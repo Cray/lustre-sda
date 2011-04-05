@@ -661,10 +661,9 @@ static int mdd_changelog_ns_store(const struct lu_env  *env,
         /* Running 2.0.x on 1.8.x file system without links EA.*/
         compat = (rc == -ENODATA);
 
-        if (unlikely(target == NULL || pathlen == 0)) {
+        if (unlikely(pathlen == 0)) {
                 /* add given path to a path to parent or empty buffer */
-                memcpy(path + pathlen - 1, "/", 1);
-                memcpy(path + pathlen, tname->ln_name,
+                memcpy(path, tname->ln_name,
                        tname->ln_namelen);
                 pathlen += tname->ln_namelen + 1;
         }
