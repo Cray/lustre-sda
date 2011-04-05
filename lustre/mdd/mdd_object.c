@@ -545,8 +545,10 @@ int mdd_path(const struct lu_env *env, struct md_object *obj,
         while (tries-- && rc == -EAGAIN)
                 rc = mdd_path_current(env, pli);
 
-        if (rc)
+        if (rc) {
+                *pathlen = 0;
                 GOTO(out_free, rc);
+        }
 
         /* Let caller know the len of path. */
         *pathlen = pli->pli_outlen;
