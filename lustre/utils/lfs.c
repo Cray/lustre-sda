@@ -2312,6 +2312,11 @@ static int lfs_changelog(int argc, char **argv)
                 {0, 0, 0, 0}
         };
         char short_opts[] = "f";
+
+        char mntpath[PATH_MAX];
+        char fsname[20];
+        char *ptr;
+
         int rc, follow = 0;
 
         optind = 0;
@@ -2337,6 +2342,15 @@ static int lfs_changelog(int argc, char **argv)
                 startrec = strtoll(argv[optind++], NULL, 10);
         if (argc > optind)
                 endrec = strtoll(argv[optind++], NULL, 10);
+
+        if (get_mdtname(mdd, "%s%s", fsname) < 0)
+                return -EINVAL;
+        ptr = fsname + strlen(fsname) - 8;
+        *ptr = '\0';
+        rc = get_root_path(WANT_PATH | WANT_ERROR, fsname, NULL, mntpath, -1);
+        if (rc)
+                return -EINVAL;
+
 
         rc = llapi_changelog_start(&changelog_priv,
                                    CHANGELOG_FLAG_BLOCK |
@@ -2370,12 +2384,18 @@ static int lfs_changelog(int argc, char **argv)
                        (int)(rec->cr_time & ((1<<30) - 1)),
                        ts.tm_year+1900, ts.tm_mon+1, ts.tm_mday,
                        rec->cr_flags & CLF_FLAGMASK, PFID(&rec->cr_tfid));
-                if (rec->cr_namelen)
+                if (rec->cr_namelen) {
                         /* namespace rec includes parent and filename */
-                        printf(" p="DFID" %.*s\n", PFID(&rec->cr_pfid),
-                               rec->cr_namelen, rec->cr_name);
-                else
-                        printf("\n");
+                        printf(" p="DFID, PFID(&rec->cr_pfid));
+                        if (rec->cr_flags & CLF_FULLNAME) {
+                                printf(" %.*s/%.*s", (int)strlen(mntpath), 
+                                       mntpath, (int)rec->cr_namelen, rec->cr_name);
+                        } else {
+                                printf(" %.*s", (int)rec->cr_namelen, rec->cr_name);
+                        }
+                } 
+                printf("\n");
+
 
                 llapi_changelog_free(&rec);
         }

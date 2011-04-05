@@ -630,8 +630,14 @@ static int mdd_changelog_ns_store(const struct lu_env  *env,
         const struct lu_fid *tpfid = mdo2fid(parent);
         struct llog_changelog_rec *rec;
         struct lu_buf *buf;
+        struct mdd_object *obj;
+        char *path;
+        __u64 recno = 0;
+        int linkno = 0;
         int reclen;
-        int rc;
+        int pathlen;
+        int origlen;
+        int rc, compat;
         ENTRY;
 
         /* Not recording */
@@ -644,11 +650,36 @@ static int mdd_changelog_ns_store(const struct lu_env  *env,
         LASSERT(tname != NULL);
         LASSERT(handle != NULL);
 
+        pathlen = MDD_PATH_MAX;
+        OBD_ALLOC(path, pathlen);
+        if (path == NULL)
+                return -ENOMEM;
+
+        obj = likely(target) ? target : parent;
+
+        rc = mdd_path(env, &obj->mod_obj, path, &pathlen, &recno, &linkno);
+        if (rc && rc != -ENODATA) {
+                OBD_FREE(path, MDD_PATH_MAX);
+                return rc;
+        }
+
+        /* Running 2.0.x on 1.8.x file system without links EA.*/
+        compat = (rc == -ENODATA);
+
+        origlen = pathlen;
+        if (!likely(target) || pathlen == 0)
+                pathlen += tname->ln_namelen;
+
+        /* target */
+        reclen = llog_data_len(sizeof(*rec) + pathlen);
+
         /* target */
         reclen = llog_data_len(sizeof(*rec) + tname->ln_namelen);
         buf = mdd_buf_alloc(env, reclen);
-        if (buf->lb_buf == NULL)
+        if (buf->lb_buf == NULL) {
+                OBD_FREE(path, MDD_PATH_MAX);
                 RETURN(-ENOMEM);
+        }
         rec = (struct llog_changelog_rec *)buf->lb_buf;
 
         rec->cr.cr_flags = CLF_VERSION | (CLF_FLAGMASK & flags);
@@ -656,10 +687,28 @@ static int mdd_changelog_ns_store(const struct lu_env  *env,
         tfid = tf ? tf : mdo2fid(target);
         rec->cr.cr_tfid = *tfid;
         rec->cr.cr_pfid = *tpfid;
-        rec->cr.cr_namelen = tname->ln_namelen;
-        memcpy(rec->cr.cr_name, tname->ln_name, rec->cr.cr_namelen);
-        if (likely(target))
+        rec->cr.cr_namelen = pathlen;
+
+        if (!likely(target) || compat) {
+                if (compat) {
+                        rec->cr.cr_flags &= ~CLF_FULLNAME;
+                        memcpy(rec->cr.cr_name, tname->ln_name,
+                               tname->ln_namelen);
+                } else {
+                        rec->cr.cr_flags |= CLF_FULLNAME;
+                        if (origlen > 0) {
+                                memcpy(rec->cr.cr_name, path, origlen);
+                                memcpy(rec->cr.cr_name + origlen - 1, "/", 1);
+                        }
+                        memcpy(rec->cr.cr_name + origlen, tname->ln_name,
+                               tname->ln_namelen);
+                }
+        } else {
+                rec->cr.cr_flags |= CLF_FULLNAME;
+                memcpy(rec->cr.cr_name, path, pathlen);
                 target->mod_cltime = cfs_time_current_64();
+        }
+        OBD_FREE(path, MDD_PATH_MAX);
 
         rc = mdd_changelog_llog_write(mdd, rec, handle);
         if (rc < 0) {

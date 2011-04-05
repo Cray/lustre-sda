@@ -277,7 +277,7 @@ struct md_object_operations {
         void (*moo_version_set)(const struct lu_env *, struct md_object *,
                                 dt_obj_version_t);
         int (*moo_path)(const struct lu_env *env, struct md_object *obj,
-                        char *path, int pathlen, __u64 *recno, int *linkno);
+                        char *path, int *pathlen, __u64 *recno, int *linkno);
         int (*moo_file_lock)(const struct lu_env *env, struct md_object *obj,
                              struct lov_mds_md *lmm, struct ldlm_extent *extent,
                              struct lustre_handle *lockh);
@@ -736,7 +736,7 @@ static inline int mo_capa_get(const struct lu_env *env,
 }
 
 static inline int mo_path(const struct lu_env *env, struct md_object *m,
-                          char *path, int pathlen, __u64 *recno, int *linkno)
+                          char *path, int *pathlen, __u64 *recno, int *linkno)
 {
         if (m->mo_ops->moo_path == NULL)
                 return -ENOSYS;

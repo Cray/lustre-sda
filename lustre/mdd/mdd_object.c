@@ -378,13 +378,13 @@ out:
 struct path_lookup_info {
         __u64                pli_recno;        /**< history point */
         __u64                pli_currec;       /**< current record */
-        struct lu_fid        pli_fid;
         struct lu_fid        pli_fids[MAX_PATH_DEPTH]; /**< path, in fids */
         struct mdd_object   *pli_mdd_obj;
         char                *pli_path;         /**< full path */
         int                  pli_pathlen;
         int                  pli_linkno;       /**< which hardlink to follow */
         int                  pli_fidcount;     /**< number of \a pli_fids */
+        int                  pli_outlen;       /**< size of path */
 };
 
 static int mdd_path_current(const struct lu_env *env,
@@ -398,15 +398,19 @@ static int mdd_path_current(const struct lu_env *env,
         struct lu_name *tmpname = &mdd_env_info(env)->mti_name;
         struct lu_fid  *tmpfid = &mdd_env_info(env)->mti_fid;
         char *ptr;
+        char *dir;
         int reclen;
         int rc;
         ENTRY;
 
         ptr = pli->pli_path + pli->pli_pathlen - 1;
         *ptr = 0;
+        dir=ptr;
         --ptr;
         pli->pli_fidcount = 0;
         pli->pli_fids[0] = *(struct lu_fid *)mdd_object_fid(pli->pli_mdd_obj);
+        pli->pli_outlen = 0;
+
 
         while (!mdd_is_root(mdd, &pli->pli_fids[pli->pli_fidcount])) {
                 mdd_obj = mdd_object_find(env, mdd,
@@ -458,7 +462,10 @@ static int mdd_path_current(const struct lu_env *env,
                 if (ptr - 1 <= pli->pli_path)
                         GOTO(out, rc = -EOVERFLOW);
                 strncpy(ptr, tmpname->ln_name, tmpname->ln_namelen);
-                *(--ptr) = '/';
+                --ptr;
+                if (pli->pli_fidcount == 0)
+                        dir = ptr;
+                *ptr = '/';
 
                 /* Store the parent fid for historic lookup */
                 if (++pli->pli_fidcount >= MAX_PATH_DEPTH)
@@ -469,22 +476,28 @@ static int mdd_path_current(const struct lu_env *env,
         /* Verify that our path hasn't changed since we started the lookup.
            Record the current index, and verify the path resolves to the
            same fid. If it does, then the path is correct as of this index. */
+        /**
+          trust object name as we already has a object
+         */
+        *dir = '\0';
         cfs_spin_lock(&mdd->mdd_cl.mc_lock);
         pli->pli_currec = mdd->mdd_cl.mc_index;
         cfs_spin_unlock(&mdd->mdd_cl.mc_lock);
-        rc = mdd_path2fid(env, mdd, ptr, &pli->pli_fid);
+        rc = mdd_path2fid(env, mdd, ptr, tmpfid);
         if (rc) {
                 CDEBUG(D_INFO, "mdd_path2fid(%s) failed %d\n", ptr, rc);
                 GOTO (out, rc = -EAGAIN);
         }
-        if (!lu_fid_eq(&pli->pli_fids[0], &pli->pli_fid)) {
+        if (!lu_fid_eq(&pli->pli_fids[1], tmpfid)) {
                 CDEBUG(D_INFO, "mdd_path2fid(%s) found another FID o="DFID
-                       " n="DFID"\n", ptr, PFID(&pli->pli_fids[0]),
-                       PFID(&pli->pli_fid));
+                       " n="DFID"\n", ptr, PFID(&pli->pli_fids[1]),
+                       PFID(tmpfid));
                 GOTO(out, rc = -EAGAIN);
         }
+        *dir='/';
         ptr++; /* skip leading / */
-        memmove(pli->pli_path, ptr, pli->pli_path + pli->pli_pathlen - ptr);
+        pli->pli_outlen = pli->pli_path + pli->pli_pathlen - ptr;
+        memmove(pli->pli_path, ptr, pli->pli_outlen);
 
         EXIT;
 out:
@@ -502,15 +515,15 @@ static int mdd_path_historic(const struct lu_env *env,
 }
 
 /* Returns the full path to this fid, as of changelog record recno. */
-static int mdd_path(const struct lu_env *env, struct md_object *obj,
-                    char *path, int pathlen, __u64 *recno, int *linkno)
+int mdd_path(const struct lu_env *env, struct md_object *obj,
+             char *path, int *pathlen, __u64 *recno, int *linkno)
 {
         struct path_lookup_info *pli;
         int tries = 3;
         int rc = -EAGAIN;
         ENTRY;
 
-        if (pathlen < 3)
+        if (*pathlen < 3)
                 RETURN(-EOVERFLOW);
 
         if (mdd_is_root(mdo2mdd(obj), mdd_object_fid(md2mdd_obj(obj)))) {
@@ -525,12 +538,18 @@ static int mdd_path(const struct lu_env *env, struct md_object *obj,
         pli->pli_mdd_obj = md2mdd_obj(obj);
         pli->pli_recno = *recno;
         pli->pli_path = path;
-        pli->pli_pathlen = pathlen;
+        pli->pli_pathlen = *pathlen;
         pli->pli_linkno = *linkno;
 
         /* Retry multiple times in case file is being moved */
         while (tries-- && rc == -EAGAIN)
                 rc = mdd_path_current(env, pli);
+
+        if (rc)
+                GOTO(out_free, rc);
+
+        /* Let caller know the len of path. */
+        *pathlen = pli->pli_outlen;
 
         /* For historical path lookup, the current links may not have existed
          * at "recno" time.  We must switch over to earlier links/parents
@@ -547,7 +566,7 @@ static int mdd_path(const struct lu_env *env, struct md_object *obj,
                 /* Return next link index to caller */
                 *linkno = pli->pli_linkno;
         }
-
+out_free:
         OBD_FREE_PTR(pli);
 
         RETURN (rc);
@@ -1235,6 +1254,10 @@ static int mdd_changelog_data_store(const struct lu_env     *env,
         const struct lu_fid *tfid = mdo2fid(mdd_obj);
         struct llog_changelog_rec *rec;
         struct lu_buf *buf;
+        __u64 recno = 0;
+        int linkno = 0;
+        char *path;
+        int pathlen;
         int reclen;
         int rc;
 
@@ -1255,17 +1278,34 @@ static int mdd_changelog_data_store(const struct lu_env     *env,
                 RETURN(0);
         }
 
-        reclen = llog_data_len(sizeof(*rec));
+        pathlen = MDD_PATH_MAX;
+        OBD_ALLOC(path, pathlen);
+        if (path == NULL)
+                return -ENOMEM;
+
+        rc = mdd_path(env, &mdd_obj->mod_obj, path, &pathlen, &recno, &linkno);
+        if (rc) {
+                OBD_FREE(path, MDD_PATH_MAX);
+                return rc;
+        }
+
+        reclen = llog_data_len(sizeof(*rec) + pathlen);
         buf = mdd_buf_alloc(env, reclen);
-        if (buf->lb_buf == NULL)
+        if (buf->lb_buf == NULL) {
+                OBD_FREE(path, MDD_PATH_MAX);
                 RETURN(-ENOMEM);
+        }
         rec = (struct llog_changelog_rec *)buf->lb_buf;
 
         rec->cr.cr_flags = CLF_VERSION | (CLF_FLAGMASK & flags);
         rec->cr.cr_type = (__u32)type;
         rec->cr.cr_tfid = *tfid;
-        rec->cr.cr_namelen = 0;
         mdd_obj->mod_cltime = cfs_time_current_64();
+        rec->cr.cr_namelen = pathlen;
+        memcpy(rec->cr.cr_name, path, rec->cr.cr_namelen);
+        if (path[0] == '/')
+                rec->cr.cr_flags |= CLF_FULLNAME;
+        OBD_FREE(path, MDD_PATH_MAX);
 
         rc = mdd_changelog_llog_write(mdd, rec, handle);
         if (rc < 0) {

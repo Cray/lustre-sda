@@ -497,6 +497,7 @@ static inline const char *changelog_type2str(int type) {
 
 /* per-record flags */
 #define CLF_VERSION  0x1000
+#define CLF_FULLNAME 0x1001
 #define CLF_FLAGMASK 0x0FFF
 /* Anything under the flagmask may be per-type (if desired) */
 /* Flags for unlink */

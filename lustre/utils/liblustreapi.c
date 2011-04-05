@@ -490,13 +490,8 @@ int llapi_file_create_pool(const char *name, unsigned long long stripe_size,
  * Find the fsname, the full path, and/or an open fd.
  * Either the fsname or path must not be NULL
  */
-#define WANT_PATH   0x1
-#define WANT_FSNAME 0x2
-#define WANT_FD     0x4
-#define WANT_INDEX  0x8
-#define WANT_ERROR  0x10
-static int get_root_path(int want, char *fsname, int *outfd, char *path,
-                         int index)
+int get_root_path(int want, char *fsname, int *outfd, char *path,
+                  int index)
 {
         struct mntent mnt;
         char buf[PATH_MAX], mntdir[PATH_MAX];
@@ -2773,7 +2768,7 @@ int llapi_ls(int argc, char *argv[])
  * Eg: if name = "lustre-MDT0000", "lustre", or "lustre-MDT0000_UUID"
  *     then buf = "lustre-MDT0000"
  */
-static int get_mdtname(char *name, char *format, char *buf)
+int get_mdtname(char *name, char *format, char *buf)
 {
         char suffix[]="-MDT0000";
         int len = strlen(name);

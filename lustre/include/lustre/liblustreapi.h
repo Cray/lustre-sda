@@ -95,6 +95,7 @@ extern int llapi_file_get_stripe(const char *path, struct lov_user_md *lum);
 #define HAVE_LLAPI_FILE_LOOKUP
 extern int llapi_file_lookup(int dirfd, const char *name);
 
+
 #define VERBOSE_COUNT   0x1
 #define VERBOSE_SIZE    0x2
 #define VERBOSE_OFFSET  0x4
@@ -235,6 +236,16 @@ extern int llapi_copytool_fini(void **priv);
 extern int llapi_copytool_recv(void *priv, struct hsm_action_list **hal,
                                int *msgsize);
 extern int llapi_copytool_free(struct hsm_action_list **hal);
+
+extern int get_mdtname(char *name, char *format, char *buf);
+
+#define WANT_PATH       0x1
+#define WANT_FSNAME     0x2
+#define WANT_FD         0x4
+#define WANT_INDEX      0x8
+#define WANT_ERROR      0x10
+extern int get_root_path(int want, char *fsname, int *outfd, char *path,
+                         int index);
 
 /** @} llapi */
 

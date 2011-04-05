@@ -5341,6 +5341,7 @@ static int mdt_fid2path(const struct lu_env *env, struct mdt_device *mdt,
 {
         struct mdt_object *obj;
         int    rc;
+        int    pathlen;
         ENTRY;
 
         CDEBUG(D_IOCTL, "path get "DFID" from "LPU64" #%d\n",
@@ -5368,8 +5369,9 @@ static int mdt_fid2path(const struct lu_env *env, struct mdt_device *mdt,
                 RETURN(rc);
         }
 
+        pathlen = fp->gf_pathlen;
         rc = mo_path(env, md_object_next(&obj->mot_obj), fp->gf_path,
-                     fp->gf_pathlen, &fp->gf_recno, &fp->gf_linkno);
+                     &pathlen, &fp->gf_recno, &fp->gf_linkno);
         mdt_object_put(env, obj);
 
         RETURN(rc);

@@ -570,7 +570,7 @@ static void dot_lustre_mdd_version_set(const struct lu_env *env,
 }
 
 static int dot_lustre_mdd_path(const struct lu_env *env, struct md_object *obj,
-                           char *path, int pathlen, __u64 *recno, int *linkno)
+                           char *path, int *pathlen, __u64 *recno, int *linkno)
 {
         return -ENOSYS;
 }
@@ -810,7 +810,7 @@ static int obf_mdd_readpage(const struct lu_env *env, struct md_object *obj,
 }
 
 static int obf_path(const struct lu_env *env, struct md_object *obj,
-                    char *path, int pathlen, __u64 *recno, int *linkno)
+                    char *path, int *pathlen, __u64 *recno, int *linkno)
 {
         return -ENOSYS;
 }

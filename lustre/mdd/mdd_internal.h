@@ -54,6 +54,9 @@
 #endif
 #include <lustre_fsfilt.h>
 
+/* Let's make it same value as POSIX_PATH_MAX */
+#define MDD_PATH_MAX 256
+
 #ifdef HAVE_QUOTA_SUPPORT
 /* quota stuff */
 extern quota_interface_t *mds_quota_interface_ref;
@@ -371,6 +374,9 @@ int mdd_get_flags(const struct lu_env *env, struct mdd_object *obj);
 struct lu_buf *mdd_buf_alloc(const struct lu_env *env, ssize_t len);
 int mdd_buf_grow(const struct lu_env *env, ssize_t len);
 void mdd_buf_put(struct lu_buf *buf);
+
+int mdd_path(const struct lu_env *env, struct md_object *obj,
+             char *path, int *pathlen, __u64 *recno, int *linkno);
 
 extern const struct md_dir_operations    mdd_dir_ops;
 extern const struct md_object_operations mdd_obj_ops;
