@@ -466,6 +466,11 @@ int mdd_changelog_llog_write(struct mdd_device         *mdd,
 int mdd_changelog_llog_cancel(struct mdd_device *mdd, long long endrec);
 int mdd_changelog_write_header(struct mdd_device *mdd, int markerflags);
 int mdd_changelog_on(struct mdd_device *mdd, int on);
+void mdd_changelog_path_store(struct llog_changelog_rec *rec,
+                              struct mdd_object *target,
+                              char *path, int pathlen,
+                              int compat);
+
 
 /* mdd_permission.c */
 #define mdd_cap_t(x) (x)

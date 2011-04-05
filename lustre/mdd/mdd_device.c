@@ -416,6 +416,24 @@ int mdd_changelog_write_header(struct mdd_device *mdd, int markerflags)
         RETURN(rc);
 }
 
+void mdd_changelog_path_store(struct llog_changelog_rec *rec,
+                              struct mdd_object *target,
+                              char *path, int pathlen,
+                              int compat)
+{
+        target->mod_cltime = cfs_time_current_64();
+
+        /* 1.8 FS on top of 2.0 */
+        if (compat) {
+                rec->cr.cr_flags &= ~CLF_FULLNAME;
+        } else {
+                rec->cr.cr_flags |= CLF_FULLNAME;
+        }
+        memcpy(rec->cr.cr_name, path, pathlen);
+        rec->cr.cr_namelen = pathlen;
+}
+
+
 /**
  * Create ".lustre" directory.
  */

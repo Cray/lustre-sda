@@ -1259,6 +1259,7 @@ static int mdd_changelog_data_store(const struct lu_env     *env,
         char *path;
         int pathlen;
         int reclen;
+        int compat;
         int rc;
 
         /* Not recording */
@@ -1284,10 +1285,16 @@ static int mdd_changelog_data_store(const struct lu_env     *env,
                 return -ENOMEM;
 
         rc = mdd_path(env, &mdd_obj->mod_obj, path, &pathlen, &recno, &linkno);
-        if (rc) {
+        if (rc && rc != -ENODATA) {
                 OBD_FREE(path, MDD_PATH_MAX);
                 return rc;
         }
+
+        /* Running 2.0.x on 1.8.x file system without links EA.*/
+        compat = (rc == -ENODATA);
+        /* noway to get path in that case */
+        if (compat)
+                pathlen = 0;
 
         reclen = llog_data_len(sizeof(*rec) + pathlen);
         buf = mdd_buf_alloc(env, reclen);
@@ -1300,11 +1307,8 @@ static int mdd_changelog_data_store(const struct lu_env     *env,
         rec->cr.cr_flags = CLF_VERSION | (CLF_FLAGMASK & flags);
         rec->cr.cr_type = (__u32)type;
         rec->cr.cr_tfid = *tfid;
-        mdd_obj->mod_cltime = cfs_time_current_64();
-        rec->cr.cr_namelen = pathlen;
-        memcpy(rec->cr.cr_name, path, rec->cr.cr_namelen);
-        if (path[0] == '/')
-                rec->cr.cr_flags |= CLF_FULLNAME;
+
+        mdd_changelog_path_store(rec, mdd_obj, path, pathlen, compat);
         OBD_FREE(path, MDD_PATH_MAX);
 
         rc = mdd_changelog_llog_write(mdd, rec, handle);

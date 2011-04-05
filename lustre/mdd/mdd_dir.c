@@ -606,7 +606,6 @@ static int __mdd_index_delete(const struct lu_env *env, struct mdd_object *pobj,
         RETURN(rc);
 }
 
-
 /** Store a namespace change changelog record
  * If this fails, we must fail the whole transaction; we don't
  * want the change to commit without the log entry.
@@ -630,13 +629,11 @@ static int mdd_changelog_ns_store(const struct lu_env  *env,
         const struct lu_fid *tpfid = mdo2fid(parent);
         struct llog_changelog_rec *rec;
         struct lu_buf *buf;
-        struct mdd_object *obj;
         char *path;
         __u64 recno = 0;
         int linkno = 0;
         int reclen;
         int pathlen;
-        int origlen;
         int rc, compat;
         ENTRY;
 
@@ -655,9 +652,7 @@ static int mdd_changelog_ns_store(const struct lu_env  *env,
         if (path == NULL)
                 return -ENOMEM;
 
-        obj = likely(target) ? target : parent;
-
-        rc = mdd_path(env, &obj->mod_obj, path, &pathlen, &recno, &linkno);
+        rc = mdd_path(env, &target->mod_obj, path, &pathlen, &recno, &linkno);
         if (rc && rc != -ENODATA) {
                 OBD_FREE(path, MDD_PATH_MAX);
                 return rc;
@@ -666,15 +661,16 @@ static int mdd_changelog_ns_store(const struct lu_env  *env,
         /* Running 2.0.x on 1.8.x file system without links EA.*/
         compat = (rc == -ENODATA);
 
-        origlen = pathlen;
-        if (!likely(target) || pathlen == 0)
-                pathlen += tname->ln_namelen;
+        if (unlikely(target == NULL || pathlen == 0)) {
+                /* add given path to a path to parent or empty buffer */
+                memcpy(path + pathlen - 1, "/", 1);
+                memcpy(path + pathlen, tname->ln_name,
+                       tname->ln_namelen);
+                pathlen += tname->ln_namelen + 1;
+        }
 
         /* target */
         reclen = llog_data_len(sizeof(*rec) + pathlen);
-
-        /* target */
-        reclen = llog_data_len(sizeof(*rec) + tname->ln_namelen);
         buf = mdd_buf_alloc(env, reclen);
         if (buf->lb_buf == NULL) {
                 OBD_FREE(path, MDD_PATH_MAX);
@@ -687,27 +683,8 @@ static int mdd_changelog_ns_store(const struct lu_env  *env,
         tfid = tf ? tf : mdo2fid(target);
         rec->cr.cr_tfid = *tfid;
         rec->cr.cr_pfid = *tpfid;
-        rec->cr.cr_namelen = pathlen;
 
-        if (!likely(target) || compat) {
-                if (compat) {
-                        rec->cr.cr_flags &= ~CLF_FULLNAME;
-                        memcpy(rec->cr.cr_name, tname->ln_name,
-                               tname->ln_namelen);
-                } else {
-                        rec->cr.cr_flags |= CLF_FULLNAME;
-                        if (origlen > 0) {
-                                memcpy(rec->cr.cr_name, path, origlen);
-                                memcpy(rec->cr.cr_name + origlen - 1, "/", 1);
-                        }
-                        memcpy(rec->cr.cr_name + origlen, tname->ln_name,
-                               tname->ln_namelen);
-                }
-        } else {
-                rec->cr.cr_flags |= CLF_FULLNAME;
-                memcpy(rec->cr.cr_name, path, pathlen);
-                target->mod_cltime = cfs_time_current_64();
-        }
+        mdd_changelog_path_store(rec, target, path, pathlen, compat);
         OBD_FREE(path, MDD_PATH_MAX);
 
         rc = mdd_changelog_llog_write(mdd, rec, handle);

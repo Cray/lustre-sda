@@ -7213,7 +7213,42 @@ test_162() {
 }
 run_test 162 "path lookup sanity"
 
+
 test_163() {
+    local USER
+    local recs
+    local lfile
+    local unln
+    local attrs
+
+    USER=$(do_facet $SINGLEMDS lctl --device $MDT0 changelog_register -n)
+    echo "Registered as changelog user $USER"
+    do_facet $SINGLEMDS lctl get_param -n mdd.$MDT0.changelog_users | \
+	grep -q $USER || error "User $USER not found in changelog_users"
+
+    lfile="$DIR/$tdir/changelog1/changlog2/changelog3/changelog4/file"
+    mkdir -p $(dirname $lfile)
+    touch $lfile
+    echo "zzzzzz" > $lfile
+    chmod 0666 $lfile
+    rm -rf $DIR/$tdir/
+
+    recs=$($LFS changelog $MDT0 | grep -c "$DIR")
+    unln=$($LFS changelog $MDT0 | grep -e "UNLNK" -e "RMDIR" | grep -c "$DIR")
+    attrs=$($LFS changelog $MDT0 | grep "SATTR" | grep -c "$DIR")
+    if [ $recs -eq 0 -o $unln -eq 0 -o $attrs -eq 0 ]; then
+        $LFS changelog $MDT0 
+        error "full path isn't work $recs / $unln / $attrs"
+    fi
+
+    echo "verifying user deregister"
+    do_facet $SINGLEMDS lctl --device $MDT0 changelog_deregister $USER
+    do_facet $SINGLEMDS lctl get_param -n mdd.$MDT0.changelog_users | \
+	grep -q $USER && error "User $USER still found in changelog_users"
+}
+run_test 163 "changelog should be get full path to object"
+
+test_164() {
 	remote_mds_nodsh && skip "remote MDS with nodsh" && return
 	copytool --test $FSNAME || { skip "copytool not runnable: $?" && return; }
 	copytool $FSNAME &
@@ -7224,7 +7259,7 @@ test_163() {
          error "kernel->userspace send failed"
 	kill -INT $!
 }
-run_test 163 "kernel <-> userspace comms"
+run_test 164 "kernel <-> userspace comms"
 
 test_169() {
 	# do directio so as not to populate the page cache
