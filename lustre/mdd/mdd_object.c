@@ -498,7 +498,7 @@ static int mdd_path_current(const struct lu_env *env,
         ptr++; /* skip leading / */
         pli->pli_outlen = pli->pli_path + pli->pli_pathlen - ptr;
         memmove(pli->pli_path, ptr, pli->pli_outlen);
-
+        pli->pli_outlen -= 1;
         EXIT;
 out:
         if (buf && !IS_ERR(buf) && buf->lb_len > OBD_ALLOC_BIG)
@@ -528,6 +528,7 @@ int mdd_path(const struct lu_env *env, struct md_object *obj,
 
         if (mdd_is_root(mdo2mdd(obj), mdd_object_fid(md2mdd_obj(obj)))) {
                 path[0] = '\0';
+                *pathlen = 0;
                 RETURN(0);
         }
 
@@ -550,6 +551,7 @@ int mdd_path(const struct lu_env *env, struct md_object *obj,
                 GOTO(out_free, rc);
         }
 
+        CDEBUG(D_INFO, "changelog pathlen %d\n", pli->pli_outlen);
         /* Let caller know the len of path. */
         *pathlen = pli->pli_outlen;
 

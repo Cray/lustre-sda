@@ -7220,6 +7220,7 @@ test_163() {
     local lfile
     local unln
     local attrs
+    local hlink
 
     USER=$(do_facet $SINGLEMDS lctl --device $MDT0 changelog_register -n)
     echo "Registered as changelog user $USER"
@@ -7231,12 +7232,17 @@ test_163() {
     touch $lfile
     echo "zzzzzz" > $lfile
     chmod 0666 $lfile
+    ln $lfile "$lfile-hard"
+    mv $lfile "$lfile-test"
     rm -rf $DIR/$tdir/
 
     recs=$($LFS changelog $MDT0 | grep -c "$DIR")
     unln=$($LFS changelog $MDT0 | grep -e "UNLNK" -e "RMDIR" | grep -c "$DIR")
     attrs=$($LFS changelog $MDT0 | grep "SATTR" | grep -c "$DIR")
-    if [ $recs -eq 0 -o $unln -eq 0 -o $attrs -eq 0 ]; then
+    hlink=$($LFS changelog $MDT0 | grep "HLINK" | grep "$DIR" | grep -c -e "-hard")
+    $LFS changelog $MDT0 
+    
+    if [ $recs -eq 0 -o $unln -eq 0 -o $attrs -eq 0 -o $hlink -eq 0 ]; then
         $LFS changelog $MDT0 
         error "full path isn't work $recs / $unln / $attrs"
     fi
@@ -7245,6 +7251,7 @@ test_163() {
     do_facet $SINGLEMDS lctl --device $MDT0 changelog_deregister $USER
     do_facet $SINGLEMDS lctl get_param -n mdd.$MDT0.changelog_users | \
 	grep -q $USER && error "User $USER still found in changelog_users"
+    return 0
 }
 run_test 163 "changelog should be get full path to object"
 

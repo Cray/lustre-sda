@@ -421,7 +421,8 @@ void mdd_changelog_path_store(struct llog_changelog_rec *rec,
                               char *path, int pathlen,
                               int compat)
 {
-        target->mod_cltime = cfs_time_current_64();
+        if (likely(target != NULL))
+                target->mod_cltime = cfs_time_current_64();
 
         /* 1.8 FS on top of 2.0 */
         if (compat) {

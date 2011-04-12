@@ -609,7 +609,7 @@ static int __mdd_index_delete(const struct lu_env *env, struct mdd_object *pobj,
 /** Store a namespace change changelog record
  * If this fails, we must fail the whole transaction; we don't
  * want the change to commit without the log entry.
- * \param target - mdd_object of change
+ * \param target - mdd_object of change, may NULL on rename.
  * \param parent - parent dir/object
  * \param tf - target lu_fid, overrides fid of \a target if this is non-null
  * \param tname - target name string
@@ -652,21 +652,24 @@ static int mdd_changelog_ns_store(const struct lu_env  *env,
         if (path == NULL)
                 return -ENOMEM;
 
-        rc = mdd_path(env, &target->mod_obj, path, &pathlen, &recno, &linkno);
+        rc = mdd_path(env, &parent->mod_obj, path, &pathlen, &recno, &linkno);
         if (rc && rc != -ENODATA) {
                 OBD_FREE(path, MDD_PATH_MAX);
                 return rc;
         }
 
-        /* Running 2.0.x on 1.8.x file system without links EA.*/
-        compat = (rc == -ENODATA);
+        if ((pathlen + tname->ln_namelen) > MDD_PATH_MAX)
+               pathlen = 0;
 
-        if (unlikely(pathlen == 0)) {
-                /* add given path to a path to parent or empty buffer */
-                memcpy(path, tname->ln_name,
-                       tname->ln_namelen);
-                pathlen += tname->ln_namelen + 1;
+        compat = (pathlen == 0);
+
+        /* add given path to a path to parent */
+        if (!compat) {
+                *(path + pathlen - 1) = '/';
         }
+        memcpy(path + pathlen, tname->ln_name, tname->ln_namelen);
+        pathlen += tname->ln_namelen;
+        *(path + pathlen + 1) = '\0';
 
         /* target */
         reclen = llog_data_len(sizeof(*rec) + pathlen);
