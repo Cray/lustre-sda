@@ -381,7 +381,7 @@ struct path_lookup_info {
         struct lu_fid        pli_fids[MAX_PATH_DEPTH]; /**< path, in fids */
         struct mdd_object   *pli_mdd_obj;
         char                *pli_path;         /**< full path */
-        int                  pli_pathlen;
+        int                  pli_pathlen;      /**< size of buffer to store path*/
         int                  pli_linkno;       /**< which hardlink to follow */
         int                  pli_fidcount;     /**< number of \a pli_fids */
         int                  pli_outlen;       /**< size of path */

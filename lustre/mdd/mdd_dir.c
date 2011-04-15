@@ -609,7 +609,7 @@ static int __mdd_index_delete(const struct lu_env *env, struct mdd_object *pobj,
 /** Store a namespace change changelog record
  * If this fails, we must fail the whole transaction; we don't
  * want the change to commit without the log entry.
- * \param target - mdd_object of change, may NULL on rename.
+ * \param target - mdd_object of change, can be NULL on rename.
  * \param parent - parent dir/object
  * \param tf - target lu_fid, overrides fid of \a target if this is non-null
  * \param tname - target name string
@@ -658,7 +658,7 @@ static int mdd_changelog_ns_store(const struct lu_env  *env,
                 return rc;
         }
 
-        if ((pathlen + tname->ln_namelen) > MDD_PATH_MAX)
+        if ((pathlen + tname->ln_namelen) >= MDD_PATH_MAX)
                pathlen = 0;
 
         compat = (pathlen == 0);
