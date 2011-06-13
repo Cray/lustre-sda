@@ -154,11 +154,12 @@ void lustre_swab_llog_rec(struct llog_rec_hdr *rec, struct llog_rec_tail *tail)
                 break;
         }
 
-        case CHANGELOG_REC: {
+        case CHANGELOG_VREC: {
                 struct llog_changelog_rec *cr = (struct llog_changelog_rec*)rec;
 
                 __swab16s(&cr->cr.cr_namelen);
-                __swab16s(&cr->cr.cr_flags);
+                __swab16s(&cr->cr.cr_version);
+                __swab32s(&cr->cr.cr_flags);
                 __swab32s(&cr->cr.cr_type);
                 __swab64s(&cr->cr.cr_index);
                 __swab64s(&cr->cr.cr_prev);
