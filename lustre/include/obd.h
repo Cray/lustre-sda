@@ -904,7 +904,10 @@ enum obd_notify_event {
         /* Configuration event */
         OBD_NOTIFY_CONFIG,
         /* Trigger quota recovery */
-        OBD_NOTIFY_QUOTA
+        OBD_NOTIFY_QUOTA,
+        /* Administratively deactivate/activate event */
+        OBD_NOTIFY_DEACTIVATE,
+        OBD_NOTIFY_ACTIVATE
 };
 
 /* bit-mask flags for config events */
@@ -1335,9 +1338,9 @@ struct obd_ops {
         int (*o_punch)(struct obd_export *exp, struct obd_info *oinfo,
                        struct obd_trans_info *oti,
                        struct ptlrpc_request_set *rqset);
-        int (*o_sync)(struct obd_export *exp, struct obdo *oa,
-                      struct lov_stripe_md *ea, obd_size start, obd_size end,
-                      void *capa);
+        int (*o_sync)(struct obd_export *exp, struct obd_info *oinfo,
+                      obd_size start, obd_size end,
+                      struct ptlrpc_request_set *set);
         int (*o_migrate)(struct lustre_handle *conn, struct lov_stripe_md *dst,
                          struct lov_stripe_md *src, obd_size start,
                          obd_size end, struct obd_trans_info *oti);

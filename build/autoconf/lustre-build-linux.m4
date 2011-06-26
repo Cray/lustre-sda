@@ -361,7 +361,9 @@ AC_SUBST(UML_CFLAGS)
 # LB_LANG_PROGRAM(C)([PROLOGUE], [BODY])
 # --------------------------------------
 m4_define([LB_LANG_PROGRAM],
-[$1
+[
+#include <linux/kernel.h>
+$1
 int
 main (void)
 {
@@ -708,11 +710,14 @@ AS_VAR_POPDEF([ac_Header])dnl
 AC_DEFUN([LB_USES_DPKG],
 [
 AC_MSG_CHECKING([if this distro uses dpkg])
-if dpkg --version >/dev/null; then
-	AC_MSG_RESULT([yes])
-	uses_dpkg=yes
-else
-	AC_MSG_RESULT([no])
-	uses_dpkg=no
-fi
+case `lsb_release -i -s 2>/dev/null` in
+        Ubuntu | Debian)
+                AC_MSG_RESULT([yes])
+                uses_dpkg=yes
+                ;;
+        *)
+                AC_MSG_RESULT([no])
+                uses_dpkg=no
+                ;;
+esac
 ])

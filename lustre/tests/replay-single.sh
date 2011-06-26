@@ -919,6 +919,19 @@ test_44b() {
 }
 run_test 44b "race in target handle connect"
 
+test_44c() {
+    replay_barrier $SINGLEMDS
+    createmany -m $DIR/$tfile-%d 100
+#define OBD_FAIL_TGT_RCVG_FLAG 0x712
+    do_facet $SINGLEMDS "lctl set_param fail_loc=0x80000712"
+    fail_abort $SINGLEMDS
+    unlinkmany $DIR/$tfile-%d 100 && return 1
+    fail $SINGLEMDS
+    unlinkmany $DIR/$tfile-%d 100 && return 1
+    return 0
+}
+run_test 44c "race in target handle connect"
+
 # Handle failed close
 test_45() {
     mdcdev=`lctl get_param -n devices | awk '/MDT0000-mdc-/ {print $1}'`
@@ -1568,7 +1581,7 @@ test_65a() #bug 3055
 
     do_facet $SINGLEMDS lctl set_param fail_val=$((${REQ_DELAY} * 1000))
 #define OBD_FAIL_PTLRPC_PAUSE_REQ        0x50a
-    do_facet $SINGLEMDS sysctl -w lustre.fail_loc=0x8000050a
+    do_facet $SINGLEMDS $LCTL set_param fail_loc=0x8000050a
     createmany -o $DIR/$tfile 10 > /dev/null
     unlinkmany $DIR/$tfile 10 > /dev/null
     # check for log message
@@ -1600,14 +1613,14 @@ test_65b() #bug 3055
 
     do_facet ost1 lctl set_param fail_val=${REQ_DELAY}
 #define OBD_FAIL_OST_BRW_PAUSE_PACK      0x224
-    do_facet ost1 sysctl -w lustre.fail_loc=0x224
+    do_facet ost1 $LCTL set_param fail_loc=0x224
 
     rm -f $DIR/$tfile
     lfs setstripe $DIR/$tfile --index=0 --count=1
     # force some real bulk transfer
     multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
 
-    do_facet ost1 sysctl -w lustre.fail_loc=0
+    do_facet ost1 $LCTL set_param fail_loc=0
     # check for log message
     $LCTL dk | grep "Early reply #" || error "No early reply"
     debugrestore
@@ -1623,18 +1636,18 @@ test_66a() #bug 3055
     at_start || return 0
     lctl get_param -n mdc.${FSNAME}-MDT0000-mdc-*.timeouts | grep "portal 12"
     # adjust 5s at a time so no early reply is sent (within deadline)
-    do_facet $SINGLEMDS "sysctl -w lustre.fail_val=5000"
+    do_facet $SINGLEMDS "$LCTL set_param fail_val=5000"
 #define OBD_FAIL_PTLRPC_PAUSE_REQ        0x50a
-    do_facet $SINGLEMDS "sysctl -w lustre.fail_loc=0x8000050a"
+    do_facet $SINGLEMDS "$LCTL set_param fail_loc=0x8000050a"
     createmany -o $DIR/$tfile 20 > /dev/null
     unlinkmany $DIR/$tfile 20 > /dev/null
     lctl get_param -n mdc.${FSNAME}-MDT0000-mdc-*.timeouts | grep "portal 12"
-    do_facet $SINGLEMDS "sysctl -w lustre.fail_val=10000"
-    do_facet $SINGLEMDS "sysctl -w lustre.fail_loc=0x8000050a"
+    do_facet $SINGLEMDS "$LCTL set_param fail_val=10000"
+    do_facet $SINGLEMDS "$LCTL set_param fail_loc=0x8000050a"
     createmany -o $DIR/$tfile 20 > /dev/null
     unlinkmany $DIR/$tfile 20 > /dev/null
     lctl get_param -n mdc.${FSNAME}-MDT0000-mdc-*.timeouts | grep "portal 12"
-    do_facet $SINGLEMDS "sysctl -w lustre.fail_loc=0"
+    do_facet $SINGLEMDS "$LCTL set_param fail_loc=0"
     sleep 9
     createmany -o $DIR/$tfile 20 > /dev/null
     unlinkmany $DIR/$tfile 20 > /dev/null
@@ -1652,11 +1665,11 @@ test_66b() #bug 3055
 
     at_start || return 0
     ORIG=$(lctl get_param -n mdc.${FSNAME}-*.timeouts | awk '/network/ {print $4}')
-    sysctl -w lustre.fail_val=$(($ORIG + 5))
+    $LCTL set_param fail_val=$(($ORIG + 5))
 #define OBD_FAIL_PTLRPC_PAUSE_REP      0x50c
-    sysctl -w lustre.fail_loc=0x50c
+    $LCTL set_param fail_loc=0x50c
     ls $DIR/$tfile > /dev/null 2>&1
-    sysctl -w lustre.fail_loc=0
+    $LCTL set_param fail_loc=0
     CUR=$(lctl get_param -n mdc.${FSNAME}-*.timeouts | awk '/network/ {print $4}')
     WORST=$(lctl get_param -n mdc.${FSNAME}-*.timeouts | awk '/network/ {print $6}')
     echo "network timeout orig $ORIG, cur $CUR, worst $WORST"
@@ -1671,12 +1684,12 @@ test_67a() #bug 3055
     at_start || return 0
     CONN1=$(lctl get_param -n osc.*.stats | awk '/_connect/ {total+=$2} END {print total}')
     # sleeping threads may drive values above this
-    do_facet ost1 "sysctl -w lustre.fail_val=400"
+    do_facet ost1 "$LCTL set_param fail_val=400"
 #define OBD_FAIL_PTLRPC_PAUSE_REQ    0x50a
-    do_facet ost1 "sysctl -w lustre.fail_loc=0x50a"
+    do_facet ost1 "$LCTL set_param fail_loc=0x50a"
     createmany -o $DIR/$tfile 20 > /dev/null
     unlinkmany $DIR/$tfile 20 > /dev/null
-    do_facet ost1 "sysctl -w lustre.fail_loc=0"
+    do_facet ost1 "$LCTL set_param fail_loc=0"
     CONN2=$(lctl get_param -n osc.*.stats | awk '/_connect/ {total+=$2} END {print total}')
     ATTEMPTS=$(($CONN2 - $CONN1))
     echo "$ATTEMPTS osc reconnect attempts on gradual slow"
@@ -1704,8 +1717,8 @@ test_67b() #bug 3055
     lfs setstripe $DIR/$tdir/${OST} -o 0 -c 1 || error "setstripe"
     echo "Creating to objid $last_id on ost $OST..."
 #define OBD_FAIL_OST_PAUSE_CREATE        0x223
-    do_facet ost1 "sysctl -w lustre.fail_val=20000"
-    do_facet ost1 "sysctl -w lustre.fail_loc=0x80000223"
+    do_facet ost1 "$LCTL set_param fail_val=20000"
+    do_facet ost1 "$LCTL set_param fail_loc=0x80000223"
     createmany -o $DIR/$tdir/${OST}/f $next_id $((last_id - next_id + 2))
 
     client_reconnect
@@ -1715,9 +1728,9 @@ test_67b() #bug 3055
     ATTEMPTS=$(($CONN2 - $CONN1))
     echo "$ATTEMPTS osc reconnect attempts on instant slow"
     # do it again; should not timeout
-    do_facet ost1 "sysctl -w lustre.fail_loc=0x80000223"
+    do_facet ost1 "$LCTL set_param fail_loc=0x80000223"
     cp /etc/profile $DIR/$tfile || error "cp failed"
-    do_facet ost1 "sysctl -w lustre.fail_loc=0"
+    do_facet ost1 "$LCTL set_param fail_loc=0"
     client_reconnect
     do_facet ost1 "lctl get_param -n ost.OSS.ost_create.timeouts"
     CONN3=$(lctl get_param -n osc.*.stats | awk '/_connect/ {total+=$2} END {print total}')
@@ -1746,13 +1759,13 @@ test_68 () #bug 13813
     mkdir -p $DIR/$tdir
     lfs setstripe $DIR/$tdir --index=0 --count=1
 #define OBD_FAIL_LDLM_PAUSE_CANCEL       0x312
-    sysctl -w lustre.fail_val=$(($TIMEOUT - 1))
-    sysctl -w lustre.fail_loc=0x80000312
+    $LCTL set_param fail_val=$(($TIMEOUT - 1))
+    $LCTL set_param fail_loc=0x80000312
     cp /etc/profile $DIR/$tdir/${tfile}_1 || error "1st cp failed $?"
-    sysctl -w lustre.fail_val=$((TIMEOUT * 5 / 4))
-    sysctl -w lustre.fail_loc=0x80000312
+    $LCTL set_param fail_val=$((TIMEOUT * 5 / 4))
+    $LCTL set_param fail_loc=0x80000312
     cp /etc/profile $DIR/$tdir/${tfile}_2 || error "2nd cp failed $?"
-    sysctl -w lustre.fail_loc=0
+    $LCTL set_param fail_loc=0
 
     echo $ENQ_MIN >> $ldlm_enqueue_min
     do_facet ost1 "echo $ENQ_MIN_R >> $ldlm_enqueue_min_r"
@@ -2222,6 +2235,94 @@ test_89() {
 }
 
 run_test 89 "no disk space leak on late ost connection"
+
+cleanup_90 () {
+    local facet=$1
+    trap 0
+    reboot_facet $facet
+    change_active $facet
+    wait_for_facet $facet
+    mount_facet $facet || error "Restart of $facet failed"
+    clients_up
+}
+
+test_90() { # bug 19494
+    local dir=$DIR/$tdir
+    local ostfail=$(get_random_entry $(get_facets OST))
+
+    if [[ $FAILURE_MODE = HARD ]]; then
+        local affected=$(affected_facets $ostfail);
+        if [[ "$affected" != $ostfail ]]; then
+            skip not functional with FAILURE_MODE=$FAILURE_MODE, affected: $affected
+            return 0
+        fi
+    fi
+
+    mkdir -p $dir
+
+    echo "Create the files"
+
+    # file "f${index}" striped over 1 OST
+    # file "all" striped over all OSTs
+
+    $LFS setstripe -c $OSTCOUNT $dir/all || error "setstripe failed to create $dir/all"
+
+    for (( i=0; i<$OSTCOUNT; i++ )); do
+        local f=$dir/f$i
+        $LFS setstripe -i $i -c 1 $f || error "setstripe failed to create $f"
+
+        # confirm that setstripe actually created the stripe on the requested OST
+        local uuid=$(ostuuid_from_index $i)
+        for file in f$i all; do
+            if [[ $dir/$file != $($LFS find --obd $uuid --name $file $dir) ]]; then
+                $LFS getstripe $dir/file
+                error wrong stripe: $file, uuid: $uuid
+            fi
+        done
+    done
+
+    # Before failing an OST, get its obd name and index
+    local varsvc=${ostfail}_svc
+    local obd=$(do_facet $ostfail lctl get_param -n obdfilter.${!varsvc}.uuid)
+    local index=${obd:(-6):1}
+
+    echo "Fail $ostfail $obd, display the list of affected files"
+    shutdown_facet $ostfail || return 2
+
+    trap "cleanup_90 $ostfail" EXIT INT
+    echo "General Query: lfs find $dir"
+    local list=$($LFS find $dir)
+    echo "$list"
+    for (( i=0; i<$OSTCOUNT; i++ )); do
+        list_member "$list" $dir/f$i || error_noexit "lfs find $dir: no file f$i"
+    done
+    list_member "$list" $dir/all || error_noexit "lfs find $dir: no file all"
+
+    # focus on the missing OST,
+    # we expect to see only two files affected: "f$(index)" and "all"
+
+    echo "Querying files on shutdown $ostfail: lfs find --obd $obd"
+    list=$($LFS find --obd $obd $dir)
+    echo "$list"
+    for file in all f$index; do
+        list_member "$list" $dir/$file ||
+            error_noexit "lfs find does not report the affected $obd for $file"
+    done
+
+    [[ $(echo $list | wc -w) -eq 2 ]] ||
+        error_noexit "lfs find reports the wrong list of affected files ${#list[@]}"
+
+    echo "Check getstripe: lfs getstripe -r --obd $obd"
+    list=$($LFS getstripe -r --obd $obd $dir)
+    echo "$list"
+    for file in all f$index; do
+        echo "$list" | grep $dir/$file ||
+            error_noexit "lfs getsripe does not report the affected $obd for $file"
+    done
+
+    cleanup_90 $ostfail
+}
+run_test 90 "lfs find identifies the missing striped file segments"
 
 complete $(basename $0) $SECONDS
 check_and_cleanup_lustre

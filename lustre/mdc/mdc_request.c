@@ -1255,6 +1255,13 @@ static int mdc_changelog_send_thread(void *csdata)
         CDEBUG(D_CHANGELOG, "changelog to fp=%p start "LPU64"\n",
                cs->cs_fp, cs->cs_startrec);
 
+        /*
+         * It's important to daemonize here to close unused FDs.
+         * The write fd from pipe is already opened by the caller,
+         * so it's fine to clear all files here
+         */
+        cfs_daemonize("mdc_clg_send_thread");
+
         OBD_ALLOC(cs->cs_buf, CR_MAXSIZE);
         if (cs->cs_buf == NULL)
                 GOTO(out, rc = -ENOMEM);
@@ -1274,9 +1281,7 @@ static int mdc_changelog_send_thread(void *csdata)
                 GOTO(out, rc);
         }
 
-        /* We need the pipe fd open, so llog_process can't daemonize */
-        rc = llog_cat_process_flags(llh, changelog_show_cb, cs,
-                                    LLOG_FLAG_NODEAMON, 0, 0);
+        rc = llog_cat_process_flags(llh, changelog_show_cb, cs, 0, 0, 0);
 
         /* Send EOF no matter what our result */
         if ((kuch = changelog_kuc_hdr(cs->cs_buf, sizeof(*kuch),
@@ -1843,7 +1848,9 @@ static int mdc_import_event(struct obd_device *obd, struct obd_import *imp,
         case IMP_EVENT_OCD:
                 rc = obd_notify_observer(obd, obd, OBD_NOTIFY_OCD, NULL);
                 break;
-
+        case IMP_EVENT_DEACTIVATE:
+        case IMP_EVENT_ACTIVATE:
+                break;
         default:
                 CERROR("Unknown import event %x\n", event);
                 LBUG();

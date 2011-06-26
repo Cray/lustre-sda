@@ -416,7 +416,8 @@ enum fid_seq {
         FID_SEQ_START      = 0x200000000ULL,
         FID_SEQ_LOCAL_FILE = 0x200000001ULL,
         FID_SEQ_DOT_LUSTRE = 0x200000002ULL,
-        FID_SEQ_NORMAL     = 0x200000400ULL
+        FID_SEQ_NORMAL     = 0x200000400ULL,
+        FID_SEQ_LOV_DEFAULT= 0xffffffffffffffffULL
 };
 
 #define OBIF_OID_MAX_BITS           32
@@ -790,8 +791,9 @@ static inline int lu_fid_cmp(const struct lu_fid *f0,
  * enumeration.
  */
 enum lu_dirent_attrs {
-        LUDA_FID    = 0x0001,
-        LUDA_TYPE   = 0x0002,
+        LUDA_FID        = 0x0001,
+        LUDA_TYPE       = 0x0002,
+        LUDA_64BITHASH  = 0x0004,
 };
 
 /**
@@ -900,7 +902,7 @@ static inline int lu_dirent_size(struct lu_dirent *ent)
         return le16_to_cpu(ent->lde_reclen);
 }
 
-#define DIR_END_OFF              0xfffffffffffffffeULL
+#define MDS_DIR_END_OFF 0xfffffffffffffffeULL
 
 /** @} lu_dir */
 
@@ -914,8 +916,8 @@ static inline int lustre_handle_is_used(struct lustre_handle *lh)
         return lh->cookie != 0ull;
 }
 
-static inline int lustre_handle_equal(struct lustre_handle *lh1,
-                                      struct lustre_handle *lh2)
+static inline int lustre_handle_equal(const struct lustre_handle *lh1,
+                                      const struct lustre_handle *lh2)
 {
         return lh1->cookie == lh2->cookie;
 }
@@ -1070,6 +1072,8 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
 #define OBD_CONNECT_MAX_EASIZE    0x800000000ULL /* preserved for large EA */
 #define OBD_CONNECT_FULL20       0x1000000000ULL /* it is 2.0 client */
 #define OBD_CONNECT_LAYOUTLOCK   0x2000000000ULL /* client supports layout lock */
+#define OBD_CONNECT_64BITHASH    0x4000000000ULL /* client supports 64-bits
+                                                  * directory hash */
 /* also update obd_connect_names[] for lprocfs_rd_connect_flags()
  * and lustre/utils/wirecheck.c */
 
@@ -1090,7 +1094,7 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
                                 OBD_CONNECT_MDS_MDS | OBD_CONNECT_FID | \
                                 LRU_RESIZE_CONNECT_FLAG | OBD_CONNECT_VBR | \
                                 OBD_CONNECT_LOV_V3 | OBD_CONNECT_SOM | \
-                                OBD_CONNECT_FULL20)
+                                OBD_CONNECT_FULL20 | OBD_CONNECT_64BITHASH)
 #define OST_CONNECT_SUPPORTED  (OBD_CONNECT_SRVLOCK | OBD_CONNECT_GRANT | \
                                 OBD_CONNECT_REQPORTAL | OBD_CONNECT_VERSION | \
                                 OBD_CONNECT_TRUNCLOCK | OBD_CONNECT_INDEX | \
@@ -1101,7 +1105,8 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
                                 OBD_CONNECT_OSS_CAPA  | OBD_CONNECT_RMT_CLIENT | \
                                 OBD_CONNECT_RMT_CLIENT_FORCE | OBD_CONNECT_VBR | \
                                 OBD_CONNECT_MDS | OBD_CONNECT_SKIP_ORPHAN | \
-                                OBD_CONNECT_GRANT_SHRINK | OBD_CONNECT_FULL20)
+                                OBD_CONNECT_GRANT_SHRINK | OBD_CONNECT_FULL20 | \
+                                OBD_CONNECT_64BITHASH)
 #define ECHO_CONNECT_SUPPORTED (0)
 #define MGS_CONNECT_SUPPORTED  (OBD_CONNECT_VERSION | OBD_CONNECT_AT | \
                                 OBD_CONNECT_FULL20)
@@ -1211,9 +1216,6 @@ enum obdo_flags {
 #define LOV_PATTERN_RAID1 0x002   /* stripes are mirrors of each other */
 #define LOV_PATTERN_FIRST 0x100   /* first stripe is not in round-robin */
 #define LOV_PATTERN_CMOBD 0x200
-
-#define LOV_OBJECT_GROUP_DEFAULT ~0ULL
-#define LOV_OBJECT_GROUP_CLEAR 0ULL
 
 #define lov_ost_data lov_ost_data_v1
 struct lov_ost_data_v1 {          /* per-stripe data structure (little-endian)*/
@@ -1861,7 +1863,8 @@ enum {
         MDS_PERM_BYPASS   = 1 << 3,
         MDS_SOM           = 1 << 4,
         MDS_QUOTA_IGNORE  = 1 << 5,
-        MDS_CLOSE_CLEANUP = 1 << 6
+        MDS_CLOSE_CLEANUP = 1 << 6,
+        MDS_KEEP_ORPHAN   = 1 << 7
 };
 
 /* instance of mdt_reint_rec */
@@ -2212,12 +2215,12 @@ struct ldlm_inodebits {
         __u64 bits;
 };
 
-struct ldlm_flock {
-        __u64 start;
-        __u64 end;
-        __u64 blocking_export;  /* not actually used over the wire */
-        __u32 blocking_pid;     /* not actually used over the wire */
-        __u32 pid;
+struct ldlm_flock_wire {
+        __u64 lfw_start;
+        __u64 lfw_end;
+        __u64 lfw_owner;
+        __u32 lfw_padding;
+        __u32 lfw_pid;
 };
 
 /* it's important that the fields of the ldlm_extent structure match
@@ -2228,11 +2231,11 @@ struct ldlm_flock {
 
 typedef union {
         struct ldlm_extent l_extent;
-        struct ldlm_flock  l_flock;
+        struct ldlm_flock_wire l_flock;
         struct ldlm_inodebits l_inodebits;
-} ldlm_policy_data_t;
+} ldlm_wire_policy_data_t;
 
-extern void lustre_swab_ldlm_policy_data (ldlm_policy_data_t *d);
+extern void lustre_swab_ldlm_policy_data (ldlm_wire_policy_data_t *d);
 
 struct ldlm_intent {
         __u64 opc;
@@ -2252,7 +2255,7 @@ struct ldlm_lock_desc {
         struct ldlm_resource_desc l_resource;
         ldlm_mode_t l_req_mode;
         ldlm_mode_t l_granted_mode;
-        ldlm_policy_data_t l_policy_data;
+        ldlm_wire_policy_data_t l_policy_data;
 };
 
 extern void lustre_swab_ldlm_lock_desc (struct ldlm_lock_desc *l);

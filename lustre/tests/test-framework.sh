@@ -8,13 +8,17 @@ set -e
 
 export REFORMAT=${REFORMAT:-""}
 export WRITECONF=${WRITECONF:-""}
-export VERBOSE=false
+export VERBOSE=${VERBOSE:-false}
 export CATASTROPHE=${CATASTROPHE:-/proc/sys/lnet/catastrophe}
 export GSS=false
 export GSS_KRB5=false
 export GSS_PIPEFS=false
 export IDENTITY_UPCALL=default
 export QUOTA_AUTO=1
+
+# LOAD_LLOOP: LU-409: only load llite_lloop module if kernel < 2.6.32 or
+#             LOAD_LLOOP is true. LOAD_LLOOP is false by default.
+export LOAD_LLOOP=${LOAD_LLOOP:-false}
 
 #export PDSH="pdsh -S -Rssh -w"
 
@@ -117,21 +121,17 @@ init_test_env() {
     export DUMPE2FS=${DUMPE2FS:-dumpe2fs}
     export E2FSCK=${E2FSCK:-e2fsck}
     export LFSCK_BIN=${LFSCK_BIN:-lfsck}
-    export LFSCK_ALWAYS=${LFSCK_ALWAYS:-"no"} # check filesystem after each test suit
-    export SKIP_LFSCK=${SKIP_LFSCK:-"yes"} # bug 13698, change to "no" when fixed
-    export SHARED_DIRECTORY=${SHARED_DIRECTORY:-"/tmp"}
-    export FSCK_MAX_ERR=4   # File system errors left uncorrected
-    if [ "$SKIP_LFSCK" == "no" ]; then
-        if [ ! -x `which $LFSCK_BIN` ]; then
-            log "$($E2FSCK -V)"
-            error_exit "$E2FSCK does not support lfsck"
-        fi
 
-        export MDSDB=${MDSDB:-$SHARED_DIRECTORY/mdsdb}
-        export OSTDB=${OSTDB:-$SHARED_DIRECTORY/ostdb}
-        export MDSDB_OPT="--mdsdb $MDSDB"
-        export OSTDB_OPT="--ostdb $OSTDB-\$ostidx"
-    fi
+    export LFSCK_ALWAYS=${LFSCK_ALWAYS:-"no"} # check fs after each test suite
+    export FSCK_MAX_ERR=4   # File system errors left uncorrected
+
+    # This is used by a small number of tests to share state between the client
+    # running the tests, or in some cases between the servers (e.g. lfsck.sh).
+    # It needs to be a non-lustre filesystem that is available on all the nodes.
+    export SHARED_DIRECTORY=${SHARED_DIRECTORY:-"/tmp"}
+    export MDSDB=${MDSDB:-$SHARED_DIRECTORY/mdsdb}
+    export OSTDB=${OSTDB:-$SHARED_DIRECTORY/ostdb}
+
     #[ -d /r ] && export ROOT=${ROOT:-/r}
     export TMP=${TMP:-$ROOT/tmp}
     export TESTSUITELOG=${TMP}/${TESTSUITE}.log
@@ -141,16 +141,16 @@ init_test_env() {
     fi
     export HOSTNAME=${HOSTNAME:-`hostname`}
     if ! echo $PATH | grep -q $LUSTRE/utils; then
-        export PATH=$PATH:$LUSTRE/utils
+        export PATH=$LUSTRE/utils:$PATH
     fi
     if ! echo $PATH | grep -q $LUSTRE/utils/gss; then
-        export PATH=$PATH:$LUSTRE/utils/gss
+        export PATH=$LUSTRE/utils/gss:$PATH
     fi
     if ! echo $PATH | grep -q $LUSTRE/tests; then
         export PATH=$LUSTRE/tests:$PATH
     fi
     if ! echo $PATH | grep -q $LUSTRE/../lustre-iokit/sgpdd-survey; then
-        export PATH=$PATH:$LUSTRE/../lustre-iokit/sgpdd-survey
+        export PATH=$LUSTRE/../lustre-iokit/sgpdd-survey:$PATH
     fi
     export LST=${LST:-"$LUSTRE/../lnet/utils/lst"}
     [ ! -f "$LST" ] && export LST=$(which lst)
@@ -165,7 +165,7 @@ init_test_env() {
         export PATH=$LUSTRE/tests/racer:$PATH:
     fi
     if ! echo $PATH | grep -q $LUSTRE/tests/mpi; then
-        export PATH=$PATH:$LUSTRE/tests/mpi
+        export PATH=$LUSTRE/tests/mpi:$PATH
     fi
     export RSYNC_RSH=${RSYNC_RSH:-rsh}
     export LCTL=${LCTL:-"$LUSTRE/utils/lctl"}
@@ -265,7 +265,7 @@ esac
 
 
 module_loaded () {
-   /sbin/lsmod | grep -q $1
+   /sbin/lsmod | grep -q "^\<$1\>"
 }
 
 # Load a module on the system where this is running.
@@ -373,15 +373,32 @@ load_modules_local() {
         load_module obdfilter/obdfilter
     fi
 
+    load_module_llite_lloop() {
+        local n1=$(uname -r | cut -d. -f1)
+        local n2=$(uname -r | cut -d. -f2)
+        local n3=$(uname -r | cut -d- -f1 | cut -d. -f3)
+
+    # load the llite_lloop module for < 2.6.32 kernels
+        if [[ $n1 -lt 2 ]] || [[ $n1 -eq 2 && $n2 -lt 6 ]] || \
+            [[ $n1 -eq 2 && $n2 -eq 6 && $n3 -lt 32 ]] || \
+            $LOAD_LLOOP; then
+                load_module llite/llite_lloop
+        fi
+    }
+
     load_module llite/lustre
-    load_module llite/llite_lloop
+    load_module_llite_lloop
     [ -d /r ] && OGDB=${OGDB:-"/r/tmp"}
     OGDB=${OGDB:-$TMP}
     rm -f $OGDB/ogdb-$HOSTNAME
     $LCTL modules > $OGDB/ogdb-$HOSTNAME
 
     # 'mount' doesn't look in $PATH, just sbin
-    [ -f $LUSTRE/utils/mount.lustre ] && cp $LUSTRE/utils/mount.lustre /sbin/. || true
+    if [ -f $LUSTRE/utils/mount.lustre ] && \
+       ! grep -qe "/sbin/mount\.lustre " /proc/mounts; then
+        [ ! -f /sbin/mount.lustre ] && touch /sbin/mount.lustre
+        mount --bind $LUSTRE/utils/mount.lustre /sbin/mount.lustre || true
+    fi
 }
 
 load_modules () {
@@ -421,6 +438,12 @@ unload_modules() {
             do_rpc_nodes $list $LUSTRE_RMMOD $FSTYPE
             do_rpc_nodes $list check_mem_leak
         fi
+    fi
+
+    if grep -qe "/sbin/mount\.lustre" /proc/mounts; then
+        umount /sbin/mount.lustre || true
+        [ -w /sbin/mount.lustre -a ! -s /sbin/mount.lustre ] && \
+            rm -f /sbin/mount.lustre || true
     fi
 
     check_mem_leak || return 254
@@ -1029,14 +1052,14 @@ check_progs_installed () {
 }
 
 # recovery-scale functions
-client_var_name() {
-    echo __$(echo $1 | tr '-' 'X')
+node_var_name() {
+    echo __$(echo $1 | tr '-' '_' | tr '.' '_')
 }
 
 start_client_load() {
     local client=$1
     local load=$2
-    local var=$(client_var_name $client)_load
+    local var=$(node_var_name $client)_load
     eval export ${var}=$load
 
     do_node $client "PATH=$PATH MOUNT=$MOUNT ERRORS_OK=$ERRORS_OK \
@@ -1067,7 +1090,7 @@ start_client_loads () {
 # only for remote client 
 check_client_load () {
     local client=$1
-    local var=$(client_var_name $client)_load
+    local var=$(node_var_name $client)_load
     local TESTLOAD=run_${!var}.sh
 
     ps auxww | grep -v grep | grep $client | grep -q "$TESTLOAD" || return 1
@@ -1141,7 +1164,7 @@ restart_client_loads () {
         check_client_load $client
         rc=${PIPESTATUS[0]}
         if [ "$rc" != 0 -a "$expectedfail" ]; then
-            local var=$(client_var_name $client)_load
+            local var=$(node_var_name $client)_load
             start_client_load $client ${!var}
             echo "Restarted client load ${!var}: on $client. Checking ..."
             check_client_load $client
@@ -1676,7 +1699,7 @@ do_node() {
     fi
     if $VERBOSE; then
         echo "CMD: $HOST $@" >&2
-        $myPDSH $HOST $LCTL mark "$@" > /dev/null 2>&1 || :
+        $myPDSH $HOST "$LCTL mark \"$@\"" > /dev/null 2>&1 || :
     fi
 
     if [ "$myPDSH" = "rsh" ]; then
@@ -1750,7 +1773,7 @@ do_nodes() {
 
     if $VERBOSE; then
         echo "CMD: $rnodes $@" >&2
-        $myPDSH $rnodes $LCTL mark "$@" > /dev/null 2>&1 || :
+        $myPDSH $rnodes "$LCTL mark \"$@\"" > /dev/null 2>&1 || :
     fi
 
     # do not replace anything from pdsh output if -N is used
@@ -2216,6 +2239,9 @@ nfs_client_mode () {
         # FIXME: remove hostname when 19215 fixed
         do_nodes $clients "echo \\\$(hostname); grep ' '$MOUNT' ' /proc/mounts"
         declare -a nfsexport=(`grep ' '$MOUNT' ' /proc/mounts | awk '{print $1}' | awk -F: '{print $1 " "  $2}'`)
+        if [[ ${#nfsexport[@]} -eq 0 ]]; then
+                error_exit NFSCLIENT=$NFSCLIENT mode, but no NFS export found!
+        fi
         do_nodes ${nfsexport[0]} "echo \\\$(hostname); df -T  ${nfsexport[1]}"
         return
     fi
@@ -2444,11 +2470,10 @@ get_svr_devs() {
 run_e2fsck() {
     local node=$1
     local target_dev=$2
-    local ostidx=$3
-    local ostdb_opt=$4
+    local extra_opts=$3
 
     df > /dev/null      # update statfs data on disk
-    local cmd="$E2FSCK -d -v -f -n $MDSDB_OPT $ostdb_opt $target_dev"
+    local cmd="$E2FSCK -d -v -t -t -f -n $extra_opts $target_dev"
     echo $cmd
     local rc=0
     do_node $node $cmd || rc=$?
@@ -2476,15 +2501,14 @@ generate_db() {
         error "$SHARED_DIRECTORY is not a shared directory"
     rm $tmp_file
 
-    run_e2fsck $(mdts_nodes) $MDTDEV
+    run_e2fsck $(mdts_nodes) $MDTDEV "--mdsdb $MDSDB"
 
     i=0
     ostidx=0
     OSTDB_LIST=""
     for node in $(osts_nodes); do
         for dev in ${OSTDEVS[i]}; do
-            local ostdb_opt=`eval echo $OSTDB_OPT`
-            run_e2fsck $node $dev $ostidx "$ostdb_opt"
+            run_e2fsck $node $dev "--mdsdb $MDSDB --ostdb $OSTDB-$ostidx"
             OSTDB_LIST="$OSTDB_LIST $OSTDB-$ostidx"
             ostidx=$((ostidx + 1))
         done
@@ -2506,14 +2530,10 @@ run_lfsck() {
 }
 
 check_and_cleanup_lustre() {
-    if [ "$LFSCK_ALWAYS" = "yes" ]; then
+    if [ "$LFSCK_ALWAYS" = "yes" -a "$TESTSUITE" != "lfsck" ]; then
         get_svr_devs
         generate_db
-        if [ "$SKIP_LFSCK" == "no" ]; then
-            run_lfsck
-        else
-            echo "skip lfsck"
-        fi
+        run_lfsck
     fi
 
     if is_mounted $MOUNT; then
@@ -2893,7 +2913,7 @@ exit_status () {
     local status=0
     local log=$TESTSUITELOG
 
-    [ -f "$log" ] && grep -q FAIL $log && status=1
+    [ -f "$log" ] && grep -q FAIL: $log && status=1
     exit $status
 }
 

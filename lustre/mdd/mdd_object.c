@@ -622,13 +622,21 @@ int mdd_get_default_md(struct mdd_object *mdd_obj, struct lov_mds_md *lmm)
         LASSERT(ldesc != NULL);
 
         lum->lmm_magic = LOV_MAGIC_V1;
-        lum->lmm_object_seq = LOV_OBJECT_GROUP_DEFAULT;
+        lum->lmm_object_seq = FID_SEQ_LOV_DEFAULT;
         lum->lmm_pattern = ldesc->ld_pattern;
         lum->lmm_stripe_size = ldesc->ld_default_stripe_size;
         lum->lmm_stripe_count = ldesc->ld_default_stripe_count;
         lum->lmm_stripe_offset = ldesc->ld_default_stripe_offset;
 
         RETURN(sizeof(*lum));
+}
+
+static int is_rootdir(struct mdd_object *mdd_obj)
+{
+        const struct mdd_device *mdd_dev = mdd_obj2mdd_dev(mdd_obj);
+        const struct lu_fid *fid = mdo2fid(mdd_obj);
+
+        return lu_fid_eq(&mdd_dev->mdd_root_fid, fid);
 }
 
 /* get lov EA only */
@@ -643,7 +651,7 @@ static int __mdd_lmm_get(const struct lu_env *env,
 
         rc = mdd_get_md(env, mdd_obj, ma->ma_lmm, &ma->ma_lmm_size,
                         XATTR_NAME_LOV);
-        if (rc == 0 && (ma->ma_need & MA_LOV_DEF))
+        if (rc == 0 && (ma->ma_need & MA_LOV_DEF) && is_rootdir(mdd_obj))
                 rc = mdd_get_default_md(mdd_obj, ma->ma_lmm);
         if (rc > 0) {
                 ma->ma_lmm_size = rc;
@@ -651,6 +659,34 @@ static int __mdd_lmm_get(const struct lu_env *env,
                 rc = 0;
         }
         RETURN(rc);
+}
+
+/* get the first parent fid from link EA */
+static int mdd_pfid_get(const struct lu_env *env,
+                        struct mdd_object *mdd_obj, struct md_attr *ma)
+{
+        struct lu_buf *buf;
+        struct link_ea_header *leh;
+        struct link_ea_entry *lee;
+        struct lu_fid *pfid = &ma->ma_pfid;
+        ENTRY;
+
+        if (ma->ma_valid & MA_PFID)
+                RETURN(0);
+
+        buf = mdd_links_get(env, mdd_obj);
+        if (IS_ERR(buf))
+                RETURN(PTR_ERR(buf));
+
+        leh = buf->lb_buf;
+        lee = (struct link_ea_entry *)(leh + 1);
+        memcpy(pfid, &lee->lee_parent_fid, sizeof(*pfid));
+        fid_be_to_cpu(pfid, pfid);
+        ma->ma_valid |= MA_PFID;
+        if (buf->lb_len > OBD_ALLOC_BIG)
+                /* if we vmalloced a large buffer drop it */
+                mdd_buf_put(buf);
+        RETURN(0);
 }
 
 int mdd_lmm_get_locked(const struct lu_env *env, struct mdd_object *mdd_obj,
@@ -749,6 +785,10 @@ int mdd_attr_get_internal(const struct lu_env *env, struct mdd_object *mdd_obj,
                     S_ISDIR(mdd_object_type(mdd_obj)))
                         rc = __mdd_lmm_get(env, mdd_obj, ma);
         }
+        if (rc == 0 && ma->ma_need & MA_PFID && !(ma->ma_valid & MA_LOV)) {
+                if (S_ISREG(mdd_object_type(mdd_obj)))
+                        rc = mdd_pfid_get(env, mdd_obj, ma);
+        }
         if (rc == 0 && ma->ma_need & MA_LMV) {
                 if (S_ISDIR(mdd_object_type(mdd_obj)))
                         rc = __mdd_lmv_get(env, mdd_obj, ma);
@@ -773,7 +813,7 @@ int mdd_attr_get_internal_locked(const struct lu_env *env,
 {
         int rc;
         int needlock = ma->ma_need &
-                       (MA_LOV | MA_LMV | MA_ACL_DEF | MA_HSM | MA_SOM);
+                       (MA_LOV | MA_LMV | MA_ACL_DEF | MA_HSM | MA_SOM | MA_PFID);
 
         if (needlock)
                 mdd_read_lock(env, mdd_obj, MOR_TGT_CHILD);
@@ -1058,9 +1098,9 @@ static int mdd_fix_attr(const struct lu_env *env, struct mdd_object *obj,
 
         if (la->la_valid == LA_ATIME) {
                 /* This is atime only set for read atime update on close. */
-                if (la->la_atime > tmp_la->la_atime &&
-                    la->la_atime <= (tmp_la->la_atime +
-                                     mdd_obj2mdd_dev(obj)->mdd_atime_diff))
+                if (la->la_atime >= tmp_la->la_atime &&
+                    la->la_atime < (tmp_la->la_atime +
+                                    mdd_obj2mdd_dev(obj)->mdd_atime_diff))
                         la->la_valid &= ~LA_ATIME;
                 RETURN(0);
         }
@@ -2125,6 +2165,15 @@ static int mdd_close(const struct lu_env *env, struct md_object *obj,
 #endif
         ENTRY;
 
+        if (ma->ma_valid & MA_FLAGS && ma->ma_attr_flags & MDS_KEEP_ORPHAN) {
+                mdd_obj->mod_count--;
+
+                if (mdd_obj->mod_flags & ORPHAN_OBJ && !mdd_obj->mod_count)
+                        CDEBUG(D_HA, "Object "DFID" is retained in orphan "
+                               "list\n", PFID(mdd_object_fid(mdd_obj)));
+                RETURN(0);
+        }
+
         /* check without any lock */
         if (mdd_obj->mod_count == 1 &&
             (mdd_obj->mod_flags & (ORPHAN_OBJ | DEAD_OBJ)) != 0) {
@@ -2138,8 +2187,7 @@ static int mdd_close(const struct lu_env *env, struct md_object *obj,
         }
 
         mdd_write_lock(env, mdd_obj, MOR_TGT_CHILD);
-        if (handle == NULL &&
-            mdd_obj->mod_count == 1 &&
+        if (handle == NULL && mdd_obj->mod_count == 1 &&
             (mdd_obj->mod_flags & ORPHAN_OBJ) != 0) {
                 mdd_write_unlock(env, mdd_obj);
                 goto again;
@@ -2183,8 +2231,8 @@ static int mdd_close(const struct lu_env *env, struct md_object *obj,
                         rc = mdd_lov_destroy(env, mdd, mdd_obj, &ma->ma_attr);
                 } else {
                         rc = mdd_object_kill(env, mdd_obj, ma);
-                                if (rc == 0)
-                                        reset = 0;
+                        if (rc == 0)
+                                reset = 0;
                 }
 
                 if (rc != 0)
@@ -2330,7 +2378,7 @@ static int __mdd_readpage(const struct lu_env *env, struct mdd_object *obj,
          * iterate through directory and fill pages from @rdpg
          */
         iops = &next->do_index_ops->dio_it;
-        it = iops->init(env, next, mdd_object_capa(env, obj));
+        it = iops->init(env, next, rdpg->rp_attrs, mdd_object_capa(env, obj));
         if (IS_ERR(it))
                 return PTR_ERR(it);
 
@@ -2377,7 +2425,7 @@ static int __mdd_readpage(const struct lu_env *env, struct mdd_object *obj,
                 /*
                  * end of directory.
                  */
-                hash_end = DIR_END_OFF;
+                hash_end = MDS_DIR_END_OFF;
                 rc = 0;
         }
         if (rc == 0) {
@@ -2434,7 +2482,7 @@ int mdd_readpage(const struct lu_env *env, struct md_object *obj,
                 dp = (struct lu_dirpage*)cfs_kmap(pg);
                 memset(dp, 0 , sizeof(struct lu_dirpage));
                 dp->ldp_hash_start = cpu_to_le64(rdpg->rp_hash);
-                dp->ldp_hash_end   = cpu_to_le64(DIR_END_OFF);
+                dp->ldp_hash_end   = cpu_to_le64(MDS_DIR_END_OFF);
                 dp->ldp_flags |= LDF_EMPTY;
                 dp->ldp_flags = cpu_to_le32(dp->ldp_flags);
                 cfs_kunmap(pg);

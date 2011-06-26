@@ -1033,7 +1033,7 @@ int cl_setattr_ost(struct inode *inode, const struct iattr *attr,
         if (IS_ERR(env))
                 RETURN(PTR_ERR(env));
 
-        io = &ccc_env_info(env)->cti_io;
+        io = ccc_env_thread_io(env);
         io->ci_obj = cl_i2info(inode)->lli_clob;
 
         io->u.ci_setattr.sa_attr.lvb_atime = LTIME_S(attr->ia_atime);
@@ -1304,22 +1304,13 @@ __u16 ll_dirent_type_get(struct lu_dirent *ent)
 }
 
 /**
- * for 32 bit inode numbers directly map seq+oid to 32bit number.
- */
-__u32 cl_fid_build_ino32(const struct lu_fid *fid)
-{
-        RETURN(fid_flatten32(fid));
-}
-
-/**
  * build inode number from passed @fid */
-__u64 cl_fid_build_ino(const struct lu_fid *fid)
+__u64 cl_fid_build_ino(const struct lu_fid *fid, int api32)
 {
-#if BITS_PER_LONG == 32
-        RETURN(fid_flatten32(fid));
-#else
-        RETURN(fid_flatten(fid));
-#endif
+        if (BITS_PER_LONG == 32 || api32)
+                RETURN(fid_flatten32(fid));
+        else
+                RETURN(fid_flatten(fid));
 }
 
 /**

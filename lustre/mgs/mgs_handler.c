@@ -454,7 +454,8 @@ static int mgs_handle_target_reg(struct ptlrpc_request *req)
                         /* Nothing wrong, or fatal error */
                         GOTO(out_nolock, rc);
         } else {
-                if ((rc = mgs_check_failover_reg(mti)))
+                if (!(mti->mti_flags & LDD_F_NO_PRIMNODE)
+                    && (rc = mgs_check_failover_reg(mti)))
                         GOTO(out_nolock, rc);
         }
 
@@ -659,8 +660,8 @@ int mgs_handle(struct ptlrpc_request *req)
         ENTRY;
 
         req_capsule_init(&req->rq_pill, req, RCL_SERVER);
-        OBD_FAIL_TIMEOUT_MS(OBD_FAIL_MGS_PAUSE_REQ, obd_fail_val);
-        if (OBD_FAIL_CHECK(OBD_FAIL_MGS_ALL_REQUEST_NET))
+        CFS_FAIL_TIMEOUT_MS(OBD_FAIL_MGS_PAUSE_REQ, cfs_fail_val);
+        if (CFS_FAIL_CHECK(OBD_FAIL_MGS_ALL_REQUEST_NET))
                 RETURN(0);
 
         LASSERT(current->journal_info == NULL);

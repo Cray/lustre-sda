@@ -956,7 +956,7 @@ GB=$((KB * 1024 * 1024))
 # inode->i_blkbits = min(PTLRPC_MAX_BRW_BITS+1, LL_MAX_BLKSIZE_BITS);
 blksize=$((1 << 21)) # 2Mb
 size_file=$((GB * 9 / 2))
-# this check is just for test9 and test10
+# this check is just for test_9
 OST0_MIN=4900000 #4.67G
 check_whether_skip () {
     OST0_SIZE=`$LFS df $DIR | awk '/\[OST:0\]/ {print $4}'`
@@ -994,7 +994,7 @@ test_9() {
         quota_show_check a g $TSTUSR
 
         echo "  Set stripe"
-	$LFS setstripe $TESTFILE -c 1
+	$LFS setstripe $TESTFILE -c 1 -i 0
         touch $TESTFILE
         chown $TSTUSR.$TSTUSR $TESTFILE
 
@@ -1194,10 +1194,10 @@ test_14a() {	# was test_14 b=12223 -- setting quota on root
 	$LFS setquota -u root -b 10 -B 10 -i 10 -I 10 $DIR
 	createmany -m ${TESTFILE} 20 || \
 	    quota_error u root "unexpected: user(root) create files failly!"
-	dd if=/dev/zero of=$TESTFILE bs=4k count=4096 || \
+        multiop ${TESTFILE} oO_CREAT:O_WRONLY:O_DIRECT:w$((4096 * 4096))c || \
 	    quota_error u root "unexpected: user(root) write files failly!"
 	chmod 666 $TESTFILE
-	$RUNAS dd if=/dev/zero of=${TESTFILE} seek=4096 bs=4k count=4096 && \
+        $RUNAS multiop ${TESTFILE} oO_WRONLY:O_APPEND:O_DIRECT:w$((4096 * 4096))c && \
 	    quota_error u root "unexpected: user(quota_usr) write a file successfully!"
 
 	# trigger the llog
@@ -1715,7 +1715,7 @@ test_23_sub() {
 	sleep 3
         quota_show_check b u $TSTUSR
 
-	$LFS setstripe $TESTFILE -c 1
+	$LFS setstripe $TESTFILE -c 1 -i 0
 	chown $TSTUSR.$TSTUSR $TESTFILE
 
 	log "    Step1: trigger quota with 0_DIRECT"
@@ -1744,13 +1744,17 @@ test_23_sub() {
 }
 
 test_23() {
-	log "run for $((OSTCOUNT * 4))MB test file"
-	test_23_sub $((OSTCOUNT * 4 * 1024))
+        local slave_cnt=$((OSTCOUNT + 1)) # 1 mds, n osts
 
-	OST0_MIN=120000
+        OST0_MIN=$((6 * $slave_cnt * 1024)) # extra space for meta blocks.
 	check_whether_skip && return 0
-	log "run for $((OSTCOUNT * 40))MB test file"
-	test_23_sub $((OSTCOUNT * 40 * 1024))
+	log "run for $((4 * $slave_cnt))MB test file"
+	test_23_sub $((4 * $slave_cnt * 1024))
+
+	OST0_MIN=$((60 * $slave_cnt * 1024)) # extra space for meta blocks.
+	check_whether_skip && return 0
+	log "run for $((40 * $slave_cnt))MB test file"
+	test_23_sub $((40 * $slave_cnt * 1024))
 }
 run_test_with_stat 23 "run for fixing bug16125 ==========="
 

@@ -141,7 +141,6 @@ int cl_glimpse_lock(const struct lu_env *env, struct cl_io *io,
 static int cl_io_get(struct inode *inode, struct lu_env **envout,
                      struct cl_io **ioout, int *refcheck)
 {
-        struct ccc_thread_info *info;
         struct lu_env          *env;
         struct cl_io           *io;
         struct cl_inode_info   *lli = cl_i2info(inode);
@@ -151,8 +150,7 @@ static int cl_io_get(struct inode *inode, struct lu_env **envout,
         if (S_ISREG(cl_inode_mode(inode))) {
                 env = cl_env_get(refcheck);
                 if (!IS_ERR(env)) {
-                        info = ccc_env_info(env);
-                        io = &info->cti_io;
+                        io = ccc_env_thread_io(env);
                         io->ci_obj = clob;
                         *envout = env;
                         *ioout  = io;
@@ -176,8 +174,8 @@ int cl_glimpse_size(struct inode *inode)
          * cl_glimpse_size(), which doesn't make sense: glimpse locks are not
          * blocking anyway.
          */
-        struct lu_env          *env;
-        struct cl_io           *io;
+        struct lu_env          *env = NULL;
+        struct cl_io           *io  = NULL;
         int                     result;
         int                     refcheck;
 
@@ -202,8 +200,8 @@ int cl_glimpse_size(struct inode *inode)
 
 int cl_local_size(struct inode *inode)
 {
-        struct lu_env           *env;
-        struct cl_io            *io;
+        struct lu_env           *env = NULL;
+        struct cl_io            *io  = NULL;
         struct ccc_thread_info  *cti;
         struct cl_object        *clob;
         struct cl_lock_descr    *descr;

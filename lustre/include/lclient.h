@@ -135,6 +135,13 @@ static inline struct cl_attr *ccc_env_thread_attr(const struct lu_env *env)
         return attr;
 }
 
+static inline struct cl_io *ccc_env_thread_io(const struct lu_env *env)
+{
+        struct cl_io *io = &ccc_env_info(env)->cti_io;
+        memset(io, 0, sizeof(*io));
+        return io;
+}
+
 struct ccc_session {
         struct ccc_io cs_ios;
 };
@@ -354,8 +361,7 @@ void cl_inode_fini(struct inode *inode);
 int cl_local_size(struct inode *inode);
 
 __u16 ll_dirent_type_get(struct lu_dirent *ent);
-__u64 cl_fid_build_ino(const struct lu_fid *fid);
-__u32 cl_fid_build_ino32(const struct lu_fid *fid);
+__u64 cl_fid_build_ino(const struct lu_fid *fid, int api32);
 __u32 cl_fid_build_gen(const struct lu_fid *fid);
 
 #ifdef INVARIANT_CHECK
@@ -378,6 +384,7 @@ int cl_ocd_update(struct obd_device *host,
 
 struct ccc_grouplock {
         struct lu_env   *cg_env;
+        struct cl_io    *cg_io;
         struct cl_lock  *cg_lock;
         unsigned long    cg_gid;
 };

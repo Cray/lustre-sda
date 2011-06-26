@@ -52,6 +52,10 @@
 #define FMODE_EXEC 0
 #endif
 
+/** Only used on client-side for indicating the tail of dir hash/offset. */
+#define LL_DIR_END_OFF          0x7fffffffffffffffULL
+#define LL_DIR_END_OFF_32BIT    0x7fffffffUL
+
 #ifndef DCACHE_LUSTRE_INVALID
 #define DCACHE_LUSTRE_INVALID 0x4000000
 #endif
@@ -77,6 +81,12 @@ extern struct file_operations ll_pgcache_seq_fops;
 
 /* remote client permission cache */
 #define REMOTE_PERM_HASHSIZE 16
+
+struct ll_getname_data {
+        char            *lgd_name;      /* points to a buffer with NAME_MAX+1 size */
+        struct lu_fid    lgd_fid;       /* target fid we are looking for */
+        int              lgd_found;     /* inode matched? */
+};
 
 /* llite setxid/access permission for user on remote client */
 struct ll_remote_perm {
@@ -157,6 +167,9 @@ struct ll_inode_info {
 
         /* identifying fields for both metadata and data stacks. */
         struct lu_fid           lli_fid;
+        /* Parent fid for accessing default stripe data on parent directory
+         * for allocating OST objects after a mknod() and later open-by-FID. */
+        struct lu_fid           lli_pfid;
         struct lov_stripe_md   *lli_smd;
 
         /* fid capability */
@@ -306,8 +319,9 @@ enum stats_track_type {
 #define LL_SBI_LOCALFLOCK       0x200 /* Local flocks support by kernel */
 #define LL_SBI_LRU_RESIZE       0x400 /* lru resize support */
 #define LL_SBI_LAZYSTATFS       0x800 /* lazystatfs mount option */
-#define LL_SBI_SOM_PREVIEW      0x1000 /* SOM preview mount option */
-#define LL_SBI_32BIT_API        0x2000 /* generate 32 bit inodes. */
+#define LL_SBI_SOM_PREVIEW     0x1000 /* SOM preview mount option */
+#define LL_SBI_32BIT_API       0x2000 /* generate 32 bit inodes. */
+#define LL_SBI_64BIT_HASH      0x4000 /* support 64-bits dir hash/offset */
 
 /* default value for ll_sb_info->contention_time */
 #define SBI_DEFAULT_CONTENTION_SECONDS     60
@@ -400,6 +414,7 @@ struct ll_sb_info {
                                                  * clustred nfs */
         struct rmtacl_ctl_table   ll_rct;
         struct eacl_table         ll_et;
+        struct vfsmount          *ll_mnt;
 };
 
 #define LL_DEFAULT_MAX_RW_CHUNK      (32 * 1024 * 1024)
@@ -581,6 +596,7 @@ extern struct file_operations ll_dir_operations;
 extern struct inode_operations ll_dir_inode_operations;
 struct page *ll_get_dir_page(struct file *filp, struct inode *dir, __u64 hash,
                              int exact, struct ll_dir_chain *chain);
+int ll_readdir(struct file *filp, void *cookie, filldir_t filldir);
 
 int ll_get_mdt_idx(struct inode *inode);
 /* llite/namei.c */
@@ -679,7 +695,7 @@ int ll_fid2path(struct obd_export *exp, void *arg);
 /**
  * protect race ll_find_aliases vs ll_revalidate_it vs ll_unhash_aliases
  */
-int ll_dops_init(struct dentry *de, int block);
+int ll_dops_init(struct dentry *de, int block, int init_sa);
 extern cfs_spinlock_t ll_lookup_lock;
 extern struct dentry_operations ll_d_ops;
 void ll_intent_drop_lock(struct lookup_intent *);
@@ -698,7 +714,7 @@ extern struct super_operations lustre_super_operations;
 
 char *ll_read_opt(const char *opt, char *data);
 void ll_lli_init(struct ll_inode_info *lli);
-int ll_fill_super(struct super_block *sb);
+int ll_fill_super(struct super_block *sb, struct vfsmount *mnt);
 void ll_put_super(struct super_block *sb);
 void ll_kill_super(struct super_block *sb);
 struct inode *ll_inode_from_lock(struct ldlm_lock *lock);

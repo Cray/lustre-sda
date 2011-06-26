@@ -69,6 +69,9 @@
                vma->vm_file->f_dentry->d_inode->i_ino,                       \
                vma->vm_file->f_dentry->d_iname, ## arg);                     \
 
+struct page *ll_nopage(struct vm_area_struct *vma, unsigned long address,
+                       int *type);
+
 static struct vm_operations_struct ll_file_vm_ops;
 
 void policy_from_vma(ldlm_policy_data_t *policy,
@@ -116,8 +119,10 @@ struct vm_area_struct * our_vma(unsigned long addr, size_t count)
  * \retval EINVAL if env can't allocated
  * \return other error codes from cl_io_init.
  */
-int ll_fault_io_init(struct vm_area_struct *vma, struct lu_env **env_ret,
-                     struct cl_env_nest *nest, pgoff_t index, unsigned long *ra_flags)
+struct cl_io *ll_fault_io_init(struct vm_area_struct *vma,
+                               struct lu_env **env_ret,
+                               struct cl_env_nest *nest,
+                               pgoff_t index, unsigned long *ra_flags)
 {
         struct file       *file  = vma->vm_file;
         struct inode      *inode = file->f_dentry->d_inode;
@@ -127,8 +132,9 @@ int ll_fault_io_init(struct vm_area_struct *vma, struct lu_env **env_ret,
         struct lu_env     *env;
         ENTRY;
 
+        *env_ret = NULL;
         if (ll_file_nolock(file))
-                RETURN(-EOPNOTSUPP);
+                RETURN(ERR_PTR(-EOPNOTSUPP));
 
         /*
          * page fault can be called when lustre IO is
@@ -138,14 +144,12 @@ int ll_fault_io_init(struct vm_area_struct *vma, struct lu_env **env_ret,
          * one.
          */
         env = cl_env_nested_get(nest);
-        if (IS_ERR(env)) {
-                *env_ret = NULL;
-                 RETURN(-EINVAL);
-        }
+        if (IS_ERR(env))
+                 RETURN(ERR_PTR(-EINVAL));
 
         *env_ret = env;
 
-        io = &ccc_env_info(env)->cti_io;
+        io = ccc_env_thread_io(env);
         io->ci_obj = ll_i2info(inode)->lli_clob;
         LASSERT(io->ci_obj != NULL);
 
@@ -179,7 +183,7 @@ int ll_fault_io_init(struct vm_area_struct *vma, struct lu_env **env_ret,
                 cio->cui_fd  = fd;
         }
 
-        return io->ci_result;
+        return io;
 }
 
 #ifndef HAVE_VM_OP_FAULT
@@ -203,43 +207,37 @@ struct page *ll_nopage(struct vm_area_struct *vma, unsigned long address,
         struct lu_env           *env;
         struct cl_env_nest      nest;
         struct cl_io            *io;
-        struct page             *page;
-        struct vvp_io           *vio;
+        struct page             *page  = NOPAGE_SIGBUS;
+        struct vvp_io           *vio = NULL;
         unsigned long           ra_flags;
         pgoff_t                 pg_offset;
         int                     result;
         ENTRY;
 
         pg_offset = ((address - vma->vm_start) >> PAGE_SHIFT) + vma->vm_pgoff;
-        result = ll_fault_io_init(vma, &env,  &nest, pg_offset, &ra_flags);
-        if (env == NULL)
+        io = ll_fault_io_init(vma, &env,  &nest, pg_offset, &ra_flags);
+        if (IS_ERR(io))
                 return NOPAGE_SIGBUS;
 
-        io = &ccc_env_info(env)->cti_io;
+        result = io->ci_result;
         if (result < 0)
                 goto out_err;
 
         vio = vvp_env_io(env);
         vio->u.fault.ft_vma            = vma;
-        vio->u.fault.ft_vmpage         = NULL;
         vio->u.fault.nopage.ft_address = address;
         vio->u.fault.nopage.ft_type    = type;
 
         result = cl_io_loop(env, io);
 
-        page = vio->u.fault.ft_vmpage;
-        if (page != NULL) {
-                LASSERT(PageLocked(page));
-                unlock_page(page);
-
-                if (result != 0)
-                        page_cache_release(page);
-        }
-
-        LASSERT(ergo(result == 0, io->u.ci_fault.ft_page != NULL));
 out_err:
-        if (result != 0)
-                page = result == -ENOMEM ? NOPAGE_OOM : NOPAGE_SIGBUS;
+        if (result == 0) {
+                LASSERT(io->u.ci_fault.ft_page != NULL);
+                page = vio->u.fault.ft_vmpage;
+        } else {
+                if (result == -ENOMEM)
+                        page = NOPAGE_OOM;
+        }
 
         vma->vm_flags &= ~VM_RAND_READ;
         vma->vm_flags |= ra_flags;
@@ -261,22 +259,22 @@ out_err:
  * \retval VM_FAULT_ERROR on general error
  * \retval NOPAGE_OOM not have memory for allocate new page
  */
-int ll_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
+int ll_fault0(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
         struct lu_env           *env;
         struct cl_io            *io;
-        struct vvp_io           *vio;
+        struct vvp_io           *vio = NULL;
         unsigned long            ra_flags;
         struct cl_env_nest       nest;
         int                      result;
         int                      fault_ret = 0;
         ENTRY;
 
-        result = ll_fault_io_init(vma, &env,  &nest, vmf->pgoff, &ra_flags);
-        if (env == NULL)
+        io = ll_fault_io_init(vma, &env,  &nest, vmf->pgoff, &ra_flags);
+        if (IS_ERR(io))
                 RETURN(VM_FAULT_ERROR);
 
-        io = &ccc_env_info(env)->cti_io;
+        result = io->ci_result;
         if (result < 0)
                 goto out_err;
 
@@ -286,17 +284,8 @@ int ll_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
         vio->u.fault.fault.ft_vmf = vmf;
 
         result = cl_io_loop(env, io);
-        if (unlikely(result != 0 && vio->u.fault.ft_vmpage != NULL)) {
-                struct page *vmpage = vio->u.fault.ft_vmpage;
-
-                LASSERT((vio->u.fault.fault.ft_flags & VM_FAULT_LOCKED) &&
-                        PageLocked(vmpage));
-                unlock_page(vmpage);
-                page_cache_release(vmpage);
-                vmf->page = NULL;
-        }
-
         fault_ret = vio->u.fault.fault.ft_flags;
+
 out_err:
         if (result != 0)
                 fault_ret |= VM_FAULT_ERROR;
@@ -309,6 +298,39 @@ out_err:
         RETURN(fault_ret);
 }
 
+int ll_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
+{
+        int count = 0;
+        bool printed = false;
+        int result;
+
+restart:
+        result = ll_fault0(vma, vmf);
+        LASSERT(!(result & VM_FAULT_LOCKED));
+        if (result == 0) {
+                struct page *vmpage = vmf->page;
+
+                /* check if this page has been truncated */
+                lock_page(vmpage);
+                if (unlikely(vmpage->mapping == NULL)) { /* unlucky */
+                        unlock_page(vmpage);
+                        page_cache_release(vmpage);
+                        vmf->page = NULL;
+
+                        if (!printed && ++count > 16) {
+                                CWARN("the page is under heavy contention,"
+                                      "maybe your app(%s) needs revising :-)\n",
+                                      current->comm);
+                                printed = true;
+                        }
+
+                        goto restart;
+                }
+
+                result |= VM_FAULT_LOCKED;
+        }
+        return result;
+}
 #endif
 
 /**

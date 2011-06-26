@@ -587,8 +587,11 @@ int ldlm_cli_enqueue_fini(struct obd_export *exp, struct ptlrpc_request *req,
                 if (with_policy)
                         if (!(type == LDLM_IBITS && !(exp->exp_connect_flags &
                                                     OBD_CONNECT_IBITS)))
-                                lock->l_policy_data =
-                                                 reply->lock_desc.l_policy_data;
+                                /* We assume lock type cannot change on server*/
+                                ldlm_convert_policy_to_local(
+                                                lock->l_resource->lr_type,
+                                                &reply->lock_desc.l_policy_data,
+                                                &lock->l_policy_data);
                 if (type != LDLM_PLAIN)
                         LDLM_DEBUG(lock,"client-side enqueue, new policy data");
         }
@@ -1101,9 +1104,9 @@ int ldlm_cli_cancel_req(struct obd_export *exp, cfs_list_t *cancels,
         LASSERT(exp != NULL);
         LASSERT(count > 0);
 
-        OBD_FAIL_TIMEOUT(OBD_FAIL_LDLM_PAUSE_CANCEL, obd_fail_val);
+        CFS_FAIL_TIMEOUT(OBD_FAIL_LDLM_PAUSE_CANCEL, cfs_fail_val);
 
-        if (OBD_FAIL_CHECK(OBD_FAIL_LDLM_CANCEL_RACE))
+        if (CFS_FAIL_CHECK(OBD_FAIL_LDLM_CANCEL_RACE))
                 RETURN(count);
 
         free = ldlm_format_handles_avail(class_exp2cliimp(exp),

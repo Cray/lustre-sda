@@ -224,9 +224,11 @@ int cfs_daemonize_ctxt(char *str);
 cfs_sigset_t cfs_get_blocked_sigs(void);
 cfs_sigset_t cfs_block_allsigs(void);
 cfs_sigset_t cfs_block_sigs(cfs_sigset_t bits);
+cfs_sigset_t cfs_block_sigsinv(unsigned long sigs);
 void cfs_restore_sigs(cfs_sigset_t);
 int cfs_signal_pending(void);
 void cfs_clear_sigpending(void);
+
 /*
  * XXX Liang:
  * these macros should be removed in the future,
@@ -308,6 +310,7 @@ void cfs_get_random_bytes(void *buf, int size);
 #include <libcfs/libcfs_kernelcomm.h>
 #include <libcfs/libcfs_workitem.h>
 #include <libcfs/libcfs_hash.h>
+#include <libcfs/libcfs_fail.h>
 #include <libcfs/params_tree.h>
 
 /* container_of depends on "likely" which is defined in libcfs_private.h */

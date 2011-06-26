@@ -165,6 +165,20 @@ LB_LINUX_TRY_COMPILE([
 ])
 
 #
+# Allow the user to set the MDS thread upper limit
+#
+AC_DEFUN([LC_MDS_MAX_THREADS],
+[
+        AC_ARG_WITH([mds_max_threads],
+        AC_HELP_STRING([--with-mds-max-threads=size],
+                        [define the maximum number of threads available on the MDS: (default=512)]),
+        [
+                MDS_THREAD_COUNT=$with_mds_max_threads
+                AC_DEFINE_UNQUOTED(MDT_MAX_THREADS, $MDS_THREAD_COUNT, [maximum number of mdt threads])
+        ])
+])
+
+#
 # LC_CONFIG_BACKINGFS
 #
 # setup, check the backing filesystem
@@ -2077,6 +2091,27 @@ EXTRA_KCFLAGS="$tmp_flags"
 ])
 
 #
+# LC_WALK_SPACE_HAS_DATA_SEM
+#
+# 2.6.32 ext4_ext_walk_space() takes i_data_sem internally.
+#
+AC_DEFUN([LC_WALK_SPACE_HAS_DATA_SEM],
+[AC_MSG_CHECKING([if ext4_ext_walk_space() takes i_data_sem])
+WALK_SPACE_DATA_SEM="$(awk 'BEGIN { in_walk_space = 0 }                                 \
+                            /^int ext4_ext_walk_space\(/ { in_walk_space = 1 }          \
+                            /^}/ { if (in_walk_space) in_walk_space = 0 }               \
+                            /i_data_sem/ { if (in_walk_space) { print("yes"); exit } }' \
+                       $LINUX/fs/ext4/extents.c)"
+if test x"$WALK_SPACE_DATA_SEM" == xyes ; then
+       AC_DEFINE(WALK_SPACE_HAS_DATA_SEM, 1,
+                 [ext4_ext_walk_space takes i_data_sem])
+       AC_MSG_RESULT([yes])
+else
+       AC_MSG_RESULT([no])
+fi
+])
+
+#
 # LC_QUOTA64
 #
 # Check if kernel has been patched for 64-bit quota limits support.
@@ -2291,6 +2326,7 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_BLK_QUEUE_MAX_SECTORS
          LC_BLK_QUEUE_MAX_SEGMENTS
          LC_EXT4_SINGLEDATA_TRANS_BLOCKS_SB
+         LC_WALK_SPACE_HAS_DATA_SEM
 
          #
          if test x$enable_server = xyes ; then
@@ -2555,6 +2591,9 @@ AC_DEFUN([LC_CONFIGURE],
 if test $target_cpu == "i686" -o $target_cpu == "x86_64"; then
         CFLAGS="$CFLAGS -Werror"
 fi
+
+# maximum MDS thread count
+LC_MDS_MAX_THREADS
 
 # include/liblustre.h
 AC_CHECK_HEADERS([sys/user.h sys/vfs.h stdint.h blkid/blkid.h])

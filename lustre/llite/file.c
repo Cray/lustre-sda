@@ -331,7 +331,7 @@ int ll_file_release(struct inode *inode, struct file *file)
 
         rc = ll_md_close(sbi->ll_md_exp, inode, file);
 
-        if (OBD_FAIL_TIMEOUT_MS(OBD_FAIL_PTLRPC_DUMP_LOG, obd_fail_val))
+        if (CFS_FAIL_TIMEOUT_MS(OBD_FAIL_PTLRPC_DUMP_LOG, cfs_fail_val))
                 libcfs_debug_dumplog();
 
         RETURN(rc);
@@ -346,6 +346,7 @@ static int ll_intent_file_open(struct file *file, void *lmm,
         const int len = file->f_dentry->d_name.len;
         struct md_op_data *op_data;
         struct ptlrpc_request *req;
+        __u32 opc = LUSTRE_OPC_ANY;
         int rc;
         ENTRY;
 
@@ -361,12 +362,15 @@ static int ll_intent_file_open(struct file *file, void *lmm,
          * makes a good candidate for using OPEN lock */
         /* If lmmsize & lmm are not 0, we are just setting stripe info
          * parameters. No need for the open lock */
-        if (!lmm && !lmmsize)
+        if (lmm == NULL && lmmsize == 0) {
                 itp->it_flags |= MDS_OPEN_LOCK;
+                if (itp->it_flags & FMODE_WRITE)
+                        opc = LUSTRE_OPC_CREATE;
+        }
 
         op_data  = ll_prep_md_op_data(NULL, parent->d_inode,
                                       file->f_dentry->d_inode, name, len,
-                                      O_RDWR, LUSTRE_OPC_ANY, NULL);
+                                      O_RDWR, opc, NULL);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -539,7 +543,7 @@ int ll_file_open(struct inode *inode, struct file *file)
                  * dentry_open after call to open_namei that checks permissions.
                  * Only nfsd_open call dentry_open directly without checking
                  * permissions and because of that this code below is safe. */
-                if (oit.it_flags & FMODE_WRITE)
+                if (oit.it_flags & (FMODE_WRITE | FMODE_READ))
                         oit.it_flags |= MDS_OPEN_OWNEROVERRIDE;
 
                 /* We do not want O_EXCL here, presumably we opened the file
@@ -808,7 +812,6 @@ void ll_io_init(struct cl_io *io, const struct file *file, int write)
 {
         struct inode *inode = file->f_dentry->d_inode;
 
-        memset(io, 0, sizeof *io);
         io->u.ci_rw.crw_nonblock = file->f_flags & O_NONBLOCK;
         if (write)
                 io->u.ci_wr.wr_append = !!(file->f_flags & O_APPEND);
@@ -831,7 +834,7 @@ static ssize_t ll_file_io_generic(const struct lu_env *env,
         ssize_t               result;
         ENTRY;
 
-        io = &ccc_env_info(env)->cti_io;
+        io = ccc_env_thread_io(env);
         ll_io_init(io, file, iot == CIT_WRITE);
 
         if (cl_io_rw_init(env, io, iot, *ppos, count) == 0) {
@@ -1461,12 +1464,13 @@ static int ll_lov_setstripe(struct inode *inode, struct file *file,
 static int ll_lov_getstripe(struct inode *inode, unsigned long arg)
 {
         struct lov_stripe_md *lsm = ll_i2info(inode)->lli_smd;
+        int rc = -ENODATA;
+        ENTRY;
 
-        if (!lsm)
-                RETURN(-ENODATA);
-
-        return obd_iocontrol(LL_IOC_LOV_GETSTRIPE, ll_i2dtexp(inode), 0, lsm,
-                            (void *)arg);
+        if (lsm != NULL)
+                rc = obd_iocontrol(LL_IOC_LOV_GETSTRIPE, ll_i2dtexp(inode), 0,
+                                   lsm, (void *)arg);
+        RETURN(rc);
 }
 
 int ll_get_grouplock(struct inode *inode, struct file *file, unsigned long arg)
@@ -1952,27 +1956,32 @@ int ll_fsync(struct file *file, struct dentry *dentry, int data)
                 ptlrpc_req_finished(req);
 
         if (data && lsm) {
-                struct obdo *oa;
+                struct obd_info *oinfo;
 
-                OBDO_ALLOC(oa);
-                if (!oa)
+                OBD_ALLOC_PTR(oinfo);
+                if (!oinfo)
                         RETURN(rc ? rc : -ENOMEM);
-
-                oa->o_id = lsm->lsm_object_id;
-                oa->o_seq = lsm->lsm_object_seq;
-                oa->o_valid = OBD_MD_FLID | OBD_MD_FLGROUP;
-                obdo_from_inode(oa, inode, &ll_i2info(inode)->lli_fid,
+                OBDO_ALLOC(oinfo->oi_oa);
+                if (!oinfo->oi_oa) {
+                        OBD_FREE_PTR(oinfo);
+                        RETURN(rc ? rc : -ENOMEM);
+                }
+                oinfo->oi_oa->o_id = lsm->lsm_object_id;
+                oinfo->oi_oa->o_seq = lsm->lsm_object_seq;
+                oinfo->oi_oa->o_valid = OBD_MD_FLID | OBD_MD_FLGROUP;
+                obdo_from_inode(oinfo->oi_oa, inode, &ll_i2info(inode)->lli_fid,
                                 OBD_MD_FLTYPE | OBD_MD_FLATIME |
                                 OBD_MD_FLMTIME | OBD_MD_FLCTIME |
                                 OBD_MD_FLGROUP);
-
-                oc = ll_osscapa_get(inode, CAPA_OPC_OSS_WRITE);
-                err = obd_sync(ll_i2sbi(inode)->ll_dt_exp, oa, lsm,
-                               0, OBD_OBJECT_EOF, oc);
-                capa_put(oc);
+                oinfo->oi_md = lsm;
+                oinfo->oi_capa = ll_osscapa_get(inode, CAPA_OPC_OSS_WRITE);
+                err = obd_sync_rqset(ll_i2sbi(inode)->ll_dt_exp, oinfo, 0,
+                                     OBD_OBJECT_EOF);
+                capa_put(oinfo->oi_capa);
                 if (!rc)
                         rc = err;
-                OBDO_FREE(oa);
+                OBDO_FREE(oinfo->oi_oa);
+                OBD_FREE_PTR(oinfo);
                 lli->lli_write_rc = err < 0 ? : 0;
         }
 
@@ -1988,7 +1997,7 @@ int ll_file_flock(struct file *file, int cmd, struct file_lock *file_lock)
                                            .ei_cbdata = file_lock };
         struct md_op_data *op_data;
         struct lustre_handle lockh = {0};
-        ldlm_policy_data_t flock;
+        ldlm_policy_data_t flock = {{0}};
         int flags = 0;
         int rc;
         ENTRY;
@@ -2000,13 +2009,18 @@ int ll_file_flock(struct file *file, int cmd, struct file_lock *file_lock)
 
         if (file_lock->fl_flags & FL_FLOCK) {
                 LASSERT((cmd == F_SETLKW) || (cmd == F_SETLK));
-                /* set missing params for flock() calls */
-                file_lock->fl_end = OFFSET_MAX;
-                file_lock->fl_pid = current->tgid;
+                /* flocks are whole-file locks */
+                flock.l_flock.end = OFFSET_MAX;
+                /* For flocks owner is determined by the local file desctiptor*/
+                flock.l_flock.owner = (unsigned long)file_lock->fl_file;
+        } else if (file_lock->fl_flags & FL_POSIX) {
+                flock.l_flock.owner = (unsigned long)file_lock->fl_owner;
+                flock.l_flock.start = file_lock->fl_start;
+                flock.l_flock.end = file_lock->fl_end;
+        } else {
+                RETURN(-EINVAL);
         }
         flock.l_flock.pid = file_lock->fl_pid;
-        flock.l_flock.start = file_lock->fl_start;
-        flock.l_flock.end = file_lock->fl_end;
 
         switch (file_lock->fl_type) {
         case F_RDLCK:
@@ -2293,22 +2307,22 @@ int ll_getattr_it(struct vfsmount *mnt, struct dentry *de,
                   struct lookup_intent *it, struct kstat *stat)
 {
         struct inode *inode = de->d_inode;
+        struct ll_sb_info *sbi = ll_i2sbi(inode);
         struct ll_inode_info *lli = ll_i2info(inode);
         int res = 0;
 
         res = ll_inode_revalidate_it(de, it, MDS_INODELOCK_UPDATE |
                                              MDS_INODELOCK_LOOKUP);
-        ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_GETATTR, 1);
+        ll_stats_ops_tally(sbi, LPROC_LL_GETATTR, 1);
 
         if (res)
                 return res;
 
         stat->dev = inode->i_sb->s_dev;
-        if (ll_need_32bit_api(ll_i2sbi(inode)))
-                stat->ino = cl_fid_build_ino32(&lli->lli_fid);
+        if (ll_need_32bit_api(sbi))
+                stat->ino = cl_fid_build_ino(&lli->lli_fid, 1);
         else
                 stat->ino = inode->i_ino;
-
         stat->mode = inode->i_mode;
         stat->nlink = inode->i_nlink;
         stat->uid = inode->i_uid;

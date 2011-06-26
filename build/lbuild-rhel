@@ -5,7 +5,8 @@
 # to force a kernel build on all distributions, update the BUILD_GEN variable
 # in build/lbuild)
 #BUILD_GEN+=".0"
-BUILD_GEN+=".1"	# refactor both rhel5 and rhel6
+#BUILD_GEN+=".1"	# refactor both rhel5 and rhel6
+BUILD_GEN+=".0"	# TT-107: don't cache the BUILD dir (reset major to 5)
 
 DEVEL_KERNEL_TYPE="devel"
 RPM_HELPERS_DIR="/usr/lib/rpm/redhat"
@@ -94,7 +95,9 @@ prepare_and_build_srpm() {
     fi
 
     # XXX - need to figure this kabichk crap out -- it fails the build
-    rpmbuildopt="$rpmbuildopt --without kabichk"
+    if ! $USE_KABI; then
+        rpmbuildopt="$rpmbuildopt --without kabichk"
+    fi
 
     # get any release specific build options
     rpmbuildopt="$rpmbuildopt $(get_rpmbuildopts)"

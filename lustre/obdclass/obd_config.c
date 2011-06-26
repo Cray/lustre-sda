@@ -235,19 +235,42 @@ int class_parse_net(char *buf, __u32 *net, char **endh)
         return class_parse_value(buf, CLASS_PARSE_NET, (void *)net, endh);
 }
 
-int class_match_net(char *buf, lnet_nid_t nid)
+/* 1 param contains key and match
+ * 0 param contains key and not match
+ * -1 param does not contain key
+ */
+int class_match_nid(char *buf, char *key, lnet_nid_t nid)
 {
-        __u32 net;
+        lnet_nid_t tmp;
+        int   rc = -1;
 
-        while (class_find_param(buf, PARAM_NETWORK, &buf) == 0) {
+        while (class_find_param(buf, key, &buf) == 0) {
                 /* please restrict to the nids pertaining to
-                 * the specified networks */
-                while (class_parse_net(buf, &net, &buf) == 0) {
-                        if (LNET_NIDNET(nid) == net)
+                 * the specified nids */
+                while (class_parse_nid(buf, &tmp, &buf) == 0) {
+                        if (tmp == nid)
                                 return 1;
                 }
+                rc = 0;
         }
-        return 0;
+        return rc;
+}
+
+int class_match_net(char *buf, char *key, __u32 net)
+{
+        __u32 tmp;
+        int   rc = -1;
+
+        while (class_find_param(buf, key, &buf) == 0) {
+                /* please restrict to the nids pertaining to
+                 * the specified networks */
+                while (class_parse_net(buf, &tmp, &buf) == 0) {
+                        if (tmp == net)
+                                return 1;
+                }
+                rc = 0;
+        }
+        return rc;
 }
 
 EXPORT_SYMBOL(class_find_param);
@@ -255,6 +278,7 @@ EXPORT_SYMBOL(class_get_next_param);
 EXPORT_SYMBOL(class_match_param);
 EXPORT_SYMBOL(class_parse_nid);
 EXPORT_SYMBOL(class_parse_net);
+EXPORT_SYMBOL(class_match_nid);
 EXPORT_SYMBOL(class_match_net);
 
 /********************** class fns **********************/
@@ -521,10 +545,6 @@ int class_detach(struct obd_device *obd, struct lustre_cfg *lcfg)
                obd->obd_name, obd->obd_uuid.uuid);
 
         class_decref(obd, "attach", obd);
-
-        /* not strictly necessary, but cleans up eagerly */
-        obd_zombie_impexp_cull();
-
         RETURN(0);
 }
 
@@ -1122,7 +1142,7 @@ int class_process_proc_param(char *prefix, struct lprocfs_vars *lvars,
                                var->name, rc);
                         rc = 0;
                 } else {
-                        LCONSOLE_INFO("%s.%.*s: set parameter %.*s=%s\n",
+                        CDEBUG(D_CONFIG, "%s.%.*s: set parameter %.*s=%s\n",
                                       lustre_cfg_string(lcfg, 0),
                                       (int)strlen(prefix) - 1, prefix,
                                       (int)(sval - key - 1), key, sval);
@@ -1518,7 +1538,7 @@ out:
  */
 
 static unsigned
-uuid_hash(cfs_hash_t *hs,  void *key, unsigned mask)
+uuid_hash(cfs_hash_t *hs, const void *key, unsigned mask)
 {
         return cfs_hash_djb2_hash(((struct obd_uuid *)key)->uuid,
                                   sizeof(((struct obd_uuid *)key)->uuid), mask);
@@ -1539,14 +1559,14 @@ uuid_key(cfs_hlist_node_t *hnode)
  *       state with this function
  */
 static int
-uuid_keycmp(void *key, cfs_hlist_node_t *hnode)
+uuid_keycmp(const void *key, cfs_hlist_node_t *hnode)
 {
         struct obd_export *exp;
 
         LASSERT(key);
         exp = cfs_hlist_entry(hnode, struct obd_export, exp_uuid_hash);
 
-        return obd_uuid_equals((struct obd_uuid *)key,&exp->exp_client_uuid) &&
+        return obd_uuid_equals(key, &exp->exp_client_uuid) &&
                !exp->exp_failed;
 }
 
@@ -1589,7 +1609,7 @@ static cfs_hash_ops_t uuid_hash_ops = {
  */
 
 static unsigned
-nid_hash(cfs_hash_t *hs,  void *key, unsigned mask)
+nid_hash(cfs_hash_t *hs, const void *key, unsigned mask)
 {
         return cfs_hash_djb2_hash(key, sizeof(lnet_nid_t), mask);
 }
@@ -1609,7 +1629,7 @@ nid_key(cfs_hlist_node_t *hnode)
  *       state with this function
  */
 static int
-nid_kepcmp(void *key, cfs_hlist_node_t *hnode)
+nid_kepcmp(const void *key, cfs_hlist_node_t *hnode)
 {
         struct obd_export *exp;
 
@@ -1669,7 +1689,7 @@ nidstats_key(cfs_hlist_node_t *hnode)
 }
 
 static int
-nidstats_keycmp(void *key, cfs_hlist_node_t *hnode)
+nidstats_keycmp(const void *key, cfs_hlist_node_t *hnode)
 {
         return *(lnet_nid_t *)nidstats_key(hnode) == *(lnet_nid_t *)key;
 }

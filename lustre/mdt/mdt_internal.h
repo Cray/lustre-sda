@@ -185,7 +185,9 @@ struct mdt_object {
         int                     mot_ioepoch_count;
         int                     mot_writecount;
         /* Lock to protect object's IO epoch. */
-        cfs_semaphore_t        mot_ioepoch_sem;
+        cfs_semaphore_t         mot_ioepoch_sem;
+        /* Lock to protect create_data */
+        cfs_semaphore_t         mot_lov_sem;
 };
 
 enum mdt_object_flags {
@@ -204,6 +206,8 @@ enum mdt_object_flags {
         MOF_SOM_RECOV   = (1 << 1),
         /** File has been just created. */
         MOF_SOM_CREATED = (1 << 2),
+        /** lov object has been created. */
+        MOF_LOV_CREATED = (1 << 3),
 };
 
 struct mdt_lock_handle {
@@ -690,7 +694,7 @@ static inline void mdt_fail_write(const struct lu_env *env,
                                   struct dt_device *dd, int id)
 {
         if (OBD_FAIL_CHECK_ORSET(id, OBD_FAIL_ONCE)) {
-                CERROR(LUSTRE_MDT_NAME": obd_fail_loc=%x, fail write ops\n",
+                CERROR(LUSTRE_MDT_NAME": cfs_fail_loc=%x, fail write ops\n",
                        id);
                 dd->dd_ops->dt_ro(env, dd);
                 /* We set FAIL_ONCE because we never "un-fail" a device */

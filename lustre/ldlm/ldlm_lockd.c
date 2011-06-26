@@ -966,12 +966,20 @@ int ldlm_server_glimpse_ast(struct ldlm_lock *lock, void *data)
                                      LDLM_GL_CALLBACK - LDLM_FIRST_OPC);
 
         rc = ptlrpc_queue_wait(req);
-        if (rc == -ELDLM_NO_LOCK_DATA)
+        /* Update the LVB from disk if the AST failed (this is a legal race)
+         *
+         * - Glimpse callback of local lock just return -ELDLM_NO_LOCK_DATA.
+         * - Glimpse callback of remote lock might return -ELDLM_NO_LOCK_DATA
+         *   when inode is cleared. LU-274
+         */
+        if (rc == -ELDLM_NO_LOCK_DATA) {
                 LDLM_DEBUG(lock, "lost race - client has a lock but no inode");
-        else if (rc != 0)
+                ldlm_res_lvbo_update(res, NULL, 1);
+        } else if (rc != 0) {
                 rc = ldlm_handle_ast_error(lock, req, rc, "glimpse");
-        else
+        } else {
                 rc = ldlm_res_lvbo_update(res, req, 1);
+        }
 
         ptlrpc_req_finished(req);
         if (rc == -ERESTART)
@@ -1165,7 +1173,10 @@ existing_lock:
         }
 
         if (dlm_req->lock_desc.l_resource.lr_type != LDLM_PLAIN)
-                lock->l_policy_data = dlm_req->lock_desc.l_policy_data;
+                ldlm_convert_policy_to_local(
+                                          dlm_req->lock_desc.l_resource.lr_type,
+                                          &dlm_req->lock_desc.l_policy_data,
+                                          &lock->l_policy_data);
         if (dlm_req->lock_desc.l_resource.lr_type == LDLM_EXTENT)
                 lock->l_req_extent = lock->l_policy_data.l_extent;
 
@@ -1537,7 +1548,10 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
         }
 
         if (lock->l_resource->lr_type != LDLM_PLAIN) {
-                lock->l_policy_data = dlm_req->lock_desc.l_policy_data;
+                ldlm_convert_policy_to_local(
+                                          dlm_req->lock_desc.l_resource.lr_type,
+                                          &dlm_req->lock_desc.l_policy_data,
+                                          &lock->l_policy_data);
                 LDLM_DEBUG(lock, "completion AST, new policy data");
         }
 
@@ -2316,7 +2330,7 @@ void ldlm_put_ref(void)
  * Export handle<->lock hash operations.
  */
 static unsigned
-ldlm_export_lock_hash(cfs_hash_t *hs, void *key, unsigned mask)
+ldlm_export_lock_hash(cfs_hash_t *hs, const void *key, unsigned mask)
 {
         return cfs_hash_u64_hash(((struct lustre_handle *)key)->cookie, mask);
 }
@@ -2340,7 +2354,7 @@ ldlm_export_lock_keycpy(cfs_hlist_node_t *hnode, void *key)
 }
 
 static int
-ldlm_export_lock_keycmp(void *key, cfs_hlist_node_t *hnode)
+ldlm_export_lock_keycmp(const void *key, cfs_hlist_node_t *hnode)
 {
         return lustre_handle_equal(ldlm_export_lock_key(hnode), key);
 }

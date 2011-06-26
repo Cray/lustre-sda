@@ -61,8 +61,13 @@ cfs_mem_cache_t *ll_file_data_slab;
 CFS_LIST_HEAD(ll_super_blocks);
 cfs_spinlock_t ll_sb_lock = CFS_SPIN_LOCK_UNLOCKED;
 
+#ifndef MS_HAS_NEW_AOPS
 extern struct address_space_operations ll_aops;
 extern struct address_space_operations ll_dir_aops;
+#else
+extern struct address_space_operations_ext ll_aops;
+extern struct address_space_operations_ext ll_dir_aops;
+#endif
 
 #ifndef log2
 #define log2(n) cfs_ffz(~(n))
@@ -157,7 +162,8 @@ static struct dentry_operations ll_d_root_ops = {
         .d_revalidate = ll_revalidate_nd,
 };
 
-static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
+static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
+                                    struct vfsmount *mnt)
 {
         struct inode *root = 0;
         struct ll_sb_info *sbi = ll_s2sbi(sb);
@@ -197,7 +203,8 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
                                   OBD_CONNECT_OSS_CAPA | OBD_CONNECT_CANCELSET|
                                   OBD_CONNECT_FID      | OBD_CONNECT_AT |
                                   OBD_CONNECT_LOV_V3 | OBD_CONNECT_RMT_CLIENT |
-                                  OBD_CONNECT_VBR      | OBD_CONNECT_FULL20;
+                                  OBD_CONNECT_VBR      | OBD_CONNECT_FULL20 |
+                                  OBD_CONNECT_64BITHASH;
 
         if (sbi->ll_flags & LL_SBI_SOM_PREVIEW)
                 data->ocd_connect_flags |= OBD_CONNECT_SOM;
@@ -220,6 +227,9 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
 #ifdef HAVE_MS_FLOCK_LOCK
         /* force vfs to use lustre handler for flock() calls - bug 10743 */
         sb->s_flags |= MS_FLOCK_LOCK;
+#endif
+#ifdef MS_HAS_NEW_AOPS
+        sb->s_flags |= MS_HAS_NEW_AOPS;
 #endif
 
         if (sbi->ll_flags & LL_SBI_FLOCK)
@@ -330,6 +340,9 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
                 sbi->ll_flags |= LL_SBI_OSS_CAPA;
         }
 
+        if (data->ocd_connect_flags & OBD_CONNECT_64BITHASH)
+                sbi->ll_flags |= LL_SBI_64BIT_HASH;
+
         obd = class_name2obd(dt);
         if (!obd) {
                 CERROR("DT %s: not setup or attached\n", dt);
@@ -342,7 +355,7 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
                                   OBD_CONNECT_SRVLOCK   | OBD_CONNECT_TRUNCLOCK|
                                   OBD_CONNECT_AT | OBD_CONNECT_RMT_CLIENT |
                                   OBD_CONNECT_OSS_CAPA | OBD_CONNECT_VBR|
-                                  OBD_CONNECT_FULL20;
+                                  OBD_CONNECT_FULL20 | OBD_CONNECT_64BITHASH;
 
         if (sbi->ll_flags & LL_SBI_SOM_PREVIEW)
                 data->ocd_connect_flags |= OBD_CONNECT_SOM;
@@ -452,7 +465,7 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
         }
 
         LASSERT(fid_is_sane(&sbi->ll_root_fid));
-        root = ll_iget(sb, cl_fid_build_ino(&sbi->ll_root_fid), &lmd);
+        root = ll_iget(sb, cl_fid_build_ino(&sbi->ll_root_fid, 0), &lmd);
         md_free_lustre_md(sbi->ll_md_exp, &lmd);
         ptlrpc_req_finished(request);
 
@@ -506,6 +519,7 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
         uuid = obd_get_uuid(sbi->ll_md_exp);
         if (uuid != NULL)
                 sb->s_dev = get_uuid2int(uuid->uuid, strlen(uuid->uuid));
+        sbi->ll_mnt = mnt;
 
         RETURN(err);
 out_root:
@@ -816,6 +830,7 @@ void ll_lli_init(struct ll_inode_info *lli)
         CFS_INIT_LIST_HEAD(&lli->lli_oss_capas);
         cfs_spin_lock_init(&lli->lli_sa_lock);
         cfs_sema_init(&lli->lli_readdir_sem, 1);
+        fid_zero(&lli->lli_pfid);
 }
 
 static inline int ll_bdi_register(struct backing_dev_info *bdi)
@@ -831,7 +846,7 @@ static inline int ll_bdi_register(struct backing_dev_info *bdi)
 #endif
 }
 
-int ll_fill_super(struct super_block *sb)
+int ll_fill_super(struct super_block *sb, struct vfsmount *mnt)
 {
         struct lustre_profile *lprof;
         struct lustre_sb_info *lsi = s2lsi(sb);
@@ -909,7 +924,7 @@ int ll_fill_super(struct super_block *sb)
         sprintf(md, "%s-%s", lprof->lp_md, ll_instance);
 
         /* connections, registrations, sb setup */
-        err = client_common_fill_super(sb, md, dt);
+        err = client_common_fill_super(sb, md, dt, mnt);
 
 out_free:
         if (md)
@@ -1506,7 +1521,9 @@ void ll_update_inode(struct inode *inode, struct lustre_md *md)
                          * but lov raid0 is not setup yet and parallel e.g.
                          * glimpse would try to use uninitialized lov */
                         cl_inode_init(inode, md);
+                        cfs_spin_lock(&lli->lli_lock);
                         lli->lli_smd = lsm;
+                        cfs_spin_unlock(&lli->lli_lock);
                         cfs_up(&lli->lli_och_sem);
                         lli->lli_maxbytes = lsm->lsm_maxbytes;
                         if (lli->lli_maxbytes > PAGE_CACHE_MAXBYTES)
@@ -1543,7 +1560,7 @@ void ll_update_inode(struct inode *inode, struct lustre_md *md)
                 cfs_spin_unlock(&lli->lli_lock);
         }
 #endif
-        inode->i_ino = cl_fid_build_ino(&body->fid1);
+        inode->i_ino = cl_fid_build_ino(&body->fid1, 0);
         inode->i_generation = cl_fid_build_gen(&body->fid1);
 
         if (body->valid & OBD_MD_FLATIME) {
@@ -1687,12 +1704,12 @@ void ll_read_inode2(struct inode *inode, void *opaque)
                 struct ll_sb_info *sbi = ll_i2sbi(inode);
                 inode->i_op = &ll_file_inode_operations;
                 inode->i_fop = sbi->ll_fop;
-                inode->i_mapping->a_ops = &ll_aops;
+                inode->i_mapping->a_ops = (struct address_space_operations *)&ll_aops;
                 EXIT;
         } else if (S_ISDIR(inode->i_mode)) {
                 inode->i_op = &ll_dir_inode_operations;
                 inode->i_fop = &ll_dir_operations;
-                inode->i_mapping->a_ops = &ll_dir_aops;
+                inode->i_mapping->a_ops = (struct address_space_operations *)&ll_dir_aops;
                 EXIT;
         } else if (S_ISLNK(inode->i_mode)) {
                 inode->i_op = &ll_fast_symlink_inode_operations;
@@ -1714,10 +1731,23 @@ void ll_delete_inode(struct inode *inode)
         ENTRY;
 
         rc = obd_fid_delete(sbi->ll_md_exp, ll_inode2fid(inode));
-        if (rc) {
+        if (rc)
                 CERROR("fid_delete() failed, rc %d\n", rc);
-        }
+
         truncate_inode_pages(&inode->i_data, 0);
+
+        /* Workaround for LU-118 */
+        if (inode->i_data.nrpages) {
+                TREE_READ_LOCK_IRQ(&inode->i_data);
+                TREE_READ_UNLOCK_IRQ(&inode->i_data);
+                LASSERTF(inode->i_data.nrpages == 0,
+                         "inode=%lu/%u(%p) nrpages=%lu, see "
+                         "http://jira.whamcloud.com/browse/LU-118\n",
+                         inode->i_ino, inode->i_generation, inode,
+                         inode->i_data.nrpages);
+        }
+        /* Workaround end */
+
         clear_inode(inode);
 
         EXIT;
@@ -1968,7 +1998,7 @@ int ll_prep_inode(struct inode **inode,
                  */
                 LASSERT(fid_is_sane(&md.body->fid1));
 
-                *inode = ll_iget(sb, cl_fid_build_ino(&md.body->fid1), &md);
+                *inode = ll_iget(sb, cl_fid_build_ino(&md.body->fid1, 0), &md);
                 if (*inode == NULL || IS_ERR(*inode)) {
                         if (md.lsm)
                                 obd_free_memmd(sbi->ll_dt_exp, &md.lsm);
@@ -2103,6 +2133,21 @@ struct md_op_data * ll_prep_md_op_data(struct md_op_data *op_data,
         op_data->op_opc = opc;
         op_data->op_mds = 0;
         op_data->op_data = data;
+
+        /* If the file is being opened after mknod() (normally due to NFS)
+         * try to use the default stripe data from parent directory for
+         * allocating OST objects.  Try to pass the parent FID to MDS. */
+        if (opc == LUSTRE_OPC_CREATE && i1 == i2 && S_ISREG(i2->i_mode) &&
+            ll_i2info(i2)->lli_smd == NULL) {
+                struct ll_inode_info *lli = ll_i2info(i2);
+
+                cfs_spin_lock(&lli->lli_lock);
+                if (likely(lli->lli_smd == NULL &&
+                           !fid_is_zero(&lli->lli_pfid)))
+                        op_data->op_fid1 = lli->lli_pfid;
+                cfs_spin_unlock(&lli->lli_lock);
+                /** We ignore parent's capability temporary. */
+        }
 
         return op_data;
 }

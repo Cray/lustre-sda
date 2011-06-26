@@ -1246,7 +1246,7 @@ static int after_reply(struct ptlrpc_request *req)
         }
 
         if (lustre_msg_get_opc(req->rq_reqmsg) != OBD_PING)
-                OBD_FAIL_TIMEOUT(OBD_FAIL_PTLRPC_PAUSE_REP, obd_fail_val);
+                CFS_FAIL_TIMEOUT(OBD_FAIL_PTLRPC_PAUSE_REP, cfs_fail_val);
         ptlrpc_at_adj_service(req, lustre_msg_get_timeout(req->rq_repmsg));
         ptlrpc_at_adj_net_latency(req,
                                   lustre_msg_get_service_time(req->rq_repmsg));
@@ -1700,8 +1700,11 @@ int ptlrpc_check_set(const struct lu_env *env, struct ptlrpc_request_set *set)
 
                 /* This moves to "unregistering" phase we need to wait for
                  * reply unlink. */
-                if (!unregistered && !ptlrpc_unregister_reply(req, 1))
+                if (!unregistered && !ptlrpc_unregister_reply(req, 1)) {
+                        /* start async bulk unlink too */
+                        ptlrpc_unregister_bulk(req, 1);
                         continue;
+                }
 
                 if (!ptlrpc_unregister_bulk(req, 1))
                         continue;
@@ -2526,6 +2529,7 @@ static int ptlrpc_replay_interpret(const struct lu_env *env,
                 imp->imp_vbr_failed = 1;
                 imp->imp_no_lock_replay = 1;
                 cfs_spin_unlock(&imp->imp_lock);
+                lustre_msg_set_status(req->rq_repmsg, aa->praa_old_status);
         } else {
                 /** The transno had better not change over replay. */
                 LASSERTF(lustre_msg_get_transno(req->rq_reqmsg) ==
@@ -2543,6 +2547,15 @@ static int ptlrpc_replay_interpret(const struct lu_env *env,
         imp->imp_last_replay_transno = lustre_msg_get_transno(req->rq_reqmsg);
         cfs_spin_unlock(&imp->imp_lock);
         LASSERT(imp->imp_last_replay_transno);
+
+        /* transaction number shouldn't be bigger than the latest replayed */
+        if (req->rq_transno > lustre_msg_get_transno(req->rq_reqmsg)) {
+                DEBUG_REQ(D_ERROR, req,
+                          "Reported transno "LPU64" is bigger than the "
+                          "replayed one: "LPU64, req->rq_transno,
+                          lustre_msg_get_transno(req->rq_reqmsg));
+                GOTO(out, rc = -EINVAL);
+        }
 
         DEBUG_REQ(D_HA, req, "got rep");
 
@@ -2564,13 +2577,9 @@ static int ptlrpc_replay_interpret(const struct lu_env *env,
          * Errors while replay can set transno to 0, but
          * imp_last_replay_transno shouldn't be set to 0 anyway
          */
-        if (req->rq_transno > 0) {
-                cfs_spin_lock(&imp->imp_lock);
-                LASSERT(req->rq_transno <= imp->imp_last_replay_transno);
-                imp->imp_last_replay_transno = req->rq_transno;
-                cfs_spin_unlock(&imp->imp_lock);
-        } else
+        if (req->rq_transno == 0)
                 CERROR("Transno is 0 during replay!\n");
+
         /* continue with recovery */
         rc = ptlrpc_import_recovery_state_machine(imp);
  out:

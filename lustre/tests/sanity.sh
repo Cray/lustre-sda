@@ -8,7 +8,8 @@
 # e.g. ONLY="22 23" or ONLY="`seq 32 39`" or EXCEPT="31"
 set -e
 
-# bug number for skipped test: 13297 2108 9789 3637 9789 3561 12622 12653 12653 5188 16260 19742 
+ONLY=${ONLY:-"$*"}
+# bug number for skipped test: 13297 2108 9789 3637 9789 3561 12622 12653 12653 5188 16260 19742
 ALWAYS_EXCEPT="                27u   42a  42b  42c  42d  45   51d   65a   65e   68b  $SANITY_EXCEPT"
 # bug number for skipped test: 2108 9789 3637 9789 3561 5188/5749 1443
 #ALWAYS_EXCEPT=${ALWAYS_EXCEPT:-"27m 42a 42b 42c 42d 45 68 76"}
@@ -1328,6 +1329,9 @@ check_seq_oid()
                 local group=${lmm[$((j+3))]}
                 local dev=$(ostdevname $devnum)
                 local dir=${MOUNT%/*}/ost$devnum
+                local mntpt=$(facet_mntpt ost$devnum)
+
+                stop ost$devnum
                 do_facet ost$devnum mount -t $FSTYPE $dev $dir $OST_MOUNT_OPTS ||
                         { error "mounting $dev as $FSTYPE failed"; return 3; }
 
@@ -1345,7 +1349,8 @@ check_seq_oid()
                 [ $stripe -eq $i ] || { error "stripe mismatch"; return 6; }
 
                 echo -e "\t\tost $obdidx, objid $objid, group $group"
-                do_facet ost$devnum umount -d $dev
+                do_facet ost$devnum umount -d $mntpt
+                start ost$devnum $dev $OST_MOUNT_OPTS
         done
 }
 
@@ -2067,15 +2072,26 @@ run_test 36f "utime on file racing with OST BRW write =========="
 
 test_36g() {
 	remote_ost_nodsh && skip "remote OST with nodsh" && return
+	local fmd_max_age
+	local fmd_before
+	local fmd_after
 
 	mkdir -p $DIR/$tdir
-	export FMD_MAX_AGE=`do_facet ost1 lctl get_param -n obdfilter.*.client_cache_seconds 2> /dev/null | head -n 1`
-	FMD_BEFORE="`awk '/ll_fmd_cache/ { print $2 }' /proc/slabinfo`"
+	fmd_max_age=$(do_facet ost1 \
+		"lctl get_param -n obdfilter.*.client_cache_seconds 2> /dev/null | \
+		head -n 1")
+
+	fmd_before=$(do_facet ost1 \
+		"awk '/ll_fmd_cache/ {print \\\$2}' /proc/slabinfo")
 	touch $DIR/$tdir/$tfile
-	sleep $((FMD_MAX_AGE + 12))
-	FMD_AFTER="`awk '/ll_fmd_cache/ { print $2 }' /proc/slabinfo`"
-	[ "$FMD_AFTER" -gt "$FMD_BEFORE" ] && \
-		echo "AFTER : $FMD_AFTER > BEFORE $FMD_BEFORE" && \
+	sleep $((fmd_max_age + 12))
+	fmd_after=$(do_facet ost1 \
+		"awk '/ll_fmd_cache/ {print \\\$2}' /proc/slabinfo")
+
+	echo "fmd_before: $fmd_before"
+	echo "fmd_after: $fmd_after"
+	[ "$fmd_after" -gt "$fmd_before" ] && \
+		echo "AFTER: $fmd_after > BEFORE: $fmd_before" && \
 		error "fmd didn't expire after ping" || true
 }
 run_test 36g "filter mod data cache expiry ====================="
@@ -2225,7 +2241,7 @@ test_39e() {
 	local mtime1=`stat -c %Y $DIR1/$tfile`
 
 	touch -m -d @$TEST_39_MTIME $DIR1/$tfile
-	
+
 	for (( i=0; i < 2; i++ )) ; do
 		local mtime2=`stat -c %Y $DIR1/$tfile`
 		[ $mtime2 = $TEST_39_MTIME ] || \
@@ -2263,7 +2279,7 @@ test_39g() {
 
 	sleep 2
 	chmod o+r $DIR1/$tfile
- 
+
 	for (( i=0; i < 2; i++ )) ; do
 		local mtime2=`stat -c %Y $DIR1/$tfile`
 		[ "$mtime1" = "$mtime2" ] || \
@@ -2358,7 +2374,7 @@ test_39k() {
 
 	kill -USR1 $multipid
 	wait $multipid || error "multiop close failed"
-		
+
 	for (( i=0; i < 2; i++ )) ; do
 		local mtime2=`stat -c %Y $DIR1/$tfile`
 
@@ -2438,8 +2454,6 @@ test_39m() {
 		cancel_lru_locks osc
 		if [ $i = 0 ] ; then echo "repeat after cancel_lru_locks"; fi
 	done
-
-	
 }
 run_test 39m "test atime and mtime before 1970"
 
@@ -3184,7 +3198,7 @@ test_54e() {
 }
 run_test 54e "console/tty device works in lustre ======================"
 
-#The test_55 used to be iopen test and it was removed by bz#24037. 
+#The test_55 used to be iopen test and it was removed by bz#24037.
 #run_test 55 "check iopen_connect_dentry() ======================"
 
 test_56a() {	# was test_56
@@ -3436,7 +3450,7 @@ run_test 56q "check lfs find -gid and ! -gid ==============================="
 test_56r() {
 	setup_56 $NUMFILES $NUMDIRS
 	TDIR=$DIR/${tdir}g
-	
+
 	EXPECTED=12
 	NUMS=`$LFIND -size 0 -t f $TDIR | wc -l`
 	[ $NUMS -eq $EXPECTED ] || \
@@ -3850,7 +3864,7 @@ cleanup_68() {
 	if [ ! -z "$LLITELOOPLOAD" ]; then
 		rmmod llite_lloop
 		unset LLITELOOPLOAD
-	fi 
+	fi
 	rm -f $DIR/f68*
 }
 
@@ -5088,6 +5102,14 @@ test_105d() { # bug 15924
         flocks_test 2 $DIR/$tdir
 }
 run_test 105d "flock race (should not freeze) ========"
+
+test_105e() { # bug 22660 && 22040
+	[ -z "`mount | grep \"$DIR.*flock\" | grep -v noflock`" ] && \
+		skip "mount w/o flock enabled" && return
+	touch $DIR/$tfile
+	flocks_test 3 $DIR/$tfile
+}
+run_test 105e "Two conflicting flocks from same process ======="
 
 test_106() { #bug 10921
 	mkdir -p $DIR/$tdir
@@ -6822,14 +6844,9 @@ test_154() {
 }
 run_test 154 "Opening a file by FID"
 
-test_155_load() {
+test_155_small_load() {
     local temp=$TMP/$tfile
     local file=$DIR/$tfile
-    local list=$(comma_list $(osts_nodes))
-    local big=$(do_nodes $list grep "cache" /proc/cpuinfo | \
-        awk '{sum+=$4} END{print sum}')
-
-    log big is $big K
 
     dd if=/dev/urandom of=$temp bs=6096 count=1 || \
         error "dd of=$temp bs=6096 count=1 failed"
@@ -6849,44 +6866,94 @@ test_155_load() {
     echo "12345" >>$file
     cmp $temp $file || error "$temp $file differ (append2)"
 
-    dd if=/dev/urandom of=$temp bs=$((big*2)) count=1k || \
-        error "dd of=$temp bs=$((big*2)) count=1k failed"
+    rm -f $temp $file
+    true
+}
+
+test_155_big_load() {
+    local temp=$TMP/$tfile
+    local file=$DIR/$tfile
+
+    free_min_max
+    local cache_size=$(do_facet ost$((MAXI+1)) \
+        "awk '/cache/ {sum+=\\\$4} END {print sum}' /proc/cpuinfo")
+    local large_file_size=$((cache_size * 2))
+
+    echo "OSS cache size: $cache_size KB"
+    echo "Large file size: $large_file_size KB"
+
+    [ $MAXV -le $large_file_size ] && \
+        skip_env "max available OST size needs > $large_file_size KB" && \
+        return 0
+
+    $SETSTRIPE $file -c 1 -i $MAXI || error "$SETSTRIPE $file failed"
+
+    dd if=/dev/urandom of=$temp bs=$large_file_size count=1k || \
+        error "dd of=$temp bs=$large_file_size count=1k failed"
     cp $temp $file
     ls -lh $temp $file
     cancel_lru_locks osc
     cmp $temp $file || error "$temp $file differ"
 
-    rm -f $temp
+    rm -f $temp $file
     true
 }
 
 test_155a() {
     set_cache read on
     set_cache writethrough on
-    test_155_load
+    test_155_small_load
 }
-run_test 155a "Verification of correctness: read cache:on write_cache:on"
+run_test 155a "Verify small file correctness: read cache:on write_cache:on"
 
 test_155b() {
     set_cache read on
     set_cache writethrough off
-    test_155_load
+    test_155_small_load
 }
-run_test 155b "Verification of correctness: read cache:on write_cache:off"
+run_test 155b "Verify small file correctness: read cache:on write_cache:off"
 
 test_155c() {
     set_cache read off
     set_cache writethrough on
-    test_155_load
+    test_155_small_load
 }
-run_test 155c "Verification of correctness: read cache:off write_cache:on"
+run_test 155c "Verify small file correctness: read cache:off write_cache:on"
 
 test_155d() {
     set_cache read off
     set_cache writethrough off
-    test_155_load
+    test_155_small_load
 }
-run_test 155d "Verification of correctness: read cache:off write_cache:off "
+run_test 155d "Verify small file correctness: read cache:off write_cache:off"
+
+test_155e() {
+    set_cache read on
+    set_cache writethrough on
+    test_155_big_load
+}
+run_test 155e "Verify big file correctness: read cache:on write_cache:on"
+
+test_155f() {
+    set_cache read on
+    set_cache writethrough off
+    test_155_big_load
+}
+run_test 155f "Verify big file correctness: read cache:on write_cache:off"
+
+test_155g() {
+    set_cache read off
+    set_cache writethrough on
+    test_155_big_load
+}
+run_test 155g "Verify big file correctness: read cache:off write_cache:on"
+
+test_155h() {
+    set_cache read off
+    set_cache writethrough off
+    test_155_big_load
+}
+run_test 155h "Verify big file correctness: read cache:off write_cache:off"
 
 test_156() {
     local CPAGES=3
@@ -7322,7 +7389,9 @@ test_170() {
         local expected_good=$((good_line1 + good_line2*2))
 
         rm -f $TMP/${tfile}*
-        if [ $bad_line -ne $bad_line_new ]; then
+	# LU-231, short malformed line may not be counted into bad lines
+        if [ $bad_line -ne $bad_line_new ] &&
+		   [ $bad_line -ne $((bad_line_new - 1)) ]; then
                 error "expected $bad_line bad lines, but got $bad_line_new"
                 return 1
         fi
@@ -7339,9 +7408,12 @@ test_171() { # bug20592
 #define OBD_FAIL_PTLRPC_DUMP_LOG         0x50e
         $LCTL set_param fail_loc=0x50e
         $LCTL set_param fail_val=3000
-        multiop_bg_pause $DIR/$tfile Os || true
+        multiop_bg_pause $DIR/$tfile O_s || true
+        local MULTIPID=$!
+        kill -USR1 $MULTIPID
         # cause log dump
         sleep 3
+        wait $MULTIPID
         if dmesg | grep "recursive fault"; then
                 error "caught a recursive fault"
         fi
@@ -7356,6 +7428,9 @@ setup_obdecho_osc () {
         local ost_nid=$1
         local obdfilter_name=$2
         echo "Creating new osc for $obdfilter_name on $ost_nid"
+        # make sure we can find loopback nid
+        $LCTL add_uuid $ost_nid $ost_nid >/dev/null 2>&1
+
         [ $rc -eq 0 ] && { $LCTL attach osc ${obdfilter_name}_osc     \
                            ${obdfilter_name}_osc_UUID || rc=2; }
         [ $rc -eq 0 ] && { $LCTL --device ${obdfilter_name}_osc setup \
@@ -7398,15 +7473,15 @@ test_180a() {
         local rmmod_local=0
 
         if ! module_loaded obdecho; then
-            load_module obdecho/obdecho 
-            rmmod_local=1           
+            load_module obdecho/obdecho
+            rmmod_local=1
         fi
 
         local osc=$($LCTL dl | grep -v mdt | awk '$3 == "osc" {print $4; exit}')
         local host=$(awk '/current_connection:/ {print $2}' /proc/fs/lustre/osc/$osc/import)
         local target=$(awk '/target:/ {print $2}' /proc/fs/lustre/osc/$osc/import)
         target=${target%_UUID}
-        
+
         [[ -n $target ]]  && { setup_obdecho_osc $host $target || rc=1; } || rc=1
         [ $rc -eq 0 ] && { obdecho_create_test ${target}_osc client || rc=2; }
         [[ -n $target ]] && cleanup_obdecho_osc $target
@@ -7428,6 +7503,25 @@ test_180b() {
         return $rc
 }
 run_test 180b "test obdecho directly on obdfilter"
+
+test_181() { # bug 22177
+	mkdir -p $DIR/$tdir || error "creating dir $DIR/$tdir"
+	# create enough files to index the directory
+	createmany -o $DIR/$tdir/foobar 4000
+	# print attributes for debug purpose
+	lsattr -d .
+	# open dir
+	multiop_bg_pause $DIR/$tdir D_Sc || return 1
+	MULTIPID=$!
+	# remove the files & current working dir
+	unlinkmany $DIR/$tdir/foobar 4000
+	rmdir $DIR/$tdir
+	kill -USR1 $MULTIPID
+	wait $MULTIPID
+	stat $DIR/$tdir && error "open-unlinked dir was not removed!"
+	return 0
+}
+run_test 181 "Test open-unlinked dir ========================"
 
 # OST pools tests
 POOL=${POOL:-cea1}
@@ -7594,8 +7688,8 @@ run_test 201b "Remove all targets from a pool =========================="
 test_201c() {
 	remote_mgs_nodsh && skip "remote MGS with nodsh" && return
 	do_facet mgs $LCTL pool_destroy $FSNAME.$POOL
-	
-	sleep 2                        
+
+	sleep 2
     # striping on an empty/nonexistant pool should fall back to "pool of everything"
 	touch ${POOL_DIR}/$tfile || error "failed to use fallback striping for missing pool"
 	# setstripe on an empty pool should fail
@@ -7613,6 +7707,136 @@ test_201c() {
 run_test 201c "Remove a pool ============================================"
 
 cleanup_pools $FSNAME
+
+# usage: default_attr <count | size | offset>
+default_attr() {
+	$LCTL get_param -n lov.$FSNAME-clilov-\*.stripe${1}
+}
+
+# usage: trim <string>
+# Trims leading and trailing whitespace from the parameter string
+trim() {
+    echo $@
+}
+
+# usage: check_default_stripe_attr <count | size | offset>
+check_default_stripe_attr() {
+	# $GETSTRIPE returns trailing whitespace which needs to be trimmed off
+	ACTUAL=$(trim $($GETSTRIPE --$1 $DIR/$tdir))
+	if [ $1 = "count" -o $1 = "size" ]; then
+		EXPECTED=`default_attr $1`;
+	else
+		# the 'stripeoffset' parameter prints as an unsigned int, so
+		# until this is fixed we hard-code -1 here
+		EXPECTED=-1;
+	fi
+	[ "x$ACTUAL" != "x$EXPECTED" ] &&
+		error "$DIR/$tdir has stripe $1 '$ACTUAL', not '$EXPECTED'"
+}
+
+# usage: check_raw_stripe_attr <count | size | offset>
+check_raw_stripe_attr() {
+	# $GETSTRIPE returns trailing whitespace which needs to be trimmed off
+	ACTUAL=$(trim $($GETSTRIPE --raw --$1 $DIR/$tdir))
+	if [ $1 = "count" -o $1 = "size" ]; then
+		EXPECTED=0;
+	else
+		EXPECTED=-1;
+	fi
+	[ "x$ACTUAL" != "x$EXPECTED" ] &&
+		error "$DIR/$tdir has raw stripe $1 '$ACTUAL', not '$EXPECTED'"
+}
+
+
+test_204a() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --count 0 --size 0 --offset -1 $DIR/$tdir
+
+	check_default_stripe_attr count
+	check_default_stripe_attr size
+	check_default_stripe_attr offset
+
+	return 0
+}
+run_test 204a "Print default stripe attributes ================="
+
+test_204b() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --count 1 $DIR/$tdir
+
+	check_default_stripe_attr size
+	check_default_stripe_attr offset
+
+	return 0
+}
+run_test 204b "Print default stripe size and offset  ==========="
+
+test_204c() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --size 65536 $DIR/$tdir
+
+	check_default_stripe_attr count
+	check_default_stripe_attr offset
+
+	return 0
+}
+run_test 204c "Print default stripe count and offset ==========="
+
+test_204d() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --offset 0 $DIR/$tdir
+
+	check_default_stripe_attr count
+	check_default_stripe_attr size
+
+	return 0
+}
+run_test 204d "Print default stripe count and size ============="
+
+test_204e() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE -d $DIR/$tdir
+
+	check_raw_stripe_attr count
+	check_raw_stripe_attr size
+	check_raw_stripe_attr offset
+
+	return 0
+}
+run_test 204e "Print raw stripe attributes ================="
+
+test_204f() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --count 1 $DIR/$tdir
+
+	check_raw_stripe_attr size
+	check_raw_stripe_attr offset
+
+	return 0
+}
+run_test 204f "Print raw stripe size and offset  ==========="
+
+test_204g() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --size 65536 $DIR/$tdir
+
+	check_raw_stripe_attr count
+	check_raw_stripe_attr offset
+
+	return 0
+}
+run_test 204g "Print raw stripe count and offset ==========="
+
+test_204h() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --offset 0 $DIR/$tdir
+
+	check_raw_stripe_attr count
+	check_raw_stripe_attr size
+
+	return 0
+}
+run_test 204h "Print raw stripe count and size ============="
 
 test_212() {
 	size=`date +%s`
@@ -7864,4 +8088,4 @@ check_and_cleanup_lustre
 if [ "$I_MOUNTED" != "yes" ]; then
 	lctl set_param debug="$OLDDEBUG" 2> /dev/null || true
 fi
-exit_status 
+exit_status

@@ -56,7 +56,8 @@
 #include <lustre_disk.h>
 #include <lustre_param.h>
 
-static int (*client_fill_super)(struct super_block *sb) = NULL;
+static int (*client_fill_super)(struct super_block *sb,
+                                struct vfsmount *mnt) = NULL;
 static void (*kill_super_cb)(struct super_block *sb) = NULL;
 
 /*********** mount lookup *********/
@@ -980,12 +981,17 @@ static int server_sb2mti(struct super_block *sb, struct mgs_target_info *mti)
                 if (LNET_NETTYP(LNET_NIDNET(id.nid)) == LOLND)
                         continue;
 
-                if (class_find_param(ldd->ldd_params,
-                                     PARAM_NETWORK, NULL) == 0 &&
-                    !class_match_net(ldd->ldd_params, id.nid)) {
-                        /* can't match specified network */
+                /* server use --servicenode param, only allow specified
+                 * nids be registered */
+                if ((ldd->ldd_flags & LDD_F_NO_PRIMNODE) != 0 &&
+                    class_match_nid(ldd->ldd_params,
+                                    PARAM_FAILNODE, id.nid) < 1)
                         continue;
-                }
+
+                /* match specified network */
+                if (!class_match_net(ldd->ldd_params,
+                                     PARAM_NETWORK, LNET_NIDNET(id.nid)))
+                        continue;
 
                 mti->mti_nids[mti->mti_nid_count] = id.nid;
                 mti->mti_nid_count++;
@@ -1311,7 +1317,6 @@ static struct vfsmount *server_kernel_mount(struct super_block *sb)
         unsigned long page, s_flags;
         struct page *__page;
         int rc;
-        int len;
         ENTRY;
 
         OBD_ALLOC(ldd, sizeof(*ldd));
@@ -1364,18 +1369,11 @@ static struct vfsmount *server_kernel_mount(struct super_block *sb)
 
         /* Glom up mount options */
         memset(options, 0, CFS_PAGE_SIZE);
-        if (IS_MDT(ldd)) {
-                /* enable 64bithash for MDS by force */
-                strcpy(options, "64bithash,");
-                len = CFS_PAGE_SIZE - strlen(options) - 2;
-                strncat(options, ldd->ldd_mount_opts, len);
-        } else {
-                strncpy(options, ldd->ldd_mount_opts, CFS_PAGE_SIZE - 2);
-        }
+        strncpy(options, ldd->ldd_mount_opts, CFS_PAGE_SIZE - 2);
 
         /* Add in any mount-line options */
         if (lmd->lmd_opts && (*(lmd->lmd_opts) != 0)) {
-                len = CFS_PAGE_SIZE - strlen(options) - 2;
+                int len = CFS_PAGE_SIZE - strlen(options) - 2;
                 if (*options != 0)
                         strcat(options, ",");
                 strncat(options, lmd->lmd_opts, len);
@@ -1432,7 +1430,7 @@ static void server_wait_finished(struct vfsmount *mnt)
                                       waited);
                /* Cannot use l_event_wait() for an interruptible sleep. */
                waited += 3;
-               blocked = l_w_e_set_sigs(sigmask(SIGKILL));
+               blocked = cfs_block_sigsinv(sigmask(SIGKILL));
                cfs_waitq_wait_event_interruptible_timeout(
                        waitq,
                        (atomic_read(&mnt->mnt_count) == 1),
@@ -1441,8 +1439,7 @@ static void server_wait_finished(struct vfsmount *mnt)
                cfs_block_sigs(blocked);
                if (rc < 0) {
                        LCONSOLE_EMERG("Danger: interrupted umount %s with "
-                                      "%d refs!\n",
-				      mnt->mnt_devname,
+                                      "%d refs!\n", mnt->mnt_devname,
                                       atomic_read(&mnt->mnt_count));
                        break;
                }
@@ -2079,6 +2076,10 @@ invalid:
         RETURN(-EINVAL);
 }
 
+struct lustre_mount_data2 {
+        void *lmd2_data;
+        struct vfsmount *lmd2_mnt;
+};
 
 /** This is the entry point for the mount call into Lustre.
  * This is called when a server or client is mounted,
@@ -2088,6 +2089,7 @@ invalid:
 int lustre_fill_super(struct super_block *sb, void *data, int silent)
 {
         struct lustre_mount_data *lmd;
+        struct lustre_mount_data2 *lmd2 = data;
         struct lustre_sb_info *lsi;
         int rc;
         ENTRY;
@@ -2106,7 +2108,7 @@ int lustre_fill_super(struct super_block *sb, void *data, int silent)
         cfs_lockdep_off();
 
         /* Figure out the lmd from the mount options */
-        if (lmd_parse((char *)data, lmd)) {
+        if (lmd_parse((char *)(lmd2->lmd2_data), lmd)) {
                 lustre_put_lsi(sb);
                 GOTO(out, rc = -EINVAL);
         }
@@ -2127,7 +2129,7 @@ int lustre_fill_super(struct super_block *sb, void *data, int silent)
                         }
                         /* Connect and start */
                         /* (should always be ll_fill_super) */
-                        rc = (*client_fill_super)(sb);
+                        rc = (*client_fill_super)(sb, lmd2->lmd2_mnt);
                         /* c_f_s will call lustre_common_put_super on failure */
                 }
         } else {
@@ -2158,7 +2160,8 @@ out:
 
 /* We can't call ll_fill_super by name because it lives in a module that
    must be loaded after this one. */
-void lustre_register_client_fill_super(int (*cfs)(struct super_block *sb))
+void lustre_register_client_fill_super(int (*cfs)(struct super_block *sb,
+                                                  struct vfsmount *mnt))
 {
         client_fill_super = cfs;
 }
@@ -2171,17 +2174,18 @@ void lustre_register_kill_super_cb(void (*cfs)(struct super_block *sb))
 /***************** FS registration ******************/
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,18))
-struct super_block * lustre_get_sb(struct file_system_type *fs_type,
-                               int flags, const char *devname, void * data)
+struct super_block * lustre_get_sb(struct file_system_type *fs_type, int flags,
+                                   const char *devname, void * data)
 {
         return get_sb_nodev(fs_type, flags, data, lustre_fill_super);
 }
 #else
-int lustre_get_sb(struct file_system_type *fs_type,
-                               int flags, const char *devname, void * data,
-                               struct vfsmount *mnt)
+int lustre_get_sb(struct file_system_type *fs_type, int flags,
+                  const char *devname, void * data, struct vfsmount *mnt)
 {
-        return get_sb_nodev(fs_type, flags, data, lustre_fill_super, mnt);
+        struct lustre_mount_data2 lmd2 = {data, mnt};
+
+        return get_sb_nodev(fs_type, flags, &lmd2, lustre_fill_super, mnt);
 }
 #endif
 
