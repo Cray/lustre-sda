@@ -2105,7 +2105,7 @@ int mdd_object_kill(const struct lu_env *env, struct mdd_object *obj,
  * No permission check is needed.
  */
 static int mdd_close(const struct lu_env *env, struct md_object *obj,
-                     struct md_attr *ma)
+                     struct md_attr *ma, int mode)
 {
         struct mdd_object *mdd_obj = md2mdd_obj(obj);
         struct mdd_device *mdd = mdo2mdd(obj);
@@ -2203,6 +2203,18 @@ out:
                 ma->ma_valid &= ~(MA_LOV | MA_COOKIE);
 
         mdd_write_unlock(env, mdd_obj);
+
+        if (rc == 0 &&
+            (mode & (FMODE_WRITE | MDS_OPEN_APPEND | MDS_OPEN_TRUNC))) {
+                if (handle == 0) {
+                        mdd_txn_param_build(env, mdd, MDD_TXN_CLOSE_OP);
+                        handle = mdd_trans_start(env, mdo2mdd(obj));
+                }
+                if (handle != NULL)
+                        mdd_changelog_data_store(env, mdd, CL_CLOSE, mode,
+                                                 mdd_obj, handle);
+        }
+
         if (handle != NULL)
                 mdd_trans_stop(env, mdo2mdd(obj), rc, handle);
 #ifdef HAVE_QUOTA_SUPPORT
