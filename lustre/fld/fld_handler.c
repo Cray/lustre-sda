@@ -340,7 +340,8 @@ static int fld_server_handle(struct lu_server_fld *fld,
 }
 
 static int fld_req_handle(struct ptlrpc_request *req,
-                          struct fld_thread_info *info)
+                          struct fld_thread_info *info,
+                          int force_mdt)
 {
         struct lu_site *site;
         struct lu_seq_range *in;
@@ -365,6 +366,9 @@ static int fld_req_handle(struct ptlrpc_request *req,
                         RETURN(err_serious(-EPROTO));
                 *out = *in;
 
+                if (force_mdt)
+                        out->lsr_flags = LU_SEQ_RANGE_MDT;
+
                 rc = fld_server_handle(lu_site2md(site)->ms_server_fld,
                                        req->rq_svc_thread->t_env,
                                        *opc, out, info);
@@ -388,7 +392,7 @@ static void fld_thread_info_fini(struct fld_thread_info *info)
         req_capsule_fini(info->fti_pill);
 }
 
-static int fld_handle(struct ptlrpc_request *req)
+static int fld_handle(struct ptlrpc_request *req, int force_mdt)
 {
         struct fld_thread_info *info;
         const struct lu_env *env;
@@ -401,7 +405,7 @@ static int fld_handle(struct ptlrpc_request *req)
         LASSERT(info != NULL);
 
         fld_thread_info_init(req, info);
-        rc = fld_req_handle(req, info);
+        rc = fld_req_handle(req, info, force_mdt);
         fld_thread_info_fini(info);
 
         return rc;
@@ -412,7 +416,7 @@ static int fld_handle(struct ptlrpc_request *req)
  */
 int fld_query(struct com_thread_info *info)
 {
-        return fld_handle(info->cti_pill->rc_req);
+        return fld_handle(info->cti_pill->rc_req, 1);
 }
 EXPORT_SYMBOL(fld_query);
 
