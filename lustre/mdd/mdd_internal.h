@@ -471,6 +471,9 @@ void mdd_changelog_path_store(struct llog_changelog_rec *rec,
                               struct mdd_object *target,
                               char *path, int pathlen,
                               int compat);
+void mdd_changelog_rec_fill(const struct lu_env *env,
+                            struct llog_changelog_rec *rec);
+
 
 
 /* mdd_permission.c */
