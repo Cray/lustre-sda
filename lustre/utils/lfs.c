@@ -2367,11 +2367,14 @@ static int lfs_changelog(int argc, char **argv)
                 secs = rec->cr_time >> 30;
                 gmtime_r(&secs, &ts);
                 printf(LPU64" %02d%-5s %02d:%02d:%02d.%06d %04d.%02d.%02d "
-                       "0x%x t="DFID, rec->cr_index, rec->cr_type,
+                       "%u:%u [%s] 0x%x t="DFID,
+                       rec->cr_index, rec->cr_type,
                        changelog_type2str(rec->cr_type),
                        ts.tm_hour, ts.tm_min, ts.tm_sec,
                        (int)(rec->cr_time & ((1<<30) - 1)),
                        ts.tm_year+1900, ts.tm_mon+1, ts.tm_mday,
+                       rec->cr_uid, rec->cr_gid,
+                       libcfs_nid2str(rec->cr_clnid),
                        rec->cr_flags, PFID(&rec->cr_tfid));
 
                 if (rec->cr_version > CL_VERSION) {

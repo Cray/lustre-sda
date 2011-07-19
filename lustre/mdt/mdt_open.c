@@ -1581,6 +1581,7 @@ int mdt_close(struct mdt_thread_info *info)
         if (mdt_check_resent(info, mdt_reconstruct_generic, NULL)) {
                 if (rc == 0)
                         mdt_shrink_reply(info);
+                mdt_exit_ucred(info);
                 RETURN(lustre_msg_get_status(req->rq_repmsg));
         }
 
@@ -1632,6 +1633,7 @@ int mdt_close(struct mdt_thread_info *info)
         if (repbody != NULL)
                 mdt_shrink_reply(info);
 
+        mdt_exit_ucred(info);
         if (OBD_FAIL_CHECK(OBD_FAIL_MDS_CLOSE_PACK))
                 RETURN(err_serious(-ENOMEM));
 
@@ -1672,8 +1674,10 @@ int mdt_done_writing(struct mdt_thread_info *info)
         if (rc)
                 RETURN(err_serious(rc));
 
-        if (mdt_check_resent(info, mdt_reconstruct_generic, NULL))
+        if (mdt_check_resent(info, mdt_reconstruct_generic, NULL)) {
+                mdt_exit_ucred(info);
                 RETURN(lustre_msg_get_status(req->rq_repmsg));
+        }
 
         med = &info->mti_exp->exp_mdt_data;
         cfs_spin_lock(&med->med_open_lock);
@@ -1688,10 +1692,11 @@ int mdt_done_writing(struct mdt_thread_info *info)
                 /* If this is a replay, reconstruct the transno. */
                 if (lustre_msg_get_flags(req->rq_reqmsg) & MSG_REPLAY) {
                         mdt_empty_transno(info);
-                        RETURN(info->mti_ioepoch->flags & MF_SOM_AU ?
-                               -EAGAIN : 0);
-                }
-                RETURN(-ESTALE);
+                        if (info->mti_ioepoch->flags & MF_SOM_AU)
+                                rc = -EAGAIN;
+                } else
+                        rc = -ESTALE;
+                GOTO(error_ucred, rc);
         }
 
         LASSERT(mfd->mfd_mode == MDS_FMODE_EPOCH ||
@@ -1707,11 +1712,13 @@ int mdt_done_writing(struct mdt_thread_info *info)
         info->mti_attr.ma_lmm_size = info->mti_mdt->mdt_max_mdsize;
         OBD_ALLOC_LARGE(info->mti_attr.ma_lmm, info->mti_mdt->mdt_max_mdsize);
         if (info->mti_attr.ma_lmm == NULL)
-                RETURN(-ENOMEM);
+                GOTO(error_ucred, rc = -ENOMEM);
 
         rc = mdt_mfd_close(info, mfd);
 
         OBD_FREE_LARGE(info->mti_attr.ma_lmm, info->mti_mdt->mdt_max_mdsize);
         mdt_empty_transno(info);
+error_ucred:
+        mdt_exit_ucred(info);
         RETURN(rc);
 }

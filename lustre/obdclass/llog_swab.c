@@ -164,6 +164,9 @@ void lustre_swab_llog_rec(struct llog_rec_hdr *rec, struct llog_rec_tail *tail)
                 __swab64s(&cr->cr.cr_index);
                 __swab64s(&cr->cr.cr_prev);
                 __swab64s(&cr->cr.cr_time);
+                __swab32s(&cr->cr.cr_uid);
+                __swab32s(&cr->cr.cr_gid);
+                __swab64s(&cr->cr.cr_clnid);
                 lustre_swab_lu_fid(&cr->cr.cr_tfid);
                 lustre_swab_lu_fid(&cr->cr.cr_pfid);
                 break;

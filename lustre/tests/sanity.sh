@@ -7376,16 +7376,28 @@ test_160() {
     # verify contents
     echo "verifying target fid"
     fidc=$($LFS changelog $MDT0 | grep timestamp | grep "CREAT" | \
-	tail -1 | awk '{print $6}')
+	tail -1 | awk '{print $8}')
     fidf=$($LFS path2fid $DIR/$tdir/pics/zach/timestamp)
     [ "$fidc" == "t=$fidf" ] || \
 	err17935 "fid in changelog $fidc != file fid $fidf"
     echo "verifying parent fid"
     fidc=$($LFS changelog $MDT0 | grep timestamp | grep "CREAT" | \
-	tail -1 | awk '{print $7}')
+	tail -1 | awk '{print $9}')
     fidf=$($LFS path2fid $DIR/$tdir/pics/zach)
     [ "$fidc" == "p=$fidf" ] || \
 	err17935 "pfid in changelog $fidc != dir fid $fidf"
+
+    if [ $RUNAS_ID -ne $UID ]; then
+        echo "verifying UID/GID "
+        chmod a+w $DIR/$tdir/pics
+        $RUNAS cp /etc/hosts $DIR/$tdir/pics/anna
+        $LFS changelog $MDT0 | tail -5
+
+        U_ID=$($LFS changelog $MDT0 | tail -5 | grep -c $RUNAS_ID)
+        G_ID=$($LFS changelog $MDT0 | tail -5 | grep -c $RUNAS_GID)
+        [ $U_ID -eq 1 ] || err17935 "UID is not added to changelog"
+        [ $G_ID -eq 1 ] || err17935 "GID is not added to changelog"
+    fi
 
     USER_REC1=$(do_facet $SINGLEMDS $LCTL get_param -n \
 	mdd.$MDT0.changelog_users | grep $USER | awk '{print $2}')
