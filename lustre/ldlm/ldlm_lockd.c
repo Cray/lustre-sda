@@ -2185,7 +2185,7 @@ static int ldlm_bl_thread_start(struct ldlm_bl_pool *blp)
         int rc;
 
         cfs_init_completion(&bltd.bltd_comp);
-        rc = cfs_kernel_thread(ldlm_bl_thread_main, &bltd, 0);
+        rc = cfs_create_thread(ldlm_bl_thread_main, &bltd);
         if (rc < 0) {
                 CERROR("cannot start LDLM thread ldlm_bl_%02d: rc %d\n",
                        cfs_atomic_read(&blp->blp_num_threads), rc);

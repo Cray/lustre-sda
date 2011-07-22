@@ -72,7 +72,6 @@ lnet_accept_magic(__u32 magic, __u32 constant)
 #define cfs_mt_wait_for_completion(c) cfs_wait_for_completion(c)
 #define cfs_mt_complete(c)            cfs_complete(c)
 #define cfs_mt_fini_completion(c)     cfs_fini_completion(c)
-#define cfs_create_thread(func, a)    cfs_kernel_thread(func, a, 0)
 
 EXPORT_SYMBOL(lnet_acceptor_port);
 
