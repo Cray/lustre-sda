@@ -30,6 +30,9 @@
  * Use is subject to license terms.
  */
 /*
+ * Copyright (c) 2011 Xyratex, Inc.
+ */
+/*
  * This file is part of Lustre, http://www.lustre.org/
  * Lustre is a trademark of Sun Microsystems, Inc.
  *
@@ -260,6 +263,13 @@ int mdd_txn_init_credits(const struct lu_env *env, struct mdd_device *mdd)
                                 break;
                         case MDD_TXN_CLOSE_OP:
                                 *c = 0;
+                                break;
+                        case MDD_TXN_REBUILD_OP:
+                                /* INDEX DELETE + INDEX INSERT +
+                                 * OI DELETE + OI INSERT + XATTR */
+                                *c = 2 * dt[DTO_INDEX_INSERT] +
+                                     2 * dt[DTO_INDEX_DELETE] +
+                                     dt[DTO_XATTR_SET];
                                 break;
                         default:
                                 CERROR("Invalid op %d init its credit\n", op);
