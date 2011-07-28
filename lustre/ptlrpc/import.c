@@ -30,6 +30,9 @@
  * Use is subject to license terms.
  */
 /*
+ * Copyright (c) 2011 Whamcloud, Inc.
+ */
+/*
  * This file is part of Lustre, http://www.lustre.org/
  * Lustre is a trademark of Sun Microsystems, Inc.
  *
@@ -1071,10 +1074,12 @@ finish:
                         cli->cl_cksum_type = OBD_CKSUM_CRC32;
                 }
 
-                if (ocd->ocd_connect_flags & OBD_CONNECT_BRW_SIZE) {
+                if (ocd->ocd_connect_flags & OBD_CONNECT_BRW_SIZE)
                         cli->cl_max_pages_per_rpc =
                                 ocd->ocd_brw_size >> CFS_PAGE_SHIFT;
-                }
+                else if (imp->imp_connect_op == MDS_CONNECT ||
+                         imp->imp_connect_op == MGS_CONNECT)
+                        cli->cl_max_pages_per_rpc = 1;
 
                 /* Reset ns_connect_flags only for initial connect. It might be
                  * changed in while using FS and if we reset it in reconnect
@@ -1276,7 +1281,7 @@ static int ptlrpc_invalidate_import_thread(void *data)
  * If we came to server that is in recovery, we enter IMP_REPLAY import state.
  * We go through our list of requests to replay and send them to server one by
  * one.
- * After sending all request from the list we change import state to 
+ * After sending all request from the list we change import state to
  * IMP_REPLAY_LOCKS and re-request all the locks we believe we have from server
  * and also all the locks we don't yet have and wait for server to grant us.
  * After that we send a special "replay completed" request and change import
@@ -1320,8 +1325,8 @@ int ptlrpc_import_recovery_state_machine(struct obd_import *imp)
                  * invalidate thread without reference to import and import can
                  * be freed at same time. */
                 class_import_get(imp);
-                rc = cfs_kernel_thread(ptlrpc_invalidate_import_thread, imp,
-                                       CLONE_VM | CLONE_FILES);
+                rc = cfs_create_thread(ptlrpc_invalidate_import_thread, imp,
+                                       CFS_DAEMON_FLAGS);
                 if (rc < 0) {
                         class_import_put(imp);
                         CERROR("error starting invalidate thread: %d\n", rc);

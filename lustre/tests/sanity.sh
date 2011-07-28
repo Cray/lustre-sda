@@ -784,6 +784,10 @@ test_24u() { # bug12192
 }
 run_test 24u "create stripe file"
 
+page_size() {
+	getconf PAGE_SIZE
+}
+
 test_24v() {
 	local NRFILES=100000
 	local FREE_INODES=`lfs df -i|grep "filesystem summary" | awk '{print $5}'`
@@ -793,7 +797,25 @@ test_24v() {
 
 	mkdir -p $DIR/d24v
 	createmany -m $DIR/d24v/$tfile $NRFILES
+
+	cancel_lru_locks mdc
+	lctl set_param mdc.*.stats clear
+
 	ls $DIR/d24v >/dev/null || error "error in listing large dir"
+
+	# LU-5 large readdir
+	# DIRENT_SIZE = 32 bytes for sizeof(struct lu_dirent) +
+	#               8 bytes for name(filename is mostly 5 in this test) +
+	#               8 bytes for luda_type
+	# take into account of overhead in lu_dirpage header and end mark in
+	# each page, plus one in RPC_NUM calculation.
+	DIRENT_SIZE=48
+	RPC_SIZE=$(($(lctl get_param -n mdc.*.max_pages_per_rpc)*$(page_size)))
+	RPC_NUM=$(((NRFILES * DIRENT_SIZE + RPC_SIZE - 1) / RPC_SIZE + 1))
+	mds_readpage=`lctl get_param mdc.*.stats | \
+				awk '/^mds_readpage/ {print $2}'`
+	[ $mds_readpage -gt $RPC_NUM ] && \
+		error "large readdir doesn't take effect"
 
 	rm $DIR/d24v -rf
 }
@@ -2614,10 +2636,6 @@ test_42d() {
 }
 run_test 42d "test complete truncate of file with cached dirty data"
 
-page_size() {
-	getconf PAGE_SIZE
-}
-
 test_42e() { # bug22074
 	local TDIR=$DIR/${tdir}e
 	local pagesz=$(page_size)
@@ -3570,7 +3588,7 @@ TEST60_HEAD="test_60 run $RANDOM"
 test_60a() {
         [ ! -f run-llog.sh ] && skip_env "missing subtest run-llog.sh" && return
 	log "$TEST60_HEAD - from kernel mode"
-	sh run-llog.sh
+	do_facet mgs sh run-llog.sh
 }
 run_test 60a "llog sanity tests run from kernel module =========="
 
@@ -4405,9 +4423,41 @@ test_80() { # bug 10718
                 error "elapsed for 1M@1T = $DIFF"
         fi
         true
-    	rm -f $DIR/$tfile
+        rm -f $DIR/$tfile
 }
 run_test 80 "Page eviction is equally fast at high offsets too  ===="
+
+test_81a() { # LU-456
+        # define OBD_FAIL_OST_MAPBLK_ENOSPC    0x228
+        # MUST OR with the OBD_FAIL_ONCE (0x80000000)
+        do_facet ost0 lctl set_param fail_loc=0x80000228
+
+        # write should trigger a retry and success
+        $SETSTRIPE -i 0 -c 1 $DIR/$tfile
+        multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
+        RC=$?
+        if [ $RC -ne 0 ] ; then
+                error "write should success, but failed for $RC"
+        fi
+}
+run_test 81a "OST should retry write when get -ENOSPC ==============="
+
+test_81b() { # LU-456
+        # define OBD_FAIL_OST_MAPBLK_ENOSPC    0x228
+        # Don't OR with the OBD_FAIL_ONCE (0x80000000)
+        do_facet ost0 lctl set_param fail_loc=0x228
+
+        # write should retry several times and return -ENOSPC finally
+        $SETSTRIPE -i 0 -c 1 $DIR/$tfile
+        multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
+        RC=$?
+        ENOSPC=28
+        if [ $RC -ne $ENOSPC ] ; then
+                error "dd should fail for -ENOSPC, but succeed."
+        fi
+}
+run_test 81b "OST should return -ENOSPC when retry still fails ======="
+
 
 test_99a() {
         [ -z "$(which cvs 2>/dev/null)" ] && skip_env "could not find cvs" && \
@@ -8105,6 +8155,21 @@ test_218() {
        rm -rf $DIR/$tfile || error "tmp file removal failed"
 }
 run_test 218 "parallel read and truncate should not deadlock ======================="
+
+test_219() {
+        # write one partial page
+        dd if=/dev/zero of=$DIR/$tfile bs=1024 count=1
+        # set no grant so vvp_io_commit_write will do sync write
+        $LCTL set_param fail_loc=0x411
+        # write a full page at the end of file
+        dd if=/dev/zero of=$DIR/$tfile bs=4096 count=1 seek=1 conv=notrunc
+
+        $LCTL set_param fail_loc=0
+        dd if=/dev/zero of=$DIR/$tfile bs=4096 count=1 seek=3
+        $LCTL set_param fail_loc=0x411
+        dd if=/dev/zero of=$DIR/$tfile bs=1024 count=1 seek=2 conv=notrunc
+}
+run_test 219 "LU-394: Write partial won't cause uncontiguous pages vec at LND"
 
 #
 # tests that do cleanup/setup should be run at the end
