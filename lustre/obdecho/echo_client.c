@@ -1511,7 +1511,6 @@ static int echo_client_kbrw(struct echo_device *ed, int rw, struct obdo *oa,
                             obd_size count, int async,
                             struct obd_trans_info *oti)
 {
-        struct echo_client_obd *ec  = ed->ed_ec;
         struct lov_stripe_md   *lsm = eco->eo_lsm;
         obd_count               npages;
         struct brw_page        *pga;
@@ -1576,13 +1575,8 @@ static int echo_client_kbrw(struct echo_device *ed, int rw, struct obdo *oa,
                                                      oa->o_id, off, pgp->count);
         }
 
-        if (ed->ed_next == NULL) {
-                struct obd_info oinfo = { { { 0 } } };
-                oinfo.oi_oa = oa;
-                oinfo.oi_md = lsm;
-                rc = obd_brw(rw, ec->ec_exp, &oinfo, npages, pga, oti);
-        } else
-                rc = cl_echo_object_brw(eco, rw, offset, pages, npages, async);
+        LASSERT(ed->ed_next != NULL);
+        rc = cl_echo_object_brw(eco, rw, offset, pages, npages, async);
 
  out:
         if (rc != 0 || rw != OBD_BRW_READ)
@@ -1609,7 +1603,8 @@ static int echo_client_kbrw(struct echo_device *ed, int rw, struct obdo *oa,
 static int echo_client_prep_commit(struct obd_export *exp, int rw,
                                    struct obdo *oa, struct echo_object *eco,
                                    obd_off offset, obd_size count,
-                                   obd_size batch, struct obd_trans_info *oti)
+                                   obd_size batch, struct obd_trans_info *oti,
+                                   int async)
 {
         struct lov_stripe_md *lsm = eco->eo_lsm;
         struct obd_ioobj ioo;
@@ -1665,6 +1660,9 @@ static int echo_client_prep_commit(struct obd_export *exp, int rw,
                         if (page == NULL && lnb[i].rc == 0)
                                 continue;
 
+                        if (async)
+                                lnb[i].flags |= OBD_BRW_ASYNC;
+
                         if (oa->o_id == ECHO_PERSISTENT_OBJID ||
                             (oa->o_valid & OBD_MD_FLFLAGS) == 0 ||
                             (oa->o_flags & OBD_FL_DEBUG_CHECK) == 0)
@@ -1709,6 +1707,7 @@ static int echo_client_brw_ioctl(int rw, struct obd_export *exp,
         struct echo_object *eco;
         int rc;
         int async = 1;
+        int test_mode;
         ENTRY;
 
         LASSERT(oa->o_valid & OBD_MD_FLGROUP);
@@ -1719,9 +1718,18 @@ static int echo_client_brw_ioctl(int rw, struct obd_export *exp,
 
         oa->o_valid &= ~OBD_MD_FLHANDLE;
 
-        switch((long)data->ioc_pbuf1) {
-        case 1:
+        /** obdfilter don't supported obd_brw now, simulate via prep_commit */
+        test_mode = (long)data->ioc_pbuf1;
+        if (test_mode == 1)
                 async = 0;
+
+        if (ed->ed_next == NULL && test_mode != 3) {
+                test_mode = 3;
+                data->ioc_plen1 = data->ioc_count;
+        }
+
+        switch(test_mode) {
+        case 1:
                 /* fall through */
         case 2:
                 rc = echo_client_kbrw(ed, rw, oa,
@@ -1732,7 +1740,7 @@ static int echo_client_brw_ioctl(int rw, struct obd_export *exp,
                 rc = echo_client_prep_commit(ec->ec_exp, rw, oa,
                                             eco, data->ioc_offset,
                                             data->ioc_count, data->ioc_plen1,
-                                            &dummy_oti);
+                                            &dummy_oti, async);
                 break;
         default:
                 rc = -EINVAL;
