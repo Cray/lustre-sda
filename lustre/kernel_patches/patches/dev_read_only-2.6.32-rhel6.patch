@@ -193,15 +193,3 @@ Index: linux-2.6.32-131.0.15.el6.x86_64/include/linux/fs.h
  extern int set_blocksize(struct block_device *, int);
  extern int sb_set_blocksize(struct super_block *, int);
  extern int sb_min_blocksize(struct super_block *, int);
-Index: linux+rh+chaos/include/linux/bio.h
-===================================================================
---- linux+rh+chaos.orig/include/linux/bio.h
-+++ linux+rh+chaos/include/linux/bio.h
-@@ -126,6 +126,7 @@ struct bio {
- #define BIO_NULL_MAPPED 9	/* contains invalid user pages */
- #define BIO_FS_INTEGRITY 10	/* fs owns integrity data, not block layer */
- #define BIO_QUIET	11	/* Make BIO Quiet */
-+#define BIO_RDONLY	31	/* device is readonly */
- #define bio_flagged(bio, flag)	((bio)->bi_flags & (1 << (flag)))
- 
- /*
