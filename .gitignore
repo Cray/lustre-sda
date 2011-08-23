@@ -75,5 +75,3 @@ cscope.*
 
 # doxygen files
 doxygen.*
-*.orig
-*.rej
