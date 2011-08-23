@@ -2,7 +2,6 @@
 
 AC_INIT([Lustre ldiskfs], 3.3.0, [https://bugzilla.lustre.org/])
 AC_CONFIG_SRCDIR([lustre-ldiskfs.spec.in])
-ldiskfs_is_ext4=yes
 
 # Don't look for install-sh, etc. in ..
 AC_CONFIG_AUX_DIR([.])

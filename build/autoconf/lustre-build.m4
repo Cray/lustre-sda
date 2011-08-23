@@ -328,44 +328,56 @@ fi
 AC_CONFIG_SUBDIRS(ldiskfs)
 ])
 
-AC_DEFUN([LC_KERNEL_WITH_EXT4],
-[if test -f $LINUX/fs/ext4/ext4.h ; then
-$1
-else
-$2
-fi
-])
+dnl
+dnl LB_HAVE_EXT4_ENABLED
+dnl
+AC_DEFUN([LB_HAVE_EXT4_ENABLED],[dnl
+  AC_MSG_CHECKING([whether to build ldiskfs based on ext4])
+  AC_ARG_ENABLE([ext4],
+    AC_HELP_STRING([--enable-ext4],
+      [enable building of ldiskfs based on ext4]),
+    [enable_ext4_val=$enableval],[enable_ext4_val=""])
 
-#
-# LB_HAVE_EXT4_ENABLED
-#
-AC_DEFUN([LB_HAVE_EXT4_ENABLED],
-[
-if test x$RHEL_KERNEL = xyes; then
-	AC_ARG_ENABLE([ext4],
-		 AC_HELP_STRING([--enable-ext4],
-				[enable building of ldiskfs based on ext4]),
-		[],
-		[
-			if test x$ldiskfs_is_ext4 = xyes; then
-				enable_ext4=yes
-			else
-				enable_ext4=no
-			fi
-		])
-else
-	case $LINUXRELEASE in
-	# ext4 was in 2.6.22-2.6.26 but not stable enough to use
-	2.6.2[[0-9]]*) enable_ext4='no' ;;
-	*)  LC_KERNEL_WITH_EXT4([enable_ext4='yes'],
-				[enable_ext4='no']) ;;
-	esac
-fi
-if test x$enable_ext4 = xyes; then
-	 ac_configure_args="$ac_configure_args --enable-ext4"
-fi
-AC_MSG_CHECKING([whether to build ldiskfs based on ext4])
-AC_MSG_RESULT([$enable_ext4])
+  if ! test -f $LINUX/fs/ext4/ext4.h ; then
+    test "X$enable_ext4_val" = Xyes && \
+      AC_ERROR([ext4 cannot be enabled for version $LINUXRELEASE])
+    enable_ext4=no
+
+  else
+    # decide whether ext4 is forced or allowed to be disabled
+    #
+    if test x$RHEL_KERNEL = xyes; then
+      # For RHEL, kernel version 2.6.19 and later, ext4 must be used.
+      #
+      min_os_ver=`
+        printf '2.6.19\n%s\n' "$LINUXRELEASE" | sort -V | head -1`
+      if test "X$min_os_ver" = "X2.6.19" ; then
+        test "X$enable_ext4_val" = Xno && \
+          AC_ERROR([ext4 cannot be disabled for version $LINUXRELEASE])
+      fi
+
+    else
+      # For non-RHEL, kernel version 2.6.26 and earlier, ext4 must be disabled
+      #
+      min_os_ver=`
+        printf '2.6.27\n%s\n' "$LINUXRELEASE" | sort -V | head -1`
+      if test "X$min_os_ver" != "X2.6.27" ; then
+        test "X$enable_ext4_val" = Xyes && \
+          AC_ERROR([ext4 cannot be enabled for version $LINUXRELEASE])
+      fi
+    fi
+
+    # $enable_ext4_val is now empty or consistent.
+    #
+    if test "X${enable_ext4_val}" = Xno ; then
+      enable_ext4=no
+    else
+      enable_ext4=yes
+      ac_configure_args="$ac_configure_args --enable-ext4"
+    fi
+  fi
+
+  AC_MSG_RESULT([$enable_ext4])
 ])
 
 # Define no libcfs by default.
