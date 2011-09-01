@@ -1277,6 +1277,7 @@ static int mdd_changelog_data_store(const struct lu_env     *env,
 {
         const struct lu_fid *tfid = mdo2fid(mdd_obj);
         struct llog_changelog_rec *rec;
+        struct thandle *th = NULL;
         struct lu_buf *buf;
         int reclen;
         int rc;
@@ -1287,7 +1288,6 @@ static int mdd_changelog_data_store(const struct lu_env     *env,
         if ((mdd->mdd_cl.mc_mask & (1 << type)) == 0)
                 RETURN(0);
 
-        LASSERT(handle != NULL);
         LASSERT(mdd_obj != NULL);
 
         if ((type >= CL_MTIME) && (type <= CL_ATIME) &&
@@ -1313,7 +1313,20 @@ static int mdd_changelog_data_store(const struct lu_env     *env,
         rec->cr.cr_namelen = 0;
         mdd_obj->mod_cltime = cfs_time_current_64();
 
-        rc = mdd_changelog_llog_write(mdd, rec, handle);
+        if (handle == NULL) {
+                /* Used for the close event only for now. */
+                LASSERT(type == CL_CLOSE);
+                LASSERT(mdd_env_info(env)->mti_param.tp_credits != 0);
+                th = mdd_trans_start(env, mdd);
+                if (IS_ERR(th))
+                        GOTO(err, rc = PTR_ERR(th));
+        }
+
+        rc = mdd_changelog_llog_write(mdd, rec, handle ? : th);
+
+        if (th)
+                mdd_trans_stop(env, mdd, rc, th);
+err:
         if (rc < 0) {
                 CERROR("changelog failed: rc=%d op%d t"DFID"\n",
                        rc, type, PFID(tfid));
@@ -2207,18 +2220,16 @@ out:
         mdd_write_unlock(env, mdd_obj);
 
         if (rc == 0 &&
-            (mode & (FMODE_WRITE | MDS_OPEN_APPEND | MDS_OPEN_TRUNC))) {
-                if (handle == 0) {
+            (mode & (FMODE_WRITE | MDS_OPEN_APPEND | MDS_OPEN_TRUNC)) &&
+            !(ma->ma_valid & MA_FLAGS && ma->ma_attr_flags & MDS_RECOV_OPEN)) {
+                if (handle == 0)
                         mdd_txn_param_build(env, mdd, MDD_TXN_CLOSE_OP);
-                        handle = mdd_trans_start(env, mdo2mdd(obj));
-                }
-                if (handle != NULL)
-                        mdd_changelog_data_store(env, mdd, CL_CLOSE, mode,
-                                                 mdd_obj, handle);
+                mdd_changelog_data_store(env, mdd, CL_CLOSE, mode,
+                                         mdd_obj, handle);
         }
 
         if (handle != NULL)
-                mdd_trans_stop(env, mdo2mdd(obj), rc, handle);
+                mdd_trans_stop(env, mdd, rc, handle);
 #ifdef HAVE_QUOTA_SUPPORT
         if (quota_opc)
                 /* Trigger dqrel on the owner of child. If failed,
