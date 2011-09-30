@@ -1062,6 +1062,7 @@ int lr_setxattr(struct lr_info *info)
 int lr_parse_line(void *priv, struct lr_info *info)
 {
         struct changelog_rec *rec;
+        char *name;
 
         if (llapi_changelog_recv(priv, &rec) != 0)
                 return -1;
@@ -1070,7 +1071,17 @@ int lr_parse_line(void *priv, struct lr_info *info)
         info->type = rec->cr_type;
         sprintf(info->tfid, DFID, PFID(&rec->cr_tfid));
         sprintf(info->pfid, DFID, PFID(&rec->cr_pfid));
-        strncpy(info->name, rec->cr_name, rec->cr_namelen);
+        if (rec->cr_flags & CLF_FULLNAME) {
+                name = strrchr(rec->cr_name, '/');
+                if (name == NULL || name[1] == '\0') {
+                        name = rec->cr_name;
+                } else {
+                        name = name + 1;
+                }
+        } else {
+                name = rec->cr_name;
+        }
+        strncpy(info->name, name, rec->cr_namelen);
         info->name[rec->cr_namelen] = '\0';
 
         if (verbose > 1)
