@@ -63,7 +63,7 @@
 
 /* OBD Device Declarations */
 extern struct obd_device *obd_devs[MAX_OBD_DEVICES];
-extern cfs_spinlock_t obd_dev_lock;
+extern cfs_rwlock_t obd_dev_lock;
 
 /* OBD Operations Declarations */
 extern struct obd_device *class_conn2obd(struct lustre_handle *);
@@ -157,9 +157,14 @@ int class_config_parse_llog(struct llog_ctxt *ctxt, char *name,
 int class_config_dump_llog(struct llog_ctxt *ctxt, char *name,
                            struct config_llog_instance *cfg);
 
+enum {
+        CONFIG_T_CONFIG  = 0,
+        CONFIG_T_SPTLRPC = 1,
+        CONFIG_T_MAX     = 2
+};
+
 /* list of active configuration logs  */
 struct config_llog_data {
-        char                       *cld_logname;
         struct ldlm_res_id          cld_resid;
         struct config_llog_instance cld_cfg;
         cfs_list_t                  cld_list_chain;
@@ -167,10 +172,11 @@ struct config_llog_data {
         struct config_llog_data    *cld_sptlrpc;/* depended sptlrpc log */
         struct obd_export          *cld_mgcexp;
         cfs_mutex_t                 cld_lock;
+        int                         cld_type;
         unsigned int                cld_stopping:1, /* we were told to stop
                                                      * watching */
-                                    cld_lostlock:1, /* lock not requeued */
-                                    cld_is_sptlrpc:1;
+                                    cld_lostlock:1; /* lock not requeued */
+        char                        cld_logname[0];
 };
 
 struct lustre_profile {
@@ -2280,6 +2286,7 @@ void class_uuid_unparse(class_uuid_t in, struct obd_uuid *out);
 int lustre_uuid_to_peer(const char *uuid, lnet_nid_t *peer_nid, int index);
 int class_add_uuid(const char *uuid, __u64 nid);
 int class_del_uuid (const char *uuid);
+int class_check_uuid(struct obd_uuid *uuid, __u64 nid);
 void class_init_uuidlist(void);
 void class_exit_uuidlist(void);
 

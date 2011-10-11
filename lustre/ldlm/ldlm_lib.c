@@ -193,6 +193,31 @@ out:
         RETURN(rc);
 }
 
+/**
+ * Find conn uuid by peer nid. @peer is a server nid. This function is used
+ * to find a conn uuid of @imp which can reach @peer.
+ */
+int client_import_find_conn(struct obd_import *imp, lnet_nid_t peer,
+                            struct obd_uuid *uuid)
+{
+        struct obd_import_conn *conn;
+        int rc = -ENOENT;
+        ENTRY;
+
+        cfs_spin_lock(&imp->imp_lock);
+        cfs_list_for_each_entry(conn, &imp->imp_conn_list, oic_item) {
+                /* check if conn uuid does have this peer nid */
+                if (class_check_uuid(&conn->oic_uuid, peer)) {
+                        *uuid = conn->oic_uuid;
+                        rc = 0;
+                        break;
+                }
+        }
+        cfs_spin_unlock(&imp->imp_lock);
+        RETURN(rc);
+}
+EXPORT_SYMBOL(client_import_find_conn);
+
 void client_destroy_import(struct obd_import *imp)
 {
         /* drop security policy instance after all rpc finished/aborted
@@ -685,7 +710,7 @@ int target_handle_connect(struct ptlrpc_request *req)
 
         if (!target || target->obd_stopping || !target->obd_set_up) {
                 LCONSOLE_ERROR_MSG(0x137, "UUID '%s' is not available "
-                                   " for connect (%s)\n", str,
+                                   "for connect (%s)\n", str,
                                    !target ? "no target" :
                                    (target->obd_stopping ? "stopping" :
                                    "not set up"));
@@ -1192,9 +1217,16 @@ static void target_exp_dequeue_req_replay(struct ptlrpc_request *req)
 #ifdef __KERNEL__
 static void target_finish_recovery(struct obd_device *obd)
 {
+        time_t elapsed_time = max_t(time_t, 1, cfs_time_current_sec() -
+                                    obd->obd_recovery_start);
         ENTRY;
-        LCONSOLE_INFO("%s: sending delayed replies to recovered clients\n",
-                      obd->obd_name);
+
+        LCONSOLE_INFO("%s: Recovery over after %d:%.02d, of %d clients "
+                      "%d recovered and %d %s evicted.\n", obd->obd_name,
+                      (int)elapsed_time / 60, (int)elapsed_time % 60,
+                      obd->obd_max_recoverable_clients,
+                      obd->obd_connected_clients, obd->obd_stale_clients,
+                      obd->obd_stale_clients == 1 ? "was" : "were");
 
         ldlm_reprocess_all_ns(obd->obd_namespace);
         cfs_spin_lock(&obd->obd_recovery_task_lock);
@@ -1737,7 +1769,7 @@ static int target_recovery_thread(void *arg)
         env.le_ctx.lc_thread = thread;
         thread->t_data = NULL;
 
-        CERROR("%s: started recovery thread pid %d\n", obd->obd_name,
+        CDEBUG(D_HA, "%s: started recovery thread pid %d\n", obd->obd_name,
                cfs_curproc_pid());
         trd->trd_processing_task = cfs_curproc_pid();
 

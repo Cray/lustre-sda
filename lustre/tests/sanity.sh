@@ -4170,13 +4170,12 @@ set_checksums()
 	return 0
 }
 
-export ORIG_CSUM_TYPE=""
+export ORIG_CSUM_TYPE="`lctl get_param -n osc/*osc-[^mM]*/checksum_type |
+                        sed 's/.*\[\(.*\)\].*/\1/g' | head -n1`"
 CKSUM_TYPES=${CKSUM_TYPES:-"crc32 adler"}
+[ "$ORIG_CSUM_TYPE" = "crc32c" ] && CKSUM_TYPES="$CKSUM_TYPES crc32c"
 set_checksum_type()
 {
-	[ "$ORIG_CSUM_TYPE" ] || \
-		ORIG_CSUM_TYPE=`lctl get_param -n osc/*osc-[^mM]*/checksum_type |
-                                sed 's/.*\[\(.*\)\].*/\1/g' | head -n1`
 	lctl set_param -n osc.*osc-[^mM]*.checksum_type $1
 	log "set checksum type to $1"
 	return 0
@@ -5089,7 +5088,7 @@ test_104a() {
 	OSC=`lctl get_param -n devices | awk '/-osc-/ {print $4}' | head -n 1`
 	lctl --device %$OSC deactivate
 	lfs df || error "lfs df with deactivated OSC failed"
-	lctl --device %$OSC recover
+	lctl --device %$OSC activate
 	lfs df || error "lfs df with reactivated OSC failed"
 	rm -f $DIR/$tfile
 }
