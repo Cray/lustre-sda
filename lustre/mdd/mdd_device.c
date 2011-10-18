@@ -146,7 +146,7 @@ static int changelog_init_cb(struct llog_handle *llh, struct llog_rec_hdr *hdr,
         ENTRY;
 
         LASSERT(llh->lgh_hdr->llh_flags & LLOG_F_IS_PLAIN);
-        LASSERT(rec->cr_hdr.lrh_type == CHANGELOG_VREC);
+        LASSERT(rec->cr_hdr.lrh_type == CHANGELOG_VREC || rec->cr_hdr.lrh_type == CHANGELOG_REC);
 
         CDEBUG(D_INFO,
                "seeing record at index %d/%d/"LPU64" t=%x %.*s in log "LPX64"\n",
