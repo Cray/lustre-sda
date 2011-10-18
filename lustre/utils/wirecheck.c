@@ -1001,13 +1001,13 @@ check_changelog_rec(void)
         CHECK_STRUCT(changelog_rec);
         CHECK_MEMBER(changelog_rec, cr_namelen);
         CHECK_MEMBER(changelog_rec, cr_version);
-        CHECK_MEMBER(changelog_rec, cr_flags);
         CHECK_MEMBER(changelog_rec, cr_type);
         CHECK_MEMBER(changelog_rec, cr_index);
         CHECK_MEMBER(changelog_rec, cr_prev);
         CHECK_MEMBER(changelog_rec, cr_time);
         CHECK_MEMBER(changelog_rec, cr_tfid);
         CHECK_MEMBER(changelog_rec, cr_pfid);
+        CHECK_MEMBER(changelog_rec, cr_flags);
         CHECK_MEMBER(changelog_rec, cr_uid);
         CHECK_MEMBER(changelog_rec, cr_gid);
         CHECK_MEMBER(changelog_rec, cr_clnid);
