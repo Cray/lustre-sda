@@ -716,14 +716,28 @@ static int vvp_io_fault_start(const struct lu_env *env,
         if (kernel_result != 0)
                 return kernel_result;
 
+        if (OBD_FAIL_CHECK(OBD_FAIL_LLITE_FAULT_TRUNC_RACE)) {
+                truncate_inode_pages_range(inode->i_mapping,
+                                         cl_offset(obj, fio->ft_index), offset);
+        }
+
         /* Temporarily lock vmpage to keep cl_page_find() happy. */
         lock_page(cfio->ft_vmpage);
+
         /* Though we have already held a cl_lock upon this page, but
          * it still can be truncated locally. */
-        page = ERR_PTR(-EFAULT);
-        if (likely(cfio->ft_vmpage->mapping != NULL))
-                page = cl_page_find(env, obj, fio->ft_index, cfio->ft_vmpage,
-                                    CPT_CACHEABLE);
+        if (unlikely(cfio->ft_vmpage->mapping == NULL)) {
+                unlock_page(cfio->ft_vmpage);
+
+                CDEBUG(D_PAGE, "llite: fault and truncate race happened!\n");
+
+                /* return +1 to stop cl_io_loop() and ll_fault() will catch
+                 * and retry. */
+                return +1;
+        }
+
+        page = cl_page_find(env, obj, fio->ft_index, cfio->ft_vmpage,
+                            CPT_CACHEABLE);
         unlock_page(cfio->ft_vmpage);
         if (IS_ERR(page)) {
                 page_cache_release(cfio->ft_vmpage);
@@ -778,7 +792,8 @@ static int vvp_io_read_page(const struct lu_env *env,
 
         ENTRY;
 
-        if (sbi->ll_ra_info.ra_max_pages_per_file)
+        if (sbi->ll_ra_info.ra_max_pages_per_file &&
+            sbi->ll_ra_info.ra_max_pages)
                 ras_update(sbi, inode, ras, page->cp_index,
                            cp->cpg_defer_uptodate);
 
@@ -801,7 +816,8 @@ static int vvp_io_read_page(const struct lu_env *env,
          * this will unlock it automatically as part of cl_page_list_disown().
          */
         cl_2queue_add(queue, page);
-        if (sbi->ll_ra_info.ra_max_pages_per_file)
+        if (sbi->ll_ra_info.ra_max_pages_per_file &&
+            sbi->ll_ra_info.ra_max_pages)
                 ll_readahead(env, io, ras,
                              vmpage->mapping, &queue->c2_qin, fd->fd_flags);
 

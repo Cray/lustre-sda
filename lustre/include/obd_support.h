@@ -422,6 +422,9 @@ int obd_alloc_fail(const void *ptr, const char *name, const char *type,
 #define OBD_FAIL_MDS_SYNC_CAPA_SL                   0x1310
 #define OBD_FAIL_SEQ_ALLOC                          0x1311
 
+#define OBD_FAIL_LLITE                              0x1400
+#define OBD_FAIL_LLITE_FAULT_TRUNC_RACE             0x1401
+
 /* Assign references to moved code to reduce code changes */
 #define OBD_FAIL_PRECHECK(id)                   CFS_FAIL_PRECHECK(id)
 #define OBD_FAIL_CHECK(id)                      CFS_FAIL_CHECK(id)
@@ -451,8 +454,6 @@ static inline void obd_fail_write(int id, struct super_block *sb)
 }
 #define OBD_FAIL_WRITE(id, sb) obd_fail_write(id, sb)
 #endif
-
-#define fixme() CDEBUG(D_OTHER, "FIXME\n");
 
 extern cfs_atomic_t libcfs_kmemory;
 

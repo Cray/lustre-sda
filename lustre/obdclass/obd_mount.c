@@ -355,7 +355,7 @@ static int ldd_write(struct lvfs_run_ctxt *mount_ctxt,
 
         push_ctxt(&saved, mount_ctxt, NULL);
 
-        file = filp_open(MOUNT_DATA_FILE, O_RDWR, 0644);
+        file = filp_open(MOUNT_DATA_FILE, O_RDWR|O_SYNC, 0644);
         if (IS_ERR(file)) {
                 rc = PTR_ERR(file);
                 CERROR("cannot open %s: rc = %d\n", MOUNT_DATA_FILE, rc);
@@ -1295,11 +1295,11 @@ out_mgc:
 
                 server_notify_target(sb, obd);
 
-                /* log has been fully processed */
-                obd_notify(obd, NULL, OBD_NOTIFY_CONFIG, (void *)CONFIG_LOG);
-
                 /* calculate recovery timeout, do it after lustre_process_log */
                 server_calc_timeout(lsi, obd);
+
+                /* log has been fully processed */
+                obd_notify(obd, NULL, OBD_NOTIFY_CONFIG, (void *)CONFIG_LOG);
         }
 
         RETURN(rc);
@@ -1916,7 +1916,7 @@ void server_calc_timeout(struct lustre_sb_info *lsi, struct obd_device *obd)
         }
 
         /* we're done */
-        obd->obd_recovery_timeout   = soft;
+        obd->obd_recovery_timeout   = max(obd->obd_recovery_timeout, soft);
         obd->obd_recovery_time_hard = hard;
         obd->obd_recovery_ir_factor = factor;
 }

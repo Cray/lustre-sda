@@ -129,11 +129,12 @@ static int mgs_disconnect(struct obd_export *exp)
 
         LASSERT(exp);
 
+        mgs_fsc_cleanup(exp);
+
         class_export_get(exp);
         mgs_counter_incr(exp, LPROC_MGS_DISCONNECT);
 
         rc = server_disconnect_export(exp);
-
         class_export_put(exp);
         RETURN(rc);
 }
@@ -328,57 +329,89 @@ static int mgs_cleanup(struct obd_device *obd)
         RETURN(0);
 }
 
-/* similar to filter_prepare_destroy */
-int mgs_get_lock(struct obd_device *obd, struct ldlm_res_id *res,
-                 struct lustre_handle *lockh)
-{
-        int rc, flags = 0;
-        ENTRY;
-
-        rc = ldlm_cli_enqueue_local(obd->obd_namespace, res,
-                                    LDLM_PLAIN, NULL, LCK_EX,
-                                    &flags, ldlm_blocking_ast,
-                                    ldlm_completion_ast, NULL,
-                                    NULL, 0, NULL, lockh);
-        if (rc)
-                CERROR("can't take cfg lock for "LPX64"/"LPX64"(%d)\n",
-                       le64_to_cpu(res->name[0]), le64_to_cpu(res->name[1]),
-                       rc);
-
-        RETURN(rc);
-}
-
-int mgs_put_lock(struct lustre_handle *lockh)
+static int mgs_completion_ast_config(struct ldlm_lock *lock, int flags,
+                                     void *cbdata)
 {
         ENTRY;
-        ldlm_lock_decref_and_cancel(lockh, LCK_EX);
-        RETURN(0);
+
+        if (!(flags & (LDLM_FL_BLOCK_WAIT | LDLM_FL_BLOCK_GRANTED |
+                       LDLM_FL_BLOCK_CONV))) {
+                struct fs_db *fsdb = (struct fs_db *)lock->l_ast_data;
+                struct lustre_handle lockh;
+
+                /* clear the bit before lock put */
+                cfs_clear_bit(FSDB_REVOKING_LOCK, &fsdb->fsdb_flags);
+
+                ldlm_lock2handle(lock, &lockh);
+                ldlm_lock_decref_and_cancel(&lockh, LCK_EX);
+        }
+
+        RETURN(ldlm_completion_ast(lock, flags, cbdata));
 }
 
-void mgs_revoke_lock(struct obd_device *obd, struct fs_db *fsdb)
+static int mgs_completion_ast_ir(struct ldlm_lock *lock, int flags,
+                                 void *cbdata)
 {
-        struct lustre_handle lockh;
-        struct ldlm_res_id   res_id;
-        int                  lockrc;
-        int                  bit;
-        int                  rc;
+        ENTRY;
+
+        if (!(flags & (LDLM_FL_BLOCK_WAIT | LDLM_FL_BLOCK_GRANTED |
+                       LDLM_FL_BLOCK_CONV))) {
+                struct fs_db *fsdb = (struct fs_db *)lock->l_ast_data;
+                struct lustre_handle lockh;
+
+                mgs_ir_notify_complete(fsdb);
+
+                ldlm_lock2handle(lock, &lockh);
+                ldlm_lock_decref_and_cancel(&lockh, LCK_EX);
+        }
+
+        RETURN(ldlm_completion_ast(lock, flags, cbdata));
+}
+
+void mgs_revoke_lock(struct obd_device *obd, struct fs_db *fsdb, int type)
+{
+        ldlm_completion_callback cp = NULL;
+        struct lustre_handle     lockh = { 0 };
+        struct ldlm_res_id       res_id;
+        int flags = LDLM_FL_ATOMIC_CB;
+        int rc;
+        ENTRY;
 
         LASSERT(fsdb->fsdb_name[0] != '\0');
-        rc = mgc_fsname2resid(fsdb->fsdb_name, &res_id, CONFIG_T_CONFIG);
+        rc = mgc_fsname2resid(fsdb->fsdb_name, &res_id, type);
         LASSERT(rc == 0);
 
-        bit = FSDB_REVOKING_LOCK;
-        if (!rc && cfs_test_and_set_bit(bit, &fsdb->fsdb_flags) == 0) {
-                lockrc = mgs_get_lock(obd, &res_id, &lockh);
-                /* clear the bit before lock put */
-                cfs_clear_bit(bit, &fsdb->fsdb_flags);
-
-                if (lockrc != ELDLM_OK)
-                        CERROR("lock error %d for fs %s\n",
-                               lockrc, fsdb->fsdb_name);
-                else
-                        mgs_put_lock(&lockh);
+        switch (type) {
+        case CONFIG_T_CONFIG:
+                cp = mgs_completion_ast_config;
+                if (cfs_test_and_set_bit(FSDB_REVOKING_LOCK, &fsdb->fsdb_flags))
+                        rc = -EALREADY;
+                break;
+        case CONFIG_T_RECOVER:
+                cp = mgs_completion_ast_ir;
+        default:
+                break;
         }
+
+        if (!rc) {
+                LASSERT(cp != NULL);
+                rc = ldlm_cli_enqueue_local(obd->obd_namespace, &res_id,
+                                            LDLM_PLAIN, NULL, LCK_EX, &flags,
+                                            ldlm_blocking_ast, cp, NULL,
+                                            fsdb, 0, NULL, &lockh);
+                if (rc != ELDLM_OK) {
+                        CERROR("can't take cfg lock for "LPX64"/"LPX64"(%d)\n",
+                               le64_to_cpu(res_id.name[0]),
+                               le64_to_cpu(res_id.name[1]), rc);
+
+                        if (type == CONFIG_T_CONFIG)
+                                cfs_clear_bit(FSDB_REVOKING_LOCK,
+                                              &fsdb->fsdb_flags);
+                }
+                /* lock has been cancelled in completion_ast. */
+        }
+
+        RETURN_EXIT;
 }
 
 /* rc=0 means ok
@@ -558,7 +591,7 @@ static int mgs_handle_target_reg(struct ptlrpc_request *req)
         }
 
 out:
-        mgs_revoke_lock(obd, fsdb);
+        mgs_revoke_lock(obd, fsdb, CONFIG_T_CONFIG);
 
 out_nolock:
         CDEBUG(D_MGS, "replying with %s, index=%d, rc=%d\n", mti->mti_svname,
@@ -714,6 +747,37 @@ static int mgs_handle_exception(struct ptlrpc_request *req)
         RETURN(0);
 }
 
+static int mgs_handle_fslog_hack(struct ptlrpc_request *req)
+{
+        char *logname;
+        char fsname[16];
+        char *ptr;
+        int rc;
+
+        /* XXX: We suppose that llog at mgs is only used for
+         * fetching file system log */
+        logname = req_capsule_client_get(&req->rq_pill, &RMF_NAME);
+        if (logname == NULL) {
+                CERROR("No logname, is llog on MGS used for something else?\n");
+                return -EINVAL;
+        }
+
+        ptr = strchr(logname, '-');
+        rc = (int)(ptr - logname);
+        if (ptr == NULL || rc >= sizeof(fsname)) {
+                CERROR("Invalid logname received: %s\n", logname);
+                return -EINVAL;
+        }
+
+        strncpy(fsname, logname, rc);
+        fsname[rc] = 0;
+        rc = mgs_fsc_attach(req->rq_export, fsname);
+        if (rc < 0 && rc != -EEXIST)
+                CERROR("add fs client %s returns %d\n", fsname, rc);
+
+        return rc;
+}
+
 /* TODO: handle requests in a similar way as MDT: see mdt_handle_common() */
 int mgs_handle(struct ptlrpc_request *req)
 {
@@ -815,6 +879,8 @@ int mgs_handle(struct ptlrpc_request *req)
                 DEBUG_REQ(D_MGS, req, "llog_init");
                 req_capsule_set(&req->rq_pill, &RQF_LLOG_ORIGIN_HANDLE_CREATE);
                 rc = llog_origin_handle_create(req);
+                if (rc == 0)
+                        (void)mgs_handle_fslog_hack(req);
                 break;
         case LLOG_ORIGIN_HANDLE_NEXT_BLOCK:
                 DEBUG_REQ(D_MGS, req, "llog next block");
@@ -855,10 +921,19 @@ out:
 
 static inline int mgs_init_export(struct obd_export *exp)
 {
+        struct mgs_export_data *data = &exp->u.eu_mgs_data;
+
+        /* init mgs_export_data for fsc */
+        cfs_spin_lock_init(&data->med_lock);
+        CFS_INIT_LIST_HEAD(&data->med_clients);
+
         cfs_spin_lock(&exp->exp_lock);
         exp->exp_connecting = 1;
         cfs_spin_unlock(&exp->exp_lock);
 
+        /* self-export doesn't need client data and ldlm initialization */
+        if (unlikely(exp == exp->exp_obd->obd_self_export))
+                return 0;
         return ldlm_init_export(exp);
 }
 
@@ -868,6 +943,10 @@ static inline int mgs_destroy_export(struct obd_export *exp)
 
         target_destroy_export(exp);
         mgs_client_free(exp);
+
+        if (unlikely(exp == exp->exp_obd->obd_self_export))
+                RETURN(0);
+
         ldlm_destroy_export(exp);
 
         RETURN(0);

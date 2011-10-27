@@ -76,6 +76,27 @@ enum {
  */
 struct fs_db;
 
+/**
+ * maintain fs client nodes of mgs.
+ */
+struct mgs_fsc {
+        struct fs_db      *mfc_fsdb;
+        /**
+         * Where the fs client comes from.
+         */
+        struct obd_export *mfc_export;
+        /**
+         * list of fs clients from the same export,
+         * protected by mgs_export_data->med_lock
+         */
+        cfs_list_t         mfc_export_list;
+        /**
+         * list of fs clients in the same fsdb, protected by fsdb->fsdb_sem
+         */
+        cfs_list_t        mfc_fsdb_list;
+        unsigned          mfc_ir_capable:1;
+};
+
 struct mgs_nidtbl {
         struct fs_db *mn_fsdb;
         struct file  *mn_version_file;
@@ -121,6 +142,9 @@ struct fs_db {
         struct sptlrpc_rule_set   fsdb_srpc_gen;
         struct mgs_tgt_srpc_conf *fsdb_srpc_tgt;
 
+        /* list of fs clients, mgs_fsc. protected by mgs_sem */
+        cfs_list_t           fsdb_clients;
+        int                  fsdb_nonir_clients;
         int                  fsdb_ir_state;
 
         /* Target NIDs Table */
@@ -130,6 +154,7 @@ struct fs_db {
         struct obd_device   *fsdb_obd;
         cfs_waitq_t          fsdb_notify_waitq;
         cfs_completion_t     fsdb_notify_comp;
+        cfs_time_t           fsdb_notify_start;
         cfs_atomic_t         fsdb_notify_phase;
         volatile int         fsdb_notify_async:1,
                              fsdb_notify_stop:1;
@@ -164,15 +189,16 @@ int mgs_pool_cmd(struct obd_device *obd, enum lcfg_command_type cmd,
                  char *poolname, char *fsname, char *ostname);
 
 /* mgs_handler.c */
-void mgs_revoke_lock(struct obd_device *obd, struct fs_db *fsdb);
 int  mgs_get_lock(struct obd_device *obd, struct ldlm_res_id *res,
                   struct lustre_handle *lockh);
 int  mgs_put_lock(struct lustre_handle *lockh);
+void mgs_revoke_lock(struct obd_device *obd, struct fs_db *fsdb, int type);
 
 /* mgs_nids.c */
 int  mgs_ir_update(struct obd_device *obd, struct mgs_target_info *mti);
 int  mgs_ir_init_fs(struct obd_device *obd, struct fs_db *fsdb);
 void mgs_ir_fini_fs(struct obd_device *obd, struct fs_db *fsdb);
+void mgs_ir_notify_complete(struct fs_db *fsdb);
 int  mgs_get_ir_logs(struct ptlrpc_request *req);
 int  lprocfs_wr_ir_state(struct file *file, const char *buffer,
                            unsigned long count, void *data);
@@ -181,6 +207,9 @@ int  lprocfs_wr_ir_timeout(struct file *file, const char *buffer,
                            unsigned long count, void *data);
 int  lprocfs_rd_ir_timeout(char *page, char **start, off_t off, int count,
                            int *eof, void *data);
+void mgs_fsc_cleanup(struct obd_export *exp);
+void mgs_fsc_cleanup_by_fsdb(struct fs_db *fsdb);
+int  mgs_fsc_attach(struct obd_export *exp, char *fsname);
 
 /* mgs_fs.c */
 int mgs_export_stats_init(struct obd_device *obd, struct obd_export *exp,
