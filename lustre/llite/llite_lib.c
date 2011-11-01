@@ -42,7 +42,6 @@
 
 #include <linux/module.h>
 #include <linux/types.h>
-#include <linux/random.h>
 #include <linux/version.h>
 
 #include <lustre_lite.h>
@@ -201,8 +200,11 @@ static struct ll_sb_info *ll_init_sbi(void)
         sbi->ll_flags |= LL_SBI_LLITE_CHECKSUM;
 #endif
 
+        /* default for CRAY is no lru resize */
+#ifndef CRAY_XT3
 #ifdef HAVE_LRU_RESIZE_SUPPORT
         sbi->ll_flags |= LL_SBI_LRU_RESIZE;
+#endif
 #endif
 
         for (i = 0; i <= LL_PROCESS_HIST_MAX; i++) {

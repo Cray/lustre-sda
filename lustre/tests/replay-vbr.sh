@@ -817,13 +817,13 @@ run_test 3c "VBR: permission dependency failure"
 vbr_deactivate_client() {
     local client=$1
     echo "Deactivating client $client";
-    do_node $client "sysctl -w lustre.fail_loc=0x50d"
+    do_node $client "lctl set_param fail_loc=0x50d"
 }
 
 vbr_activate_client() {
     local client=$1
     echo "Activating client $client";
-    do_node $client "sysctl -w lustre.fail_loc=0x0"
+    do_node $client "lctl set_param fail_loc=0x0"
 }
 
 remote_server ()
@@ -1014,9 +1014,9 @@ test_6a() {
 
     facet_failover mds
     # replay only 5 requests
-    do_node $CLIENT2 "sysctl -w lustre.fail_val=5"
+    do_node $CLIENT2 "lctl set_param fail_val=5"
 #define OBD_FAIL_PTLRPC_REPLAY        0x50e
-    do_node $CLIENT2 "sysctl -w lustre.fail_loc=0x2000050e"
+    do_node $CLIENT2 "lctl set_param fail_loc=0x2000050e"
     client_up $CLIENT2
     # vbr_activate_client $CLIENT2
     # need way to know that client stops replays

@@ -51,8 +51,6 @@ enum {
         OBD_STATS_NUM,
 };
 
-extern unsigned int obd_fail_loc;
-extern unsigned int obd_fail_val;
 extern unsigned int obd_debug_peer_on_timeout;
 extern unsigned int obd_dump_on_timeout;
 extern unsigned int obd_dump_on_eviction;
@@ -68,14 +66,26 @@ extern int at_extra;
 extern unsigned int obd_sync_filter;
 extern unsigned int obd_max_dirty_pages;
 extern atomic_t obd_dirty_pages;
-extern cfs_waitq_t obd_race_waitq;
-extern int obd_race_state;
 extern unsigned int obd_alloc_fail_rate;
 
 /* Timeout definitions */
 #define OBD_TIMEOUT_DEFAULT             100
+#ifdef CRAY_XT3
+/*
+ * Ideally, these values should be longer than the LND timeout.  These should
+ * be suitable for both Gemini and Portals.  For Portals, the values are
+ * shorter than the LND timeout, but we can't make them too long.
+ *
+ * For Gemini, a minimum of 70s to handle a gnilnd timeout of 60s. The gnilnd 
+ * timeout can creep up to 65s depending on system load and how often the 
+ * reaper thread runs, so 70s should give us some head room.
+ */
+#define LDLM_TIMEOUT_DEFAULT            70
+#define MDS_LDLM_TIMEOUT_DEFAULT        70
+#else
 #define LDLM_TIMEOUT_DEFAULT            20
 #define MDS_LDLM_TIMEOUT_DEFAULT        6
+#endif /* CRAY_XT3 */
 #ifdef HAVE_DELAYED_RECOVERY
 #define STALE_EXPORT_MAXTIME_DEFAULT    (24*60*60) /**< one day, in seconds */
 #else
@@ -345,88 +355,16 @@ extern unsigned int obd_alloc_fail_rate;
 
 #define OBD_FAIL_GENERAL_ALLOC           0xC00
 
-/* Failure injection control */
-#define OBD_FAIL_MASK_SYS    0x0000FF00
-#define OBD_FAIL_MASK_LOC   (0x000000FF | OBD_FAIL_MASK_SYS)
-#define OBD_FAIL_ONCE        0x80000000
-#define OBD_FAILED           0x40000000
-/* The following flags aren't made to be combined */
-#define OBD_FAIL_SKIP        0x20000000 /* skip N then fail */
-#define OBD_FAIL_SOME        0x10000000 /* fail N times */
-#define OBD_FAIL_RAND        0x08000000 /* fail 1/N of the time */
-#define OBD_FAIL_USR1        0x04000000 /* user flag */
-
-int obd_fail_check(__u32 id);
-#define OBD_FAIL_CHECK(id)                                                   \
-({                                                                           \
-        int _ret_ = 0;                                                       \
-        if (unlikely(obd_fail_loc && (_ret_ = obd_fail_check(id)))) {        \
-                CERROR("*** obd_fail_loc=%x ***\n", id);                     \
-        }                                                                    \
-        _ret_;                                                               \
-})
-
-#define OBD_FAIL_CHECK_QUIET(id)                                             \
-        (unlikely(obd_fail_loc) ? obd_fail_check(id) : 0)
-
-/* deprecated - just use OBD_FAIL_CHECK */
-#define OBD_FAIL_CHECK_ONCE OBD_FAIL_CHECK
-
-#define OBD_FAIL_RETURN(id, ret)                                             \
-do {                                                                         \
-        if (unlikely(obd_fail_loc && obd_fail_check(id))) {                  \
-                CERROR("*** obd_fail_return=%x rc=%d ***\n", id, ret);       \
-                RETURN(ret);                                                 \
-        }                                                                    \
-} while(0)
-
-#define OBD_FAIL_TIMEOUT(id, secs)                                           \
-({      int _ret_ = 0;                                                       \
-        if (unlikely(obd_fail_loc && (_ret_ = obd_fail_check(id)))) {        \
-                CERROR("obd_fail_timeout id %x sleeping for %d secs\n",      \
-                       (id), (secs));                                        \
-                cfs_schedule_timeout(CFS_TASK_UNINT,                         \
-                                    cfs_time_seconds(secs));                 \
-                CERROR("obd_fail_timeout id %x awake\n", (id));              \
-        }                                                                    \
-        _ret_;                                                               \
-})
-
-#define OBD_FAIL_TIMEOUT_MS(id, ms)                                          \
-({      int _ret_ = 0;                                                       \
-        if (unlikely(obd_fail_loc && (_ret_ = obd_fail_check(id)))) {        \
-                CERROR("obd_fail_timeout id %x sleeping for %d ms\n",        \
-                       (id), (ms));                                          \
-                cfs_schedule_timeout(CFS_TASK_UNINT,                         \
-                                     cfs_time_seconds(ms)/1000);             \
-                CERROR("obd_fail_timeout id %x awake\n", (id));              \
-        }                                                                    \
-        _ret_;                                                               \
-})
-
-#ifdef __KERNEL__
-/* The idea here is to synchronise two threads to force a race. The
- * first thread that calls this with a matching fail_loc is put to
- * sleep. The next thread that calls with the same fail_loc wakes up
- * the first and continues. */
-#define OBD_RACE(id)                                                         \
-do {                                                                         \
-        if (unlikely(obd_fail_loc && obd_fail_check(id))) {                  \
-                obd_race_state = 0;                                          \
-                CERROR("obd_race id %x sleeping\n", (id));                   \
-                OBD_SLEEP_ON(obd_race_waitq, obd_race_state != 0);           \
-                CERROR("obd_fail_race id %x awake\n", (id));                 \
-        } else if ((obd_fail_loc & OBD_FAIL_MASK_LOC) ==                     \
-                    ((id) & OBD_FAIL_MASK_LOC)) {                            \
-                CERROR("obd_fail_race id %x waking\n", (id));                \
-                obd_race_state = 1;                                          \
-                wake_up(&obd_race_waitq);                                    \
-        }                                                                    \
-} while(0)
-#else
-/* sigh.  an expedient fix until OBD_RACE is fixed up */
-#define OBD_RACE(foo) do {} while(0)
-#endif
+#define OBD_FAIL_CHECK(id)              CFS_FAIL_CHECK(id)
+#define OBD_FAIL_CHECK_QUIET(id)        CFS_FAIL_CHECK_QUIET(id)
+#define OBD_FAIL_RETURN(id, ret)        CFS_FAIL_RETURN(id, ret)
+#define OBD_FAIL_TIMEOUT(id, secs)      CFS_FAIL_TIMEOUT(id, secs)
+#define OBD_FAIL_TIMEOUT_MS(id, ms)     CFS_FAIL_TIMEOUT_MS(id, ms)
+#define OBD_RACE(id)                    CFS_RACE(id)
+#define OBD_FAIL_ONCE                   CFS_FAIL_ONCE
+#define OBD_FAILED                      CFS_FAILED
+#define obd_fail_val                    cfs_fail_val
+#define obd_fail_loc                    cfs_fail_loc
 
 #define fixme() CDEBUG(D_OTHER, "FIXME\n");
 

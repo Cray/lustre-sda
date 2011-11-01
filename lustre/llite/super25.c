@@ -38,7 +38,6 @@
 
 #include <linux/module.h>
 #include <linux/types.h>
-#include <linux/random.h>
 #include <linux/version.h>
 #include <lustre_lite.h>
 #include <lustre_ha.h>
@@ -139,7 +138,7 @@ static int __init init_lustre_lite(void)
 
         lustre_register_client_process_config(ll_process_config);
 
-        ll_get_random_bytes(seed, sizeof(seed));
+        cfs_get_random_bytes(seed, sizeof(seed));
 
         /* Nodes with small feet have little entropy
          * the NID for this node gives the most entropy in the low bits */
@@ -153,7 +152,7 @@ static int __init init_lustre_lite(void)
         }
 
         do_gettimeofday(&tv);
-        ll_srand(tv.tv_sec ^ seed[0], tv.tv_usec ^ seed[1]);
+        cfs_srand(tv.tv_sec ^ seed[0], tv.tv_usec ^ seed[1]);
 
         return rc;
 }

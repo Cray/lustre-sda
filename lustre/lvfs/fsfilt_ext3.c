@@ -1401,21 +1401,17 @@ out:
 
 static int fsfilt_ext3_setup(struct super_block *sb)
 {
-#if !defined(S_PDIROPS) && (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,6)) && defined(HAVE_QUOTA_SUPPORT)
         struct ext3_sb_info *sbi = EXT3_SB(sb);
-#endif
-#if 0
-        sbi->dx_lock = fsfilt_ext3_dx_lock;
-        sbi->dx_unlock = fsfilt_ext3_dx_unlock;
-#endif
-#ifdef S_PDIROPS
-        CWARN("Enabling PDIROPS\n");
-        set_opt(sbi->s_mount_opt, PDIROPS);
-        sb->s_flags |= S_PDIROPS;
-#endif
+
+        /* lustre already forces data to hit disk before commit,
+         * so we don't need to use the ordered mode. see bug 21406 */
+        clear_opt(sbi->s_mount_opt, ORDERED_DATA);
+        set_opt(sbi->s_mount_opt, WRITEBACK_DATA);
+
         if (!EXT3_HAS_COMPAT_FEATURE(sb, EXT3_FEATURE_COMPAT_DIR_INDEX))
                 CWARN("filesystem doesn't have dir_index feature enabled\n");
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,6)) && defined(HAVE_QUOTA_SUPPORT)
+
+#if defined(HAVE_QUOTA_SUPPORT)
         /* enable journaled quota support */
         /* kfreed in ext3_put_super() */
         sbi->s_qf_names[USRQUOTA] = kstrdup("lquota.user.reserved", GFP_KERNEL);
@@ -1428,9 +1424,7 @@ static int fsfilt_ext3_setup(struct super_block *sb)
                 return -ENOMEM;
         }
         sbi->s_jquota_fmt = QFMT_VFS_V0;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,13))
         set_opt(sbi->s_mount_opt, QUOTA);
-#endif
 #endif
         return 0;
 }

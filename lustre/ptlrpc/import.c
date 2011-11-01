@@ -56,6 +56,7 @@
 struct ptlrpc_connect_async_args {
          __u64 pcaa_peer_committed;
         int pcaa_initial_connect;
+         __u32 pcaa_conn_cnt;
 };
 
 static void __import_set_state(struct obd_import *imp,
@@ -144,7 +145,7 @@ int ptlrpc_set_import_discon(struct obd_import *imp, __u32 conn_cnt)
 
         spin_lock(&imp->imp_lock);
 
-        if (imp->imp_state == LUSTRE_IMP_FULL &&
+        if (imp->imp_state != LUSTRE_IMP_NEW &&
             (conn_cnt == 0 || conn_cnt == imp->imp_conn_cnt)) {
                 char *target_start;
                 int   target_len;
@@ -703,6 +704,7 @@ int ptlrpc_connect_import(struct obd_import *imp, char *new_uuid)
 
         aa->pcaa_peer_committed = committed_before_reconnect;
         aa->pcaa_initial_connect = initial_connect;
+        aa->pcaa_conn_cnt = imp->imp_conn_cnt;
         if (aa->pcaa_initial_connect) {
                 spin_lock(&imp->imp_lock);
                 imp->imp_replayable = 1;
@@ -761,6 +763,11 @@ static int ptlrpc_connect_interpret(struct ptlrpc_request *request,
                 spin_unlock(&imp->imp_lock);
                 RETURN(0);
         }
+
+	if (imp->imp_conn_cnt > aa->pcaa_conn_cnt) {
+	    spin_unlock(&imp->imp_lock);
+	    RETURN(0);
+	}
 
         if (rc) {
                 /* if this reconnect to busy export - not need select new target

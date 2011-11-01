@@ -58,6 +58,9 @@
 #include <linux/signal.h>
 #include <linux/sched.h>
 #include <linux/kthread.h>
+#ifdef HAVE_LINUX_RANDOM_H
+#include <linux/random.h>
+#endif
 
 #include <linux/miscdevice.h>
 #include <libcfs/linux/portals_compat25.h>
@@ -336,6 +339,11 @@ typedef atomic_t cfs_atomic_t;
  */
 
 #define cfs_in_interrupt() in_interrupt()
+
+/*
+ * Random bytes
+ */
+#define cfs_get_random_bytes_prim(buf, nbytes)  get_random_bytes(buf, nbytes)
 
 #else   /* !__KERNEL__ */
 

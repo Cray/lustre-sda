@@ -41,7 +41,6 @@
  */
 #ifdef __KERNEL__
 #include <linux/module.h>
-#include <linux/random.h>
 #else
 #include <liblustre.h>
 #endif
@@ -60,15 +59,13 @@ __u64 obd_alloc;
 __u64 obd_pages;
 #endif
 
-unsigned int obd_fail_val = 0;
-unsigned int obd_fail_loc = 0;
 unsigned int obd_alloc_fail_rate = 0;
 
 int obd_alloc_fail(const void *ptr, const char *name, const char *type,
                    size_t size, const char *file, int line)
 {
         if (ptr == NULL ||
-            (ll_rand() & OBD_ALLOC_FAIL_MASK) < obd_alloc_fail_rate) {
+            (cfs_rand() & OBD_ALLOC_FAIL_MASK) < obd_alloc_fail_rate) {
                 CERROR("%s%salloc of %s ("LPU64" bytes) failed at %s:%d\n",
                        ptr ? "force " :"", type, name, (__u64)size, file,
                        line);
@@ -243,52 +240,4 @@ void lprocfs_counter_sub(struct lprocfs_stats *stats, int idx,
 EXPORT_SYMBOL(lprocfs_counter_sub);
 #endif  /* LPROCFS */
 
-EXPORT_SYMBOL(obd_fail_loc);
 EXPORT_SYMBOL(obd_alloc_fail_rate);
-EXPORT_SYMBOL(obd_fail_val);
-
-int obd_fail_check(__u32 id)
-{
-        static int count = 0;
-        if (likely((obd_fail_loc & OBD_FAIL_MASK_LOC) !=
-                   (id & OBD_FAIL_MASK_LOC)))
-                return 0;
-
-        if ((obd_fail_loc & (OBD_FAILED | OBD_FAIL_ONCE)) ==
-            (OBD_FAILED | OBD_FAIL_ONCE)) {
-                count = 0; /* paranoia */
-                return 0;
-        }
-
-        if (obd_fail_loc & OBD_FAIL_RAND) {
-                if (obd_fail_val < 2)
-                        return 0;
-                if (ll_rand() % obd_fail_val > 0)
-                        return 0;
-        }
-
-        if (obd_fail_loc & OBD_FAIL_SKIP) {
-                count++;
-                if (count < obd_fail_val)
-                        return 0;
-                count = 0;
-        }
-
-        /* Overridden by FAIL_ONCE */
-        if (obd_fail_loc & OBD_FAIL_SOME) {
-                count++;
-                if (count >= obd_fail_val) {
-                        count = 0;
-                        /* Don't fail anymore */
-                        obd_fail_loc |= OBD_FAIL_ONCE;
-                }
-        }
-
-        obd_fail_loc |= OBD_FAILED;
-        /* Handle old checks that OR in this */
-        if (id & OBD_FAIL_ONCE)
-                obd_fail_loc |= OBD_FAIL_ONCE;
-
-        return 1;
-}
-EXPORT_SYMBOL(obd_fail_check);

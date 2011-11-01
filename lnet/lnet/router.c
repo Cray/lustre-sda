@@ -99,6 +99,17 @@ lnet_peers_start_down(void)
         return check_routers_before_use;
 }
 
+/* Notify the upper layer of a change in lnd status.
+ * Must be called with LNET_LOCK held.				*/
+static void lnet_do_ul_notify_locked(lnet_peer_t *lp)
+{
+        lnet_notify_entry_t *entry;
+
+        list_for_each_entry (entry, &the_lnet.ln_notify_cbs, ln_list) {
+                (entry->ln_cb)(lp->lp_ni, lp->lp_nid, lp->lp_alive, lp->lp_last_alive);
+        }
+}
+
 void
 lnet_notify_locked(lnet_peer_t *lp, int notifylnd, int alive, cfs_time_t when)
 {
@@ -122,6 +133,9 @@ lnet_notify_locked(lnet_peer_t *lp, int notifylnd, int alive, cfs_time_t when)
         lp->lp_alive = !(!alive);               /* 1 bit! */
         lp->lp_notify = 1;
         lp->lp_notifylnd |= notifylnd;
+
+        /* Notify upper layer */
+        lnet_do_ul_notify_locked(lp);
 
         CDEBUG(D_NET, "set %s %d\n", libcfs_nid2str(lp->lp_nid), alive);
 }

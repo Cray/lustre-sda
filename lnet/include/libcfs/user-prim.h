@@ -336,6 +336,8 @@ struct cfs_stack_trace {
                 (remainder);            \
         })
 
+#define cfs_get_random_bytes_prim(val, size)     (*val) = 0
+
 /* !__KERNEL__ */
 #endif
 

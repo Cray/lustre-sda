@@ -69,7 +69,16 @@ unsigned int obd_max_dirty_pages = 256;
 unsigned int obd_timeout = OBD_TIMEOUT_DEFAULT;   /* seconds */
 unsigned int ldlm_timeout = LDLM_TIMEOUT_DEFAULT; /* seconds */
 /* Adaptive timeout defs here instead of ptlrpc module for /proc/sys/ access */
+#ifdef CRAY_XT3
+/*
+ * For Gemini, a minimum of 70s to handle a gnilnd timeout of 60s. The gnilnd 
+ * timeout can creep up to 65s depending on system load and how often the 
+ * reaper thread runs, so 70s should give us some head room.
+ */
+unsigned int at_min = 70;
+#else
 unsigned int at_min = 0;
+#endif  /* CRAY_XT3 */
 #ifdef HAVE_AT_SUPPORT
 unsigned int at_max = 600;
 #else
@@ -80,21 +89,6 @@ int at_early_margin = 5;
 int at_extra = 30;
 
 atomic_t obd_dirty_pages;
-cfs_waitq_t obd_race_waitq;
-int obd_race_state;
-
-#ifdef __KERNEL__
-unsigned int obd_print_fail_loc(void)
-{
-        CWARN("obd_fail_loc = %x\n", obd_fail_loc);
-        return obd_fail_loc;
-}
-
-void obd_set_fail_loc(unsigned int fl)
-{
-        obd_fail_loc = fl;
-}
-#endif
 
 static inline void obd_data2conn(struct lustre_handle *conn,
                                  struct obd_ioctl_data *data)
@@ -365,9 +359,6 @@ void *obd_psdev = NULL;
 
 EXPORT_SYMBOL(obd_devs);
 EXPORT_SYMBOL(obd_lvfs_ctxt_cache);
-EXPORT_SYMBOL(obd_print_fail_loc);
-EXPORT_SYMBOL(obd_race_waitq);
-EXPORT_SYMBOL(obd_race_state);
 EXPORT_SYMBOL(obd_debug_peer_on_timeout);
 EXPORT_SYMBOL(obd_dump_on_timeout);
 EXPORT_SYMBOL(obd_dump_on_eviction);
@@ -525,7 +516,6 @@ int init_obdclass(void)
 #endif
 
         spin_lock_init(&obd_types_lock);
-        cfs_waitq_init(&obd_race_waitq);
         obd_zombie_impexp_init();
 #ifdef LPROCFS
         obd_memory = lprocfs_alloc_stats(OBD_STATS_NUM,

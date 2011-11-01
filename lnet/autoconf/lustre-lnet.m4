@@ -965,6 +965,57 @@ AC_SUBST(RALND)
 ])
 
 #
+# LN_CONFIG_GNILND
+#
+# check whether to use the Gemini Network Interface lnd
+#
+AC_DEFUN([LN_CONFIG_GNILND],
+[#### Gemini Network Interface
+AC_MSG_CHECKING([whether to enable GNI])
+AC_ARG_ENABLE([gni],
+	AC_HELP_STRING([--enable-gni],
+			[enable GNI lnd]),
+       [],[enable_gni='no'])
+AC_MSG_RESULT([$enable_gni])
+GNILND=""
+if test x$enable_gni = xyes ; then
+  AC_MSG_CHECKING([if GNI kernel headers are present])
+  # placeholder
+  # GNICPPFLAGS was set in spec file
+  EXTRA_KCFLAGS_save="$EXTRA_KCFLAGS"
+  EXTRA_KCFLAGS="$EXTRA_KCFLAGS $GNICPPFLAGS"
+  LB_LINUX_TRY_COMPILE([
+	#include <linux/types.h>
+	#include <gni_pub.h>
+	#include <krca_lib.h>
+  ],[
+	gni_cdm_handle_t 	*kgni_domain;
+	gni_return_t 		rc;
+	int 			rrc;
+	__u32 			nid = 0, nic_addr;
+
+	rc = gni_cdm_create(0, 1, 1, 0, &kgni_domain);
+
+	rrc = (rc == GNI_RC_SUCCESS) ? 0 : 1;
+
+	rrc += krca_nid_to_nicaddrs(nid, 1, &nic_addr);
+
+	return rrc;
+
+  ],[
+	AC_MSG_RESULT([yes])
+	GNILND="gnilnd"
+  ],[
+	AC_MSG_RESULT([no])
+	AC_MSG_ERROR([can't compile gnilnd with given GNICPPFLAGS: $GNICPPFLAGS])
+  ])
+  EXTRA_KCFLAGS="$EXTRA_KCFLAGS_save"
+fi
+AC_SUBST(GNICPPFLAGS)
+AC_SUBST(GNILND)
+])
+
+#
 # LN_STRUCT_PAGE_LIST
 #
 # 2.6.4 no longer has page->list
@@ -1546,6 +1597,7 @@ LN_CONFIG_VIB
 LN_CONFIG_IIB
 LN_CONFIG_O2IB
 LN_CONFIG_RALND
+LN_CONFIG_GNILND
 LN_CONFIG_PTLLND
 LN_CONFIG_MX
 
@@ -1768,6 +1820,7 @@ AM_CONDITIONAL(BUILD_CIBLND, test x$CIBLND = "xciblnd")
 AM_CONDITIONAL(BUILD_IIBLND, test x$IIBLND = "xiiblnd")
 AM_CONDITIONAL(BUILD_VIBLND, test x$VIBLND = "xviblnd")
 AM_CONDITIONAL(BUILD_RALND, test x$RALND = "xralnd")
+AM_CONDITIONAL(BUILD_GNILND, test x$GNILND = "xgnilnd")
 AM_CONDITIONAL(BUILD_PTLLND, test x$PTLLND = "xptllnd")
 AM_CONDITIONAL(BUILD_UPTLLND, test x$UPTLLND = "xptllnd")
 AM_CONDITIONAL(BUILD_USOCKLND, test x$USOCKLND = "xusocklnd")
@@ -1810,6 +1863,8 @@ lnet/klnds/qswlnd/Makefile
 lnet/klnds/qswlnd/autoMakefile
 lnet/klnds/ralnd/Makefile
 lnet/klnds/ralnd/autoMakefile
+lnet/klnds/gnilnd/Makefile
+lnet/klnds/gnilnd/autoMakefile
 lnet/klnds/socklnd/Makefile
 lnet/klnds/socklnd/autoMakefile
 lnet/klnds/ptllnd/Makefile

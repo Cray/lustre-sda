@@ -854,6 +854,7 @@ static struct mod_paths {
 } mod_paths[] = {
         {"libcfs", "lnet/libcfs"},
         {"lnet", "lnet/lnet"},
+        {"lnet_selftest", "lnet/selftest"},
         {"kciblnd", "lnet/klnds/ciblnd"},
         {"kgmlnd", "lnet/klnds/gmlnd"},
         {"kmxlnd", "lnet/klnds/mxlnd"},
@@ -861,6 +862,7 @@ static struct mod_paths {
         {"ko2iblnd", "lnet/klnds/o2iblnd"},
         {"kopeniblnd", "lnet/klnds/openiblnd"},
         {"kptllnd", "lnet/klnds/ptllnd"},
+        {"kgnilnd", "lnet/klnds/gnilnd"},
         {"kqswlnd", "lnet/klnds/qswlnd"},
         {"kralnd", "lnet/klnds/ralnd"},
         {"ksocklnd", "lnet/klnds/socklnd"},

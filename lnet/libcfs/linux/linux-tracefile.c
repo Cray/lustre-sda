@@ -251,22 +251,48 @@ set_ptldebug_header(struct ptldebug_header *header, int subsys, int mask,
 	return;
 }
 
+char *
+dbghdr_to_err_string(struct ptldebug_header *hdr)
+{
+        switch (hdr->ph_subsys) {
+
+                case S_LND:
+                case S_LNET:
+                        return "LNetError";
+                default:
+                        return "LustreError";
+        }
+}
+
+char *
+dbghdr_to_info_string(struct ptldebug_header *hdr)
+{
+        switch (hdr->ph_subsys) {
+
+                case S_LND:
+                case S_LNET:
+                        return "LNet";
+                default:
+                        return "Lustre";
+        }
+}
+
 void print_to_console(struct ptldebug_header *hdr, int mask, const char *buf,
 			     int len, const char *file, const char *fn)
 {
 	char *prefix = "Lustre", *ptype = NULL;
 
 	if ((mask & D_EMERG) != 0) {
-		prefix = "LustreError";
+		prefix = dbghdr_to_err_string(hdr);
 		ptype = KERN_EMERG;
 	} else if ((mask & D_ERROR) != 0) {
-		prefix = "LustreError";
+		prefix = dbghdr_to_err_string(hdr);
 		ptype = KERN_ERR;
 	} else if ((mask & D_WARNING) != 0) {
-		prefix = "Lustre";
+		prefix = dbghdr_to_info_string(hdr);
 		ptype = KERN_WARNING;
 	} else if ((mask & (D_CONSOLE | libcfs_printk)) != 0) {
-		prefix = "Lustre";
+		prefix = dbghdr_to_info_string(hdr);
 		ptype = KERN_INFO;
 	}
 

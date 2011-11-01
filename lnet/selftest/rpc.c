@@ -190,7 +190,10 @@ srpc_init_server_rpc (srpc_server_rpc_t *rpc,
                       srpc_service_t *sv, srpc_buffer_t *buffer)
 {
         memset(rpc, 0, sizeof(*rpc));
-        swi_init_workitem(&rpc->srpc_wi, rpc, srpc_handle_rpc);
+        swi_init_workitem(&rpc->srpc_wi, rpc, srpc_handle_rpc,
+                          sv->sv_id <= SRPC_FRAMEWORK_SERVICE_MAX_ID ?
+                          CFS_WI_SCHED_SERIAL :
+                          swi_sched_from_nid(buffer->buf_peer.nid));
 
         rpc->srpc_ev.ev_fired = 1; /* no event expected now */
 
@@ -581,13 +584,7 @@ free:
 inline void
 srpc_schedule_server_rpc (srpc_server_rpc_t *rpc)
 {
-        srpc_service_t *sv = rpc->srpc_service;
-
-        if (sv->sv_id > SRPC_FRAMEWORK_SERVICE_MAX_ID)
-                swi_schedule_workitem(&rpc->srpc_wi);
-        else    /* framework RPCs are handled one by one */
-                swi_schedule_serial_workitem(&rpc->srpc_wi);
-
+        swi_schedule(&rpc->srpc_wi);
         return;
 }
 
@@ -796,7 +793,7 @@ srpc_server_rpc_done (srpc_server_rpc_t *rpc, int status)
          * Cancel pending schedules and prevent future schedule attempts:
          */
         LASSERT (rpc->srpc_ev.ev_fired);
-        swi_kill_workitem(&rpc->srpc_wi);
+        swi_exit(&rpc->srpc_wi);
 
         if (!sv->sv_shuttingdown && !list_empty(&sv->sv_blocked_msgq)) {
                 buffer = list_entry(sv->sv_blocked_msgq.next,
@@ -1019,7 +1016,7 @@ srpc_client_rpc_done (srpc_client_rpc_t *rpc, int status)
          * Cancel pending schedules and prevent future schedule attempts:
          */
         LASSERT (!srpc_event_pending(rpc));
-        swi_kill_workitem(wi);
+        swi_exit(wi);
 
         spin_unlock(&rpc->crpc_lock);
 
@@ -1182,7 +1179,7 @@ srpc_abort_rpc (srpc_client_rpc_t *rpc, int why)
 
         rpc->crpc_aborted = 1;
         rpc->crpc_status  = why;
-        swi_schedule_workitem(&rpc->crpc_wi);
+        swi_schedule(&rpc->crpc_wi);
         return;
 }
 
@@ -1199,7 +1196,7 @@ srpc_post_rpc (srpc_client_rpc_t *rpc)
                 rpc->crpc_timeout);
 
         srpc_add_client_rpc_timer(rpc);
-        swi_schedule_workitem(&rpc->crpc_wi);
+        swi_schedule(&rpc->crpc_wi);
         return;
 }
 
@@ -1301,7 +1298,7 @@ srpc_lnet_ev_handler (lnet_event_t *ev)
                 rpcev->ev_fired  = 1;
                 rpcev->ev_status = (ev->type == LNET_EVENT_UNLINK) ?
                                                 -EINTR : ev->status;
-                swi_schedule_workitem(&crpc->crpc_wi);
+                swi_schedule(&crpc->crpc_wi);
 
                 spin_unlock(&crpc->crpc_lock);
                 break;

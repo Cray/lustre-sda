@@ -69,7 +69,6 @@
 #include <linux/list.h>
 #include <linux/kmod.h>
 #include <linux/sysctl.h>
-#include <linux/random.h>
 #include <linux/utsname.h>
 #include <linux/jiffies.h>      /* msecs_to_jiffies */
 #include <asm/semaphore.h>

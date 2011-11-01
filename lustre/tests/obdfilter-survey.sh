@@ -56,25 +56,30 @@ obdflter_survey_targets () {
 
 	case $case in
 		disk)    targets=$(get_targets);;
-		netdisk) targets=$(get_targets);;
-		network) targets="$(osts_nodes)";;
-		*) error "unknown obdflter-survey case!" ;;
+		netdisk) targets="";;
+		# use ost1 host as a default target for case=network
+		network) targets=$(facet_host ost1);;
+		*) error "unknown obdfilter-survey case!" ;;
 	esac
 	echo $targets
 }
 
 obdflter_survey_run () {
 	local case=$1
+	local targets=${2:-$(obdflter_survey_targets $case)}
+	local rc=0
 
 	rm -f ${TMP}/obdfilter_survey*
 
-	local targets=$(obdflter_survey_targets $case)
 	local cmd="NETTYPE=$NETTYPE thrlo=$thrlo nobjhi=$nobjhi thrhi=$thrhi size=$size case=$case rslt_loc=${TMP} targets=\"$targets\" $OBDSURVEY"
 	echo + $cmd
 	eval $cmd
+	rc=$?
 
 	cat ${TMP}/obdfilter_survey*
+	return $rc
 }
+
 test_1a () {
 	obdflter_survey_run disk
 }
@@ -185,9 +190,21 @@ test_3a () {
 	# Start lctl and check for the device list. The device list must be empty.
 	cleanupall
 
-	obdflter_survey_run network
-
+	# targets for case=network should contain only one entry, name or server ip:
+	# case 2 (network):
+	#   $ nobjhi=2 thrhi=2 size=1024 targets="<name/ip_of_server>" case=network sh obdfilter-survey
+	#   where, targets is name or ip address of system, which you want to
+	#   set as server.
+ 
+	# So we run this test on each oss server separatelly
+	local rc=0
+	local oss
+	for oss in $(osts_nodes); do
+		obdflter_survey_run network $oss
+		rc=$((rc+$?))
+	done
 	setupall
+	return $rc
 }
 run_test 3a "Network survey"
 

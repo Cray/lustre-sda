@@ -112,11 +112,6 @@ typedef struct {
 #else
 # if (LNET_MAX_PAYLOAD < LNET_MTU)
 #  error "LNET_MAX_PAYLOAD too small - error in configure --with-max-payload-mb"
-# elif defined(__KERNEL__)
-#  if (LNET_MAX_PAYLOAD > (PAGE_SIZE * LNET_MAX_IOV))
-/*  PAGE_SIZE is a constant: check with cpp! */
-#   error "LNET_MAX_PAYLOAD too large - error in configure --with-max-payload-mb"
-#  endif
 # endif
 #endif
 

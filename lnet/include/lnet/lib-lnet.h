@@ -348,13 +348,12 @@ lnet_msg_alloc(void)
 
         LIBCFS_ALLOC(msg, sizeof(*msg));
 
-        if (msg != NULL) {
-                /* NULL pointers, clear flags etc */
-                memset (msg, 0, sizeof (*msg));
+        /* no need to zero, LIBCFS_ALLOC does for us */
+
 #ifdef CRAY_XT3
+        if (msg != NULL)
                 msg->msg_ev.uid = LNET_UID_ANY;
 #endif
-        }
         return (msg);
 }
 
@@ -753,6 +752,20 @@ void lnet_md_deconstruct(lnet_libmd_t *lmd, lnet_md_t *umd);
 void lnet_register_lnd(lnd_t *lnd);
 void lnet_unregister_lnd(lnd_t *lnd);
 int lnet_set_ip_niaddr (lnet_ni_t *ni);
+
+/*
+ * Register a function that will be called each time an lnd reports that
+ * a directly-connected peer has transitioned down or up.
+ * Redundant register attempts will result in -EEXIST.
+ */
+int LNetRegisterNotifyCallback(lnet_notify_callback cb);
+
+/*
+ * Deregister a function that was successfully registered via
+ * lnet_register_notify_callback().  Attempts to deregister an unknown
+ * function will result in -ENOENT.
+ */
+int LNetUnregisterNotifyCallback(lnet_notify_callback cb);
 
 #ifdef __KERNEL__
 int lnet_connect(cfs_socket_t **sockp, lnet_nid_t peer_nid,

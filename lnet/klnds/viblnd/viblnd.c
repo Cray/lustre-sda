@@ -1019,7 +1019,7 @@ kibnal_create_conn (cm_cep_handle_t cep)
         }
         memset (conn->ibc_connvars, 0, sizeof(*conn->ibc_connvars));
         /* Random seed for QP sequence number */
-        get_random_bytes(&conn->ibc_connvars->cv_rxpsn,
+        cfs_get_random_bytes(&conn->ibc_connvars->cv_rxpsn,
                          sizeof(conn->ibc_connvars->cv_rxpsn));
 
         LIBCFS_ALLOC(conn->ibc_rxs, IBNAL_RX_MSGS * sizeof (kib_rx_t));

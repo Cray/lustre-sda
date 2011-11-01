@@ -1408,7 +1408,7 @@ struct dentry *filter_fid2dentry(struct obd_device *obd,
             !obd->u.filter.fo_destroy_in_progress) {
                 /* don't fail lookups for orphan recovery, it causes
                  * later LBUGs when objects still exist during precreate */
-                CDEBUG(D_INFO, "*** obd_fail_loc=%x ***\n",OBD_FAIL_OST_ENOENT);
+                CDEBUG(D_INFO, "*** cfs_fail_loc=%x ***\n",OBD_FAIL_OST_ENOENT);
                 RETURN(ERR_PTR(-ENOENT));
         }
 
@@ -1969,7 +1969,7 @@ int filter_common_setup(struct obd_device *obd, obd_count len, void *buf,
         filter->fo_readcache_max_filesize = FILTER_MAX_CACHE_SIZE;
         filter->fo_fmd_max_num = FILTER_FMD_MAX_NUM_DEFAULT;
         filter->fo_fmd_max_age = FILTER_FMD_MAX_AGE_DEFAULT;
-        filter->fo_syncjournal = 1; /* Sync journals on i/o by default b=19128 */
+        filter->fo_syncjournal = 0; /* Don't sync journals on i/o by default */
         filter_slc_set(filter); /* initialize sync on lock cancel */
 
         rc = filter_prep(obd);
@@ -2018,7 +2018,7 @@ int filter_common_setup(struct obd_device *obd, obd_count len, void *buf,
         }
 
         label = fsfilt_get_label(obd, obd->u.obt.obt_sb);
-        LCONSOLE_INFO("%s: Now serving %s %s%s with recovery %s\n",
+        LCONSOLE_WARN("%s: Now serving %s %s%s with recovery %s\n",
                       obd->obd_name, label ?: str, lmi ? "on " : "",
                       lmi ? s2lsi(lmi->lmi_sb)->lsi_lmd->lmd_dev : "",
                       obd->obd_replayable ? "enabled" : "disabled");
@@ -3270,11 +3270,11 @@ static int filter_statfs(struct obd_device *obd, struct obd_statfs *osfs,
                 struct lr_server_data *lsd = filter->fo_fsd;
                 int index = le32_to_cpu(lsd->lsd_ost_index);
 
-                if (obd_fail_val == -1 ||
-                    index == obd_fail_val)
+                if (cfs_fail_val == -1 ||
+                    index == cfs_fail_val)
                         osfs->os_bfree = osfs->os_bavail = 2;
-                else if (obd_fail_loc & OBD_FAIL_ONCE)
-                        obd_fail_loc &= ~OBD_FAILED; /* reset flag */
+                else if (cfs_fail_loc & OBD_FAIL_ONCE)
+                        cfs_fail_loc &= ~OBD_FAILED; /* reset flag */
         }
 
         /* set EROFS to state field if FS is mounted as RDONLY. The goal is to

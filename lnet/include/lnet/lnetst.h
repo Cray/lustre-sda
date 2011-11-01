@@ -475,6 +475,7 @@ typedef struct {
         __u32 zombie_sessions;
         __u32 brw_errors;
         __u32 ping_errors;
+        __u32 running;
 } WIRE_ATTR sfw_counters_t;
 
 #endif

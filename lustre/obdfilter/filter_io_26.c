@@ -171,7 +171,12 @@ static int dio_complete_routine(struct bio *bio, unsigned int done, int error)
         }
 
         /* the check is outside of the cycle for performance reason -bzzz */
-        if (!test_bit(BIO_RW, &bio->bi_rw)) {
+#ifdef CONFIG_LUSTRE_PATCH	/* hack to recognize SLES11SP2 */
+        if (!(bio->bi_rw & REQ_WRITE))
+#else
+        if (!test_bit(BIO_RW, &bio->bi_rw))
+#endif
+					    {
                 bio_for_each_segment(bvl, bio, i) {
                         if (likely(error == 0))
                                 SetPageUptodate(bvl->bv_page);
@@ -373,6 +378,20 @@ int filter_do_bio(struct obd_export *exp, struct inode *inode,
                                        bdev_get_queue(bio->bi_bdev);
 
                                 /* Dang! I have to fragment this I/O */
+#ifdef CONFIG_LUSTRE_PATCH	/* hack to recognize SLES11SP2 */
+                                CDEBUG(D_INODE, "bio++ sz %d vcnt %d(%d) "
+                                       "sectors %d(%d) psg %d(%d) hsg %d(%d) "
+                                       "sector "LPU64" next "LPU64"\n",
+                                       bio->bi_size,
+                                       bio->bi_vcnt, bio->bi_max_vecs,
+                                       bio->bi_size >> 9, queue_max_sectors(q),
+                                       bio_phys_segments(q, bio),
+                                       queue_max_segments(q),
+                                       bio_hw_segments(q, bio),
+                                       queue_max_segments(q),
+                                       (u64)bio->bi_sector,
+                                       (u64)sector);
+#else
                                 CDEBUG(D_INODE, "bio++ sz %d vcnt %d(%d) "
                                        "sectors %d(%d) psg %d(%d) max hsg %d "
                                        "sector "LPU64" next "LPU64"\n",
@@ -384,6 +403,7 @@ int filter_do_bio(struct obd_export *exp, struct inode *inode,
                                        queue_max_hw_segments(q),
                                        (u64)bio->bi_sector,
                                        (u64)sector);
+#endif
 
                                 record_start_io(iobuf, rw, bio->bi_size, exp);
                                 rc = fsfilt_send_bio(rw, obd, inode, bio);
@@ -594,6 +614,7 @@ int filter_commitrw_write(struct obd_export *exp, struct obdo *oa,
         int quota_pending[2] = {0, 0}, quota_pages = 0;
         unsigned int qcids[MAXQUOTAS] = {oa->o_uid, oa->o_gid};
         int sync_journal_commit = obd->u.filter.fo_syncjournal;
+        int clear_cache = 0;
         ENTRY;
 
         LASSERT(oti != NULL);
@@ -662,9 +683,13 @@ int filter_commitrw_write(struct obd_export *exp, struct obdo *oa,
                     OBD_BRW_FROM_GRANT)
                         iobuf->dr_ignore_quota = 1;
 
-                if (!(lnb->flags & OBD_BRW_ASYNC)) {
+                /* This is a direct i/o request, don't cache anything at
+                 * the application's request */
+                if (lnb->flags & OBD_BRW_SYNC)
+                        clear_cache = 1;
+
+                if (!(lnb->flags & OBD_BRW_ASYNC))
                         sync_journal_commit = 1;
-                }
         }
 
         /* we try to get enough quota to write here, and let ldiskfs
@@ -821,7 +846,7 @@ cleanup:
         }
 
         if (inode) {
-                if (fo->fo_writethrough_cache == 0 ||
+                if (fo->fo_writethrough_cache == 0 || clear_cache ||
                     i_size_read(inode) > fo->fo_readcache_max_filesize)
                         filter_release_cache(obd, obj, nb, inode);
                 up_read(&inode->i_alloc_sem);

@@ -792,4 +792,22 @@ int lprocfs_wr_ping(struct file *file, const char *buffer,
 }
 EXPORT_SYMBOL(lprocfs_wr_ping);
 
+int lprocfs_wr_reconnect(struct file *file, const char *buffer,
+                            unsigned long count, void *data)
+{
+        struct obd_device *obd = data;
+        char tmpbuf[sizeof(struct obd_uuid)];
+
+        if (count >= sizeof (tmpbuf))
+                return -EINVAL;
+
+        memcpy(tmpbuf, buffer, count);
+        tmpbuf[count] = 0;
+
+        ptlrpc_recover_import(obd->u.cli.cl_import, tmpbuf);
+
+        return count;
+}
+EXPORT_SYMBOL(lprocfs_wr_reconnect);
+
 #endif /* LPROCFS */

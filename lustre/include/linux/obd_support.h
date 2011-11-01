@@ -181,9 +181,6 @@ static inline cksum_type_t cksum_type_unpack(obd_flag o_flags)
         }                                                                    \
 }
 
-#define OBD_SLEEP_ON(wq, state)  wait_event_interruptible(wq, state)
-
-
 #else /* !__KERNEL__ */
 # define LTIME_S(time) (time)
 /* for obd_class.h */

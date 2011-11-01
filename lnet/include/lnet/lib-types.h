@@ -159,6 +159,7 @@ typedef struct {
 #define LNET_PROTO_VIB_MAGIC                LNET_PROTO_IB_MAGIC
 #define LNET_PROTO_RA_MAGIC                 0x0be91b92
 #define LNET_PROTO_QSW_MAGIC                0x0be91b93
+#define LNET_PROTO_GNI_MAGIC                0xb00fbabe /* ask Kim */
 #define LNET_PROTO_TCP_MAGIC                0xeebc0ded
 #define LNET_PROTO_PTL_MAGIC                0x50746C4E /* 'PtlN' unique magic */
 #define LNET_PROTO_GM_MAGIC                 0x6d797269 /* 'myri'! */
@@ -571,6 +572,8 @@ typedef struct
         cfs_waitq_t        ln_waitq;
         struct semaphore   ln_api_mutex;
         struct semaphore   ln_lnd_mutex;
+
+        struct list_head   ln_notify_cbs;		/* notify callbacks */
 #else
 # ifndef HAVE_LIBPTHREAD
         int                ln_lock;
@@ -663,5 +666,26 @@ typedef struct
         int                ln_server_mode_flag;
 #endif        
 } lnet_t;
+
+/* Function that will be called each time an lnd reports (by calling lnd_notify()) 
+ * that its connection to a peer has gone up or down.  
+ * 
+ * Arguments are identical to those of lnet_notify():
+ * 
+ * 	ni 	Identifies LNET instance.
+ * 	nid	Identifies the peer.
+ * 	alive	Non-zero if the connection to the peer has come up,
+ * 		zero if the connection has gone down.
+ * 	when	Timestamp of the transition, in jiffies.
+ * 
+ * LNET must not be reentered via this function--deadlock will occur,
+ * since the LNET global lock is held over the callback.   		*/
+typedef void (*lnet_notify_callback)(struct lnet_ni *ni, lnet_nid_t nid, int alive, cfs_time_t when);
+
+/* List entries to remember callbacks registered by upper layers. */
+typedef struct lnet_notify_entry {
+    	struct list_head ln_list;		/* list of all callbacks */
+    	lnet_notify_callback ln_cb;		/* the callback */
+} lnet_notify_entry_t;
 
 #endif

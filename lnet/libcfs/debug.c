@@ -68,7 +68,7 @@ CFS_MODULE_PARM(libcfs_debug_mb, "i", uint, 0644,
                 "Total debug buffer size.");
 EXPORT_SYMBOL(libcfs_debug_mb);
 
-unsigned int libcfs_printk = (D_CANTMASK);
+unsigned int libcfs_printk = (D_CANTMASK | D_NETERROR);
 CFS_MODULE_PARM(libcfs_printk, "i", uint, 0644,
                 "Lustre kernel debug console mask");
 EXPORT_SYMBOL(libcfs_printk);
@@ -108,7 +108,11 @@ EXPORT_SYMBOL(libcfs_catastrophe);
 unsigned int libcfs_watchdog_ratelimit = 300;
 EXPORT_SYMBOL(libcfs_watchdog_ratelimit);
 
+#ifdef CRAY_XT3
+unsigned int libcfs_panic_on_lbug = 1;
+#else /* CRAY_XT3 */
 unsigned int libcfs_panic_on_lbug = 0;
+#endif /* CRAY_XT3 */
 CFS_MODULE_PARM(libcfs_panic_on_lbug, "i", uint, 0644,
                 "Lustre kernel panic on LBUG");
 EXPORT_SYMBOL(libcfs_panic_on_lbug);

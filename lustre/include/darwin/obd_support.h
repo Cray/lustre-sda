@@ -62,8 +62,6 @@ static inline __u32 crc32_le(__u32 crc, unsigned char const *p, size_t len)
         return crc;
 }
 
-#define OBD_SLEEP_ON(wq)        sleep_on(wq)
-
 /* for obd_class.h */
 # ifndef ERR_PTR
 #  define ERR_PTR(a) ((void *)(a))

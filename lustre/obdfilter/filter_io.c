@@ -921,6 +921,7 @@ static int filter_commitrw_read(struct obd_export *exp, struct obdo *oa,
         struct ldlm_resource *resource = NULL;
         struct ldlm_namespace *ns = exp->exp_obd->obd_namespace;
         struct niobuf_local *lnb;
+        int clear_cache = 0;
         int i;
         ENTRY;
 
@@ -944,9 +945,13 @@ static int filter_commitrw_read(struct obd_export *exp, struct obdo *oa,
                         page_cache_release(lnb->page);
                         lnb->page = NULL;
                 }
+                /* This is a direct i/o request, don't cache anything at
+                 * the application's request */
+                if (lnb->flags & OBD_BRW_SYNC)
+                        clear_cache = 1;
         }
 
-        if (inode && (fo->fo_read_cache == 0 ||
+        if (inode && (fo->fo_read_cache == 0 || clear_cache ||
                       i_size_read(inode) > fo->fo_readcache_max_filesize))
                 filter_release_cache(exp->exp_obd, obj, rnb, inode);
 

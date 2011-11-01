@@ -42,7 +42,8 @@ DIST_SUBDIRS := linux darwin
 
 if LIBLUSTRE
 noinst_LIBRARIES= libcfs.a
-libcfs_a_SOURCES= debug.c user-prim.c user-lock.c user-tcpip.c user-bitops.c
+libcfs_a_SOURCES= debug.c prng.c user-prim.c user-lock.c user-tcpip.c \
+                  user-bitops.c
 libcfs_a_CPPFLAGS = $(LLCPPFLAGS)
 libcfs_a_CFLAGS = $(LLCFLAGS)
 endif
@@ -61,7 +62,7 @@ nodist_libcfs_SOURCES := darwin/darwin-sync.c darwin/darwin-mem.c	\
 	darwin/darwin-tcpip.c darwin/darwin-utils.c 			\
 	darwin/darwin-debug.c darwin/darwin-proc.c 			\
 	darwin/darwin-tracefile.c darwin/darwin-module.c 		\
-	debug.c module.c tracefile.c nidstrings.c watchdog.c
+	debug.c module.c tracefile.c nidstrings.c watchdog.c prng.c fail.c
 
 libcfs_CFLAGS := $(EXTRA_KCFLAGS)
 libcfs_LDFLAGS := $(EXTRA_KLDFLAGS)

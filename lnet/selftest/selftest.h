@@ -121,21 +121,26 @@ struct sfw_test_instance;
  * When wi_action returns non-zero, it means the workitem has either been
  * freed or reused and workitem scheduler won't touch it any more.
  */
+#define CFS_WI_SCHED_SERIAL    (-1)
+
 typedef int (*swi_action_t) (struct swi_workitem *);
 typedef struct swi_workitem {
         struct list_head wi_list;        /* chain on runq */
         int              wi_state;
         swi_action_t     wi_action;
         void            *wi_data;
+        int              wi_sched_id;
         unsigned int     wi_running:1;
         unsigned int     wi_scheduled:1;
 } swi_workitem_t;
 
 static inline void
-swi_init_workitem (swi_workitem_t *wi, void *data, swi_action_t action)
+swi_init_workitem (swi_workitem_t *wi, void *data,
+                   swi_action_t action, int sched_id)
 {
         CFS_INIT_LIST_HEAD(&wi->wi_list);
 
+        wi->wi_sched_id  = sched_id;
         wi->wi_running   = 0;
         wi->wi_scheduled = 0;
         wi->wi_data      = data;
@@ -363,6 +368,7 @@ typedef struct {
         atomic_t          sn_refcount;
         atomic_t          sn_brw_errors;
         atomic_t          sn_ping_errors;
+        cfs_time_t        sn_started;
 } sfw_session_t;
 
 #define sfw_sid_equal(sid0, sid1)     ((sid0).ses_nid == (sid1).ses_nid && \
@@ -471,9 +477,8 @@ void srpc_service_remove_buffers(srpc_service_t *sv, int nbuffer);
 void srpc_get_counters(srpc_counters_t *cnt);
 void srpc_set_counters(const srpc_counters_t *cnt);
 
-void swi_kill_workitem(swi_workitem_t *wi);
-void swi_schedule_workitem(swi_workitem_t *wi);
-void swi_schedule_serial_workitem(swi_workitem_t *wi);
+void swi_exit(swi_workitem_t *wi);
+void swi_schedule(swi_workitem_t *wi);
 int swi_startup(void);
 int sfw_startup(void);
 int srpc_startup(void);
@@ -500,6 +505,15 @@ srpc_destroy_client_rpc (srpc_client_rpc_t *rpc)
         return;
 }
 
+#define SWI_GOLDEN_RATIO_PRIME_64       0x9e37fffffffc0001ULL
+#define SWI_SCHED_MASK                ((1U << 16) - 1)
+
+static inline unsigned
+swi_sched_from_nid(lnet_nid_t nid)
+{
+        return (unsigned)(nid * SWI_GOLDEN_RATIO_PRIME_64) & SWI_SCHED_MASK;
+}
+
 static inline void
 srpc_init_client_rpc (srpc_client_rpc_t *rpc, lnet_process_id_t peer,
                       int service, int nbulkiov, int bulklen,
@@ -512,7 +526,8 @@ srpc_init_client_rpc (srpc_client_rpc_t *rpc, lnet_process_id_t peer,
                                 crpc_bulk.bk_iovs[nbulkiov]));
 
         CFS_INIT_LIST_HEAD(&rpc->crpc_list);
-        swi_init_workitem(&rpc->crpc_wi, rpc, srpc_send_rpc);
+        swi_init_workitem(&rpc->crpc_wi, rpc, srpc_send_rpc,
+                          swi_sched_from_nid(peer.nid));
         spin_lock_init(&rpc->crpc_lock);
         atomic_set(&rpc->crpc_refcount, 1); /* 1 ref for caller */
 

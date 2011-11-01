@@ -360,7 +360,8 @@ int lov_quota_adjust_qunit(struct obd_export *exp,
         for (i = 0; i < lov->desc.ld_tgt_count; i++) {
                 int err;
 
-                if (!lov->lov_tgts[i] || !lov->lov_tgts[i]->ltd_active) {
+                if (!lov->lov_tgts[i] || !lov->lov_tgts[i]->ltd_active ||
+                    !lov->lov_tgts[i]->ltd_exp) {
                         CDEBUG(D_HA, "ost %d is inactive\n", i);
                         continue;
                 }

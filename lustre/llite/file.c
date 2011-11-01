@@ -1775,6 +1775,7 @@ static ssize_t ll_file_aio_write(struct kiocb *iocb, const struct iovec *iov,
         unsigned long nrsegs_copy, nrsegs_orig = 0;
         size_t count, iov_offset = 0;
         int got_write_sem = 0;
+        int direct_io = file->f_flags & O_DIRECT ? 1 : 0;
         struct ll_file_data *fd = LUSTRE_FPRIVATE(file);
         ENTRY;
 
@@ -1944,7 +1945,16 @@ repeat:
                         GOTO(out, retval);
 
                 ll_update_time(file);
+
+                /* for dio using server-side locking, we don't need to serialize
+                 * writes, see bug 21137 */
+                if (got_write_sem && direct_io)
+                        up(&ll_i2info(inode)->lli_write_sem);
+
                 retval = ll_direct_IO(WRITE, file, iov_copy, *ppos, nr_segs, 0);
+
+                if (got_write_sem && direct_io)
+                        down(&ll_i2info(inode)->lli_write_sem);
                 if (retval > 0) {
                         lprocfs_counter_add(sbi->ll_stats,
                                             LPROC_LL_LOCKLESS_WRITE,

@@ -317,6 +317,9 @@ nid2hostname() {
     ptl*)   # Portals
             # FIXME: Convert portal ID to hostname
             ;;
+    gni*)   # Gemini
+            host_name=$(printf "nid%05d" $addr)
+            ;;
     *)  # tcp, o2ib, cib, openib, iib, vib, ra
         ip_addr=${addr}
         # Is it IP address or hostname?
@@ -361,7 +364,7 @@ nids2hostname() {
 
         case "${nettype}" in
         lo* | elan* | gm* | ptl*) ;;
-        *)  # tcp, o2ib, cib, openib, iib, vib, ra
+        *)  # tcp, o2ib, cib, openib, iib, vib, ra, gni
             host_name=$(nid2hostname ${nid})
             if [ ${PIPESTATUS[0]} -ne 0 ]; then
                 echo "${host_name}"
@@ -395,7 +398,7 @@ ip2hostname_single_node() {
 
         case "${nettype}" in
         lo* | elan* | gm* | ptl*) ;;
-        *)  # tcp, o2ib, cib, openib, iib, vib, ra
+        *)  # tcp, o2ib, cib, openib, iib, vib, ra, gni
             host_name=$(nid2hostname ${nid})
             if [ ${PIPESTATUS[0]} -ne 0 ]; then
                 echo "${host_name}"

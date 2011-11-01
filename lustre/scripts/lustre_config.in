@@ -327,7 +327,7 @@ construct_mkfs_cmdline() {
     local failnids failnids_str
 
     if $UPGRADE_TARGET; then
-        MKFS_CMD="$TUNEFS --writeconf"
+        MKFS_CMD="$TUNEFS --writeconf --erase-params "
     else
         MKFS_CMD="$MKFS $REFORMAT_OPTION"
     fi

@@ -215,7 +215,7 @@ static int echo_create_object(struct obd_device *obd, int on_target,
                 if (lsm->lsm_stripe_size == 0)
                         lsm->lsm_stripe_size = CFS_PAGE_SIZE;
 
-                idx = ll_rand();
+                idx = cfs_rand();
 
                 /* setup stripes: indices + default ids if required */
                 for (i = 0; i < lsm->lsm_stripe_count; i++) {

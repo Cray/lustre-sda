@@ -48,12 +48,12 @@ Index: linux-2.6.27.21-0.1/drivers/scsi/sd.c
 +
 +extern void sd_iostats_init(void);
 +extern void sd_iostats_fini(void);
-+void sd_iostats_start_req(struct request *rq);
++void sd_iostats_start_req(struct scsi_cmnd *SCpnt);
 +void sd_iostats_finish_req(struct scsi_cmnd *SCpnt);
 +#else
 +static inline void sd_iostats_init(void) {}
 +static inline void sd_iostats_fini(void) {}
-+static inline void sd_iostats_start_req(struct request *rq) {}
++static inline void sd_iostats_start_req(struct scsi_cmnd *SCpnt) {}
 +static inline void sd_iostats_finish_req(struct scsi_cmnd *SCpnt) {}
 +#endif
 +
@@ -64,16 +64,17 @@ Index: linux-2.6.27.21-0.1/drivers/scsi/sd.c
 	 */
 	ret = BLKPREP_OK;
   out:
-+	if (rq->rq_disk && ret == BLKPREP_OK) 
-+		sd_iostats_start_req(rq);
++	if (rq->cmd_type == REQ_TYPE_FS && ret == BLKPREP_OK) 
++		sd_iostats_start_req(SCpnt);
 	return scsi_prep_return(q, rq, ret);
  }
 
-@@ -1091,6 +1111,7 @@
+@@ -1091,6 +1111,8 @@
  		break;
  	}
   out:
-+	sd_iostats_finish_req(SCpnt);
++	if (SCpnt->request->cmd_type == REQ_TYPE_FS)
++		sd_iostats_finish_req(SCpnt);
  	if (rq_data_dir(SCpnt->request) == READ && scsi_prot_sg_count(SCpnt))
  		sd_dif_complete(SCpnt, good_bytes);
  
@@ -114,7 +115,7 @@ Index: linux-2.6.27.21-0.1/drivers/scsi/sd.c
  	dev_set_drvdata(dev, sdkp);
  	add_disk(gd);
  	sd_dif_config_host(sdkp);
-@@ -1923,6 +1974,366 @@
+@@ -1923,6 +1974,374 @@
  	return 0;
  }
  
@@ -388,8 +389,16 @@ Index: linux-2.6.27.21-0.1/drivers/scsi/sd.c
 +		i = IOSTAT_NCOUNTERS - 1;
 +	stats->iostat_queue_ticks[i] += jiffies - stats->iostat_queue_stamp;
 +	stats->iostat_queue_ticks_sum += jiffies - stats->iostat_queue_stamp;
-+	BUG_ON(stats->iostat_queue_depth == 0);
-+	stats->iostat_queue_depth--;
++	//BUG_ON(stats->iostat_queue_depth == 0);
++	if (!(rq->cmd_flags & (1 << __REQ_NR_BITS))) {
++               printk(KERN_WARNING "%p request hasn't prepared\n", rq);
++               blk_dump_rq_flags(rq, "sd-stat");
++       }
++	if (stats->iostat_queue_depth == 0) {
++               printk(KERN_WARNING "queue_depth will <0 on %p request\n", rq);
++               blk_dump_rq_flags(rq, "sd-stat");
++       } else
++	        stats->iostat_queue_depth--;
 +
 +	/* update seek stats. XXX: not sure about nr_sectors */
 +	stats->iostat_sectors += blk_rq_sectors(rq);
@@ -408,9 +417,9 @@ Index: linux-2.6.27.21-0.1/drivers/scsi/sd.c
 +	spin_unlock_irqrestore(&stats->iostat_lock, irqflags);
 +}
 +
-+void sd_iostats_start_req(struct request *rq)
++void sd_iostats_start_req(struct scsi_cmnd *SCpnt)
 +{
-+	struct scsi_cmnd        *SCpnt = rq->special;
++	struct request          *rq = SCpnt->request;
 +	iostat_stats_t		*stats;
 +	iostat_counter_t	*counter;
 +	int			bucket;
@@ -424,7 +433,7 @@ Index: linux-2.6.27.21-0.1/drivers/scsi/sd.c
 +	if (stats == NULL)
 +		return;
 +
-+	nsect = scsi_bufflen(SCpnt) >> 9;
++	nsect = scsi_bufflen(SCpnt) >> 9; rq->cmd_flags |= (1 << __REQ_NR_BITS);
 +	for (bucket = 0, tmp = nsect; tmp > 1; bucket++)
 +		tmp >>= 1;
 +

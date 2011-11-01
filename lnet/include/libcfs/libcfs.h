@@ -55,6 +55,7 @@
 #endif
 
 #include "curproc.h"
+#include "libcfs/libcfs_fail.h"
 
 #ifndef __KERNEL__
 #include <stdio.h>
@@ -280,6 +281,7 @@ do {                                                                    \
 #define LCONSOLE_ERROR_MSG(errnum, format, a...) CDEBUG_LIMIT(D_CONSOLE | D_ERROR, \
                            "%x-%x: " format, errnum, LERRCHKSUM(errnum),  ## a)
 #define LCONSOLE_ERROR(format, a...) LCONSOLE_ERROR_MSG(0x00, format, ## a)
+#define LCONSOLE_NETERR(format, a...)  CDEBUG_LIMIT(D_CONSOLE | D_NETERROR, format, ## a)
 
 #define LCONSOLE_EMERG(format, a...) CDEBUG(D_CONSOLE | D_EMERG, format, ## a)
 
@@ -721,6 +723,16 @@ void *cfs_stack_trace_frame(struct cfs_stack_trace *trace, int frame_no);
 int cfs_oflags2univ(int flags);
 /* convert universal open flags to local open flags */
 int cfs_univ2oflags(int flags);
+
+/*
+ * Random number handling
+ */
+
+/* returns a random 32-bit integer */
+unsigned int cfs_rand(void);
+/* seed the generator */
+void cfs_srand(unsigned int, unsigned int);
+void cfs_get_random_bytes(void *buf, int size);
 
 #define _LIBCFS_H
 

@@ -79,6 +79,7 @@ do {                                      \
         __swab32s(&(fc).active_tests);    \
         __swab32s(&(fc).active_batches);  \
         __swab32s(&(fc).zombie_sessions); \
+        __swab32s(&(fc).running);         \
 } while (0)
 
 #define sfw_unpack_rpc_counters(rc)     \
@@ -297,6 +298,7 @@ sfw_init_session (sfw_session_t *sn, lst_sid_t sid, const char *name)
         sn->sn_timer_active = 0;
         sn->sn_id           = sid;
         sn->sn_timeout      = session_timeout;
+        sn->sn_started      = cfs_time_current();
 
         timer->stt_data = sn;
         timer->stt_func = sfw_session_expired;
@@ -397,6 +399,7 @@ sfw_get_stats (srpc_stat_reqst_t *request, srpc_stat_reply_t *reply)
         sfw_session_t  *sn = sfw_data.fw_session;
         sfw_counters_t *cnt = &reply->str_fw;
         sfw_batch_t    *bat;
+        cfs_duration_t  dur;
 
         reply->str_sid = (sn == NULL) ? LST_INVALID_SID : sn->sn_id;
 
@@ -416,6 +419,11 @@ sfw_get_stats (srpc_stat_reqst_t *request, srpc_stat_reply_t *reply)
 
         srpc_get_counters(&reply->str_rpc);
 
+        /* send over the msecs since the session was started 
+         - with 32 bits to send, this is ~49 days */
+        dur = cfs_time_sub(cfs_time_current(), sn->sn_started);
+
+        cnt->running         = jiffies_to_msecs(dur);
         cnt->brw_errors      = atomic_read(&sn->sn_brw_errors);
         cnt->ping_errors     = atomic_read(&sn->sn_ping_errors);
         cnt->zombie_sessions = atomic_read(&sfw_data.fw_nzombies);
@@ -868,7 +876,7 @@ sfw_test_rpc_done (srpc_client_rpc_t *rpc)
         spin_unlock(&tsi->tsi_lock);
 
         if (!done) {
-                swi_schedule_workitem(&tsu->tsu_worker);
+                swi_schedule(&tsu->tsu_worker);
                 return;
         }
 
@@ -959,7 +967,7 @@ test_done:
          * - my batch is still active; no one can run it again now.
          * Cancel pending schedules and prevent future schedule attempts:
          */
-        swi_kill_workitem(wi);
+        swi_exit(wi);
         sfw_test_unit_done(tsu);
         return 1;
 }
@@ -990,8 +998,9 @@ sfw_run_batch (sfw_batch_t *tsb)
                         atomic_inc(&tsi->tsi_nactive);
                         tsu->tsu_loop = tsi->tsi_loop;
                         wi = &tsu->tsu_worker;
-                        swi_init_workitem(wi, tsu, sfw_run_test);
-                        swi_schedule_workitem(wi);
+                        swi_init_workitem(wi, tsu, sfw_run_test,
+                                 swi_sched_from_nid(tsu->tsu_dest.nid));
+                        swi_schedule(wi);
                 }
         }
 

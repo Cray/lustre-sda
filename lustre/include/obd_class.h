@@ -1798,6 +1798,6 @@ void class_init_uuidlist(void);
 void class_exit_uuidlist(void);
 
 /* prng.c */
-void ll_generate_random_uuid(class_uuid_t uuid_out);
+#define ll_generate_random_uuid(uuid_out) cfs_get_random_bytes(uuid_out, sizeof(class_uuid_t))
 
 #endif /* __LINUX_OBD_CLASS_H */

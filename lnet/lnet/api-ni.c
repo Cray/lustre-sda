@@ -1223,6 +1223,8 @@ LNetInit(void)
         CFS_INIT_LIST_HEAD(&the_lnet.ln_zombie_rcd);
 
 #ifdef __KERNEL__
+        CFS_INIT_LIST_HEAD(&the_lnet.ln_notify_cbs);
+
         /* All LNDs apart from the LOLND are in separate modules.  They
          * register themselves when their module loads, and unregister
          * themselves when their module is unloaded. */
@@ -1825,3 +1827,74 @@ lnet_ping (lnet_process_id_t id, int timeout_ms, lnet_process_id_t *ids, int n_i
         LIBCFS_FREE(info, infosz);
         return rc;
 }
+
+#ifdef __KERNEL__
+
+/* Register a function that will be called each time an lnd reports that
+ * a directly-connected peer has transitioned down or up.
+ * Redundant register attempts will result in -EEXIST.   */
+int LNetRegisterNotifyCallback(lnet_notify_callback cb)
+{
+        int rc = 0;
+        lnet_notify_entry_t *entry, *new_entry;
+
+        LASSERT (the_lnet.ln_init);
+        LASSERT (cb != NULL);
+
+        LIBCFS_ALLOC(new_entry, sizeof(*new_entry));
+        if (new_entry == NULL)
+                return -ENOMEM;
+
+        LNET_LOCK();
+
+        list_for_each_entry (entry, &the_lnet.ln_notify_cbs, ln_list) {
+                if (entry->ln_cb == cb) {
+                        rc = -EEXIST;
+                        goto error_exit;
+                }
+        }
+
+        CFS_INIT_LIST_HEAD(&new_entry->ln_list);
+        new_entry->ln_cb = cb;
+        list_add_tail(&new_entry->ln_list, &the_lnet.ln_notify_cbs);
+
+        error_exit: LNET_UNLOCK();
+        return rc;
+}
+EXPORT_SYMBOL(LNetRegisterNotifyCallback);
+
+/* Deregister a function that was successfully registered via
+ * lnet_register_notify_callback().  Attempts to deregister an unknown
+ * function will result in -ENOENT.                       */
+int LNetUnregisterNotifyCallback(lnet_notify_callback cb)
+{
+	lnet_notify_entry_t *entry;
+
+	LASSERT (the_lnet.ln_init);
+	LNET_LOCK();
+
+	list_for_each_entry (entry, &the_lnet.ln_notify_cbs, ln_list) {
+		if (entry->ln_cb == cb) {
+			list_del (&entry->ln_list);
+			LNET_UNLOCK();
+			LIBCFS_FREE(entry, sizeof(*entry));
+			return 0;
+		}
+	}
+
+	LNET_UNLOCK();
+	return -ENOENT;
+}
+EXPORT_SYMBOL(LNetUnregisterNotifyCallback);
+
+#else
+int LNetRegisterNotifyCallback(lnet_notify_callback cb)
+{
+	return -EOPNOTSUPP;
+}
+
+int LNetUnregisterNotifyCallback(lnet_notify_callback cb)
+{
+	return -EOPNOTSUPP;
+}
+#endif

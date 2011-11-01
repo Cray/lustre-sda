@@ -49,7 +49,6 @@
 #include <lustre_mds.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/random.h>
 #include <linux/fs.h>
 #include <linux/jbd.h>
 # include <linux/smp_lock.h>
@@ -950,7 +949,8 @@ static int mds_getattr_lock(struct ptlrpc_request *req, int offset,
                                                          MDS_INODELOCK_UPDATE,
                                                          name, namesize,
                                                          child_lockh, &dchild,
-                                                         LCK_CR, child_part);
+                                                         LCK_CR, child_part,
+                                                         IT_GETATTR, 0);
                 } else {
                         /* For revalidate by fid we always take UPDATE lock */
                         dchild = mds_fid2locked_dentry(obd, &body->fid2, NULL,
@@ -1621,7 +1621,7 @@ int mds_handle(struct ptlrpc_request *req)
                 OBD_FAIL_RETURN(OBD_FAIL_MDS_READPAGE_NET, 0);
                 rc = mds_readpage(req, REQ_REC_OFF);
 
-                if (OBD_FAIL_CHECK_ONCE(OBD_FAIL_MDS_SENDPAGE)) {
+                if (OBD_FAIL_CHECK(OBD_FAIL_MDS_SENDPAGE)) {
                         RETURN(0);
                 }
 
@@ -2061,7 +2061,7 @@ static int mds_setup(struct obd_device *obd, obd_count len, void *buf)
         }
 
         label = fsfilt_get_label(obd, obd->u.obt.obt_sb);
-        LCONSOLE_INFO("%s: Now serving %s on %s with recovery %s\n",
+        LCONSOLE_WARN("%s: Now serving %s on %s with recovery %s\n",
                       obd->obd_name, label ?: str, lsi->lsi_lmd->lmd_dev,
                       obd->obd_replayable ? "enabled" : "disabled");
 

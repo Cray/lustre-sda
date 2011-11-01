@@ -715,7 +715,7 @@ static int llog_test_setup(struct obd_device *obd, obd_count len, void *buf)
         if (rc)
                 RETURN(rc);
 
-        llog_test_rand = ll_rand();
+        llog_test_rand = cfs_rand();
 
         rc = llog_run_tests(obd);
         if (rc)
