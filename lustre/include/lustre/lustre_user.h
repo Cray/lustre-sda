@@ -598,6 +598,7 @@ static inline void hsm_set_cl_error(int *flags, int error)
 struct changelog_rec {
         __u16                 cr_namelen;
         __u16                 cr_version;     /** changelog record version */
+        __u32                 cr_flags;       /** common and per-event flags */
         __u32                 cr_type;  /**< \a changelog_rec_type */
         __u64                 cr_index; /**< changelog record number */
         __u64                 cr_prev;  /**< last index for this target fid */
@@ -610,7 +611,6 @@ struct changelog_rec {
                 __u32         cr_markerflags; /**< CL_MARK flags */
         };
         lustre_fid            cr_pfid;        /**< parent fid */
-        __u32                 cr_flags;       /** common and per-event flags */
         char                  cr_name[0];     /**< last element */
 } __attribute__((packed));
 
