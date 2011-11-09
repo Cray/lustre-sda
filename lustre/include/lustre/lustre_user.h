@@ -603,9 +603,6 @@ struct changelog_rec {
         __u64                 cr_index; /**< changelog record number */
         __u64                 cr_prev;  /**< last index for this target fid */
         __u64                 cr_time;
-        __u32                 cr_uid;     /**< user id that made the change */
-        __u32                 cr_gid;     /**< group id of user that made the change */
-        __u64                 cr_clnid;   /** < client nid that made the change */
         union {
                 lustre_fid    cr_tfid;        /**< target fid */
                 __u32         cr_markerflags; /**< CL_MARK flags */

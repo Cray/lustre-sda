@@ -1304,8 +1304,6 @@ static int mdd_changelog_data_store(const struct lu_env     *env,
                 RETURN(-ENOMEM);
         rec = (struct llog_changelog_rec *)buf->lb_buf;
 
-        mdd_changelog_rec_fill(env, rec);
-
         rec->cr.cr_flags = CLF_EVENT_FLAGMASK & flags;
         rec->cr.cr_version = CL_VERSION;
         rec->cr.cr_type = (__u32)type;

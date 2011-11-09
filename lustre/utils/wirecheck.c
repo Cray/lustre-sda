@@ -1011,10 +1011,6 @@ check_changelog_rec(void)
         CHECK_MEMBER(changelog_rec, cr_time);
         CHECK_MEMBER(changelog_rec, cr_tfid);
         CHECK_MEMBER(changelog_rec, cr_pfid);
-        CHECK_MEMBER(changelog_rec, cr_uid);
-        CHECK_MEMBER(changelog_rec, cr_gid);
-        CHECK_MEMBER(changelog_rec, cr_clnid);
-
 }
 
 static void

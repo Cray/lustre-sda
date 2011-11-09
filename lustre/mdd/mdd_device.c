@@ -235,16 +235,6 @@ static int mdd_changelog_llog_init(struct mdd_device *mdd)
         return rc;
 }
 
-void mdd_changelog_rec_fill(const struct lu_env *env,
-                            struct llog_changelog_rec *rec)
-{
-        struct md_ucred *uc = md_ucred(env);
-        rec->cr.cr_uid = uc->mu_fsuid;
-        rec->cr.cr_gid = uc->mu_fsgid;
-        rec->cr.cr_clnid = uc->mu_nid;
-}
-
-
 static int mdd_changelog_init(const struct lu_env *env, struct mdd_device *mdd)
 {
         int rc;

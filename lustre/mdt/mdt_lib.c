@@ -145,7 +145,6 @@ static int new_init_ucred(struct mdt_thread_info *info, ucred_init_type_t type,
         LASSERT(req->rq_auth_gss);
         LASSERT(!req->rq_auth_usr_mdt);
         LASSERT(req->rq_user_desc);
-        CLASSERT(sizeof(lnet_nid_t) == sizeof(__u64));
 
         ucred->mu_valid = UCRED_INVALID;
 
@@ -153,7 +152,6 @@ static int new_init_ucred(struct mdt_thread_info *info, ucred_init_type_t type,
         ucred->mu_o_gid   = pud->pud_gid;
         ucred->mu_o_fsuid = pud->pud_fsuid;
         ucred->mu_o_fsgid = pud->pud_fsgid;
-        ucred->mu_nid     = peernid;
 
         if (type == BODY_INIT) {
                 struct mdt_body *body = (struct mdt_body *)buf;
@@ -417,18 +415,14 @@ static int old_init_ucred(struct mdt_thread_info *info,
         struct md_ucred *uc = mdt_ucred(info);
         struct mdt_device  *mdt = info->mti_mdt;
         struct md_identity *identity = NULL;
-        lnet_nid_t peernid = mdt_info_req(info)->rq_peer.nid;
 
         ENTRY;
-
-        CLASSERT(sizeof(lnet_nid_t) == sizeof(__u64));
 
         uc->mu_valid = UCRED_INVALID;
         uc->mu_o_uid = uc->mu_uid = body->uid;
         uc->mu_o_gid = uc->mu_gid = body->gid;
         uc->mu_o_fsuid = uc->mu_fsuid = body->fsuid;
         uc->mu_o_fsgid = uc->mu_fsgid = body->fsgid;
-        uc->mu_nid     = peernid;
         uc->mu_suppgids[0] = body->suppgid;
         uc->mu_suppgids[1] = -1;
         uc->mu_ginfo = NULL;
@@ -448,7 +442,7 @@ static int old_init_ucred(struct mdt_thread_info *info,
         uc->mu_identity = identity;
 
         /* process root_squash here. */
-        mdt_root_squash(info, peernid);
+        mdt_root_squash(info, mdt_info_req(info)->rq_peer.nid);
 
         /* remove fs privilege for non-root user. */
         if (uc->mu_fsuid)
@@ -465,13 +459,12 @@ static int old_init_ucred_reint(struct mdt_thread_info *info)
         struct md_ucred *uc = mdt_ucred(info);
         struct mdt_device  *mdt = info->mti_mdt;
         struct md_identity *identity = NULL;
-        lnet_nid_t peernid = mdt_info_req(info)->rq_peer.nid;
+
         ENTRY;
 
         uc->mu_valid = UCRED_INVALID;
         uc->mu_o_uid = uc->mu_o_fsuid = uc->mu_uid = uc->mu_fsuid;
         uc->mu_o_gid = uc->mu_o_fsgid = uc->mu_gid = uc->mu_fsgid;
-        uc->mu_nid     = peernid;
         uc->mu_ginfo = NULL;
         if (!is_identity_get_disabled(mdt->mdt_identity_cache)) {
                 identity = mdt_identity_get(mdt->mdt_identity_cache,
@@ -489,7 +482,7 @@ static int old_init_ucred_reint(struct mdt_thread_info *info)
         uc->mu_identity = identity;
 
         /* process root_squash here. */
-        mdt_root_squash(info, peernid);
+        mdt_root_squash(info, mdt_info_req(info)->rq_peer.nid);
 
         /* remove fs privilege for non-root user. */
         if (uc->mu_fsuid)
