@@ -103,12 +103,6 @@ int mdd_txn_commit_cb(const struct lu_env *env, struct thandle *txn,
         return 0;
 }
 
-static void mdd_txn_changelog_param_build(const struct lu_env *env)
-{
-        int log_credits = dto_txn_credits[DTO_LOG_REC];
-        txn_param_credit_add(&mdd_env_info(env)->mti_param, log_credits);
-}
-
 void mdd_txn_param_build(const struct lu_env *env, struct mdd_device *mdd,
                          enum mdd_txn_op op)
 {
@@ -116,8 +110,6 @@ void mdd_txn_param_build(const struct lu_env *env, struct mdd_device *mdd,
 
         txn_param_init(&mdd_env_info(env)->mti_param,
                        mdd->mdd_tod[op].mod_credits);
-
-        mdd_txn_changelog_param_build(env);
 }
 
 int mdd_log_txn_param_build(const struct lu_env *env, struct md_object *obj,
@@ -257,9 +249,6 @@ int mdd_txn_init_credits(const struct lu_env *env, struct mdd_device *mdd)
                                  */
                                  *c = 2 * dt[DTO_INDEX_INSERT] +
                                           dt[DTO_OBJECT_CREATE];
-                                break;
-                        case MDD_TXN_CLOSE_OP:
-                                *c = 0;
                                 break;
                         default:
                                 CERROR("Invalid op %d init its credit\n", op);
