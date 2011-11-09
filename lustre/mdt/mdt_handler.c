@@ -5186,7 +5186,7 @@ static int mdt_obd_disconnect(struct obd_export *exp)
 static int mdt_init_export(struct obd_export *exp)
 {
         struct mdt_export_data *med = &exp->exp_mdt_data;
-        int                     rc = 0;
+        int                     rc;
         ENTRY;
 
         CFS_INIT_LIST_HEAD(&med->med_open_head);
@@ -5313,9 +5313,6 @@ static int mdt_obd_notify(struct obd_device *obd,
 
         switch (ev) {
         case OBD_NOTIFY_CONFIG:
-                /* reset recovery timeout in case it has already started */
-                target_start_recovery_timer(obd);
-
                 mdt_allow_cli(mdt, (unsigned long)data);
 
 #ifdef HAVE_QUOTA_SUPPORT
@@ -5466,6 +5463,7 @@ static int mdt_ioc_version_get(struct mdt_thread_info *mti, void *karg)
         struct mdt_lock_handle  *lh;
         int rc;
         ENTRY;
+
         CDEBUG(D_IOCTL, "getting version for "DFID"\n", PFID(fid));
         if (!fid_is_sane(fid))
                 RETURN(-EINVAL);
@@ -5485,6 +5483,9 @@ static int mdt_ioc_version_get(struct mdt_thread_info *mti, void *karg)
                  * fid, this is error to find remote object here
                  */
                 CERROR("nonlocal object "DFID"\n", PFID(fid));
+        } else if (rc == 0) {
+                 *(__u64 *)data->ioc_inlbuf2 = ENOENT_VERSION;
+                rc = -ENOENT;
         } else {
                 version = mo_version_get(mti->mti_env, mdt_object_child(obj));
                *(__u64 *)data->ioc_inlbuf2 = version;

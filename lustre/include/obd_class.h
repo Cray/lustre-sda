@@ -61,6 +61,19 @@
 #error Unsupported operating system.
 #endif
 
+#define OBD_STATFS_NODELAY      0x0001  /* requests should be send without delay
+                                         * and resends for avoid deadlocks */
+#define OBD_STATFS_FROM_CACHE   0x0002  /* the statfs callback should not update
+                                         * obd_osfs_age */
+#define OBD_STATFS_PTLRPCD      0x0004  /* requests will be sent via ptlrpcd
+                                         * instead of a specific set. This
+                                         * means that we cannot rely on the set
+                                         * interpret routine to be called.
+                                         * lov_statfs_fini() must thus be called
+                                         * by the request interpret routine */
+
+#define OBD_FL_PUNCH    0x00000001      /* To indicate it is punch operation */
+
 /* OBD Device Declarations */
 extern struct obd_device *obd_devs[MAX_OBD_DEVICES];
 extern cfs_rwlock_t obd_dev_lock;
@@ -2130,7 +2143,7 @@ static inline int md_clear_open_replay_data(struct obd_export *exp,
 }
 
 static inline int md_set_lock_data(struct obd_export *exp,
-                                   __u64 *lockh, void *data, __u32 *bits)
+                                   __u64 *lockh, void *data, __u64 *bits)
 {
         ENTRY;
         EXP_CHECK_MD_OP(exp, set_lock_data);

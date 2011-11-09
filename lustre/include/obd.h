@@ -173,6 +173,7 @@ struct obd_info {
            - while lock handling, the flags obtained on the enqueue
            request are set here.
            - while stats, the flags used for control delay/resend.
+           - while setattr, the flags used for distinguish punch operation
          */
         int                     oi_flags;
         /* Lock handle specific for every OSC lock. */
@@ -1540,7 +1541,7 @@ struct md_ops {
                                       struct ptlrpc_request *);
         int (*m_clear_open_replay_data)(struct obd_export *,
                                         struct obd_client_handle *);
-        int (*m_set_lock_data)(struct obd_export *, __u64 *, void *, __u32 *);
+        int (*m_set_lock_data)(struct obd_export *, __u64 *, void *, __u64 *);
 
         ldlm_mode_t (*m_lock_match)(struct obd_export *, int,
                                     const struct lu_fid *, ldlm_type_t,

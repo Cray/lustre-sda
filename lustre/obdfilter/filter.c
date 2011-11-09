@@ -647,7 +647,7 @@ static void filter_fmd_cleanup(struct obd_export *exp)
 
 static int filter_init_export(struct obd_export *exp)
 {
-        int rc = 0;
+        int rc;
         ENTRY;
 
         cfs_spin_lock_init(&exp->exp_filter_data.fed_lock);
@@ -2025,6 +2025,9 @@ int filter_common_setup(struct obd_device *obd, struct lustre_cfg* lcfg,
         /* failover is the default */
         obd->obd_replayable = 1;
 
+        /* disable connection until configuration finishes */
+        obd->obd_no_conn = 1;
+
         if (lcfg->lcfg_bufcount > 3 && LUSTRE_CFG_BUFLEN(lcfg, 3) > 0) {
                 str = lustre_cfg_string(lcfg, 3);
                 if (strchr(str, 'n')) {
@@ -2131,17 +2134,6 @@ int filter_common_setup(struct obd_device *obd, struct lustre_cfg* lcfg,
                       obd->obd_name, label ?: str, lmi ? "on " : "",
                       lmi ? s2lsi(lmi->lmi_sb)->lsi_lmd->lmd_dev : "",
                       obd->obd_replayable ? "enabled" : "disabled");
-
-        if (obd->obd_recovering)
-                LCONSOLE_WARN("%s: Will be in recovery for at least %d:%.02d, "
-                              "or until %d client%s reconnect%s\n",
-                              obd->obd_name,
-                              obd->obd_recovery_timeout / 60,
-                              obd->obd_recovery_timeout % 60,
-                              obd->obd_max_recoverable_clients,
-                              (obd->obd_max_recoverable_clients == 1) ? "" : "s",
-                              (obd->obd_max_recoverable_clients == 1) ? "s": "");
-
 
         RETURN(0);
 
@@ -3410,7 +3402,7 @@ int filter_setattr(struct obd_export *exp, struct obd_info *oinfo,
         int rc;
         ENTRY;
 
-        if (oa->o_valid & OBD_FL_TRUNC)
+        if (oinfo->oi_flags & OBD_FL_PUNCH)
                 opc |= CAPA_OPC_OSS_TRUNC;
 
         rc = filter_auth_capa(exp, NULL, oa->o_seq, capa, opc);
@@ -3697,7 +3689,7 @@ static int filter_handle_precreate(struct obd_export *exp, struct obdo *oa,
                 rc = filter_precreate(obd, oa, group, &diff);
                 oa->o_id = filter_last_id(&obd->u.filter, group);
                 oa->o_seq = group;
-                oa->o_valid = OBD_MD_FLID | OBD_MD_FLGROUP;
+                oa->o_valid |= (OBD_MD_FLID | OBD_MD_FLGROUP);
                 GOTO(out, rc);
         }
         /* else diff == 0 */
@@ -4326,9 +4318,7 @@ static int filter_truncate(struct obd_export *exp, struct obd_info *oinfo,
                 oinfo->oi_policy.l_extent.start);
 
         oinfo->oi_oa->o_size = oinfo->oi_policy.l_extent.start;
-        oinfo->oi_oa->o_valid |= OBD_FL_TRUNC;
         rc = filter_setattr(exp, oinfo, oti);
-        oinfo->oi_oa->o_valid &= ~OBD_FL_TRUNC;
         RETURN(rc);
 }
 
@@ -4710,8 +4700,10 @@ static int filter_notify(struct obd_device *obd,
 {
         switch (ev) {
         case OBD_NOTIFY_CONFIG:
-                /* reset recovery timeout in case it has already started */
-                target_start_recovery_timer(obd);
+                LASSERT(obd->obd_no_conn);
+                cfs_spin_lock(&obd->obd_dev_lock);
+                obd->obd_no_conn = 0;
+                cfs_spin_unlock(&obd->obd_dev_lock);
                 break;
         default:
                 CDEBUG(D_INFO, "%s: Unhandled notification %#x\n",
