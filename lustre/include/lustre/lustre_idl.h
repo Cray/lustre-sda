@@ -1946,8 +1946,7 @@ enum {
         MDS_SOM           = 1 << 4,
         MDS_QUOTA_IGNORE  = 1 << 5,
         MDS_CLOSE_CLEANUP = 1 << 6,
-        MDS_KEEP_ORPHAN   = 1 << 7,
-        MDS_RECOV_OPEN    = 1 << 8,
+        MDS_KEEP_ORPHAN   = 1 << 7
 };
 
 /* instance of mdt_reint_rec */
