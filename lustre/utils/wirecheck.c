@@ -1003,7 +1003,6 @@ check_changelog_rec(void)
         BLANK_LINE();
         CHECK_STRUCT(changelog_rec);
         CHECK_MEMBER(changelog_rec, cr_namelen);
-        CHECK_MEMBER(changelog_rec, cr_version);
         CHECK_MEMBER(changelog_rec, cr_flags);
         CHECK_MEMBER(changelog_rec, cr_type);
         CHECK_MEMBER(changelog_rec, cr_index);

@@ -1304,8 +1304,7 @@ static int mdd_changelog_data_store(const struct lu_env     *env,
                 RETURN(-ENOMEM);
         rec = (struct llog_changelog_rec *)buf->lb_buf;
 
-        rec->cr.cr_flags = CLF_EVENT_FLAGMASK & flags;
-        rec->cr.cr_version = CL_VERSION;
+        rec->cr.cr_flags = CLF_VERSION | (CLF_FLAGMASK & flags);
         rec->cr.cr_type = (__u32)type;
         rec->cr.cr_tfid = *tfid;
         rec->cr.cr_namelen = 0;
@@ -1445,7 +1444,7 @@ static int mdd_attr_set_changelog(const struct lu_env *env,
                 type++;
         }
 
-        /* FYI we only store the first CLF_EVENT_FLAGMASK bits of la_valid */
+        /* FYI we only store the first CLF_FLAGMASK bits of la_valid */
         return mdd_changelog_data_store(env, mdd, type, (int)valid,
                                         md2mdd_obj(obj), handle);
 }
