@@ -30,6 +30,9 @@
  * Use is subject to license terms.
  */
 /*
+ * Copyright (c) 2011 Whamcloud, Inc.
+ */
+/*
  * This file is part of Lustre, http://www.lustre.org/
  * Lustre is a trademark of Sun Microsystems, Inc.
  *
@@ -90,7 +93,7 @@ static int mdd_device_init(const struct lu_env *env, struct lu_device *d,
         /* Prepare transactions callbacks. */
         mdd->mdd_txn_cb.dtc_txn_start = mdd_txn_start_cb;
         mdd->mdd_txn_cb.dtc_txn_stop = mdd_txn_stop_cb;
-        mdd->mdd_txn_cb.dtc_txn_commit = mdd_txn_commit_cb;
+        mdd->mdd_txn_cb.dtc_txn_commit = NULL;
         mdd->mdd_txn_cb.dtc_cookie = mdd;
         mdd->mdd_txn_cb.dtc_tag = LCT_MD_THREAD;
         CFS_INIT_LIST_HEAD(&mdd->mdd_txn_cb.dtc_linkage);
@@ -1502,10 +1505,17 @@ static int mdd_iocontrol(const struct lu_env *env, struct md_device *m,
         mdd = lu2mdd_dev(&m->md_lu_dev);
 
         /* Doesn't use obd_ioctl_data */
-        if (cmd == OBD_IOC_CHANGELOG_CLEAR) {
+        switch (cmd) {
+        case OBD_IOC_CHANGELOG_CLEAR: {
                 struct changelog_setinfo *cs = karg;
                 rc = mdd_changelog_user_purge(mdd, cs->cs_id, cs->cs_recno);
                 RETURN(rc);
+        }
+        case OBD_IOC_GET_MNTOPT: {
+                mntopt_t *mntopts = (mntopt_t *)karg;
+                *mntopts = mdd->mdd_dt_conf.ddp_mntopts;
+                RETURN(0);
+        }
         }
 
         /* Below ioctls use obd_ioctl_data */
@@ -1528,7 +1538,7 @@ static int mdd_iocontrol(const struct lu_env *env, struct md_device *m,
                                               MCUD_UNREGISTER);
                 break;
         default:
-                rc = -EOPNOTSUPP;
+                rc = -ENOTTY;
         }
 
         RETURN (rc);
