@@ -748,7 +748,7 @@ int ll_inode_getattr(struct inode *inode, struct obdo *obdo,
         if (rc == 0) {
                 obdo_refresh_inode(inode, obdo, obdo->o_valid);
                 CDEBUG(D_INODE,
-                       "objid "LPX64" size %Lu, blocks %llu, blksize %lu\n",
+                       "objid "LPX64" size %llu, blocks %llu, blksize %lu\n",
                        lli->lli_smd->lsm_object_id, i_size_read(inode),
                        (unsigned long long)inode->i_blocks,
                        (unsigned long)ll_inode_blksize(inode));
@@ -1348,8 +1348,8 @@ int ll_lov_getstripe_ea_info(struct inode *inode, const char *filename,
         op_data = ll_prep_md_op_data(NULL, inode, NULL, filename,
                                      strlen(filename), lmmsize,
                                      LUSTRE_OPC_ANY, NULL);
-        if (op_data == NULL)
-                RETURN(-ENOMEM);
+        if (IS_ERR(op_data))
+                RETURN(PTR_ERR(op_data));
 
         op_data->op_valid = OBD_MD_FLEASIZE | OBD_MD_FLDIREA;
         rc = md_getattr_name(sbi->ll_md_exp, op_data, &req);
@@ -1755,6 +1755,7 @@ int ll_file_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
 #endif
         struct ll_file_data *fd = LUSTRE_FPRIVATE(file);
         int flags;
+
         ENTRY;
 
         CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p),cmd=%x\n", inode->i_ino,
@@ -1833,7 +1834,6 @@ int ll_file_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
         }
         case OBD_IOC_FID2PATH:
                 RETURN(ll_fid2path(ll_i2mdexp(inode), (void *)arg));
-
         case LL_IOC_GET_MDTIDX: {
                 int mdtidx;
 
@@ -1844,6 +1844,16 @@ int ll_file_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
                 if (put_user((int)mdtidx, (int*)arg))
                         RETURN(-EFAULT);
 
+                RETURN(0);
+        }
+        case OBD_IOC_GETNAME: {
+                struct obd_device *obd =
+                                class_exp2obd(ll_i2sbi(inode)->ll_dt_exp);
+                if (!obd)
+                        RETURN(-EFAULT);
+                if (cfs_copy_to_user((void *)arg, obd->obd_name,
+                                     strlen(obd->obd_name) + 1))
+                        RETURN(-EFAULT);
                 RETURN(0);
         }
 
@@ -1867,7 +1877,7 @@ loff_t ll_file_seek(struct file *file, loff_t offset, int origin)
         ENTRY;
         retval = offset + ((origin == 2) ? i_size_read(inode) :
                            (origin == 1) ? file->f_pos : 0);
-        CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p), to=%Lu=%#Lx(%s)\n",
+        CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p), to=%llu=%#llx(%s)\n",
                inode->i_ino, inode->i_generation, inode, retval, retval,
                origin == 2 ? "SEEK_END": origin == 1 ? "SEEK_CUR" : "SEEK_SET");
         ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_LLSEEK, 1);
@@ -2301,8 +2311,8 @@ int __ll_inode_revalidate_it(struct dentry *dentry, struct lookup_intent *it,
                 op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL,
                                              0, ealen, LUSTRE_OPC_ANY,
                                              NULL);
-                if (op_data == NULL)
-                        RETURN(-ENOMEM);
+                if (IS_ERR(op_data))
+                        RETURN(PTR_ERR(op_data));
 
                 op_data->op_valid = valid;
                 /* Once OBD_CONNECT_ATTRFID is not supported, we can't find one

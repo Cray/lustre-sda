@@ -1899,6 +1899,15 @@ AC_DEFUN([LC_EXPORT_ADD_TO_PAGE_CACHE_LRU],
 
 # 2.6.31
 
+# 2.6.30 x86 node_to_cpumask has been removed. must use cpumask_of_node
+AC_DEFUN([LC_EXPORT_CPUMASK_OF_NODE],
+         [LB_CHECK_SYMBOL_EXPORT([node_to_cpumask_map],
+                                 [arch/$LINUX_ARCH/mm/numa.c],
+                                 [AC_DEFINE(HAVE_CPUMASK_OF_NODE, 1,
+                                            [node_to_cpumask_map is exported by
+                                             the kernel])]) # x86_64
+         ])
+
 # 2.6.31 replaces blk_queue_hardsect_size by blk_queue_logical_block_size function
 AC_DEFUN([LC_BLK_QUEUE_LOG_BLK_SIZE],
 [AC_MSG_CHECKING([if blk_queue_logical_block_size is defined])
@@ -1960,6 +1969,23 @@ LB_LINUX_TRY_COMPILE([
         AC_MSG_RESULT(no)
 ])
 ])
+
+#  2.6.27.15-2 SuSE 11 sp0 kernels lack the name field for BDI
+AC_DEFUN([LC_BDI_NAME],
+[AC_MSG_CHECKING([if backing_device_info has name field])
+LB_LINUX_TRY_COMPILE([
+        #include <linux/blkkdev.h>
+],[
+        struct backing_dev_info bdi;
+        bdi.name = NULL;
+],[
+        AC_MSG_RESULT(yes)
+        AC_DEFINE(HAVE_BDI_NAME, 1,
+                  [backing_device_info has name field])
+],[
+        AC_MSG_RESULT(no)
+])
+])  
 
 # 2.6.32 removes blk_queue_max_sectors and add blk_queue_max_hw_sectors
 # check blk_queue_max_sectors and use it until disappear.
@@ -2035,6 +2061,19 @@ EXTRA_KCFLAGS="-I$LINUX/fs"
 EXTRA_KCFLAGS=$tmp_flags
 ])
 
+# 2.6.32 set_cpus_allowed is no more defined if CONFIG_CPUMASK_OFFSTACK=yes
+AC_DEFUN([LC_SET_CPUS_ALLOWED],
+         [AC_MSG_CHECKING([if kernel defines set_cpus_allowed])
+          LB_LINUX_TRY_COMPILE(
+                [#include <linux/sched.h>],
+                [struct task_struct *p = NULL;
+                 cpumask_t mask = { { 0 } };
+                 (void) set_cpus_allowed(p, mask);],
+                [AC_MSG_RESULT([yes])
+                 AC_DEFINE(HAVE_SET_CPUS_ALLOWED, 1,
+                           [set_cpus_allowed is exported by the kernel])],
+                [AC_MSG_RESULT([no])] )])
+
 #
 # LC_D_OBTAIN_ALIAS
 # starting from 2.6.28 kernel replaces d_alloc_anon() with
@@ -2055,6 +2094,36 @@ LB_LINUX_TRY_COMPILE([
 ])
 ])
 
+#
+# 2.6.38 export blkdev_get_by_dev
+#
+AC_DEFUN([LC_BLKDEV_GET_BY_DEV],
+[LB_CHECK_SYMBOL_EXPORT([blkdev_get_by_dev],
+[fs/block_dev.c],[
+AC_DEFINE(HAVE_BLKDEV_GET_BY_DEV, 1,
+            [blkdev_get_by_dev is exported by the kernel])
+],[
+])
+])
+
+#
+# 2.6.39 remove unplug_fn from request_queue.
+#
+AC_DEFUN([LC_REQUEST_QUEUE_UNPLUG_FN],
+[AC_MSG_CHECKING([if request_queue has unplug_fn field])
+LB_LINUX_TRY_COMPILE([
+        #include <linux/blkdev.h>
+],[
+        struct request_queue rq;
+        memset(rq.unplug_fn, 0, sizeof(rq.unplug_fn));
+],[
+        AC_DEFINE(HAVE_REQUEST_QUEUE_UNPLUG_FN, 1,
+                  [request_queue has unplug_fn field]),
+        AC_MSG_RESULT([yes])
+],[
+        AC_MSG_RESULT([no])
+])
+])
 
 #
 # LC_PROG_LINUX
@@ -2193,9 +2262,13 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_BI_HW_SEGMENTS
          LC_HAVE_QUOTAIO_H
          LC_VFS_SYMLINK_5ARGS
+         LC_BDI_NAME
          LC_SB_ANY_QUOTA_ACTIVE
          LC_SB_HAS_QUOTA_ACTIVE
          LC_EXPORT_ADD_TO_PAGE_CACHE_LRU
+
+         # 2.6.30
+         LC_EXPORT_CPUMASK_OF_NODE
 
          # 2.6.31
          LC_BLK_QUEUE_LOG_BLK_SIZE
@@ -2206,6 +2279,13 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_SB_BDI
          LC_BLK_QUEUE_MAX_SECTORS
          LC_BLK_QUEUE_MAX_SEGMENTS
+         LC_SET_CPUS_ALLOWED
+
+         # 2.6.38
+         LC_BLKDEV_GET_BY_DEV
+
+         # 2.6.39
+         LC_REQUEST_QUEUE_UNPLUG_FN
 
          #
          if test x$enable_server = xyes ; then

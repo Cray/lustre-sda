@@ -113,6 +113,8 @@ void lu_object_put(const struct lu_env *env, struct lu_object *o)
         }
 
         if (!lu_object_is_dying(top)) {
+                LASSERT(cfs_list_empty(&top->loh_lru));
+                cfs_list_add_tail(&top->loh_lru, &bkt->lsb_lru);
                 cfs_hash_bd_unlock(site->ls_obj_hash, &bd, 1);
                 return;
         }
@@ -129,7 +131,6 @@ void lu_object_put(const struct lu_env *env, struct lu_object *o)
          * and we can safely destroy object below.
          */
         cfs_hash_bd_del_locked(site->ls_obj_hash, &bd, &top->loh_hash);
-        cfs_list_del_init(&top->loh_lru);
         cfs_hash_bd_unlock(site->ls_obj_hash, &bd, 1);
         /*
          * Object was already removed from hash and lru above, can
@@ -285,20 +286,7 @@ int lu_site_purge(const struct lu_env *env, struct lu_site *s, int nr)
                 bkt = cfs_hash_bd_extra_get(s->ls_obj_hash, &bd);
 
                 cfs_list_for_each_entry_safe(h, temp, &bkt->lsb_lru, loh_lru) {
-                        /*
-                         * Objects are sorted in lru order, and "busy"
-                         * objects (ones with h->loh_ref > 0) naturally tend to
-                         * live near hot end that we scan last. Unfortunately,
-                         * sites usually have small (less then ten) number of
-                         * busy yet rarely accessed objects (some global
-                         * objects, accessed directly through pointers,
-                         * bypassing hash table).
-                         * Currently algorithm scans them over and over again.
-                         * Probably we should move busy objects out of LRU,
-                         * or we can live with that.
-                         */
-                        if (cfs_atomic_read(&h->loh_ref) > 0)
-                                continue;
+                        LASSERT(cfs_atomic_read(&h->loh_ref) == 0);
 
                         cfs_hash_bd_get(s->ls_obj_hash, &h->loh_fid, &bd2);
                         LASSERT(bd.bd_bucket == bd2.bd_bucket);
@@ -367,7 +355,7 @@ enum {
          *
          * XXX overflow is not handled correctly.
          */
-        LU_CDEBUG_LINE = 256
+        LU_CDEBUG_LINE = 512
 };
 
 struct lu_cdebug_data {
@@ -564,7 +552,6 @@ static struct lu_object *lu_object_new(const struct lu_env *env,
         cfs_hash_bd_get_and_lock(hs, (void *)f, &bd, 1);
         bkt = cfs_hash_bd_extra_get(hs, &bd);
         cfs_hash_bd_add_locked(hs, &bd, &o->lo_header->loh_hash);
-        cfs_list_add_tail(&o->lo_header->loh_lru, &bkt->lsb_lru);
         bkt->lsb_busy++;
         cfs_hash_bd_unlock(hs, &bd, 1);
         return o;
@@ -613,6 +600,8 @@ static struct lu_object *lu_object_find_try(const struct lu_env *env,
         hs = s->ls_obj_hash;
         cfs_hash_bd_get_and_lock(hs, (void *)f, &bd, 1);
         o = htable_lookup(s, &bd, f, waiter, &version);
+        if (o != NULL && !cfs_list_empty(&o->lo_header->loh_lru))
+                cfs_list_del_init(&o->lo_header->loh_lru);
         cfs_hash_bd_unlock(hs, &bd, 1);
         if (o != NULL)
                 return o;
@@ -635,7 +624,6 @@ static struct lu_object *lu_object_find_try(const struct lu_env *env,
 
                 bkt = cfs_hash_bd_extra_get(hs, &bd);
                 cfs_hash_bd_add_locked(hs, &bd, &o->lo_header->loh_hash);
-                cfs_list_add_tail(&o->lo_header->loh_lru, &bkt->lsb_lru);
                 bkt->lsb_busy++;
                 cfs_hash_bd_unlock(hs, &bd, 1);
                 return o;
@@ -841,10 +829,18 @@ static unsigned lu_obj_hop_hash(cfs_hash_t *hs,
                                 const void *key, unsigned mask)
 {
         struct lu_fid  *fid = (struct lu_fid *)key;
-        unsigned        hash;
+        __u32           hash;
 
-        hash = (fid_seq(fid) + fid_oid(fid)) & (CFS_HASH_NBKT(hs) - 1);
-        hash += fid_hash(fid, hs->hs_bkt_bits) << hs->hs_bkt_bits;
+        hash = fid_flatten32(fid);
+        hash += (hash >> 4) + (hash << 12); /* mixing oid and seq */
+        hash = cfs_hash_long(hash, hs->hs_bkt_bits);
+
+        /* give me another random factor */
+        hash -= cfs_hash_long((unsigned long)hs, fid_oid(fid) % 11 + 3);
+
+        hash <<= hs->hs_cur_bits - hs->hs_bkt_bits;
+        hash |= (fid_seq(fid) + fid_oid(fid)) & (CFS_HASH_NBKT(hs) - 1);
+
         return hash & mask;
 }
 
@@ -902,27 +898,29 @@ cfs_hash_ops_t lu_site_hash_ops = {
  * Initialize site \a s, with \a d as the top level device.
  */
 #define LU_SITE_BITS_MIN    12
-#define LU_SITE_BITS_MAX    23
+#define LU_SITE_BITS_MAX    24
 /**
- * total 128 buckets, we don't want too many buckets because:
+ * total 256 buckets, we don't want too many buckets because:
  * - consume too much memory
  * - avoid unbalanced LRU list
  */
-#define LU_SITE_BKT_BITS    7
+#define LU_SITE_BKT_BITS    8
 
 int lu_site_init(struct lu_site *s, struct lu_device *top)
 {
         struct lu_site_bkt_data *bkt;
         cfs_hash_bd_t bd;
+        char name[16];
         int bits;
         int i;
         ENTRY;
 
         memset(s, 0, sizeof *s);
         bits = lu_htable_order();
+        snprintf(name, 16, "lu_site_%s", top->ld_type->ldt_name);
         for (bits = min(max(LU_SITE_BITS_MIN, bits), LU_SITE_BITS_MAX);
              bits >= LU_SITE_BITS_MIN; bits--) {
-                s->ls_obj_hash = cfs_hash_create("lu_site", bits, bits,
+                s->ls_obj_hash = cfs_hash_create(name, bits, bits,
                                                  bits - LU_SITE_BKT_BITS,
                                                  sizeof(*bkt), 0, 0,
                                                  &lu_site_hash_ops,

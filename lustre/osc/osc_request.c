@@ -1219,14 +1219,16 @@ static int check_write_rcs(struct ptlrpc_request *req,
 static inline int can_merge_pages(struct brw_page *p1, struct brw_page *p2)
 {
         if (p1->flag != p2->flag) {
-                unsigned mask = ~(OBD_BRW_FROM_GRANT|
-                                  OBD_BRW_NOCACHE|OBD_BRW_SYNC|OBD_BRW_ASYNC);
+                unsigned mask = ~(OBD_BRW_FROM_GRANT| OBD_BRW_NOCACHE|
+                                  OBD_BRW_SYNC|OBD_BRW_ASYNC|OBD_BRW_NOQUOTA);
 
                 /* warn if we try to combine flags that we don't know to be
                  * safe to combine */
-                if ((p1->flag & mask) != (p2->flag & mask))
-                        CERROR("is it ok to have flags 0x%x and 0x%x in the "
-                               "same brw?\n", p1->flag, p2->flag);
+                if (unlikely((p1->flag & mask) != (p2->flag & mask))) {
+                        CWARN("Saw flags 0x%x and 0x%x in the same brw, please "
+                              "report this at http://bugs.whamcloud.com/\n",
+                              p1->flag, p2->flag);
+                }
                 return 0;
         }
 
@@ -2201,9 +2203,9 @@ static void osc_ap_completion(const struct lu_env *env,
         rc = oap->oap_caller_ops->ap_completion(env, oap->oap_caller_data,
                                                 oap->oap_cmd, oa, rc);
 
-        /* ll_ap_completion (from llite) drops PG_locked. so, a new
-         * I/O on the page could start, but OSC calls it under lock
-         * and thus we can add oap back to pending safely */
+        /* cl_page_completion() drops PG_locked. so, a new I/O on the page could
+         * start, but OSC calls it under lock and thus we can add oap back to
+         * pending safely */
         if (rc)
                 /* upper layer wants to leave the page on pending queue */
                 osc_oap_to_pending(oap);
@@ -2537,27 +2539,6 @@ osc_send_oap_rpc(const struct lu_env *env, struct client_obd *cli,
                 }
                 if (oap == NULL)
                         break;
-                /*
-                 * Page submitted for IO has to be locked. Either by
-                 * ->ap_make_ready() or by higher layers.
-                 */
-#if defined(__KERNEL__) && defined(__linux__)
-                {
-                        struct cl_page *page;
-
-                        page = osc_oap2cl_page(oap);
-
-                        if (page->cp_type == CPT_CACHEABLE &&
-                            !(PageLocked(oap->oap_page) &&
-                              (CheckWriteback(oap->oap_page, cmd)))) {
-                                CDEBUG(D_PAGE, "page %p lost wb %lx/%x\n",
-                                       oap->oap_page,
-                                       (long)oap->oap_page->flags,
-                                       oap->oap_async_flags);
-                                LBUG();
-                        }
-                }
-#endif
 
                 /* take the page out of our book-keeping */
                 cfs_list_del_init(&oap->oap_pending_item);
@@ -4531,6 +4512,8 @@ static int osc_precleanup(struct obd_device *obd, enum obd_cleanup_stage stage)
                  */
                 obd_zombie_barrier();
                 obd_cleanup_client_import(obd);
+                ptlrpc_lprocfs_unregister_obd(obd);
+                lprocfs_obd_cleanup(obd);
                 rc = obd_llog_finish(obd, 0);
                 if (rc != 0)
                         CERROR("failed to cleanup llogging subsystems\n");
@@ -4545,8 +4528,6 @@ int osc_cleanup(struct obd_device *obd)
         int rc;
 
         ENTRY;
-        ptlrpc_lprocfs_unregister_obd(obd);
-        lprocfs_obd_cleanup(obd);
 
         /* free memory of osc quota cache */
         lquota_cleanup(quota_interface, obd);

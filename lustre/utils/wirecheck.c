@@ -388,6 +388,19 @@ check_obd_connect_data(void)
         CHECK_MEMBER(obd_connect_data, ocd_maxbytes);
         CHECK_MEMBER(obd_connect_data, padding1);
         CHECK_MEMBER(obd_connect_data, padding2);
+        CHECK_MEMBER(obd_connect_data, padding3);
+        CHECK_MEMBER(obd_connect_data, padding4);
+        CHECK_MEMBER(obd_connect_data, padding5);
+        CHECK_MEMBER(obd_connect_data, padding6);
+        CHECK_MEMBER(obd_connect_data, padding7);
+        CHECK_MEMBER(obd_connect_data, padding8);
+        CHECK_MEMBER(obd_connect_data, padding9);
+        CHECK_MEMBER(obd_connect_data, paddingA);
+        CHECK_MEMBER(obd_connect_data, paddingB);
+        CHECK_MEMBER(obd_connect_data, paddingC);
+        CHECK_MEMBER(obd_connect_data, paddingD);
+        CHECK_MEMBER(obd_connect_data, paddingE);
+        CHECK_MEMBER(obd_connect_data, paddingF);
 
         CHECK_DEFINE_64X(OBD_CONNECT_RDONLY);
         CHECK_DEFINE_64X(OBD_CONNECT_INDEX);
@@ -773,11 +786,11 @@ check_mdt_body(void)
 
         /* these should be identical to their EXT3_*_FL counterparts, and
          * are redefined only to avoid dragging in ext3_fs.h */
-        CHECK_DEFINE_X(MDS_SYNC_FL);
-        CHECK_DEFINE_X(MDS_IMMUTABLE_FL);
-        CHECK_DEFINE_X(MDS_APPEND_FL);
-        CHECK_DEFINE_X(MDS_NOATIME_FL);
-        CHECK_DEFINE_X(MDS_DIRSYNC_FL);
+        CHECK_DEFINE_X(LUSTRE_SYNC_FL);
+        CHECK_DEFINE_X(LUSTRE_IMMUTABLE_FL);
+        CHECK_DEFINE_X(LUSTRE_APPEND_FL);
+        CHECK_DEFINE_X(LUSTRE_NOATIME_FL);
+        CHECK_DEFINE_X(LUSTRE_DIRSYNC_FL);
 
         CHECK_DEFINE_X(MDS_INODELOCK_LOOKUP);
         CHECK_DEFINE_X(MDS_INODELOCK_UPDATE);
@@ -1877,7 +1890,7 @@ main(int argc, char **argv)
         CHECK_VALUE(MDS_STATUS_CONN);
         CHECK_VALUE(MDS_STATUS_LOV);
 
-        CHECK_VALUE(MDS_BFLAG_UNCOMMITTED_WRITES);
+        CHECK_VALUE(LUSTRE_BFLAG_UNCOMMITTED_WRITES);
 
         CHECK_VALUE_X(MF_SOM_CHANGE);
         CHECK_VALUE_X(MF_EPOCH_OPEN);

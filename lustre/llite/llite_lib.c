@@ -883,7 +883,9 @@ static inline int ll_bdi_register(struct backing_dev_info *bdi)
 #ifdef HAVE_BDI_REGISTER
         static atomic_t ll_bdi_num = ATOMIC_INIT(0);
 
+#ifdef HAVE_BDI_NAME
         bdi->name = "lustre";
+#endif
         return bdi_register(bdi, NULL, "lustre-%d",
                             atomic_inc_return(&ll_bdi_num));
 #else
@@ -1816,8 +1818,8 @@ int ll_iocontrol(struct inode *inode, struct file *file,
                 op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL,
                                              0, 0, LUSTRE_OPC_ANY,
                                              NULL);
-                if (op_data == NULL)
-                        RETURN(-ENOMEM);
+                if (IS_ERR(op_data))
+                        RETURN(PTR_ERR(op_data));
 
                 op_data->op_valid = OBD_MD_FLFLAGS;
                 rc = md_getattr(sbi->ll_md_exp, op_data, &req);

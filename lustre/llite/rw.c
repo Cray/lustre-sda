@@ -76,7 +76,7 @@ void ll_truncate(struct inode *inode)
         struct ll_inode_info *lli = ll_i2info(inode);
         ENTRY;
 
-        CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p) to %Lu\n",inode->i_ino,
+        CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p) to %llu\n", inode->i_ino,
                inode->i_generation, inode, i_size_read(inode));
 
         ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_TRUNC, 1);
@@ -1130,7 +1130,7 @@ out_unlock:
         return;
 }
 
-int ll_writepage(struct page *vmpage, struct writeback_control *unused)
+int ll_writepage(struct page *vmpage, struct writeback_control *wbc)
 {
         struct inode           *inode = vmpage->mapping->host;
         struct lu_env          *env;
@@ -1177,21 +1177,18 @@ int ll_writepage(struct page *vmpage, struct writeback_control *unused)
                         cl_2queue_init_page(queue, page);
                         result = cl_io_submit_rw(env, io, CRT_WRITE,
                                                  queue, CRP_NORMAL);
-                        cl_page_list_disown(env, io, &queue->c2_qin);
                         if (result != 0) {
-                                /*
-                                 * There is no need to clear PG_writeback, as
-                                 * cl_io_submit_rw() calls completion callback
-                                 * on failure.
-                                 */
                                 /*
                                  * Re-dirty page on error so it retries write,
                                  * but not in case when IO has actually
                                  * occurred and completed with an error.
                                  */
-                                if (!PageError(vmpage))
-                                        set_page_dirty(vmpage);
+                                if (!PageError(vmpage)) {
+                                        redirty_page_for_writepage(wbc, vmpage);
+                                        result = 0;
+                                }
                         }
+                        cl_page_list_disown(env, io, &queue->c2_qin);
                         LASSERT(!cl_page_is_owned(page, io));
                         lu_ref_del(&page->cp_reference,
                                    "writepage", cfs_current());
