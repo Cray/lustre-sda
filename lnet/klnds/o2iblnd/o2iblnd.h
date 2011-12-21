@@ -195,12 +195,20 @@ kiblnd_concurrent_sends_v1(void)
 
 struct kib_hca_dev;
 
+/* o2iblnd can run over aliased interface */
+#ifdef IFALIASZ
+#define KIB_IFNAME_SIZE              IFALIASZ
+#else
+#define KIB_IFNAME_SIZE              256
+#endif
+
 typedef struct
 {
         cfs_list_t           ibd_list;          /* chain on kib_devs */
         cfs_list_t           ibd_fail_list;     /* chain on kib_failed_devs */
         __u32                ibd_ifip;          /* IPoIB interface IP */
-        char                 ibd_ifname[32];    /* IPoIB interface name */
+        /** IPoIB interface name */
+        char                 ibd_ifname[KIB_IFNAME_SIZE];
         int                  ibd_nnets;         /* # nets extant */
 
         cfs_time_t           ibd_next_failover;
@@ -227,7 +235,10 @@ typedef struct kib_hca_dev
         cfs_atomic_t         ibh_ref;           /* refcount */
 } kib_hca_dev_t;
 
-#define IBLND_POOL_DEADLINE     300             /* # of seconds to keep pool alive */
+/** # of seconds to keep pool alive */
+#define IBLND_POOL_DEADLINE     300
+/** # of seconds to retry if allocation failed */
+#define IBLND_POOL_RETRY        1
 
 typedef struct
 {

@@ -1629,7 +1629,7 @@ kiblnd_fmr_pool_map(kib_fmr_poolset_t *fps, __u64 *pages, int npages,
                 fps->fps_version ++;
                 cfs_list_add_tail(&fpo->fpo_list, &fps->fps_pool_list);
         } else {
-                fps->fps_next_retry = cfs_time_shift(10);
+                fps->fps_next_retry = cfs_time_shift(IBLND_POOL_RETRY);
         }
         cfs_spin_unlock(&fps->fps_lock);
 
@@ -1824,8 +1824,7 @@ kiblnd_pool_alloc_node(kib_poolset_t *ps)
         if (rc == 0) {
                 cfs_list_add_tail(&pool->po_list, &ps->ps_pool_list);
         } else {
-                /* retry 10 seconds later */
-                ps->ps_next_retry = cfs_time_shift(10);
+                ps->ps_next_retry = cfs_time_shift(IBLND_POOL_RETRY);
                 CERROR("Can't allocate new %s pool because out of memory\n",
                        ps->ps_name);
         }
@@ -2589,17 +2588,16 @@ kiblnd_create_dev(char *ifname)
 
         memset(dev, 0, sizeof(*dev));
 #ifdef HAVE_DEV_GET_BY_NAME_2ARG
-        if ((netdev = dev_get_by_name(&init_net, ifname)) == NULL) {
+        netdev = dev_get_by_name(&init_net, ifname);
 #else
-        if ((netdev = dev_get_by_name(ifname)) == NULL) {
+        netdev = dev_get_by_name(ifname);
 #endif
-                CERROR("Can't find netdev of IF: %s\n", ifname);
-                LIBCFS_FREE(dev, sizeof(*dev));
-                return NULL;
+        if (netdev == NULL) {
+                dev->ibd_can_failover = 0;
+        } else {
+                dev->ibd_can_failover = !!(netdev->flags & IFF_MASTER);
+                dev_put(netdev);
         }
-
-        dev->ibd_can_failover = !!(netdev->flags & IFF_MASTER);
-        dev_put(netdev);
 
         CFS_INIT_LIST_HEAD(&dev->ibd_nets);
         CFS_INIT_LIST_HEAD(&dev->ibd_list); /* not yet in kib_devs */
