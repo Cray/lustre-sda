@@ -513,7 +513,6 @@ int ll_readdir(struct file *filp, void *cookie, filldir_t filldir)
         struct page          *page;
         struct ll_dir_chain   chain;
         int                   done;
-        int                   shift;
         int                   rc;
         ENTRY;
 
@@ -529,7 +528,6 @@ int ll_readdir(struct file *filp, void *cookie, filldir_t filldir)
 
         rc    = 0;
         done  = 0;
-        shift = 0;
         ll_dir_chain_init(&chain);
 
         fd->fd_dir.lfd_next = pos;
@@ -982,7 +980,47 @@ static int quotactl_ioctl(struct ll_sb_info *sbi, struct if_quotactl *qctl)
                         OBD_FREE_PTR(oqctl);
                         RETURN(rc);
                 }
+                /* If QIF_SPACE is not set, client should collect the
+                 * space usage from OSSs by itself */
+                if (cmd == Q_GETQUOTA &&
+                    !(oqctl->qc_dqblk.dqb_valid & QIF_SPACE) &&
+                    !oqctl->qc_dqblk.dqb_curspace) {
+                        struct obd_quotactl *oqctl_tmp;
 
+                        OBD_ALLOC_PTR(oqctl_tmp);
+                        if (oqctl_tmp == NULL)
+                                GOTO(out, rc = -ENOMEM);
+
+                        oqctl_tmp->qc_cmd = Q_GETOQUOTA;
+                        oqctl_tmp->qc_id = oqctl->qc_id;
+                        oqctl_tmp->qc_type = oqctl->qc_type;
+
+                        /* collect space usage from OSTs */
+                        oqctl_tmp->qc_dqblk.dqb_curspace = 0;
+                        rc = obd_quotactl(sbi->ll_dt_exp, oqctl_tmp);
+                        if (!rc || rc == -EREMOTEIO) {
+                                oqctl->qc_dqblk.dqb_curspace =
+                                        oqctl_tmp->qc_dqblk.dqb_curspace;
+                                oqctl->qc_dqblk.dqb_valid |= QIF_SPACE;
+                        }
+
+                        /* collect space & inode usage from MDTs */
+                        oqctl_tmp->qc_dqblk.dqb_curspace = 0;
+                        oqctl_tmp->qc_dqblk.dqb_curinodes = 0;
+                        rc = obd_quotactl(sbi->ll_md_exp, oqctl_tmp);
+                        if (!rc || rc == -EREMOTEIO) {
+                                oqctl->qc_dqblk.dqb_curspace +=
+                                        oqctl_tmp->qc_dqblk.dqb_curspace;
+                                oqctl->qc_dqblk.dqb_curinodes =
+                                        oqctl_tmp->qc_dqblk.dqb_curinodes;
+                                oqctl->qc_dqblk.dqb_valid |= QIF_INODES;
+                        } else {
+                                oqctl->qc_dqblk.dqb_valid &= ~QIF_SPACE;
+                        }
+
+                        OBD_FREE_PTR(oqctl_tmp);
+                }
+out:
                 QCTL_COPY(qctl, oqctl);
                 OBD_FREE_PTR(oqctl);
         }
@@ -990,9 +1028,14 @@ static int quotactl_ioctl(struct ll_sb_info *sbi, struct if_quotactl *qctl)
         RETURN(rc);
 }
 
-static int ll_dir_ioctl(struct inode *inode, struct file *file,
+#ifdef HAVE_UNLOCKED_IOCTL
+static long ll_dir_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+#else
+static int  ll_dir_ioctl(struct inode *unuse, struct file *file,
                         unsigned int cmd, unsigned long arg)
+#endif
 {
+        struct inode *inode = file->f_dentry->d_inode;
         struct ll_sb_info *sbi = ll_i2sbi(inode);
         struct obd_ioctl_data *data;
         int rc = 0;
@@ -1576,6 +1619,10 @@ struct file_operations ll_dir_operations = {
         .release  = ll_dir_release,
         .read     = generic_read_dir,
         .readdir  = ll_readdir,
-        .ioctl    = ll_dir_ioctl,
-        .fsync    = ll_fsync
+#ifdef HAVE_UNLOCKED_IOCTL
+        .unlocked_ioctl   = ll_dir_ioctl,
+#else
+        .ioctl          = ll_dir_ioctl,
+#endif
+        .fsync    = ll_fsync,
 };

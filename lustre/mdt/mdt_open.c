@@ -1579,6 +1579,7 @@ int mdt_close(struct mdt_thread_info *info)
                              info->mti_mdt->mdt_max_cookiesize);
         rc = req_capsule_server_pack(info->mti_pill);
         if (mdt_check_resent(info, mdt_reconstruct_generic, NULL)) {
+                mdt_client_compatibility(info);
                 if (rc == 0)
                         mdt_shrink_reply(info);
                 mdt_exit_ucred(info);
@@ -1630,8 +1631,10 @@ int mdt_close(struct mdt_thread_info *info)
                 mdt_empty_transno(info);
                 mdt_object_put(info->mti_env, o);
         }
-        if (repbody != NULL)
+        if (repbody != NULL) {
+                mdt_client_compatibility(info);
                 mdt_shrink_reply(info);
+        }
 
         mdt_exit_ucred(info);
         if (OBD_FAIL_CHECK(OBD_FAIL_MDS_CLOSE_PACK))

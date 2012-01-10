@@ -28,6 +28,10 @@
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ * Copyright (c) 2011 Whamcloud, Inc.
+ */
+/*
+ * Copyright (c) 2011 Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -89,10 +93,18 @@ static int write_capa_keys(const struct lu_env *env,
         int i, rc;
 
         mti = lu_context_key_get(&env->le_ctx, &mdt_thread_key);
-        mdt_trans_credit_init(env, mdt, MDT_TXN_CAPA_KEYS_WRITE_OP);
-        th = mdt_trans_start(env, mdt);
+        th = mdt_trans_create(env, mdt);
         if (IS_ERR(th))
                 RETURN(PTR_ERR(th));
+
+        rc = dt_declare_record_write(env, mdt->mdt_ck_obj,
+                                     sizeof(*tmp) * 3, 0, th);
+        if (rc)
+                goto stop;
+
+        rc = mdt_trans_start(env, mdt, th);
+        if (rc)
+                goto stop;
 
         tmp = &mti->mti_capa_key;
 
@@ -106,6 +118,7 @@ static int write_capa_keys(const struct lu_env *env,
                         break;
         }
 
+stop:
         mdt_trans_stop(env, mdt, th);
 
         CDEBUG(D_INFO, "write capability keys rc = %d:\n", rc);
@@ -192,7 +205,7 @@ void mdt_ck_timer_callback(unsigned long castmeharder)
         struct ptlrpc_thread *thread = &mdt->mdt_ck_thread;
 
         ENTRY;
-        thread->t_flags |= SVC_EVENT;
+        thread_add_flags(thread, SVC_EVENT);
         cfs_waitq_signal(&thread->t_ctl_waitq);
         EXIT;
 }
@@ -215,7 +228,7 @@ static int mdt_ck_thread_main(void *args)
         cfs_daemonize_ctxt("mdt_ck");
         cfs_block_allsigs();
 
-        thread->t_flags = SVC_RUNNING;
+        thread_set_flags(thread, SVC_RUNNING);
         cfs_waitq_signal(&thread->t_ctl_waitq);
 
         rc = lu_env_init(&env, LCT_MD_THREAD|LCT_REMEMBER|LCT_NOREF);
@@ -233,12 +246,13 @@ static int mdt_ck_thread_main(void *args)
         mdsnum = mdt_md_site(mdt)->ms_node_id;
         while (1) {
                 l_wait_event(thread->t_ctl_waitq,
-                             thread->t_flags & (SVC_STOPPING | SVC_EVENT),
+                             thread_is_stopping(thread) ||
+                             thread_is_event(thread),
                              &lwi);
 
-                if (thread->t_flags & SVC_STOPPING)
+                if (thread_is_stopping(thread))
                         break;
-                thread->t_flags &= ~SVC_EVENT;
+                thread_clear_flags(thread, SVC_EVENT);
 
                 if (cfs_time_before(cfs_time_current(), mdt->mdt_ck_expiry))
                         break;
@@ -276,7 +290,7 @@ static int mdt_ck_thread_main(void *args)
         }
         lu_env_fini(&env);
 
-        thread->t_flags = SVC_STOPPED;
+        thread_set_flags(thread, SVC_STOPPED);
         cfs_waitq_signal(&thread->t_ctl_waitq);
         RETURN(0);
 }
@@ -293,7 +307,7 @@ int mdt_ck_thread_start(struct mdt_device *mdt)
                 return rc;
         }
 
-        l_wait_condition(thread->t_ctl_waitq, thread->t_flags & SVC_RUNNING);
+        l_wait_condition(thread->t_ctl_waitq, thread_is_running(thread));
         return 0;
 }
 
@@ -301,10 +315,10 @@ void mdt_ck_thread_stop(struct mdt_device *mdt)
 {
         struct ptlrpc_thread *thread = &mdt->mdt_ck_thread;
 
-        if (!(thread->t_flags & SVC_RUNNING))
+        if (!thread_is_running(thread))
                 return;
 
-        thread->t_flags = SVC_STOPPING;
+        thread_set_flags(thread, SVC_STOPPING);
         cfs_waitq_signal(&thread->t_ctl_waitq);
-        l_wait_condition(thread->t_ctl_waitq, thread->t_flags & SVC_STOPPED);
+        l_wait_condition(thread->t_ctl_waitq, thread_is_stopped(thread));
 }

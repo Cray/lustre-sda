@@ -128,7 +128,7 @@ enum ma_valid {
         MA_LMV       = (1 << 4),
         MA_ACL_DEF   = (1 << 5),
         MA_LOV_DEF   = (1 << 6),
-/* (Layout lock will used #7 here) */
+        MA_LAY_GEN   = (1 << 7),
         MA_HSM       = (1 << 8),
         MA_SOM       = (1 << 9),
         MA_PFID      = (1 << 10)
@@ -171,18 +171,19 @@ struct md_attr {
         __u64                   ma_need;
         __u64                   ma_attr_flags;
         struct lu_attr          ma_attr;
-        struct lov_mds_md      *ma_lmm;
-        int                     ma_lmm_size;
-        struct lmv_stripe_md   *ma_lmv;
-        int                     ma_lmv_size;
-        void                   *ma_acl;
-        int                     ma_acl_size;
-        struct llog_cookie     *ma_cookie;
-        int                     ma_cookie_size;
-        struct lustre_capa     *ma_capa;
-        struct md_hsm           ma_hsm;
-        struct md_som_data     *ma_som;
         struct lu_fid           ma_pfid;
+        struct md_hsm           ma_hsm;
+        struct lov_mds_md      *ma_lmm;
+        struct lmv_stripe_md   *ma_lmv;
+        void                   *ma_acl;
+        struct llog_cookie     *ma_cookie;
+        struct lustre_capa     *ma_capa;
+        struct md_som_data     *ma_som;
+        int                     ma_lmm_size;
+        int                     ma_lmv_size;
+        int                     ma_acl_size;
+        int                     ma_cookie_size;
+        __u16                   ma_layout_gen;
 };
 
 /** Additional parameters for create */
@@ -279,10 +280,6 @@ struct md_object_operations {
                             struct lustre_capa *, int renewal);
 
         int (*moo_object_sync)(const struct lu_env *, struct md_object *);
-        dt_obj_version_t (*moo_version_get)(const struct lu_env *,
-                                            struct md_object *);
-        void (*moo_version_set)(const struct lu_env *, struct md_object *,
-                                dt_obj_version_t);
         int (*moo_path)(const struct lu_env *env, struct md_object *obj,
                         char *path, int pathlen, __u64 *recno, int *linkno);
         int (*moo_file_lock)(const struct lu_env *env, struct md_object *obj,
@@ -331,6 +328,13 @@ struct md_dir_operations {
         int (*mdo_unlink)(const struct lu_env *env, struct md_object *pobj,
                           struct md_object *cobj, const struct lu_name *lname,
                           struct md_attr *ma);
+
+        /** This method is used to compare a requested layout to an existing
+         * layout (struct lov_mds_md_v1/3 vs struct lov_mds_md_v1/3) */
+        int (*mdo_lum_lmm_cmp)(const struct lu_env *env,
+                               struct md_object *cobj,
+                               const struct md_op_spec *spec,
+                               struct md_attr *ma);
 
         /** partial ops for cross-ref case */
         int (*mdo_name_insert)(const struct lu_env *env,
@@ -757,20 +761,6 @@ static inline int mo_object_sync(const struct lu_env *env, struct md_object *m)
         return m->mo_ops->moo_object_sync(env, m);
 }
 
-static inline dt_obj_version_t mo_version_get(const struct lu_env *env,
-                                              struct md_object *m)
-{
-        LASSERT(m->mo_ops->moo_version_get);
-        return m->mo_ops->moo_version_get(env, m);
-}
-
-static inline void mo_version_set(const struct lu_env *env,
-                                  struct md_object *m, dt_obj_version_t ver)
-{
-        LASSERT(m->mo_ops->moo_version_set);
-        return m->mo_ops->moo_version_set(env, m, ver);
-}
-
 static inline int mo_file_lock(const struct lu_env *env, struct md_object *m,
                                struct lov_mds_md *lmm,
                                struct ldlm_extent *extent,
@@ -869,6 +859,15 @@ static inline int mdo_unlink(const struct lu_env *env,
 {
         LASSERT(c->mo_dir_ops->mdo_unlink);
         return c->mo_dir_ops->mdo_unlink(env, p, c, lname, ma);
+}
+
+static inline int mdo_lum_lmm_cmp(const struct lu_env *env,
+                                  struct md_object *c,
+                                  const struct md_op_spec *spec,
+                                  struct md_attr *ma)
+{
+        LASSERT(c->mo_dir_ops->mdo_lum_lmm_cmp);
+        return c->mo_dir_ops->mdo_lum_lmm_cmp(env, c, spec, ma);
 }
 
 static inline int mdo_name_insert(const struct lu_env *env,

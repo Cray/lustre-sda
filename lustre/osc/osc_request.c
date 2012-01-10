@@ -66,9 +66,6 @@
 #include <lustre_param.h>
 #include "osc_internal.h"
 
-static quota_interface_t *quota_interface = NULL;
-extern quota_interface_t osc_quota_interface;
-
 static void osc_release_ppga(struct brw_page **ppga, obd_count count);
 static int brw_interpret(const struct lu_env *env,
                          struct ptlrpc_request *req, void *data, int rc);
@@ -1486,10 +1483,6 @@ static int check_write_checksum(struct obdo *oa, const lnet_process_id_t *peer,
                 return 0;
         }
 
-        /* If this is mmaped file - it can be changed at any time */
-        if (oa->o_valid & OBD_MD_FLFLAGS && oa->o_flags & OBD_FL_MMAP)
-                return 1;
-
         cksum_type = cksum_type_unpack(oa->o_valid & OBD_MD_FLFLAGS ?
                                        oa->o_flags : 0);
         new_cksum = osc_checksum_bulk(nob, page_count, pga, OST_WRITE,
@@ -1546,7 +1539,6 @@ static int osc_brw_fini_request(struct ptlrpc_request *req, int rc)
                 RETURN(-EPROTO);
         }
 
-#ifdef HAVE_QUOTA_SUPPORT
         /* set/clear over quota flag for a uid/gid */
         if (lustre_msg_get_opc(req->rq_reqmsg) == OST_WRITE &&
             body->oa.o_valid & (OBD_MD_FLUSRQUOTA | OBD_MD_FLGRPQUOTA)) {
@@ -1555,10 +1547,8 @@ static int osc_brw_fini_request(struct ptlrpc_request *req, int rc)
                 CDEBUG(D_QUOTA, "setdq for [%u %u] with valid "LPX64", flags %x\n",
                        body->oa.o_uid, body->oa.o_gid, body->oa.o_valid,
                        body->oa.o_flags);
-                lquota_setdq(quota_interface, cli, qid, body->oa.o_valid,
-                             body->oa.o_flags);
+                osc_quota_setdq(cli, qid, body->oa.o_valid, body->oa.o_flags);
         }
-#endif
 
         osc_update_grant(cli, body);
 
@@ -2225,20 +2215,9 @@ static int brw_interpret(const struct lu_env *env,
         rc = osc_brw_fini_request(req, rc);
         CDEBUG(D_INODE, "request %p aa %p rc %d\n", req, aa, rc);
         if (osc_recoverable_error(rc)) {
-                /* Only retry once for mmaped files since the mmaped page
-                 * might be modified at anytime. We have to retry at least
-                 * once in case there WAS really a corruption of the page
-                 * on the network, that was not caused by mmap() modifying
-                 * the page. Bug11742 */
-                if ((rc == -EAGAIN) && (aa->aa_resends > 0) &&
-                    aa->aa_oa->o_valid & OBD_MD_FLFLAGS &&
-                    aa->aa_oa->o_flags & OBD_FL_MMAP) {
-                        rc = 0;
-                } else {
-                        rc = osc_brw_redo_request(req, aa);
-                        if (rc == 0)
-                                RETURN(0);
-                }
+                rc = osc_brw_redo_request(req, aa);
+                if (rc == 0)
+                        RETURN(0);
         }
 
         if (aa->aa_ocapa) {
@@ -2296,10 +2275,8 @@ static struct ptlrpc_request *osc_build_req(const struct lu_env *env,
         struct osc_brw_async_args *aa;
         struct obdo *oa = NULL;
         const struct obd_async_page_ops *ops = NULL;
-        void *caller_data = NULL;
         struct osc_async_page *oap;
         struct osc_async_page *tmp;
-        struct ost_body *body;
         struct cl_req *clerq = NULL;
         enum cl_req_type crt = (cmd & OBD_BRW_WRITE) ? CRT_WRITE : CRT_READ;
         struct ldlm_lock *lock = NULL;
@@ -2326,7 +2303,6 @@ static struct ptlrpc_request *osc_build_req(const struct lu_env *env,
                 struct cl_page *page = osc_oap2cl_page(oap);
                 if (ops == NULL) {
                         ops = oap->oap_caller_ops;
-                        caller_data = oap->oap_caller_data;
 
                         clerq = cl_req_alloc(env, page, crt,
                                              1 /* only 1-object rpcs for
@@ -2375,7 +2351,6 @@ static struct ptlrpc_request *osc_build_req(const struct lu_env *env,
          * later setattr before earlier BRW (as determined by the request xid),
          * the OST will not use BRW timestamps.  Sadly, there is no obvious
          * way to do this in a single call.  bug 10150 */
-        body = req_capsule_client_get(&req->rq_pill, &RMF_OST_BODY);
         cl_req_attr_set(env, clerq, &crattr,
                         OBD_MD_FLMTIME|OBD_MD_FLCTIME|OBD_MD_FLATIME);
 
@@ -2997,7 +2972,7 @@ int osc_queue_async_io(const struct lu_env *env, struct obd_export *exp,
                 qid[USRQUOTA] = attr.cat_uid;
                 qid[GRPQUOTA] = attr.cat_gid;
                 if (rc == 0 &&
-                    lquota_chkdq(quota_interface, cli, qid) == NO_QUOTA)
+                    osc_quota_chkdq(cli, qid) == NO_QUOTA)
                         rc = -EDQUOT;
                 if (rc)
                         RETURN(rc);
@@ -3879,8 +3854,7 @@ static int osc_iocontrol(unsigned int cmd, struct obd_export *exp, int len,
                                                data->ioc_offset);
                 GOTO(out, err);
         case OBD_IOC_POLL_QUOTACHECK:
-                err = lquota_poll_check(quota_interface, exp,
-                                        (struct if_quotacheck *)karg);
+                err = osc_quota_poll_check(exp, (struct if_quotacheck *)karg);
                 GOTO(out, err);
         case OBD_IOC_PING_TARGET:
                 err = ptlrpc_obd_ping(obd);
@@ -4530,7 +4504,7 @@ int osc_cleanup(struct obd_device *obd)
         ENTRY;
 
         /* free memory of osc quota cache */
-        lquota_cleanup(quota_interface, obd);
+        osc_quota_cleanup(obd);
 
         rc = client_obd_cleanup(obd);
 
@@ -4599,6 +4573,9 @@ struct obd_ops osc_obd_ops = {
         .o_llog_init            = osc_llog_init,
         .o_llog_finish          = osc_llog_finish,
         .o_process_config       = osc_process_config,
+        .o_quotactl             = osc_quotactl,
+        .o_quotacheck           = osc_quotacheck,
+        .o_quota_adjust_qunit   = osc_quota_adjust_qunit,
 };
 
 extern struct lu_kmem_descr osc_caches[];
@@ -4620,16 +4597,10 @@ int __init osc_init(void)
 
         lprocfs_osc_init_vars(&lvars);
 
-        cfs_request_module("lquota");
-        quota_interface = PORTAL_SYMBOL_GET(osc_quota_interface);
-        lquota_init(quota_interface);
-        init_obd_quota_ops(quota_interface, &osc_obd_ops);
-
+        osc_quota_init();
         rc = class_register_type(&osc_obd_ops, NULL, lvars.module_vars,
                                  LUSTRE_OSC_NAME, &osc_device_type);
         if (rc) {
-                if (quota_interface)
-                        PORTAL_SYMBOL_PUT(osc_quota_interface);
                 lu_kmem_fini(osc_caches);
                 RETURN(rc);
         }
@@ -4651,10 +4622,7 @@ static void /*__exit*/ osc_exit(void)
 {
         lu_device_type_fini(&osc_device_type);
 
-        lquota_exit(quota_interface);
-        if (quota_interface)
-                PORTAL_SYMBOL_PUT(osc_quota_interface);
-
+        osc_quota_exit();
         class_unregister_type(LUSTRE_OSC_NAME);
         lu_kmem_fini(osc_caches);
 }

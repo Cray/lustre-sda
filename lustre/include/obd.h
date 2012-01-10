@@ -144,7 +144,8 @@ struct lov_stripe_md {
                 __u32 lw_magic;
                 __u32 lw_stripe_size;      /* size of the stripe */
                 __u32 lw_pattern;          /* striping pattern (RAID0, RAID1) */
-                unsigned lw_stripe_count;  /* number of objects being striped over */
+                __u16 lw_stripe_count;  /* number of objects being striped over */
+                __u16 lw_layout_gen;       /* generation of the layout */
                 char  lw_pool_name[LOV_MAXPOOLNAME]; /* pool name */
         } lsm_wire;
 
@@ -154,6 +155,7 @@ struct lov_stripe_md {
 #define lsm_object_id    lsm_wire.lw_object_id
 #define lsm_object_seq   lsm_wire.lw_object_seq
 #define lsm_magic        lsm_wire.lw_magic
+#define lsm_layout_gen   lsm_wire.lw_layout_gen
 #define lsm_stripe_size  lsm_wire.lw_stripe_size
 #define lsm_pattern      lsm_wire.lw_pattern
 #define lsm_stripe_count lsm_wire.lw_stripe_count
@@ -205,6 +207,57 @@ static inline int lov_stripe_md_cmp(struct lov_stripe_md *m1,
         return memcmp(&m1->lsm_wire, &m2->lsm_wire, sizeof m1->lsm_wire);
 }
 
+static inline int lov_lum_lsm_cmp(struct lov_user_md *lum,
+                                  struct lov_stripe_md  *lsm)
+{
+        if (lsm->lsm_magic != lum->lmm_magic)
+                return 1;
+        if ((lsm->lsm_stripe_count != 0) && (lum->lmm_stripe_count != 0) &&
+            (lsm->lsm_stripe_count != lum->lmm_stripe_count))
+                return 2;
+        if ((lsm->lsm_stripe_size != 0) && (lum->lmm_stripe_size != 0) &&
+            (lsm->lsm_stripe_size != lum->lmm_stripe_size))
+                return 3;
+        if ((lsm->lsm_pattern != 0) && (lum->lmm_pattern != 0) &&
+            (lsm->lsm_pattern != lum->lmm_pattern))
+                return 4;
+        if ((lsm->lsm_magic == LOV_MAGIC_V3) &&
+            (strncmp(lsm->lsm_pool_name,
+                     ((struct lov_user_md_v3 *)lum)->lmm_pool_name,
+                     LOV_MAXPOOLNAME) != 0))
+                return 5;
+        return 0;
+}
+
+static inline int lov_lum_swab_if_needed(struct lov_user_md_v3 *lumv3,
+                                         int *lmm_magic,
+                                         struct lov_user_md *lum)
+{
+        if (lum && cfs_copy_from_user(lumv3, lum,sizeof(struct lov_user_md_v1)))
+                return -EFAULT;
+
+        *lmm_magic = lumv3->lmm_magic;
+
+        if (*lmm_magic == __swab32(LOV_USER_MAGIC_V1)) {
+                lustre_swab_lov_user_md_v1((struct lov_user_md_v1 *)lumv3);
+                *lmm_magic = LOV_USER_MAGIC_V1;
+        } else if (*lmm_magic == LOV_USER_MAGIC_V3) {
+                if (lum && cfs_copy_from_user(lumv3, lum, sizeof(*lumv3)))
+                        return -EFAULT;
+        } else if (*lmm_magic == __swab32(LOV_USER_MAGIC_V3)) {
+                if (lum && cfs_copy_from_user(lumv3, lum, sizeof(*lumv3)))
+                        return -EFAULT;
+                lustre_swab_lov_user_md_v3(lumv3);
+                *lmm_magic = LOV_USER_MAGIC_V3;
+        } else if (*lmm_magic != LOV_USER_MAGIC_V1) {
+                CDEBUG(D_IOCTL,
+                       "bad userland LOV MAGIC: %#08x != %#08x nor %#08x\n",
+                       *lmm_magic, LOV_USER_MAGIC_V1, LOV_USER_MAGIC_V3);
+                       return -EINVAL;
+        }
+        return 0;
+}
+
 void lov_stripe_lock(struct lov_stripe_md *md);
 void lov_stripe_unlock(struct lov_stripe_md *md);
 
@@ -230,6 +283,10 @@ struct brw_page {
 
 struct ost_server_data;
 
+struct osd_properties {
+        size_t osd_max_ea_size;
+};
+
 #define OBT_MAGIC       0xBDDECEAE
 /* hold common fields for "target" device */
 struct obd_device_target {
@@ -246,6 +303,7 @@ struct obd_device_target {
         cfs_rw_semaphore_t        obt_rwsem;
         struct vfsmount          *obt_vfsmnt;
         struct file              *obt_health_check_filp;
+        struct osd_properties    obt_osd_properties;
 };
 
 /* llog contexts */
@@ -465,7 +523,6 @@ struct client_obd {
         cfs_waitq_t              cl_destroy_waitq;
 
         struct mdc_rpc_lock     *cl_rpc_lock;
-        struct mdc_rpc_lock     *cl_setattr_lock;
         struct mdc_rpc_lock     *cl_close_lock;
         struct osc_creator       cl_oscc;
 
@@ -1583,7 +1640,7 @@ struct lsm_operations {
         void (*lsm_stripe_by_offset)(struct lov_stripe_md *, int *, obd_off *,
                                      obd_off *);
         int (*lsm_lmm_verify) (struct lov_mds_md *lmm, int lmm_bytes,
-                               int *stripe_count);
+                               __u16 *stripe_count);
         int (*lsm_unpackmd) (struct lov_obd *lov, struct lov_stripe_md *lsm,
                              struct lov_mds_md *lmm);
 };

@@ -1369,14 +1369,20 @@ test_58a() {
 run_test 58a "test recovery from llog for setattr op (test llog_gen_rec)"
 
 test_58b() {
+    local orig
+    local new
+
+    large_xattr_enabled &&
+        orig="$(generate_string $(max_xattr_size))" || orig="bar"
+
     mount_client $MOUNT2
     mkdir -p $DIR/$tdir
     touch $DIR/$tdir/$tfile
     replay_barrier $SINGLEMDS
-    setfattr -n trusted.foo -v bar $DIR/$tdir/$tfile
+    setfattr -n trusted.foo -v $orig $DIR/$tdir/$tfile
     fail $SINGLEMDS
-    VAL=`getfattr --absolute-names --only-value -n trusted.foo $MOUNT2/$tdir/$tfile`
-    [ x$VAL = x"bar" ] || return 1
+    new=$(get_xattr_value trusted.foo $MOUNT2/$tdir/$tfile)
+    [[ "$new" = "$orig" ]] || return 1
     rm -f $DIR/$tdir/$tfile
     rmdir $DIR/$tdir
     zconf_umount `hostname` $MOUNT2
@@ -1384,20 +1390,33 @@ test_58b() {
 run_test 58b "test replay of setxattr op"
 
 test_58c() { # bug 16570
-        mount_client $MOUNT2
-        mkdir -p $DIR/$tdir
-        touch $DIR/$tdir/$tfile
-        drop_request "setfattr -n trusted.foo -v bar $DIR/$tdir/$tfile" || \
-                return 1
-        VAL=`getfattr --absolute-names --only-value -n trusted.foo $MOUNT2/$tdir/$tfile`
-        [ x$VAL = x"bar" ] || return 2
-        drop_reint_reply "setfattr -n trusted.foo1 -v bar1 $DIR/$tdir/$tfile" || \
-                return 3
-        VAL=`getfattr --absolute-names --only-value -n trusted.foo1 $MOUNT2/$tdir/$tfile`
-        [ x$VAL = x"bar1" ] || return 4
-        rm -f $DIR/$tdir/$tfile
-        rmdir $DIR/$tdir
-        zconf_umount `hostname` $MOUNT2
+    local orig
+    local orig1
+    local new
+
+    if large_xattr_enabled; then
+        local xattr_size=$(max_xattr_size)
+        orig="$(generate_string $((xattr_size / 2)))"
+        orig1="$(generate_string $xattr_size)"
+    else
+        orig="bar"
+        orig1="bar1"
+    fi
+
+    mount_client $MOUNT2
+    mkdir -p $DIR/$tdir
+    touch $DIR/$tdir/$tfile
+    drop_request "setfattr -n trusted.foo -v $orig $DIR/$tdir/$tfile" ||
+        return 1
+    new=$(get_xattr_value trusted.foo $MOUNT2/$tdir/$tfile)
+    [[ "$new" = "$orig" ]] || return 2
+    drop_reint_reply "setfattr -n trusted.foo1 -v $orig1 $DIR/$tdir/$tfile" ||
+        return 3
+    new=$(get_xattr_value trusted.foo1 $MOUNT2/$tdir/$tfile)
+    [[ "$new" = "$orig1" ]] || return 4
+    rm -f $DIR/$tdir/$tfile
+    rmdir $DIR/$tdir
+    zconf_umount $HOSTNAME $MOUNT2
 }
 run_test 58c "resend/reconstruct setxattr op"
 
@@ -2058,7 +2077,10 @@ run_test 85a "check the cancellation of unused locks during recovery(IBITS)"
 test_85b() { #bug 16774
     lctl set_param -n ldlm.cancel_unused_locks_before_replay "1"
 
-    lfs setstripe -o 0 -c 1 $DIR
+    do_facet mgs $LCTL pool_new $FSNAME.$TESTNAME || return 1
+    do_facet mgs $LCTL pool_add $FSNAME.$TESTNAME $FSNAME-OST0000 || return 2
+
+    lfs setstripe -c 1 -p $FSNAME.$TESTNAME $DIR
 
     for i in `seq 100`; do
         dd if=/dev/urandom of=$DIR/$tfile-$i bs=4096 count=32 >/dev/null 2>&1
@@ -2074,11 +2096,15 @@ test_85b() { #bug 16774
     addr=`echo $lov_id | awk '{print $4}' | awk -F '-' '{print $3}'`
     count=`lctl get_param -n ldlm.namespaces.*OST0000*$addr.lock_unused_count`
     echo "before recovery: unused locks count = $count"
+    [ $count != 0 ] || return 3
 
     fail ost1
 
     count2=`lctl get_param -n ldlm.namespaces.*OST0000*$addr.lock_unused_count`
     echo "after recovery: unused locks count = $count2"
+
+    do_facet mgs $LCTL pool_remove $FSNAME.$TESTNAME $FSNAME-OST0000 || return 4
+    do_facet mgs $LCTL pool_destroy $FSNAME.$TESTNAME || return 5
 
     if [ $count2 -ge $count ]; then
         error "unused locks are not canceled"

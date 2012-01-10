@@ -73,17 +73,12 @@
  * must be called under ->lli_size_sem */
 void ll_truncate(struct inode *inode)
 {
-        struct ll_inode_info *lli = ll_i2info(inode);
         ENTRY;
 
         CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p) to %llu\n", inode->i_ino,
                inode->i_generation, inode, i_size_read(inode));
 
         ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_TRUNC, 1);
-        if (lli->lli_size_sem_owner == cfs_current()) {
-                LASSERT_SEM_LOCKED(&lli->lli_size_sem);
-                ll_inode_size_unlock(inode, 0);
-        }
 
         EXIT;
         return;
@@ -148,7 +143,6 @@ static struct ll_cl_context *ll_cl_init(struct file *file,
         cio = ccc_env_io(env);
         io = cio->cui_cl.cis_io;
         if (io == NULL && create) {
-                struct vvp_io *vio;
                 loff_t pos;
 
                 /*
@@ -156,9 +150,7 @@ static struct ll_cl_context *ll_cl_init(struct file *file,
                  * methods directly, bypassing file system ->write() operation,
                  * so cl_io has to be created here.
                  */
-
                 io = ccc_env_thread_io(env);
-                vio = vvp_env_io(env);
                 ll_io_init(io, file, 1);
 
                 /* No lock at all for this kind of IO - we can't do it because

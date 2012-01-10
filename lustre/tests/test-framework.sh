@@ -139,7 +139,7 @@ init_test_env() {
         export LOGDIR=${LOGDIR:-${TMP}/test_logs/}/$(date +%s)
         export LOGDIRSET=true
     fi
-    export HOSTNAME=${HOSTNAME:-`hostname`}
+    export HOSTNAME=${HOSTNAME:-$(hostname -s)}
     if ! echo $PATH | grep -q $LUSTRE/utils; then
         export PATH=$LUSTRE/utils:$PATH
     fi
@@ -692,7 +692,7 @@ stop() {
     local mntpt=$(facet_mntpt $facet)
     running=$(do_facet ${facet} "grep -c $mntpt' ' /proc/mounts") || true
     if [ ${running} -ne 0 ]; then
-        echo "Stopping $mntpt (opts:$@)"
+        echo "Stopping $mntpt (opts:$@) on $HOST"
         do_facet ${facet} umount -d $@ $mntpt
     fi
 
@@ -1518,6 +1518,14 @@ facet_failover() {
 
     echo "Failing $facet on node $host"
 
+    # Make sure the client data is synced to disk. LU-924
+    #
+    # We don't write client data synchrnously (to avoid flooding sync writes
+    # when there are many clients connecting), so if the server reboots before
+    # the client data reachs disk, the client data will be lost and the client
+    # will be evicted after recovery, which is not what we expected.
+    do_facet $facet "sync; sync; sync"
+
     local affected=$(affected_facets $facet)
 
     shutdown_facet $facet
@@ -1667,6 +1675,95 @@ h2o2ib() {
     h2name_or_ip "$1" "o2ib"
 }
 declare -fx h2o2ib
+
+# This enables variables in cfg/"setup".sh files to support the pdsh HOSTLIST
+# expressions format. As a bonus we can then just pass in those variables
+# to pdsh. What this function does is take a HOSTLIST type string and
+# expand it into a space deliminated list for us.
+hostlist_expand() {
+    local hostlist=$1
+    local offset=$2
+    local myList
+    local item
+    local list
+
+    [ -z "$hostlist" ] && return
+
+    # Translate the case of [..],..,[..] to [..] .. [..]
+    list="${hostlist/],/] }"
+    front=${list%%[*}
+    [[ "$front" == *,* ]] && {
+        new="${list%,*} "
+        old="${list%,*},"
+        list=${list/${old}/${new}}
+    }
+
+    for item in $list; do
+        # Test if we have any []'s at all
+        if [ "$item" != "${item/\[/}" ]; then {
+            # Expand the [*] into list
+            name=${item%%[*}
+            back=${item#*]}
+
+            if [ "$name" != "$item" ]; then
+                group=${item#$name[*}
+                group=${group%%]*}
+
+                for range in ${group//,/ }; do
+                    begin=${range%-*}
+                    end=${range#*-}
+
+                    # Number of leading zeros
+                    padlen=${#begin}
+                    padlen2=${#end}
+                    end=$(echo $end | sed 's/0*//')
+                    [[ -z "$end" ]] && end=0
+                    [[ $padlen2 -gt $padlen ]] && {
+                        [[ $padlen2 -eq ${#end} ]] && padlen2=0
+                        padlen=$padlen2
+                    }
+                    begin=$(echo $begin | sed 's/0*//')
+                    [ -z $begin ] && begin=0
+
+                    for num in $(seq -f "%0${padlen}g" $begin $end); do
+                        value="${name#*,}${num}${back}"
+                        [ "$value" != "${value/\[/}" ] && {
+                            value=$(hostlist_expand "$value")
+                        }
+                        myList="$myList $value"
+                    done
+                done
+            fi
+        } else {
+            myList="$myList $item"
+        } fi
+    done
+    myList=${myList//,/ }
+    myList=${myList:1} # Remove first character which is a space
+
+    # Filter any duplicates without sorting
+    list="$myList "
+    myList="${list%% *}"
+
+    while [[ "$list" != ${myList##* } ]]; do
+        list=${list//${list%% *} /}
+        myList="$myList ${list%% *}"
+    done
+    myList="${myList%* }";
+
+    # We can select an object at a offset in the list
+    [ $# -eq 2 ] && {
+        cnt=0
+        for item in $myList; do
+            let cnt=cnt+1
+            [ $cnt -eq $offset ] && {
+                myList=$item
+            }
+        done
+        [ $(get_node_count $myList) -ne 1 ] && myList=""
+    }
+    echo $myList
+}
 
 facet_host() {
     local facet=$1
@@ -3460,19 +3557,20 @@ remote_nodes_list () {
 
 init_clients_lists () {
     # Sanity check: exclude the local client from RCLIENTS
-    local rclients=$(echo " $RCLIENTS " | sed -re "s/\s+$HOSTNAME\s+/ /g")
+    local clients=$(hostlist_expand "$RCLIENTS")
+    local rclients=$(exclude_items_from_list "$clients" $HOSTNAME)
 
     # Sanity check: exclude the dup entries
-    rclients=$(for i in $rclients; do echo $i; done | sort -u)
+    RCLIENTS=$(for i in ${rclients//,/ }; do echo $i; done | sort -u)
 
-    local clients="$SINGLECLIENT $HOSTNAME $rclients"
+    clients="$SINGLECLIENT $HOSTNAME $RCLIENTS"
 
     # Sanity check: exclude the dup entries from CLIENTS
     # for those configs which has SINGLCLIENT set to local client
     clients=$(for i in $clients; do echo $i; done | sort -u)
 
-    CLIENTS=`comma_list $clients`
-    local -a remoteclients=($rclients)
+    CLIENTS=$(comma_list $clients)
+    local -a remoteclients=($RCLIENTS)
     for ((i=0; $i<${#remoteclients[@]}; i++)); do
             varname=CLIENT$((i + 2))
             eval $varname=${remoteclients[i]}
@@ -4687,4 +4785,57 @@ is_sanity_benchmark() {
 
 min_ost_size () {
     $LCTL get_param -n osc.*.kbytesavail | sort -n | head -n1
+}
+
+# Get the block size of the filesystem.
+get_block_size() {
+    local facet=$1
+    local device=$2
+    local size
+
+    size=$(do_facet $facet "$DUMPE2FS -h $device 2>&1" |
+           awk '/^Block size:/ {print $3}')
+    echo $size
+}
+
+# Check whether the "large_xattr" feature is enabled or not.
+large_xattr_enabled() {
+    local mds_dev=$(mdsdevname ${SINGLEMDS//mds/})
+
+    do_facet $SINGLEMDS "$DUMPE2FS -h $mds_dev 2>&1 | grep -q large_xattr"
+    return ${PIPESTATUS[0]}
+}
+
+# Get the maximum xattr size supported by the filesystem.
+max_xattr_size() {
+    local size
+
+    if large_xattr_enabled; then
+        # include/linux/limits.h: #define XATTR_SIZE_MAX 65536
+        size=65536
+    else
+        local mds_dev=$(mdsdevname ${SINGLEMDS//mds/})
+        local block_size=$(get_block_size $SINGLEMDS $mds_dev)
+
+        # maximum xattr size = size of block - size of header -
+        #                      size of 1 entry - 4 null bytes
+        size=$((block_size - 32 - 32 - 4))
+    fi
+
+    echo $size
+}
+
+# Dump the value of the named xattr from a file.
+get_xattr_value() {
+    local xattr_name=$1
+    local file=$2
+
+    echo "$(getfattr -n $xattr_name --absolute-names --only-values $file)"
+}
+
+# Generate a string with size of $size bytes.
+generate_string() {
+    local size=${1:-1024} # in bytes
+
+    echo "$(head -c $size < /dev/zero | tr '\0' y)"
 }

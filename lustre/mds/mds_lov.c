@@ -201,12 +201,14 @@ static int mds_lov_update_max_ost(struct mds_obd *mds, obd_id index)
         /* workaround - New target not in objids file; increase mdsize */
         /* ld_tgt_count is used as the max index everywhere, despite its name. */
         if (data[off] == 0) {
+                __u32 max_easize;
                 __u32 stripes;
 
+                max_easize = mds->mds_obt.obt_osd_properties.osd_max_ea_size;
                 data[off] = 1;
                 mds->mds_lov_objid_count++;
-                stripes = min_t(__u32, LOV_MAX_STRIPE_COUNT,
-                                mds->mds_lov_objid_count);
+                stripes = min(lov_mds_md_stripecnt(max_easize, LOV_MAGIC_V3),
+                              mds->mds_lov_objid_count);
 
                 mds->mds_max_mdsize = lov_mds_md_size(stripes, LOV_MAGIC_V3);
                 mds->mds_max_cookiesize = stripes * sizeof(struct llog_cookie);
@@ -232,7 +234,7 @@ static int mds_lov_objinit(struct mds_obd *mds, __u32 index)
 int mds_lov_prepare_objids(struct obd_device *obd, struct lov_mds_md *lmm)
 {
         struct lov_ost_data_v1 *data;
-        __u32 count;
+        __u16 count;
         int rc = 0;
         __u32 j;
 
@@ -242,11 +244,11 @@ int mds_lov_prepare_objids(struct obd_device *obd, struct lov_mds_md *lmm)
 
         switch (le32_to_cpu(lmm->lmm_magic)) {
                 case LOV_MAGIC_V1:
-                        count = le32_to_cpu(((struct lov_mds_md_v1*)lmm)->lmm_stripe_count);
+                        count = le16_to_cpu(((struct lov_mds_md_v1*)lmm)->lmm_stripe_count);
                         data = &(((struct lov_mds_md_v1*)lmm)->lmm_objects[0]);
                         break;
                 case LOV_MAGIC_V3:
-                        count = le32_to_cpu(((struct lov_mds_md_v3*)lmm)->lmm_stripe_count);
+                        count = le16_to_cpu(((struct lov_mds_md_v3*)lmm)->lmm_stripe_count);
                         data = &(((struct lov_mds_md_v3*)lmm)->lmm_objects[0]);
                         break;
                 default:
@@ -275,7 +277,7 @@ EXPORT_SYMBOL(mds_lov_prepare_objids);
  * after use
  */
 static int mds_log_lost_precreated(struct obd_device *obd,
-                                   struct lov_stripe_md **lsmp, int *stripes,
+                                   struct lov_stripe_md **lsmp, __u16 *stripes,
                                    obd_id id, obd_count count, int idx)
 {
         struct lov_stripe_md *lsm = *lsmp;
@@ -306,7 +308,7 @@ void mds_lov_update_objids(struct obd_device *obd, struct lov_mds_md *lmm)
         int j;
         struct lov_ost_data_v1 *obj;
         struct lov_stripe_md *lsm = NULL;
-        int stripes = 0;
+        __u16 stripes = 0;
         int count;
         ENTRY;
 
@@ -316,11 +318,11 @@ void mds_lov_update_objids(struct obd_device *obd, struct lov_mds_md *lmm)
 
         switch (le32_to_cpu(lmm->lmm_magic)) {
                 case LOV_MAGIC_V1:
-                        count = le32_to_cpu(((struct lov_mds_md_v1*)lmm)->lmm_stripe_count);
+                        count = le16_to_cpu(((struct lov_mds_md_v1*)lmm)->lmm_stripe_count);
                         obj = ((struct lov_mds_md_v1*)lmm)->lmm_objects;
                         break;
                 case LOV_MAGIC_V3:
-                        count = le32_to_cpu(((struct lov_mds_md_v3*)lmm)->lmm_stripe_count);
+                        count = le16_to_cpu(((struct lov_mds_md_v3*)lmm)->lmm_stripe_count);
                         obj = ((struct lov_mds_md_v3*)lmm)->lmm_objects;
                         break;
                 default:
@@ -368,8 +370,8 @@ EXPORT_SYMBOL(mds_lov_update_objids);
 static int mds_lov_update_from_read(struct mds_obd *mds, obd_id *data,
                                     __u32 count)
 {
-        __u32 i;
-        __u32 stripes;
+        __u32 max_easize = mds->mds_obt.obt_osd_properties.osd_max_ea_size;
+        __u32 i, stripes;
 
         for (i = 0; i < count; i++) {
                 if (data[i] == 0)
@@ -378,7 +380,7 @@ static int mds_lov_update_from_read(struct mds_obd *mds, obd_id *data,
                 mds->mds_lov_objid_count++;
         }
 
-        stripes = min_t(__u32, LOV_MAX_STRIPE_COUNT,
+        stripes = min(lov_mds_md_stripecnt(max_easize, LOV_MAGIC_V3),
                          mds->mds_lov_objid_count);
 
         mds->mds_max_mdsize = lov_mds_md_size(stripes, LOV_MAGIC_V3);
@@ -717,12 +719,14 @@ int mds_lov_connect(struct obd_device *obd, char * lov_name)
                                   OBD_CONNECT_OSS_CAPA  | OBD_CONNECT_FULL20  |
                                   OBD_CONNECT_CHANGE_QS | OBD_CONNECT_AT      |
                                   OBD_CONNECT_MDS | OBD_CONNECT_SKIP_ORPHAN   |
-                                  OBD_CONNECT_SOM;
+                                  OBD_CONNECT_SOM | OBD_CONNECT_MAX_EASIZE;
 #ifdef HAVE_LRU_RESIZE_SUPPORT
         data->ocd_connect_flags |= OBD_CONNECT_LRU_RESIZE;
 #endif
         data->ocd_version = LUSTRE_VERSION_CODE;
         data->ocd_group = mdt_to_obd_objseq(mds->mds_id);
+        data->ocd_max_easize = mds->mds_obt.obt_osd_properties.osd_max_ea_size;
+
         /* send max bytes per rpc */
         data->ocd_brw_size = PTLRPC_MAX_BRW_PAGES << CFS_PAGE_SHIFT;
         /* send the list of supported checksum types */

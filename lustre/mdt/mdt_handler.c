@@ -469,6 +469,32 @@ static inline int mdt_body_has_lov(const struct lu_attr *la,
                 (S_ISDIR(la->la_mode) && (body->valid & OBD_MD_FLDIREA )) );
 }
 
+void mdt_client_compatibility(struct mdt_thread_info *info)
+{
+        struct mdt_body       *body;
+        struct ptlrpc_request *req = mdt_info_req(info);
+        struct obd_export     *exp = req->rq_export;
+        struct md_attr        *ma = &info->mti_attr;
+        struct lu_attr        *la = &ma->ma_attr;
+        ENTRY;
+
+        if (exp->exp_connect_flags & OBD_CONNECT_LAYOUTLOCK)
+                /* the client can deal with 16-bit lmm_stripe_count */
+                RETURN_EXIT;
+
+        body = req_capsule_server_get(info->mti_pill, &RMF_MDT_BODY);
+
+        if (!mdt_body_has_lov(la, body))
+                RETURN_EXIT;
+
+        /* now we have a reply with a lov for a client not compatible with the
+         * layout lock so we have to clean the layout generation number */
+        if (S_ISREG(la->la_mode))
+                ma->ma_lmm->lmm_layout_gen = 0;
+        EXIT;
+}
+
+
 static int mdt_getattr_internal(struct mdt_thread_info *info,
                                 struct mdt_object *o, int ma_need)
 {
@@ -740,6 +766,7 @@ out_shrink:
         if (rc == 0)
                 mdt_counter_incr(req->rq_export, LPROC_MDT_GETATTR);
 
+        mdt_client_compatibility(info);
         mdt_shrink_reply(info);
         return rc;
 }
@@ -1108,6 +1135,7 @@ static int mdt_getattr_name(struct mdt_thread_info *info)
         mdt_exit_ucred(info);
         EXIT;
 out_shrink:
+        mdt_client_compatibility(info);
         mdt_shrink_reply(info);
         return rc;
 }
@@ -1562,6 +1590,7 @@ static int mdt_reint_internal(struct mdt_thread_info *info,
 out_ucred:
         mdt_exit_ucred(info);
 out_shrink:
+        mdt_client_compatibility(info);
         mdt_shrink_reply(info);
         return rc;
 }
@@ -3325,6 +3354,7 @@ static int mdt_intent_getattr(enum mdt_it_code opcode,
 out_ucred:
         mdt_exit_ucred(info);
 out_shrink:
+        mdt_client_compatibility(info);
         mdt_shrink_reply(info);
         return rc;
 }
@@ -3912,6 +3942,10 @@ static int mdt_start_ptlrpc_service(struct mdt_device *m)
 
         /*
          * setattr service configuration.
+         *
+         * XXX To keep the compatibility with old client(< 2.2), we need to
+         * preserve this portal for a certain time, it should be removed
+         * eventually. LU-617.
          */
         conf = (typeof(conf)) {
                 .psc_nbufs           = MDS_NBUFS,
@@ -4181,8 +4215,11 @@ static struct lu_device *mdt_layer_setup(struct lu_env *env,
         lu_device_get(d);
         lu_ref_add(&d->ld_reference, "lu-stack", &lu_site_init);
 
-        RETURN(d);
+        cfs_spin_lock(&d->ld_site->ls_ld_lock);
+        cfs_list_add_tail(&d->ld_linkage, &d->ld_site->ls_ld_linkage);
+        cfs_spin_unlock(&d->ld_site->ls_ld_lock);
 
+        RETURN(d);
 out_alloc:
         ldt->ldt_ops->ldto_device_free(env, d);
         type->typ_refcnt--;
@@ -5455,7 +5492,7 @@ static int mdt_ioc_version_get(struct mdt_thread_info *mti, void *karg)
                  *(__u64 *)data->ioc_inlbuf2 = ENOENT_VERSION;
                 rc = -ENOENT;
         } else {
-                version = mo_version_get(mti->mti_env, mdt_object_child(obj));
+                version = dt_version_get(mti->mti_env, mdt_obj2dt(obj));
                *(__u64 *)data->ioc_inlbuf2 = version;
                 rc = 0;
         }

@@ -279,7 +279,7 @@ static int ldlm_lock_busy(struct ldlm_lock *lock)
 /* This is called from within a timer interrupt and cannot schedule */
 static void waiting_locks_callback(unsigned long unused)
 {
-        struct ldlm_lock *lock, *last = NULL;
+        struct ldlm_lock *lock;
 
 repeat:
         cfs_spin_lock_bh(&waiting_locks_spinlock);
@@ -354,8 +354,6 @@ repeat:
                            cfs_time_current_sec()- lock->l_last_activity,
                            libcfs_nid2str(
                                    lock->l_export->exp_connection->c_peer.nid));
-
-                last = lock;
 
                 /* no needs to take an extra ref on the lock since it was in
                  * the waiting_locks_list and ldlm_add_waiting_lock()
@@ -652,7 +650,6 @@ static int ldlm_cb_interpret(const struct lu_env *env,
         struct ldlm_cb_async_args *ca   = data;
         struct ldlm_lock          *lock = ca->ca_lock;
         struct ldlm_cb_set_arg    *arg  = ca->ca_set_arg;
-        struct ptlrpc_request_set *set  = arg->set;
         ENTRY;
 
         LASSERT(lock != NULL);
@@ -665,7 +662,8 @@ static int ldlm_cb_interpret(const struct lu_env *env,
         }
         LDLM_LOCK_RELEASE(lock);
 
-        cfs_waitq_signal(&set->set_waitq);
+        if (cfs_atomic_dec_return(&arg->rpcs) < arg->threshold)
+                cfs_waitq_signal(&arg->waitq);
         RETURN(0);
 }
 
@@ -684,8 +682,8 @@ static inline int ldlm_bl_and_cp_ast_tail(struct ptlrpc_request *req,
                         cfs_atomic_inc(&arg->restart);
         } else {
                 LDLM_LOCK_GET(lock);
-                ptlrpc_set_add_req(arg->set, req);
-                ++arg->rpcs;
+                ptlrpcd_add_req(req, PDL_POLICY_ROUND, -1);
+                cfs_atomic_inc(&arg->rpcs);
         }
 
         RETURN(rc);
@@ -2616,7 +2614,7 @@ static int ldlm_cleanup(void)
         RETURN(0);
 }
 
-int __init ldlm_init(void)
+int ldlm_init(void)
 {
         cfs_init_mutex(&ldlm_ref_sem);
         cfs_init_mutex(ldlm_namespace_lock(LDLM_NAMESPACE_SERVER));
@@ -2649,7 +2647,7 @@ int __init ldlm_init(void)
         return 0;
 }
 
-void __exit ldlm_exit(void)
+void ldlm_exit(void)
 {
         int rc;
         if (ldlm_refcount)

@@ -110,7 +110,7 @@ static void mdt_obj_version_get(struct mdt_thread_info *info,
         LASSERT(o);
         LASSERT(mdt_object_exists(o) >= 0);
         if (mdt_object_exists(o) > 0)
-                *version = mo_version_get(info->mti_env, mdt_object_child(o));
+                *version = dt_version_get(info->mti_env, mdt_obj2dt(o));
         else
                 *version = ENOENT_VERSION;
         CDEBUG(D_INODE, "FID "DFID" version is "LPX64"\n",
@@ -414,16 +414,12 @@ static int mdt_md_mkobj(struct mdt_thread_info *info)
         RETURN(rc);
 }
 
-/* In the raw-setattr case, we lock the child inode.
- * In the write-back case or if being called from open,
- *               the client holds a lock already.
- * We use the ATTR_FROM_OPEN (translated into MRF_SETATTR_LOCKED by
- * mdt_setattr_unpack()) flag to tell these cases apart. */
 int mdt_attr_set(struct mdt_thread_info *info, struct mdt_object *mo,
                  struct md_attr *ma, int flags)
 {
         struct mdt_lock_handle  *lh;
         int do_vbr = ma->ma_attr.la_valid & (LA_MODE|LA_UID|LA_GID|LA_FLAGS);
+        __u64 lockpart = MDS_INODELOCK_UPDATE;
         int rc;
         ENTRY;
 
@@ -433,15 +429,12 @@ int mdt_attr_set(struct mdt_thread_info *info, struct mdt_object *mo,
         lh = &info->mti_lh[MDT_LH_PARENT];
         mdt_lock_reg_init(lh, LCK_PW);
 
-        if (!(flags & MRF_SETATTR_LOCKED)) {
-                __u64 lockpart = MDS_INODELOCK_UPDATE;
-                if (ma->ma_attr.la_valid & (LA_MODE|LA_UID|LA_GID))
-                        lockpart |= MDS_INODELOCK_LOOKUP;
+        if (ma->ma_attr.la_valid & (LA_MODE|LA_UID|LA_GID))
+                lockpart |= MDS_INODELOCK_LOOKUP;
 
-                rc = mdt_object_lock(info, mo, lh, lockpart, MDT_LOCAL_LOCK);
-                if (rc != 0)
-                        RETURN(rc);
-        }
+        rc = mdt_object_lock(info, mo, lh, lockpart, MDT_LOCAL_LOCK);
+        if (rc != 0)
+                RETURN(rc);
 
         if (mdt_object_exists(mo) == 0)
                 GOTO(out_unlock, rc = -ENOENT);
@@ -502,7 +495,7 @@ static int mdt_reint_setattr(struct mdt_thread_info *info,
         /* start a log jounal handle if needed */
         if (!(mdt_conn_flags(info) & OBD_CONNECT_SOM)) {
                 if ((ma->ma_attr.la_valid & LA_SIZE) ||
-                    (rr->rr_flags & MRF_SETATTR_LOCKED)) {
+                    (rr->rr_flags & MRF_OPEN_TRUNC)) {
                         /* Check write access for the O_TRUNC case */
                         if (mdt_write_read(mo) < 0)
                                 GOTO(out_put, rc = -ETXTBSY);
@@ -604,6 +597,7 @@ out:
         if (rc == 0)
                 mdt_counter_incr(req->rq_export, LPROC_MDT_SETATTR);
 
+        mdt_client_compatibility(info);
         mdt_shrink_reply(info);
         return rc;
 }
@@ -1284,6 +1278,9 @@ static int mdt_reint_rename(struct mdt_thread_info *info,
                 mdt_counter_incr(req->rq_export, LPROC_MDT_RENAME);
                 if (mnew)
                         mdt_handle_last_unlink(info, mnew, ma);
+
+                mdt_rename_counter_tally(info, info->mti_mdt, req->rq_export,
+                                         msrcdir, mtgtdir);
         }
 
         EXIT;

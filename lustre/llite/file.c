@@ -318,7 +318,8 @@ int ll_file_release(struct inode *inode, struct file *file)
         /* The last ref on @file, maybe not the the owner pid of statahead.
          * Different processes can open the same dir, "ll_opendir_key" means:
          * it is me that should stop the statahead thread. */
-        if (lli->lli_opendir_key == fd && lli->lli_opendir_pid != 0)
+        if (S_ISDIR(inode->i_mode) && lli->lli_opendir_key == fd &&
+            lli->lli_opendir_pid != 0)
                 ll_stop_statahead(inode, lli->lli_opendir_key);
 
         if (inode->i_sb->s_root == file->f_dentry) {
@@ -327,9 +328,11 @@ int ll_file_release(struct inode *inode, struct file *file)
                 RETURN(0);
         }
 
-        if (lsm)
-                lov_test_and_clear_async_rc(lsm);
-        lli->lli_async_rc = 0;
+        if (!S_ISDIR(inode->i_mode)) {
+                if (lsm)
+                        lov_test_and_clear_async_rc(lsm);
+                lli->lli_async_rc = 0;
+        }
 
         rc = ll_md_close(sbi->ll_md_exp, inode, file);
 
@@ -519,8 +522,8 @@ int ll_file_open(struct inode *inode, struct file *file)
         fd->fd_file = file;
         if (S_ISDIR(inode->i_mode)) {
                 cfs_spin_lock(&lli->lli_sa_lock);
-                if (lli->lli_opendir_key == NULL && lli->lli_opendir_pid == 0 &&
-                    lli->lli_sai == NULL) {
+                if (lli->lli_opendir_key == NULL && lli->lli_sai == NULL &&
+                    lli->lli_opendir_pid == 0) {
                         lli->lli_opendir_key = fd;
                         lli->lli_opendir_pid = cfs_curproc_pid();
                         opendir_set = 1;
@@ -1883,12 +1886,9 @@ loff_t ll_file_seek(struct file *file, loff_t offset, int origin)
         ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_LLSEEK, 1);
 
         if (origin == 2) { /* SEEK_END */
-                int nonblock = 0, rc;
+                int rc;
 
-                if (file->f_flags & O_NONBLOCK)
-                        nonblock = LDLM_FL_BLOCK_NOWAIT;
-
-                rc = cl_glimpse_size(inode);
+                rc = ll_glimpse_size(inode);
                 if (rc != 0)
                         RETURN(rc);
 
@@ -1919,6 +1919,8 @@ int ll_flush(struct file *file)
         struct lov_stripe_md *lsm = lli->lli_smd;
         int rc, err;
 
+        LASSERT(!S_ISDIR(inode->i_mode));
+
         /* the application should know write failure already. */
         if (lli->lli_write_rc)
                 return 0;
@@ -1936,9 +1938,13 @@ int ll_flush(struct file *file)
         return rc ? -EIO : 0;
 }
 
+#ifndef HAVE_FILE_FSYNC_2ARGS
 int ll_fsync(struct file *file, struct dentry *dentry, int data)
+#else
+int ll_fsync(struct file *file, int data)
+#endif
 {
-        struct inode *inode = dentry->d_inode;
+        struct inode *inode = file->f_dentry->d_inode;
         struct ll_inode_info *lli = ll_i2info(inode);
         struct lov_stripe_md *lsm = lli->lli_smd;
         struct ptlrpc_request *req;
@@ -1955,14 +1961,16 @@ int ll_fsync(struct file *file, struct dentry *dentry, int data)
 
         /* catch async errors that were recorded back when async writeback
          * failed for pages in this mapping. */
-        err = lli->lli_async_rc;
-        lli->lli_async_rc = 0;
-        if (rc == 0)
-                rc = err;
-        if (lsm) {
-                err = lov_test_and_clear_async_rc(lsm);
+        if (!S_ISDIR(inode->i_mode)) {
+                err = lli->lli_async_rc;
+                lli->lli_async_rc = 0;
                 if (rc == 0)
                         rc = err;
+                if (lsm) {
+                        err = lov_test_and_clear_async_rc(lsm);
+                        if (rc == 0)
+                                rc = err;
+                }
         }
 
         oc = ll_mdscapa_get(inode);
@@ -2001,7 +2009,7 @@ int ll_fsync(struct file *file, struct dentry *dentry, int data)
                         rc = err;
                 OBDO_FREE(oinfo->oi_oa);
                 OBD_FREE_PTR(oinfo);
-                lli->lli_write_rc = err < 0 ? : 0;
+                lli->lli_write_rc = rc < 0 ? rc : 0;
         }
 
         RETURN(rc);
@@ -2230,7 +2238,6 @@ int __ll_inode_revalidate_it(struct dentry *dentry, struct lookup_intent *it,
 {
         struct inode *inode = dentry->d_inode;
         struct ptlrpc_request *req = NULL;
-        struct ll_sb_info *sbi;
         struct obd_export *exp;
         int rc = 0;
         ENTRY;
@@ -2239,7 +2246,6 @@ int __ll_inode_revalidate_it(struct dentry *dentry, struct lookup_intent *it,
                 CERROR("REPORT THIS LINE TO PETER\n");
                 RETURN(0);
         }
-        sbi = ll_i2sbi(inode);
 
         CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p),name=%s\n",
                inode->i_ino, inode->i_generation, inode, dentry->d_name.name);
@@ -2349,11 +2355,11 @@ int ll_inode_revalidate_it(struct dentry *dentry, struct lookup_intent *it,
                 RETURN(0);
         }
 
-        /* cl_glimpse_size will prefer locally cached writes if they extend
+        /* ll_glimpse_size will prefer locally cached writes if they extend
          * the file */
 
         if (rc == 0)
-                rc = cl_glimpse_size(inode);
+                rc = ll_glimpse_size(inode);
 
         RETURN(rc);
 }
@@ -2440,8 +2446,12 @@ int ll_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 #endif
 
 
-static
-int lustre_check_acl(struct inode *inode, int mask)
+static int
+#ifdef HAVE_GENERIC_PERMISSION_4ARGS
+lustre_check_acl(struct inode *inode, int mask, unsigned int flags)
+#else
+lustre_check_acl(struct inode *inode, int mask)
+#endif
 {
 #ifdef CONFIG_FS_POSIX_ACL
         struct ll_inode_info *lli = ll_i2info(inode);
@@ -2449,6 +2459,10 @@ int lustre_check_acl(struct inode *inode, int mask)
         int rc;
         ENTRY;
 
+#ifdef HAVE_GENERIC_PERMISSION_4ARGS
+        if (flags & IPERM_FLAG_RCU)
+                return -ECHILD;
+#endif
         cfs_spin_lock(&lli->lli_lock);
         acl = posix_acl_dup(lli->lli_posix_acl);
         cfs_spin_unlock(&lli->lli_lock);
@@ -2465,11 +2479,14 @@ int lustre_check_acl(struct inode *inode, int mask)
 #endif
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,10))
-#ifndef HAVE_INODE_PERMISION_2ARGS
-int ll_inode_permission(struct inode *inode, int mask, struct nameidata *nd)
+#ifdef HAVE_GENERIC_PERMISSION_4ARGS
+int ll_inode_permission(struct inode *inode, int mask, unsigned int flags)
 #else
+# ifdef HAVE_INODE_PERMISION_2ARGS
 int ll_inode_permission(struct inode *inode, int mask)
+# else
+int ll_inode_permission(struct inode *inode, int mask, struct nameidata *nd)
+# endif
 #endif
 {
         int rc = 0;
@@ -2494,61 +2511,10 @@ int ll_inode_permission(struct inode *inode, int mask)
                 return lustre_check_remote_perm(inode, mask);
 
         ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_INODE_PERM, 1);
-        rc = generic_permission(inode, mask, lustre_check_acl);
+        rc = ll_generic_permission(inode, mask, flags, lustre_check_acl);
 
         RETURN(rc);
 }
-#else
-int ll_inode_permission(struct inode *inode, int mask, struct nameidata *nd)
-{
-        int mode = inode->i_mode;
-        int rc;
-
-        CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p), mask %o\n",
-               inode->i_ino, inode->i_generation, inode, mask);
-
-        if (ll_i2sbi(inode)->ll_flags & LL_SBI_RMT_CLIENT)
-                return lustre_check_remote_perm(inode, mask);
-
-        ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_INODE_PERM, 1);
-
-        if ((mask & MAY_WRITE) && IS_RDONLY(inode) &&
-            (S_ISREG(mode) || S_ISDIR(mode) || S_ISLNK(mode)))
-                return -EROFS;
-        if ((mask & MAY_WRITE) && IS_IMMUTABLE(inode))
-                return -EACCES;
-        if (cfs_curproc_fsuid() == inode->i_uid) {
-                mode >>= 6;
-        } else if (1) {
-                if (((mode >> 3) & mask & S_IRWXO) != mask)
-                        goto check_groups;
-                rc = lustre_check_acl(inode, mask);
-                if (rc == -EAGAIN)
-                        goto check_groups;
-                if (rc == -EACCES)
-                        goto check_capabilities;
-                return rc;
-        } else {
-check_groups:
-                if (cfs_curproc_is_in_groups(inode->i_gid))
-                        mode >>= 3;
-        }
-        if ((mode & mask & S_IRWXO) == mask)
-                return 0;
-
-check_capabilities:
-        if (!(mask & MAY_EXEC) ||
-            (inode->i_mode & S_IXUGO) || S_ISDIR(inode->i_mode))
-                if (cfs_capable(CFS_CAP_DAC_OVERRIDE))
-                        return 0;
-
-        if (cfs_capable(CFS_CAP_DAC_READ_SEARCH) && ((mask == MAY_READ) ||
-            (S_ISDIR(inode->i_mode) && !(mask & MAY_WRITE))))
-                return 0;
-
-        return -EACCES;
-}
-#endif
 
 #ifdef HAVE_FILE_READV
 #define READ_METHOD readv

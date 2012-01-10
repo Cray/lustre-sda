@@ -454,7 +454,7 @@ int dqacq_handler(struct obd_device *obd, struct qunit_data *qdata, int opc)
         case QUOTA_DQREL:
                 /* The usage in administrative file might be incorrect before
                  * recovery done */
-                if (*usage - qdata->qd_count < 0)
+                if (*usage < qdata->qd_count)
                         *usage = 0;
                 else
                         *usage -= qdata->qd_count;
@@ -1054,6 +1054,8 @@ int dquot_create_oqaq(struct lustre_quota_ctxt *qctxt,
                         oqaq->qaq_bunit_sz =
                                 QUSG(oqaq->qaq_bunit_sz * cqs_factor, 1)
                                 << QUOTABLOCK_BITS;
+                        if (oqaq->qaq_bunit_sz >= qctxt->lqc_bunit_sz)
+                                break;
                         b_limitation = oqaq->qaq_bunit_sz * (ost_num + 1) *
                                 shrink_qunit_limit;
                 }
@@ -1088,6 +1090,8 @@ int dquot_create_oqaq(struct lustre_quota_ctxt *qctxt,
                 while (ilimit > dquot->dq_dqb.dqb_curinodes
                        + 2 * i_limitation) {
                         oqaq->qaq_iunit_sz = oqaq->qaq_iunit_sz * cqs_factor;
+                        if (oqaq->qaq_iunit_sz >= qctxt->lqc_iunit_sz)
+                                break;
                         i_limitation = oqaq->qaq_iunit_sz * mdt_num *
                                 shrink_qunit_limit;
                 }
@@ -1557,17 +1561,6 @@ int mds_get_dqblk(struct obd_device *obd, struct obd_quotactl *oqctl)
         dqblk->dqb_curinodes = 0;
         dqblk->dqb_curspace = 0;
         rc = mds_get_space(obd, oqctl);
-
-        /*
-         * Querying of curinodes and/or curspace may have failed, administrative
-         * quota data are likely to be better approximation to the real usage in
-         * this case.
-         */
-        if (!(dqblk->dqb_valid & QIF_INODES) && dquot->dq_dqb.dqb_curinodes > 0)
-                dqblk->dqb_curinodes = dquot->dq_dqb.dqb_curinodes;
-
-        if (!(dqblk->dqb_valid & QIF_SPACE) && dquot->dq_dqb.dqb_curspace > 0)
-                dqblk->dqb_curspace = dquot->dq_dqb.dqb_curspace;
 
         RETURN(rc);
 

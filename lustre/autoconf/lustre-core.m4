@@ -510,7 +510,10 @@ AC_TRY_RUN([
 	AC_MSG_RESULT([ACL size $acl_size])
         AC_DEFINE_UNQUOTED(XATTR_ACL_SIZE, AS_TR_SH([$acl_size]), [size of xattr acl])
 ],[
-        AC_ERROR([ACL size can't computed])
+        AC_ERROR([ACL size can't be computed])
+],[
+	AC_MSG_RESULT([can't check ACL size, make it 260])
+        AC_DEFINE_UNQUOTED(XATTR_ACL_SIZE,260)
 ])
 CFLAGS="$tmp_flags"
 ])
@@ -965,22 +968,26 @@ LB_LINUX_TRY_COMPILE([
 
 #
 # LC_STATFS_DENTRY_PARAM
-# starting from 2.6.18 linux kernel uses dentry instead of
-# super_block for first vfs_statfs argument
+# starting from 2.6.18 linux kernel uses dentry instead of super_block
+# for the first parameter of the super_operations->statfs() callback.
+#
 #
 AC_DEFUN([LC_STATFS_DENTRY_PARAM],
-[AC_MSG_CHECKING([first vfs_statfs parameter is dentry])
+[AC_MSG_CHECKING([if super_ops.statfs() first parameter is dentry])
+tmp_flags="$EXTRA_KCFLAGS"
+EXTRA_KCFLAGS="-Werror"
 LB_LINUX_TRY_COMPILE([
         #include <linux/fs.h>
 ],[
-	int vfs_statfs(struct dentry *, struct kstatfs *);
+        ((struct super_operations *)0)->statfs((struct dentry *)0, (struct kstatfs*)0);
 ],[
         AC_DEFINE(HAVE_STATFS_DENTRY_PARAM, 1,
-                [first parameter of vfs_statfs is dentry])
+                  [super_ops.statfs() first parameter is dentry])
         AC_MSG_RESULT([yes])
 ],[
         AC_MSG_RESULT([no])
 ])
+EXTRA_KCFLAGS="$tmp_flags"
 ])
 
 #
@@ -1151,19 +1158,20 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LC_PAGE_CHECKED],
 [AC_MSG_CHECKING([kernel has PageChecked and SetPageChecked])
 LB_LINUX_TRY_COMPILE([
+        #include <linux/mm.h>
 #ifdef HAVE_LINUX_MMTYPES_H
         #include <linux/mm_types.h>
 #endif
-	#include <linux/page-flags.h>
+        #include <linux/page-flags.h>
 ],[
- 	struct page *p;
+        struct page *p = NULL;
 
         /* before 2.6.26 this define*/
         #ifndef PageChecked	
- 	/* 2.6.26 use function instead of define for it */
- 	SetPageChecked(p);
- 	PageChecked(p);
- 	#endif
+        /* 2.6.26 use function instead of define for it */
+        SetPageChecked(p);
+        PageChecked(p);
+        #endif
 ],[
         AC_MSG_RESULT(yes)
         AC_DEFINE(HAVE_PAGE_CHECKED, 1,
@@ -1213,34 +1221,6 @@ LB_LINUX_TRY_COMPILE([
 ],[
 	AC_MSG_RESULT(no)
 ])
-])
-
-# LC_VFS_READDIR_U64_INO
-# 2.6.19 use u64 for inode number instead of inode_t
-AC_DEFUN([LC_VFS_READDIR_U64_INO],
-[AC_MSG_CHECKING([check vfs_readdir need 64bit inode number])
-tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="-Werror"
-LB_LINUX_TRY_COMPILE([
-#include <linux/fs.h>
-	int fillonedir(void * __buf, const char * name, int namlen, loff_t offset,
-                      u64 ino, unsigned int d_type)
-	{
-		return 0;
-	}
-],[
-	filldir_t filter;
-
-	filter = fillonedir;
-	return 1;
-],[
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_VFS_READDIR_U64_INO, 1,
-                [if vfs_readdir need 64bit inode number])
-],[
-        AC_MSG_RESULT(no)
-])
-EXTRA_KCFLAGS="$tmp_flags"
 ])
 
 # LC_FILE_WRITEV
@@ -1358,7 +1338,7 @@ LB_LINUX_TRY_COMPILE([
         #include <linux/crypto.h>
 ],[
         struct crypto_blkcipher *tfm;
-        tfm = crypto_alloc_blkcipher("aes", 0, 0 );
+        tfm = crypto_alloc_blkcipher("aes", 0, sizeof(tfm) );
 ],[
         AC_MSG_RESULT([yes])
         AC_DEFINE(HAVE_ASYNC_BLOCK_CIPHER, 1, [kernel has block cipher support])
@@ -1563,15 +1543,13 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LC_FH_TO_DENTRY],
 [AC_MSG_CHECKING([if kernel has .fh_to_dentry member in export_operations struct])
 LB_LINUX_TRY_COMPILE([
+        #include <linux/fs.h>
 #ifdef HAVE_LINUX_EXPORTFS_H
         #include <linux/exportfs.h>
-#else
-        #include <linux/fs.h>
 #endif
 ],[
         struct export_operations exp;
-
-        exp.fh_to_dentry   = NULL;
+        memset(exp.fh_to_dentry, 0, sizeof(exp.fh_to_dentry));
 ], [
         AC_MSG_RESULT([yes])
         AC_DEFINE(HAVE_FH_TO_DENTRY, 1,
@@ -1589,7 +1567,7 @@ LB_LINUX_TRY_COMPILE([
 ],[
         struct proc_dir_entry pde;
 
-        pde.deleted   = NULL;
+        pde.deleted = sizeof(pde);
 ], [
         AC_MSG_RESULT([yes])
         AC_DEFINE(HAVE_PROCFS_DELETED, 1,
@@ -1643,6 +1621,7 @@ LB_LINUX_TRY_COMPILE([
         struct fs_struct fs;
 
         fs.pwd = path;
+        memset(&fs, 0, sizeof(fs));
 ], [
         AC_MSG_RESULT([yes])
         AC_DEFINE(HAVE_FS_STRUCT_USE_PATH, 1,
@@ -1652,18 +1631,19 @@ LB_LINUX_TRY_COMPILE([
 ])
 ])
 
-# 2.6.27
 
+#
+# 2.6.27
+#
 AC_DEFUN([LC_INODE_PERMISION_2ARGS],
 [AC_MSG_CHECKING([inode_operations->permission has two args])
 LB_LINUX_TRY_COMPILE([
         #include <linux/fs.h>
 ],[
         struct inode *inode;
-
-        inode->i_op->permission(NULL,0);
+        inode->i_op->permission(NULL, 0);
 ],[
-        AC_DEFINE(HAVE_INODE_PERMISION_2ARGS, 1, 
+        AC_DEFINE(HAVE_INODE_PERMISION_2ARGS, 1,
                   [inode_operations->permission has two args])
         AC_MSG_RESULT([yes])
 ],[
@@ -1805,7 +1785,7 @@ LB_LINUX_TRY_COMPILE([
         #include <linux/bio.h>
 ],[
         struct bio io;
-        io.bi_hw_segments = 0;
+        io.bi_hw_segments = sizeof(io);
 ],[
         AC_DEFINE(HAVE_BI_HW_SEGMENTS, 1,
                 [struct bio has a bi_hw_segments field])
@@ -2095,6 +2075,63 @@ LB_LINUX_TRY_COMPILE([
 ])
 
 #
+# 2.6.36 fs_struct.lock use spinlock instead of rwlock.
+#
+AC_DEFUN([LC_FS_STRUCT_RWLOCK],
+[AC_MSG_CHECKING([if fs_struct.lock use rwlock])
+LB_LINUX_TRY_COMPILE([
+        #include <asm/atomic.h>
+        #include <linux/spinlock.h>
+        #include <linux/fs_struct.h>
+],[
+        ((struct fs_struct *)0)->lock = (rwlock_t){ 0 };
+],[
+        AC_DEFINE(HAVE_FS_STRUCT_RWLOCK, 1,
+                  [fs_struct.lock use rwlock])
+        AC_MSG_RESULT([yes])
+],[
+        AC_MSG_RESULT([no])
+])
+])
+
+#
+# 2.6.36 super_operations add evict_inode method. it hybird of
+# delete_inode & clear_inode.
+#
+AC_DEFUN([LC_SBOPS_EVICT_INODE],
+[AC_MSG_CHECKING([if super_operations.evict_inode exist])
+LB_LINUX_TRY_COMPILE([
+        #include <linux/fs.h>
+],[
+        ((struct super_operations *)0)->evict_inode(NULL);
+],[
+        AC_DEFINE(HAVE_SBOPS_EVICT_INODE, 1,
+                [super_operations.evict_inode() is exist in kernel])
+        AC_MSG_RESULT([yes])
+],[
+        AC_MSG_RESULT([no])
+])
+])
+
+#
+# 2.6.35 file_operations.fsync taken 2 arguments.
+#
+AC_DEFUN([LC_FILE_FSYNC],
+[AC_MSG_CHECKING([if file_operations.fsync taken 2 arguments])
+LB_LINUX_TRY_COMPILE([
+        #include <linux/fs.h>
+],[
+        ((struct file_operations *)0)->fsync(NULL, 0);
+],[
+        AC_DEFINE(HAVE_FILE_FSYNC_2ARGS, 1,
+                [file_operations.fsync taken 2 arguments])
+        AC_MSG_RESULT([yes])
+],[
+        AC_MSG_RESULT([no])
+])
+])
+
+#
 # 2.6.38 export blkdev_get_by_dev
 #
 AC_DEFUN([LC_BLKDEV_GET_BY_DEV],
@@ -2104,6 +2141,48 @@ AC_DEFINE(HAVE_BLKDEV_GET_BY_DEV, 1,
             [blkdev_get_by_dev is exported by the kernel])
 ],[
 ])
+])
+
+#
+# 2.6.38 vfsmount.mnt_count doesn't use atomic_t
+#
+AC_DEFUN([LC_ATOMIC_MNT_COUNT],
+[AC_MSG_CHECKING([if vfsmount.mnt_count is atomic_t])
+LB_LINUX_TRY_COMPILE([
+        #include <asm/atomic.h>
+        #include <linux/fs.h>
+        #include <linux/mount.h>
+],[
+        ((struct vfsmount *)0)->mnt_count = ((atomic_t) { 0 });
+],[
+        AC_DEFINE(HAVE_ATOMIC_MNT_COUNT, 1,
+                [vfsmount.mnt_count is atomic_t])
+        AC_MSG_RESULT([yes])
+],[
+        AC_MSG_RESULT([no])
+])
+])
+
+#
+# 2.6.38 use path as 4th parameter in quota_on.
+#
+AC_DEFUN([LC_QUOTA_ON_USE_PATH],
+[AC_MSG_CHECKING([quota_on use path as parameter])
+tmp_flags="$EXTRA_KCFLAGS"
+EXTRA_KCFLAGS="-Werror"
+LB_LINUX_TRY_COMPILE([
+        #include <linux/fs.h>
+        #include <linux/quota.h>
+],[
+        ((struct quotactl_ops *)0)->quota_on(NULL, 0, 0, ((struct path*)0));
+],[
+        AC_DEFINE(HAVE_QUOTA_ON_USE_PATH, 1,
+                [quota_on use path as 4th paramter])
+        AC_MSG_RESULT([yes])
+],[
+        AC_MSG_RESULT([no])
+])
+EXTRA_KCFLAGS="$tmp_flags"
 ])
 
 #
@@ -2118,7 +2197,26 @@ LB_LINUX_TRY_COMPILE([
         memset(rq.unplug_fn, 0, sizeof(rq.unplug_fn));
 ],[
         AC_DEFINE(HAVE_REQUEST_QUEUE_UNPLUG_FN, 1,
-                  [request_queue has unplug_fn field]),
+                  [request_queue has unplug_fn field])
+        AC_MSG_RESULT([yes])
+],[
+        AC_MSG_RESULT([no])
+])
+])
+
+#
+# 2.6.38 generic_permission taken 4 paremater.
+# in fact, it means rcu-walk aware permission bring.
+#
+AC_DEFUN([LC_GENERIC_PERMISSION],
+[AC_MSG_CHECKING([if generic_permission take 4 arguments])
+LB_LINUX_TRY_COMPILE([
+        #include <linux/fs.h>
+],[
+        generic_permission(NULL, 0, 0, NULL);
+],[
+        AC_DEFINE(HAVE_GENERIC_PERMISSION_4ARGS, 1,
+                  [generic_permission taken 4 arguments])
         AC_MSG_RESULT([yes])
 ],[
         AC_MSG_RESULT([no])
@@ -2208,7 +2306,6 @@ AC_DEFUN([LC_PROG_LINUX],
 
          # 2.6.19
          LC_INODE_BLKSIZE
-         LC_VFS_READDIR_U64_INO
          LC_FILE_WRITEV
          LC_FILE_READV
 
@@ -2233,9 +2330,9 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_VM_OP_FAULT
          LC_PROCFS_USERS
          LC_EXPORTFS_DECODE_FH
-  
-  	 # 2.6.24
-  	 LC_HAVE_MMTYPES_H
+
+         # 2.6.24
+         LC_HAVE_MMTYPES_H
          LC_BIO_ENDIO_2ARG
          LC_FH_TO_DENTRY
          LC_PROCFS_DELETED
@@ -2243,7 +2340,7 @@ AC_DEFUN([LC_PROG_LINUX],
 
          #2.6.25
          LC_MAPPING_CAP_WRITEBACK_DIRTY
-  
+
          # 2.6.26
          LC_FS_STRUCT_USE_PATH
 
@@ -2281,8 +2378,18 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_BLK_QUEUE_MAX_SEGMENTS
          LC_SET_CPUS_ALLOWED
 
+         # 2.6.35
+         LC_FILE_FSYNC
+
+         # 2.6.36
+         LC_FS_STRUCT_RWLOCK
+         LC_SBOPS_EVICT_INODE
+
          # 2.6.38
+         LC_ATOMIC_MNT_COUNT
          LC_BLKDEV_GET_BY_DEV
+         LC_GENERIC_PERMISSION
+         LC_QUOTA_ON_USE_PATH
 
          # 2.6.39
          LC_REQUEST_QUEUE_UNPLUG_FN

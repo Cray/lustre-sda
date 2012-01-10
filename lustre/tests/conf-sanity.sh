@@ -957,7 +957,7 @@ set_and_check() {
 	    FINAL=$(($ORIG + 5))
 	fi
 	echo "Setting $PARAM from $ORIG to $FINAL"
-	do_facet $SINGLEMDS "$LCTL conf_param $PARAM='$FINAL'" || error conf_param failed
+	do_facet mgs "$LCTL conf_param $PARAM='$FINAL'" || error conf_param failed
 
 	wait_update $(facet_host $myfacet) "$TEST" "$FINAL" || error check failed!
 }
@@ -1442,7 +1442,7 @@ test_35a() { # bug 12459
 	log "Set up a fake failnode for the MDS"
 	FAKENID="127.0.0.2"
 	local device=$(do_facet $SINGLEMDS "lctl get_param -n devices" | awk '($3 ~ "mdt" && $4 ~ "MDT") { print $4 }' | head -1)
-	do_facet $SINGLEMDS $LCTL conf_param ${device}.failover.node=$FAKENID || return 4
+	do_facet mgs $LCTL conf_param ${device}.failover.node=$FAKENID || return 4
 
 	log "Wait for RECONNECT_INTERVAL seconds (10s)"
 	sleep 10
@@ -1496,7 +1496,7 @@ test_35b() { # bug 18674
 	FAKENID="127.0.0.2"
 	local device=$(do_facet $SINGLEMDS "$LCTL get_param -n devices" | \
 			awk '($3 ~ "mdt" && $4 ~ "MDT") { print $4 }' | head -1)
-	do_facet $SINGLEMDS "$LCTL conf_param ${device}.failover.node=$FAKENID" || \
+	do_facet mgs "$LCTL conf_param ${device}.failover.node=$FAKENID" || \
 		return 1
 
 	local at_max_saved=0
@@ -2629,7 +2629,7 @@ test_55() {
 		setup_noconfig
 		stopall
 
-		setup
+		setup_noconfig
 		sync
 		echo checking size of lov_objid for ost index $i
 		LOV_OBJID_SIZE=$(do_facet mds1 "$DEBUGFS -R 'stat lov_objid' $mdsdev 2>/dev/null" | grep ^User | awk '{print $6}')
@@ -2651,7 +2651,7 @@ test_56() {
 	add ost1 $OST_MKFS_OPTS --index=1000 --reformat $(ostdevname 1)
 	add ost2 $OST_MKFS_OPTS --index=10000 --reformat $(ostdevname 2)
 
-	start_mds
+	start_mgsmds
 	start_ost
 	start_ost2 || error "Unable to start second ost"
 	mount_client $MOUNT || error "Unable to mount client"
@@ -2688,8 +2688,8 @@ count_osts() {
 }
 
 test_58() { # bug 22658
-        [ "$FSTYPE" != "ldiskfs" ] && skip "not supported for $FSTYPE" && return
-	setup
+	[ "$FSTYPE" != "ldiskfs" ] && skip "not supported for $FSTYPE" && return
+	setup_noconfig
 	mkdir -p $DIR/$tdir
 	createmany -o $DIR/$tdir/$tfile-%d 100
 	# make sure that OSTs do not cancel llog cookies before we unmount the MDS
@@ -2757,6 +2757,65 @@ test_60() { # LU-471
 	reformat
 }
 run_test 60 "check mkfs.lustre --mkfsoptions -E -O options setting"
+
+test_61() { # LU-80
+    local reformat=false
+
+    if ! large_xattr_enabled; then
+        reformat=true
+        local mds_dev=$(mdsdevname ${SINGLEMDS//mds/})
+        add $SINGLEMDS $MDS_MKFS_OPTS --mkfsoptions='\"-O large_xattr\"' \
+            --reformat $mds_dev || error "reformatting $mds_dev failed"
+    fi
+
+    setup_noconfig || error "setting up the filesystem failed"
+    client_up || error "starting client failed"
+
+    local file=$DIR/$tfile
+    touch $file
+
+    local large_value="$(generate_string $(max_xattr_size))"
+    local small_value="bar"
+
+    local name="trusted.big"
+    log "save large xattr $name on $file"
+    setfattr -n $name -v $large_value $file ||
+        error "saving $name on $file failed"
+
+    local new_value=$(get_xattr_value $name $file)
+    [[ "$new_value" != "$large_value" ]] &&
+        error "$name different after saving"
+
+    log "shrink value of $name on $file"
+    setfattr -n $name -v $small_value $file ||
+        error "shrinking value of $name on $file failed"
+
+    new_value=$(get_xattr_value $name $file)
+    [[ "$new_value" != "$small_value" ]] &&
+        error "$name different after shrinking"
+
+    log "grow value of $name on $file"
+    setfattr -n $name -v $large_value $file ||
+        error "growing value of $name on $file failed"
+
+    new_value=$(get_xattr_value $name $file)
+    [[ "$new_value" != "$large_value" ]] &&
+        error "$name different after growing"
+
+    log "check value of $name on $file after remounting MDS"
+    fail $SINGLEMDS
+    new_value=$(get_xattr_value $name $file)
+    [[ "$new_value" != "$large_value" ]] &&
+        error "$name different after remounting MDS"
+
+    log "remove large xattr $name from $file"
+    setfattr -x $name $file || error "removing $name from $file failed"
+
+    rm -f $file
+    stopall
+    $reformat && reformat
+}
+run_test 61 "large xattr"
 
 if ! combined_mgs_mds ; then
 	stop mgs

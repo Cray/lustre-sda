@@ -1698,6 +1698,14 @@ static void lov_dump_user_lmm_header(struct lov_user_md *lum, char *path,
                              lum->lmm_pattern, nl);
         }
 
+        if ((verbose & VERBOSE_GENERATION) && !is_dir) {
+                if (verbose & ~VERBOSE_GENERATION)
+                        llapi_printf(LLAPI_MSG_NORMAL, "%slayout_gen:     ",
+                                     prefix);
+                llapi_printf(LLAPI_MSG_NORMAL, "%u%c",
+                             (int)lum->u.lum_layout_gen, nl);
+        }
+
         if (verbose & VERBOSE_OFFSET) {
                 if (verbose & ~VERBOSE_OFFSET)
                         llapi_printf(LLAPI_MSG_NORMAL, "%sstripe_offset:  ",
@@ -1926,7 +1934,7 @@ static int find_time_check(lstat_t *st, struct find_param *param, int mds)
         /* Check if file is accepted. */
         if (param->atime) {
                 ret = find_value_cmp(st->st_atime, param->atime,
-                                     param->asign, param->exclude_atime, 
+                                     param->asign, param->exclude_atime,
                                      24 * 60 * 60, mds);
                 if (ret < 0)
                         return ret;
@@ -1935,7 +1943,7 @@ static int find_time_check(lstat_t *st, struct find_param *param, int mds)
 
         if (param->mtime) {
                 ret = find_value_cmp(st->st_mtime, param->mtime,
-                                     param->msign, param->exclude_mtime, 
+                                     param->msign, param->exclude_mtime,
                                      24 * 60 * 60, mds);
                 if (ret < 0)
                         return ret;
@@ -2538,7 +2546,6 @@ int llapi_target_iterate(int type_num, char **obd_type,
                 char *obd_name = NULL;
                 char *obd_uuid = NULL;
                 char *bufp = buf;
-                struct obd_ioctl_data datal = { 0, };
                 struct obd_statfs osfs_buffer;
 
                 while(bufp[0] == ' ')
@@ -2551,9 +2558,6 @@ int llapi_target_iterate(int type_num, char **obd_type,
                 obd_uuid = strsep(&bufp, " ");
 
                 memset(&osfs_buffer, 0, sizeof (osfs_buffer));
-
-                datal.ioc_pbuf1 = (char *)&osfs_buffer;
-                datal.ioc_plen1 = sizeof(osfs_buffer);
 
                 for (i = 0; i < type_num; i++) {
                         if (strcmp(obd_type_name, obd_type[i]) != 0)

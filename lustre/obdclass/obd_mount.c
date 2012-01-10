@@ -123,7 +123,7 @@ static int server_register_mount(const char *name, struct super_block *sb,
         cfs_up(&lustre_mount_info_lock);
 
         CDEBUG(D_MOUNT, "reg_mnt %p from %s, vfscount=%d\n",
-               lmi->lmi_mnt, name, cfs_atomic_read(&lmi->lmi_mnt->mnt_count));
+               lmi->lmi_mnt, name, mnt_get_count(lmi->lmi_mnt));
 
         RETURN(0);
 }
@@ -143,7 +143,7 @@ static int server_deregister_mount(const char *name)
         }
 
         CDEBUG(D_MOUNT, "dereg_mnt %p from %s, vfscount=%d\n",
-               lmi->lmi_mnt, name, cfs_atomic_read(&lmi->lmi_mnt->mnt_count));
+               lmi->lmi_mnt, name, mnt_get_count(lmi->lmi_mnt));
 
         OBD_FREE(lmi->lmi_name, strlen(lmi->lmi_name) + 1);
         cfs_list_del(&lmi->lmi_list_chain);
@@ -175,7 +175,7 @@ struct lustre_mount_info *server_get_mount(const char *name)
 
         CDEBUG(D_MOUNT, "get_mnt %p from %s, refs=%d, vfscount=%d\n",
                lmi->lmi_mnt, name, cfs_atomic_read(&lsi->lsi_mounts),
-               cfs_atomic_read(&lmi->lmi_mnt->mnt_count));
+               mnt_get_count(lmi->lmi_mnt));
 
         RETURN(lmi);
 }
@@ -217,7 +217,7 @@ int server_put_mount(const char *name, struct vfsmount *mnt)
 {
         struct lustre_mount_info *lmi;
         struct lustre_sb_info *lsi;
-        int count = atomic_read(&mnt->mnt_count) - 1;
+        int count = mnt_get_count(mnt) - 1;
         ENTRY;
 
         /* This might be the last one, can't deref after this */
@@ -1409,6 +1409,7 @@ static struct vfsmount *server_kernel_mount(struct super_block *sb)
         char *options = NULL;
         unsigned long page, s_flags;
         struct page *__page;
+        int len;
         int rc;
         ENTRY;
 
@@ -1464,11 +1465,15 @@ static struct vfsmount *server_kernel_mount(struct super_block *sb)
         memset(options, 0, CFS_PAGE_SIZE);
         strncpy(options, ldd->ldd_mount_opts, CFS_PAGE_SIZE - 2);
 
+        len = CFS_PAGE_SIZE - strlen(options) - 2;
+        if (*options != 0)
+                strcat(options, ",");
+        strncat(options, "no_mbcache", len);
+
         /* Add in any mount-line options */
         if (lmd->lmd_opts && (*(lmd->lmd_opts) != 0)) {
-                int len = CFS_PAGE_SIZE - strlen(options) - 2;
-                if (*options != 0)
-                        strcat(options, ",");
+                len = CFS_PAGE_SIZE - strlen(options) - 2;
+                strcat(options, ",");
                 strncat(options, lmd->lmd_opts, len);
         }
 
@@ -1515,25 +1520,25 @@ static void server_wait_finished(struct vfsmount *mnt)
 
        cfs_waitq_init(&waitq);
 
-       while (atomic_read(&mnt->mnt_count) > 1) {
+       while (mnt_get_count(mnt) > 1) {
                if (waited && (waited % 30 == 0))
                        LCONSOLE_WARN("Mount still busy with %d refs after "
                                       "%d secs.\n",
-                                      atomic_read(&mnt->mnt_count),
+                                      mnt_get_count(mnt),
                                       waited);
                /* Cannot use l_event_wait() for an interruptible sleep. */
                waited += 3;
                blocked = cfs_block_sigsinv(sigmask(SIGKILL));
                cfs_waitq_wait_event_interruptible_timeout(
                        waitq,
-                       (atomic_read(&mnt->mnt_count) == 1),
+                       (mnt_get_count(mnt) == 1),
                        cfs_time_seconds(3),
                        rc);
                cfs_block_sigs(blocked);
                if (rc < 0) {
                        LCONSOLE_EMERG("Danger: interrupted umount %s with "
                                       "%d refs!\n", mnt->mnt_devname,
-                                      atomic_read(&mnt->mnt_count));
+                                      mnt_get_count(mnt));
                        break;
                }
 
@@ -2261,6 +2266,11 @@ int lustre_fill_super(struct super_block *sb, void *data, int silent)
          * `special'.
          */
         cfs_lockdep_off();
+
+        /*
+         * LU-639: the obd cleanup of last mount may not finish yet, wait here.
+         */
+        obd_zombie_barrier();
 
         /* Figure out the lmd from the mount options */
         if (lmd_parse((char *)(lmd2->lmd2_data), lmd)) {

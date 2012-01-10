@@ -1141,7 +1141,8 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
                                 OBD_CONNECT_RMT_CLIENT_FORCE | OBD_CONNECT_VBR | \
                                 OBD_CONNECT_MDS | OBD_CONNECT_SKIP_ORPHAN | \
                                 OBD_CONNECT_GRANT_SHRINK | OBD_CONNECT_FULL20 | \
-                                OBD_CONNECT_64BITHASH | OBD_CONNECT_MAXBYTES)
+                                OBD_CONNECT_64BITHASH | OBD_CONNECT_MAXBYTES | \
+                                OBD_CONNECT_MAX_EASIZE)
 #define ECHO_CONNECT_SUPPORTED (0)
 #define MGS_CONNECT_SUPPORTED  (OBD_CONNECT_VERSION | OBD_CONNECT_AT | \
                                 OBD_CONNECT_FULL20 | OBD_CONNECT_IMP_RECOV)
@@ -1276,7 +1277,9 @@ enum obdo_flags {
         OBD_FL_CKSUM_RSVD2  = 0x00008000, /* for future cksum types */
         OBD_FL_CKSUM_RSVD3  = 0x00010000, /* for future cksum types */
         OBD_FL_SHRINK_GRANT = 0x00020000, /* object shrink the grant */
-        OBD_FL_MMAP         = 0x00040000, /* object is mmapped on the client */
+        OBD_FL_MMAP         = 0x00040000, /* object is mmapped on the client.
+                                           * XXX: obsoleted - reserved for old
+                                           * clients prior than 2.2 */
         OBD_FL_RECOV_RESEND = 0x00080000, /* recoverable resent */
         OBD_FL_NOSPC_BLK    = 0x00100000, /* no more block space on OST */
 
@@ -1314,7 +1317,9 @@ struct lov_mds_md_v1 {            /* LOV EA mds/wire data (little-endian) */
         __u64 lmm_object_id;      /* LOV object ID */
         __u64 lmm_object_seq;     /* LOV object seq number */
         __u32 lmm_stripe_size;    /* size of stripe in bytes */
-        __u32 lmm_stripe_count;   /* num stripes in use for this object */
+        /* lmm_stripe_count used to be __u32 */
+        __u16 lmm_stripe_count;   /* num stripes in use for this object */
+        __u16 lmm_layout_gen;     /* layout generation number */
         struct lov_ost_data_v1 lmm_objects[0]; /* per-stripe data */
 };
 
@@ -1334,6 +1339,7 @@ struct lov_mds_md_v1 {            /* LOV EA mds/wire data (little-endian) */
 #define XATTR_NAME_LMA          "trusted.lma"
 #define XATTR_NAME_LMV          "trusted.lmv"
 #define XATTR_NAME_LINK         "trusted.link"
+#define XATTR_NAME_VERSION      "trusted.version"
 
 
 struct lov_mds_md_v3 {            /* LOV EA mds/wire data (little-endian) */
@@ -1342,7 +1348,9 @@ struct lov_mds_md_v3 {            /* LOV EA mds/wire data (little-endian) */
         __u64 lmm_object_id;      /* LOV object ID */
         __u64 lmm_object_seq;     /* LOV object seq number */
         __u32 lmm_stripe_size;    /* size of stripe in bytes */
-        __u32 lmm_stripe_count;   /* num stripes in use for this object */
+        /* lmm_stripe_count used to be __u32 */
+        __u16 lmm_stripe_count;   /* num stripes in use for this object */
+        __u16 lmm_layout_gen;     /* layout generation number */
         char  lmm_pool_name[LOV_MAXPOOLNAME]; /* must be 32bit aligned */
         struct lov_ost_data_v1 lmm_objects[0]; /* per-stripe data */
 };
@@ -2128,7 +2136,18 @@ enum seq_op {
 
 #define LOV_MIN_STRIPE_BITS 16   /* maximum PAGE_SIZE (ia64), power of 2 */
 #define LOV_MIN_STRIPE_SIZE (1<<LOV_MIN_STRIPE_BITS)
-#define LOV_MAX_STRIPE_COUNT  160   /* until bug 4424 is fixed */
+#define LOV_MAX_STRIPE_COUNT_OLD 160
+/* This calculation is crafted so that input of 4096 will result in 160
+ * which in turn is equal to old maximal stripe count.
+ * XXX: In fact this is too simpified for now, what it also need is to get
+ * ea_type argument to clearly know how much space each stripe consumes.
+ *
+ * The limit of 12 pages is somewhat arbitrary, but is a reasonably large
+ * allocation that is sufficient for the current generation of systems.
+ *
+ * (max buffer size - lov+rpc header) / sizeof(struct lov_ost_data_v1) */
+#define LOV_MAX_STRIPE_COUNT 2000  /* ((12 * 4096 - 256) / 24) */
+#define LOV_ALL_STRIPES       0xffff /* only valid for directories */
 #define LOV_V1_INSANE_STRIPE_COUNT 65532 /* maximum stripe count bz13933 */
 
 #define LOV_MAX_UUID_BUFFER_SIZE  8192

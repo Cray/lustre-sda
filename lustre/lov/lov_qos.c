@@ -505,7 +505,7 @@ static int lov_check_and_create_object(struct lov_obd *lov, int ost_idx,
                                        struct lov_request *req,
                                        struct obd_trans_info *oti)
 {
-        int stripe;
+        __u16 stripe;
         int rc = -EIO;
         ENTRY;
 
@@ -790,7 +790,6 @@ static int alloc_qos(struct obd_export *exp, int *idx_arr, int *stripe_cnt,
         int stripe_cnt_min = min_stripe_count(*stripe_cnt, flags);
         struct pool_desc *pool;
         struct ost_pool *osts;
-        struct lov_qos_rr *lqr;
         ENTRY;
 
         if (stripe_cnt_min < 1)
@@ -799,11 +798,9 @@ static int alloc_qos(struct obd_export *exp, int *idx_arr, int *stripe_cnt,
         pool = lov_find_pool(lov, poolname);
         if (pool == NULL) {
                 osts = &(lov->lov_packed);
-                lqr = &(lov->lov_qos.lq_rr);
         } else {
                 cfs_down_read(&pool_tgt_rw_sem(pool));
                 osts = &(pool->pool_obds);
-                lqr = &(pool->pool_rr);
         }
 
         obd_getref(exp->exp_obd);
@@ -1008,7 +1005,7 @@ int qos_prep_create(struct obd_export *exp, struct lov_request_set *set)
         LASSERT(src_oa->o_valid & OBD_MD_FLGROUP);
 
         if (set->set_oi->oi_md == NULL) {
-                int stripes_def = lov_get_stripecnt(lov, 0);
+                __u16 stripes_def = lov_get_stripecnt(lov, LOV_MAGIC, 0);
 
                 /* If the MDS file was truncated up to some size, stripe over
                  * enough OSTs to allow the file to be created at that size.
@@ -1032,8 +1029,8 @@ int qos_prep_create(struct obd_export *exp, struct lov_request_set *set)
                         if (stripes < stripes_def)
                                 stripes = stripes_def;
                 } else {
-                         flag = LOV_USES_DEFAULT_STRIPE;
-                         stripes = stripes_def;
+                        flag = LOV_USES_DEFAULT_STRIPE;
+                        stripes = stripes_def;
                 }
 
                 rc = lov_alloc_memmd(&set->set_oi->oi_md, stripes,
@@ -1049,6 +1046,7 @@ int qos_prep_create(struct obd_export *exp, struct lov_request_set *set)
         lsm = set->set_oi->oi_md;
         lsm->lsm_object_id = src_oa->o_id;
         lsm->lsm_object_seq = src_oa->o_seq;
+        lsm->lsm_layout_gen = 0; /* actual generation set in mdd_lov_create() */
 
         if (!lsm->lsm_stripe_size)
                 lsm->lsm_stripe_size = lov->desc.ld_default_stripe_size;

@@ -98,6 +98,55 @@ struct osd_ctxt {
 };
 #endif
 
+#ifdef HAVE_LDISKFS_PDO
+
+#define osd_ldiskfs_find_entry(dir, dentry, de, lock)   \
+        ll_ldiskfs_find_entry(dir, dentry, de, lock)
+#define osd_ldiskfs_add_entry(handle, child, cinode, hlock) \
+        ldiskfs_add_entry(handle, child, cinode, hlock)
+
+#else /* HAVE_LDISKFS_PDO */
+
+struct htree_lock {
+        int     dummy;
+};
+
+struct htree_lock_head {
+        int     dummy;
+};
+
+#define ldiskfs_htree_lock(lock, head, inode, op)  do { LBUG(); } while (0)
+#define ldiskfs_htree_unlock(lock)                 do { LBUG(); } while (0)
+
+static inline struct htree_lock_head *ldiskfs_htree_lock_head_alloc(int dep)
+{
+        LBUG();
+        return NULL;
+}
+
+#define ldiskfs_htree_lock_head_free(lh)           do { LBUG(); } while (0)
+
+#define LDISKFS_DUMMY_HTREE_LOCK        0xbabecafe
+
+static inline struct htree_lock *ldiskfs_htree_lock_alloc(void)
+{
+        return (struct htree_lock *)LDISKFS_DUMMY_HTREE_LOCK;
+}
+
+static inline void ldiskfs_htree_lock_free(struct htree_lock *lk)
+{
+        LASSERT((unsigned long)lk == LDISKFS_DUMMY_HTREE_LOCK);
+}
+
+#define HTREE_HBITS_DEF         0
+
+#define osd_ldiskfs_find_entry(dir, dentry, de, lock)   \
+        ll_ldiskfs_find_entry(dir, dentry, de)
+#define osd_ldiskfs_add_entry(handle, child, cinode, lock) \
+        ldiskfs_add_entry(handle, child, cinode)
+
+#endif /* HAVE_LDISKFS_PDO */
+
 /*
  * osd device.
  */
@@ -106,14 +155,15 @@ struct osd_device {
         struct dt_device          od_dt_dev;
         /* information about underlying file system */
         struct lustre_mount_info *od_mount;
-        /* object index */
-        struct osd_oi             od_oi;
         /*
          * XXX temporary stuff for object index: directory where every object
          * is named by its fid.
          */
         struct dt_object         *od_obj_area;
-
+        /* object index */
+        struct osd_oi            *od_oi_table;
+        /* total number of OI containers */
+        int                       od_oi_count;
         /*
          * Fid Capability
          */
@@ -219,13 +269,13 @@ struct osd_thread_info {
 
         /** dentry for Iterator context. */
         struct dentry          oti_it_dentry;
+        struct htree_lock     *oti_hlock;
 
         struct lu_fid          oti_fid;
         struct osd_inode_id    oti_id;
         /*
          * XXX temporary: for ->i_op calls.
          */
-        struct txn_param       oti_txn;
         struct timespec        oti_time;
         /*
          * XXX temporary: fake struct file for osd_object_sync
@@ -289,6 +339,8 @@ struct osd_thread_info {
         char                   oti_ldp2[OSD_FID_REC_SZ];
 };
 
+extern int ldiskfs_pdo;
+
 #ifdef LPROCFS
 /* osd_lproc.c */
 void lprocfs_osd_init_vars(struct lprocfs_static_vars *lvars);
@@ -341,6 +393,16 @@ static inline int osd_fid_is_root(const struct lu_fid *fid)
 static inline int osd_fid_is_igif(const struct lu_fid *fid)
 {
         return fid_is_igif(fid) || osd_fid_is_root(fid);
+}
+
+static inline struct osd_oi *
+osd_fid2oi(struct osd_device *osd, const struct lu_fid *fid)
+{
+        if (!fid_is_norm(fid))
+                return NULL;
+
+        LASSERT(osd->od_oi_table != NULL && osd->od_oi_count >= 1);
+        return &osd->od_oi_table[fid->f_seq % osd->od_oi_count];
 }
 
 #endif /* __KERNEL__ */

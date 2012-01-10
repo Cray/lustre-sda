@@ -411,18 +411,6 @@ static int cml_object_sync(const struct lu_env *env, struct md_object *mo)
         RETURN(rc);
 }
 
-static dt_obj_version_t cml_version_get(const struct lu_env *env,
-                                        struct md_object *mo)
-{
-        return mo_version_get(env, md_object_next(mo));
-}
-
-static void cml_version_set(const struct lu_env *env, struct md_object *mo,
-                            dt_obj_version_t version)
-{
-        return mo_version_set(env, md_object_next(mo), version);
-}
-
 static const struct md_object_operations cml_mo_ops = {
         .moo_permission    = cml_permission,
         .moo_attr_get      = cml_attr_get,
@@ -441,8 +429,6 @@ static const struct md_object_operations cml_mo_ops = {
         .moo_changelog     = cml_changelog,
         .moo_capa_get      = cml_capa_get,
         .moo_object_sync   = cml_object_sync,
-        .moo_version_get   = cml_version_get,
-        .moo_version_set   = cml_version_set,
         .moo_path          = cml_path,
         .moo_file_lock     = cml_file_lock,
         .moo_file_unlock   = cml_file_unlock,
@@ -605,6 +591,17 @@ static int cml_unlink(const struct lu_env *env, struct md_object *mo_p,
         ENTRY;
         rc = mdo_unlink(env, md_object_next(mo_p), md_object_next(mo_c),
                         lname, ma);
+        RETURN(rc);
+}
+
+/** Call mdo_lum_lmm_cmp() on next layer */
+static int cml_lum_lmm_cmp(const struct lu_env *env, struct md_object *mo_c,
+                           const struct md_op_spec *spec, struct md_attr *ma)
+{
+        int rc;
+        ENTRY;
+
+        rc = mdo_lum_lmm_cmp(env, md_object_next(mo_c), spec, ma);
         RETURN(rc);
 }
 
@@ -894,6 +891,7 @@ static const struct md_dir_operations cml_dir_ops = {
         .mdo_create      = cml_create,
         .mdo_link        = cml_link,
         .mdo_unlink      = cml_unlink,
+        .mdo_lum_lmm_cmp = cml_lum_lmm_cmp,
         .mdo_name_insert = cml_name_insert,
         .mdo_rename      = cml_rename,
         .mdo_rename_tgt  = cml_rename_tgt,
@@ -1140,26 +1138,10 @@ static int cmr_file_unlock(const struct lu_env *env, struct md_object *mo,
         return -EREMOTE;
 }
 
-/**
- * cmr moo_version_get().
- */
-static dt_obj_version_t cmr_version_get(const struct lu_env *env,
-                                        struct md_object *mo)
+static int cmr_lum_lmm_cmp(const struct lu_env *env, struct md_object *mo_c,
+                           const struct md_op_spec *spec, struct md_attr *ma)
 {
-        /** Don't check remote object version */
-        return 0;
-}
-
-
-/**
- * cmr moo_version_set().
- * No need to update remote object version here, it is done as a part
- * of reintegration of partial operation on the remote server.
- */
-static void cmr_version_set(const struct lu_env *env, struct md_object *mo,
-                            dt_obj_version_t version)
-{
-        return;
+        return -EREMOTE;
 }
 
 /** Set of md_object_operations for cmr. */
@@ -1181,8 +1163,6 @@ static const struct md_object_operations cmr_mo_ops = {
         .moo_changelog     = cmr_changelog,
         .moo_capa_get      = cmr_capa_get,
         .moo_object_sync   = cmr_object_sync,
-        .moo_version_get   = cmr_version_get,
-        .moo_version_set   = cmr_version_set,
         .moo_path          = cmr_path,
         .moo_file_lock     = cmr_file_lock,
         .moo_file_unlock   = cmr_file_unlock,
@@ -1565,6 +1545,7 @@ static const struct md_dir_operations cmr_dir_ops = {
         .mdo_create      = cmr_create,
         .mdo_link        = cmr_link,
         .mdo_unlink      = cmr_unlink,
+        .mdo_lum_lmm_cmp = cmr_lum_lmm_cmp,
         .mdo_rename      = cmr_rename,
         .mdo_rename_tgt  = cmr_rename_tgt
 };
