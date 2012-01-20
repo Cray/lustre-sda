@@ -850,17 +850,6 @@ LB_LINUX_TRY_COMPILE([
 EXTRA_KCFLAGS="$tmp_flags"
 ])
 
-# LC_EXPORT_SYNCHRONIZE_RCU
-# after 2.6.12 synchronize_rcu is preferred over synchronize_kernel
-AC_DEFUN([LC_EXPORT_SYNCHRONIZE_RCU],
-[LB_CHECK_SYMBOL_EXPORT([synchronize_rcu],
-[kernel/rcupdate.c],[
-        AC_DEFINE(HAVE_SYNCHRONIZE_RCU, 1,
-                [in 2.6.12 synchronize_rcu preferred over synchronize_kernel])
-],[
-])
-])
-
 # 2.6.15
 
 # LC_INODE_I_MUTEX
@@ -1877,7 +1866,23 @@ AC_DEFUN([LC_EXPORT_ADD_TO_PAGE_CACHE_LRU],
 ])
 ])
 
-# 2.6.31
+#
+# 2.6.29 introduce sb_any_quota_loaded.
+#
+AC_DEFUN([LC_SB_ANY_QUOTA_LOADED],
+[AC_MSG_CHECKING([Kernel has sb_any_quota_loaded])
+LB_LINUX_TRY_COMPILE([
+        #include <linux/quotaops.h>
+],[
+        sb_any_quota_loaded(NULL);
+],[
+        AC_DEFINE(HAVE_SB_ANY_QUOTA_LOADED, 1,
+                [Kernel has a sb_any_quota_loaded])
+        AC_MSG_RESULT([yes])
+],[
+        AC_MSG_RESULT([no])
+])
+])
 
 # 2.6.30 x86 node_to_cpumask has been removed. must use cpumask_of_node
 AC_DEFUN([LC_EXPORT_CPUMASK_OF_NODE],
@@ -1905,6 +1910,24 @@ LB_LINUX_TRY_COMPILE([
 ])
 
 # 2.6.32
+
+# 2.6.32 changes cache_detail's member cache_request to cache_upcall
+# in kernel commit bc74b4f5e63a09fb78e245794a0de1e5a2716bbe
+AC_DEFUN([LC_CACHE_UPCALL],
+[AC_MSG_CHECKING([if cache_detail has cache_upcall field])
+        LB_LINUX_TRY_COMPILE([
+                #include <linux/sunrpc/cache.h>
+        ],[
+                struct cache_detail cd;
+                cd.cache_upcall = NULL;
+        ],[
+                AC_MSG_RESULT(yes)
+                AC_DEFINE(HAVE_CACHE_UPCALL, 1,
+                          [cache_detail has cache_upcall field])
+        ],[
+                AC_MSG_RESULT(no)
+        ])
+])
 
 # 2.6.32 add a limits member in struct request_queue.
 AC_DEFUN([LC_REQUEST_QUEUE_LIMITS],
@@ -2224,6 +2247,18 @@ LB_LINUX_TRY_COMPILE([
 ])
 
 #
+# 2.6.38 export simple_setattr
+#
+AC_DEFUN([LC_EXPORT_SIMPLE_SETATTR],
+[LB_CHECK_SYMBOL_EXPORT([simple_setattr],
+[fs/libfs.c],[
+AC_DEFINE(HAVE_SIMPLE_SETATTR, 1,
+            [simple_setattr is exported by the kernel])
+],[
+])
+])
+
+#
 # LC_PROG_LINUX
 #
 # Lustre linux kernel checks
@@ -2364,6 +2399,9 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_SB_HAS_QUOTA_ACTIVE
          LC_EXPORT_ADD_TO_PAGE_CACHE_LRU
 
+         # 2.6.29
+         LC_SB_ANY_QUOTA_LOADED
+
          # 2.6.30
          LC_EXPORT_CPUMASK_OF_NODE
 
@@ -2377,9 +2415,11 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_BLK_QUEUE_MAX_SECTORS
          LC_BLK_QUEUE_MAX_SEGMENTS
          LC_SET_CPUS_ALLOWED
+         LC_CACHE_UPCALL
 
          # 2.6.35
          LC_FILE_FSYNC
+         LC_EXPORT_SIMPLE_SETATTR
 
          # 2.6.36
          LC_FS_STRUCT_RWLOCK

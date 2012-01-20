@@ -132,7 +132,7 @@ int osc_enqueue_base(struct obd_export *exp, struct ldlm_res_id *res_id,
                      obd_enqueue_update_f upcall,
                      void *cookie, struct ldlm_enqueue_info *einfo,
                      struct lustre_handle *lockh,
-                     struct ptlrpc_request_set *rqset, int async);
+                     struct ptlrpc_request_set *rqset, int async, int agl);
 int osc_cancel_base(struct lustre_handle *lockh, __u32 mode);
 
 int osc_match_base(struct obd_export *exp, struct ldlm_res_id *res_id,
@@ -157,7 +157,6 @@ void osc_oap_to_pending(struct osc_async_page *oap);
 int  osc_oap_interrupted(const struct lu_env *env, struct osc_async_page *oap);
 void loi_list_maint(struct client_obd *cli, struct lov_oinfo *loi);
 void osc_check_rpcs(const struct lu_env *env, struct client_obd *cli);
-
 int osc_queue_async_io(const struct lu_env *env, struct obd_export *exp,
                        struct lov_stripe_md *lsm, struct lov_oinfo *loi,
                        struct osc_async_page *oap, int cmd, int off,

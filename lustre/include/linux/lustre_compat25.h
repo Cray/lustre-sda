@@ -684,13 +684,6 @@ static inline int ll_crypto_hmac(struct crypto_tfm *tfm,
 #define ll_crypto_tfm_alg_max_keysize	crypto_tfm_alg_max_keysize
 #endif /* HAVE_ASYNC_BLOCK_CIPHER */
 
-#ifndef HAVE_SYNCHRONIZE_RCU
-/* Linux 2.6.32 provides define when !CONFIG_TREE_PREEMPT_RCU */
-#ifndef synchronize_rcu
-#define synchronize_rcu() synchronize_kernel()
-#endif
-#endif
-
 #ifdef HAVE_FILE_REMOVE_SUID
 # define ll_remove_suid(file, mnt)       file_remove_suid(file)
 #else
@@ -771,6 +764,10 @@ static inline long labs(long x)
 #define INODE_PRIVATE_DATA(inode)       ((inode)->u.generic_ip)
 #endif
 
+#ifndef HAVE_SIMPLE_SETATTR
+#define simple_setattr(dentry, ops) inode_setattr((dentry)->d_inode, ops)
+#endif
+
 #ifndef SLAB_DESTROY_BY_RCU
 #define CFS_SLAB_DESTROY_BY_RCU 0
 #else
@@ -783,7 +780,7 @@ static inline long labs(long x)
 #define ll_sb_has_quota_active(sb, type) sb_has_quota_enabled(sb, type)
 #endif
 
-#ifdef DQUOT_USAGE_ENABLED
+#ifdef HAVE_SB_ANY_QUOTA_LOADED
 #define ll_sb_any_quota_active(sb) sb_any_quota_loaded(sb)
 #elif defined(HAVE_SB_ANY_QUOTA_ACTIVE)
 #define ll_sb_any_quota_active(sb) sb_any_quota_active(sb)

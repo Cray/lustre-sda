@@ -550,6 +550,9 @@ struct client_obd {
         struct lu_client_seq    *cl_seq;
 
         cfs_atomic_t             cl_resends; /* resend count */
+
+        /* ptlrpc work for writeback in ptlrpcd context */
+        void                    *cl_writeback_work;
 };
 #define obd2cli_tgt(obd) ((char *)(obd)->u.cli.cl_target_uuid.uuid)
 
@@ -1732,6 +1735,18 @@ static inline int client_should_resend(int resend, struct client_obd *cli)
 {
         return cfs_atomic_read(&cli->cl_resends) ?
                cfs_atomic_read(&cli->cl_resends) > resend : 1;
+}
+
+/**
+ * Return device name for this device
+ *
+ * XXX: lu_device is declared before obd_device, while a pointer pointing
+ * back to obd_device in lu_device, so this helper function defines here
+ * instead of in lu_object.h
+ */
+static inline const char *lu_dev_name(const struct lu_device *lu_dev)
+{
+        return lu_dev->ld_obd->obd_name;
 }
 
 #endif /* __OBD_H */

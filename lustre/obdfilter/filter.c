@@ -1596,9 +1596,7 @@ int filter_vfs_unlink(struct inode *dir, struct dentry *dentry,
             IS_IMMUTABLE(dentry->d_inode))
                 GOTO(out, rc = -EPERM);
 
-        /* NOTE: This might need to go outside i_mutex, though it isn't clear if
-         *       that was done because of journal_start (which is already done
-         *       here) or some other ordering issue. */
+        /* Locking order: i_mutex -> journal_lock -> dqptr_sem. LU-952 */
         ll_vfs_dq_init(dir);
 
         rc = ll_security_inode_unlink(dir, dentry, mnt);
@@ -1693,7 +1691,6 @@ static int filter_intent_policy(struct ldlm_namespace *ns,
                                 struct ldlm_lock **lockp, void *req_cookie,
                                 ldlm_mode_t mode, int flags, void *data)
 {
-        CFS_LIST_HEAD(rpc_list);
         struct ptlrpc_request *req = req_cookie;
         struct ldlm_lock *lock = *lockp, *l = NULL;
         struct ldlm_resource *res = lock->l_resource;
@@ -1732,23 +1729,17 @@ static int filter_intent_policy(struct ldlm_namespace *ns,
          * lock, and should not be granted if the lock will be blocked.
          */
 
+        if (flags & LDLM_FL_BLOCK_NOWAIT) {
+                OBD_FAIL_TIMEOUT(OBD_FAIL_LDLM_AGL_DELAY, 5);
+
+                if (OBD_FAIL_CHECK(OBD_FAIL_LDLM_AGL_NOLOCK))
+                        RETURN(ELDLM_LOCK_ABORTED);
+        }
+
         LASSERT(ns == ldlm_res_to_ns(res));
         lock_res(res);
-        rc = policy(lock, &tmpflags, 0, &err, &rpc_list);
+        rc = policy(lock, &tmpflags, 0, &err, NULL);
         check_res_locked(res);
-
-        /* FIXME: we should change the policy function slightly, to not make
-         * this list at all, since we just turn around and free it */
-        while (!cfs_list_empty(&rpc_list)) {
-                struct ldlm_lock *wlock =
-                        cfs_list_entry(rpc_list.next, struct ldlm_lock,
-                                       l_cp_ast);
-                LASSERT((lock->l_flags & LDLM_FL_AST_SENT) == 0);
-                LASSERT(lock->l_flags & LDLM_FL_CP_REQD);
-                lock->l_flags &= ~LDLM_FL_CP_REQD;
-                cfs_list_del_init(&wlock->l_cp_ast);
-                LDLM_LOCK_RELEASE(wlock);
-        }
 
         /* The lock met with no resistance; we're finished. */
         if (rc == LDLM_ITER_CONTINUE) {
@@ -1766,6 +1757,12 @@ static int filter_intent_policy(struct ldlm_namespace *ns,
                 }
                 unlock_res(res);
                 RETURN(err);
+        } else if (flags & LDLM_FL_BLOCK_NOWAIT) {
+                /* LDLM_FL_BLOCK_NOWAIT means it is for AGL. Do not send glimpse
+                 * callback for glimpse size. The real size user will trigger
+                 * the glimpse callback when necessary. */
+                unlock_res(res);
+                RETURN(ELDLM_LOCK_ABORTED);
         }
 
         /* Do not grant any lock, but instead send GL callbacks.  The extent
@@ -3244,7 +3241,6 @@ int filter_setattr_internal(struct obd_export *exp, struct dentry *dentry,
         }
         if (ia_valid & (ATTR_SIZE | ATTR_UID | ATTR_GID)) {
                 unsigned long now = jiffies;
-                ll_vfs_dq_init(inode);
                 /* Filter truncates and writes are serialized by
                  * i_alloc_sem, see the comment in
                  * filter_preprw_write.*/
@@ -3314,6 +3310,11 @@ int filter_setattr_internal(struct obd_export *exp, struct dentry *dentry,
                 if (IS_ERR(handle))
                         GOTO(out_unlock, rc = PTR_ERR(handle));
         }
+
+        /* Locking order: i_mutex -> journal_lock -> dqptr_sem. LU-952 */
+        if (ia_valid & (ATTR_SIZE | ATTR_UID | ATTR_GID))
+                ll_vfs_dq_init(inode);
+
         if (oa->o_valid & OBD_MD_FLFLAGS) {
                 rc = fsfilt_iocontrol(exp->exp_obd, dentry,
                                       FSFILT_IOC_SETFLAGS, (long)&oa->o_flags);
@@ -4174,7 +4175,6 @@ int filter_destroy(struct obd_export *exp, struct obdo *oa,
                 if (fcc != NULL)
                         *fcc = oa->o_lcookie;
         }
-        ll_vfs_dq_init(dchild->d_inode);
 
         /* we're gonna truncate it first in order to avoid possible deadlock:
          *      P1                      P2
@@ -4208,6 +4208,9 @@ int filter_destroy(struct obd_export *exp, struct obdo *oa,
                 up_write(&dchild->d_inode->i_alloc_sem);
                 GOTO(cleanup, rc = PTR_ERR(handle));
         }
+
+        /* Locking order: i_mutex -> journal_lock -> dqptr_sem. LU-952 */
+        ll_vfs_dq_init(dchild->d_inode);
 
         iattr.ia_valid = ATTR_SIZE;
         iattr.ia_size = 0;

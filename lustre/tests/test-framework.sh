@@ -37,8 +37,13 @@ if [ -f "$EXCEPT_LIST_FILE" ]; then
     . $EXCEPT_LIST_FILE
 fi
 
-[ -z "$MODPROBECONF" -a -f /etc/modprobe.conf ] && MODPROBECONF=/etc/modprobe.conf
-[ -z "$MODPROBECONF" -a -f /etc/modprobe.d/Lustre ] && MODPROBECONF=/etc/modprobe.d/Lustre
+# check config files for options in decreasing order of preference
+[ -z "$MODPROBECONF" -a -f /etc/modprobe.d/lustre.conf ] &&
+    MODPROBECONF=/etc/modprobe.d/lustre.conf
+[ -z "$MODPROBECONF" -a -f /etc/modprobe.d/Lustre ] &&
+    MODPROBECONF=/etc/modprobe.d/Lustre
+[ -z "$MODPROBECONF" -a -f /etc/modprobe.conf ] &&
+    MODPROBECONF=/etc/modprobe.conf
 
 assert_DIR () {
     local failed=""
@@ -608,12 +613,12 @@ set_default_debug_nodes () {
     local nodes=$1
 
     if [[ ,$nodes, = *,$HOSTNAME,* ]]; then
-	nodes=$(exclude_items_from_list "$nodes" "$HOSTNAME")
-	set_default_debug
+        nodes=$(exclude_items_from_list "$nodes" "$HOSTNAME")
+            set_default_debug
     fi
 
     [[ -n $nodes ]] && do_rpc_nodes $nodes set_default_debug \
-	\\\"$PTLDEBUG\\\" \\\"$SUBSYSTEM\\\" $DEBUG_SIZE || true
+        \\\"$PTLDEBUG\\\" \\\"$SUBSYSTEM\\\" $DEBUG_SIZE || true
 }
 
 set_default_debug_facet () {
@@ -3053,7 +3058,7 @@ error_noexit() {
 
     # We need to dump the logs on all nodes
     if $dump; then
-        gather_logs $(comma_list $(nodes_list))
+        gather_logs $(comma_list $(nodes_list)) 0
     fi
 
     debugrestore
@@ -3332,7 +3337,7 @@ run_one_logged() {
 
     echo
     log_sub_test_begin test_${1}
-    (run_one $1 "$2") 2>&1 | tee $test_log
+    (run_one $1 "$2") 2>&1 | tee -i $test_log
     local RC=${PIPESTATUS[0]}
 
     [ $RC -ne 0 ] && [ ! -f $LOGDIR/err ] && \
@@ -4227,6 +4232,7 @@ cleanup_pools () {
 
 gather_logs () {
     local list=$1
+    local tar_logs=$2
 
     local ts=$(date +%s)
     local docp=true
@@ -4252,10 +4258,12 @@ gather_logs () {
         do_nodes $list rsync -az "${prefix}.*.${suffix}" $HOSTNAME:$LOGDIR
       fi
 
-    local archive=$LOGDIR/${TESTSUITE}-$ts.tar.bz2
-    tar -jcf $archive $LOGDIR/*$ts* $LOGDIR/*${TESTSUITE}*
+    if [ $tar_logs == 1 ]; then
+        local archive=$LOGDIR/${TESTSUITE}-$ts.tar.bz2
+        tar -jcf $archive $LOGDIR/*$ts* $LOGDIR/*${TESTSUITE}*
 
-    echo $archive
+        echo $archive
+    fi
 }
 
 cleanup_logs () {
