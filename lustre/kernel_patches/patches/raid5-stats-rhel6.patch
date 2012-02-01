@@ -1,9 +1,7 @@
-diff --git a/drivers/md/raid5.c b/drivers/md/raid5.c
-index 9cd137e..890c96c 100644
-Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
+Index: linux-2.6.32-220.el6/drivers/md/raid5.c
 ===================================================================
---- linux-2.6.32-131.4.1.el6.orig/drivers/md/raid5.c	2011-07-20 13:27:43.000000000 +0300
-+++ linux-2.6.32-131.4.1.el6/drivers/md/raid5.c	2011-07-20 13:59:59.000000000 +0300
+--- linux-2.6.32-220.el6.orig/drivers/md/raid5.c
++++ linux-2.6.32-220.el6/drivers/md/raid5.c
 @@ -221,10 +221,12 @@ static void __release_stripe(raid5_conf_
  			if (test_bit(STRIPE_DELAYED, &sh->state)) {
  				list_add_tail(&sh->lru, &conf->delayed_list);
@@ -40,8 +38,8 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  		bi = &sh->dev[i].req;
  
  		bi->bi_rw = rw;
--		if (rw == WRITE)
-+		if (rw == WRITE) {
+-		if (rw & WRITE)
++		if (rw & WRITE) {
 +			atomic_inc(&conf->writes_out);
  			bi->bi_end_io = raid5_end_write_request;
 -		else
@@ -59,7 +57,7 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
 +			atomic_inc(&conf->out_reqs_in_queue);
  			generic_make_request(bi);
  		} else {
- 			if (rw == WRITE)
+ 			if (rw & WRITE)
 @@ -1653,6 +1664,8 @@ static void raid5_end_read_request(struc
  	mdk_rdev_t *rdev;
  
@@ -78,7 +76,7 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  	for (i=0 ; i<disks; i++)
  		if (bi == &sh->dev[i].req)
  			break;
-@@ -2676,6 +2691,7 @@ static void handle_stripe_dirtying5(raid
+@@ -2674,6 +2689,7 @@ static void handle_stripe_dirtying5(raid
  					set_bit(R5_LOCKED, &dev->flags);
  					set_bit(R5_Wantread, &dev->flags);
  					s->locked++;
@@ -86,7 +84,7 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  				} else {
  					set_bit(STRIPE_DELAYED, &sh->state);
  					set_bit(STRIPE_HANDLE, &sh->state);
-@@ -2699,6 +2715,7 @@ static void handle_stripe_dirtying5(raid
+@@ -2697,6 +2713,7 @@ static void handle_stripe_dirtying5(raid
  					set_bit(R5_LOCKED, &dev->flags);
  					set_bit(R5_Wantread, &dev->flags);
  					s->locked++;
@@ -94,7 +92,7 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  				} else {
  					set_bit(STRIPE_DELAYED, &sh->state);
  					set_bit(STRIPE_HANDLE, &sh->state);
-@@ -2749,6 +2766,7 @@ static void handle_stripe_dirtying6(raid
+@@ -2747,6 +2764,7 @@ static void handle_stripe_dirtying6(raid
  				set_bit(R5_LOCKED, &dev->flags);
  				set_bit(R5_Wantread, &dev->flags);
  				s->locked++;
@@ -102,7 +100,7 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  			} else {
  				pr_debug("Request delayed stripe %llu "
  					"block %d for Reconstruct\n",
-@@ -3118,6 +3136,8 @@ static void handle_stripe5(struct stripe
+@@ -3116,6 +3134,8 @@ static void handle_stripe5(struct stripe
  	clear_bit(STRIPE_HANDLE, &sh->state);
  	clear_bit(STRIPE_DELAYED, &sh->state);
  
@@ -111,7 +109,7 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  	s.syncing = test_bit(STRIPE_SYNCING, &sh->state);
  	s.expanding = test_bit(STRIPE_EXPAND_SOURCE, &sh->state);
  	s.expanded = test_bit(STRIPE_EXPAND_READY, &sh->state);
-@@ -3409,6 +3429,8 @@ static void handle_stripe6(struct stripe
+@@ -3407,6 +3427,8 @@ static void handle_stripe6(struct stripe
  	clear_bit(STRIPE_HANDLE, &sh->state);
  	clear_bit(STRIPE_DELAYED, &sh->state);
  
@@ -120,7 +118,7 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  	s.syncing = test_bit(STRIPE_SYNCING, &sh->state);
  	s.expanding = test_bit(STRIPE_EXPAND_SOURCE, &sh->state);
  	s.expanded = test_bit(STRIPE_EXPAND_READY, &sh->state);
-@@ -3711,6 +3733,7 @@ static void raid5_activate_delayed(raid5
+@@ -3709,6 +3731,7 @@ static void raid5_activate_delayed(raid5
  			if (!test_and_set_bit(STRIPE_PREREAD_ACTIVE, &sh->state))
  				atomic_inc(&conf->preread_active_stripes);
  			list_add_tail(&sh->lru, &conf->hold_list);
@@ -128,7 +126,7 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  		}
  	} else
  		plugger_set_plug(&conf->plug);
-@@ -4001,7 +4024,8 @@ static int chunk_aligned_read(mddev_t *m
+@@ -3999,7 +4022,8 @@ static int chunk_aligned_read(mddev_t *m
  				    conf->device_lock, /* nothing */);
  		atomic_inc(&conf->active_aligned_reads);
  		spin_unlock_irq(&conf->device_lock);
@@ -138,7 +136,7 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  		generic_make_request(align_bi);
  		return 1;
  	} else {
-@@ -4074,6 +4098,8 @@ static int make_request(mddev_t *mddev, 
+@@ -4072,6 +4096,8 @@ static int make_request(mddev_t *mddev, 
  	const int rw = bio_data_dir(bi);
  	int remaining;
  
@@ -147,7 +145,7 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  	if (unlikely(bi->bi_rw & BIO_FLUSH)) {
  		md_flush_request(mddev, bi);
  		return 0;
-@@ -4081,6 +4107,11 @@ static int make_request(mddev_t *mddev, 
+@@ -4079,6 +4105,11 @@ static int make_request(mddev_t *mddev, 
  
  	md_write_start(mddev, bi);
  
@@ -159,7 +157,7 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  	if (rw == READ &&
  	     mddev->reshape_position == MaxSector &&
  	     chunk_aligned_read(mddev,bi))
-@@ -4212,7 +4243,7 @@ static int make_request(mddev_t *mddev, 
+@@ -4210,7 +4241,7 @@ static int make_request(mddev_t *mddev, 
  
  		if ( rw == WRITE )
  			md_write_end(mddev);
@@ -168,7 +166,7 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  		bio_endio(bi, 0);
  	}
  
-@@ -4646,6 +4677,7 @@ static void raid5d(mddev_t *mddev)
+@@ -4644,6 +4675,7 @@ static void raid5d(mddev_t *mddev)
  		spin_unlock_irq(&conf->device_lock);
  		
  		handled++;
@@ -176,7 +174,7 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  		handle_stripe(sh);
  		release_stripe(sh);
  		cond_resched();
-@@ -5382,6 +5414,22 @@ static void status(struct seq_file *seq,
+@@ -5380,6 +5412,22 @@ static void status(struct seq_file *seq,
  			       conf->disks[i].rdev &&
  			       test_bit(In_sync, &conf->disks[i].rdev->flags) ? "U" : "_");
  	seq_printf (seq, "]");
@@ -201,8 +199,8 @@ Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.c
  	printall(seq, conf);
 Index: linux-2.6.32-131.4.1.el6/drivers/md/raid5.h
 ===================================================================
---- linux-2.6.32-131.4.1.el6.orig/drivers/md/raid5.h	2011-07-20 13:54:06.000000000 +0300
-+++ linux-2.6.32-131.4.1.el6/drivers/md/raid5.h	2011-07-20 13:57:00.000000000 +0300
+--- linux-2.6.32-131.4.1.el6.orig/drivers/md/raid5.h   2011-07-20 13:54:06.000000000 +0300
++++ linux-2.6.32-131.4.1.el6/drivers/md/raid5.h        2011-07-20 13:57:00.000000000 +0300
 @@ -439,6 +439,25 @@ struct raid5_private_data {
  	 * the new thread here until we fully activate the array.
  	 */

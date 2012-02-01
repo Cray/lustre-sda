@@ -1,41 +1,45 @@
---- linux-2.6.32-44.2.el6/include/scsi/sas.h	2009-12-02 22:51:21.000000000 -0500
-+++ linux-2.6.32-44.2.el6/include/scsi/sas.h.new	2010-11-16 15:58:43.000000000 -0500
-@@ -341,7 +341,10 @@
+Index: linux-2.6.32-220.el6/include/scsi/sas.h
+===================================================================
+--- linux-2.6.32-220.el6.orig/include/scsi/sas.h
++++ linux-2.6.32-220.el6/include/scsi/sas.h
+@@ -329,6 +329,9 @@ struct ssp_response_iu {
  
- 	u8      conf_route_table:1;
- 	u8      configuring:1;
- 	u8      _r_b:6;
+ 	u8     datapres:2;
+ 	u8     _r_b:6;
 +/*	u8      _r_b:5; */
 +/*	u8      table_to_table:1; */
 +#define TABLE_TO_TABLE(x) (((x)->_r_b & 0b100000) != 0)
  
- 	u8      _r_c;
+ 	u8     status;
  
-@@ -528,7 +531,10 @@
- 	u8      _r_a;
- 	u8      num_phys;
+@@ -522,6 +525,9 @@ struct ssp_response_iu {
+ 	u8     _r_a[10];
  
- 	u8      _r_b:6;
+ 	u8     _r_b:6;
 +/*	u8      table_to_table:1; */
 +/*	u8      _r_b:5; */
 +#define TABLE_TO_TABLE(x) (((x)->_r_b & 0b100000) != 0)
- 	u8      configuring:1;
- 	u8      conf_route_table:1;
+ 	u8     datapres:2;
  
---- linux-2.6.32-44.2.el6/include/scsi/libsas.h	2010-11-15 22:35:29.000000000 -0500
-+++ linux-2.6.32-44.2.el6/include/scsi/libsas.h.new	2010-11-16 15:58:04.000000000 -0500
-@@ -143,6 +143,7 @@
- 	u8     num_phys;
+ 	u8     status;
+Index: linux-2.6.32-220.el6/include/scsi/libsas.h
+===================================================================
+--- linux-2.6.32-220.el6.orig/include/scsi/libsas.h
++++ linux-2.6.32-220.el6/include/scsi/libsas.h
+@@ -145,6 +145,7 @@ struct expander_device {
+ 	u8     t2t_supp:1;
  	u8     configuring:1;
  	u8     conf_route_table:1;
 +	u8     table_to_table:1;
+ 
  	u8     enclosure_logical_id[8];
  
- 	struct ex_phy *ex_phy;
---- linux-2.6.32-44.2.el6/drivers/scsi/libsas/sas_expander.c	2009-12-02 22:51:21.000000000 -0500
-+++ linux-2.6.32-44.2.el6/drivers/scsi/libsas/sas_expander.c.new	2010-11-15 14:01:10.000000000 -0500
-@@ -322,6 +322,8 @@
- 	dev->ex_dev.num_phys = min(rg->num_phys, (u8)MAX_EXPANDER_PHYS);
+Index: linux-2.6.32-220.el6/drivers/scsi/libsas/sas_expander.c
+===================================================================
+--- linux-2.6.32-220.el6.orig/drivers/scsi/libsas/sas_expander.c
++++ linux-2.6.32-220.el6/drivers/scsi/libsas/sas_expander.c
+@@ -331,6 +331,8 @@ static void ex_assign_report_general(str
+ 	dev->ex_dev.t2t_supp = rg->t2t_supp;
  	dev->ex_dev.conf_route_table = rg->conf_route_table;
  	dev->ex_dev.configuring = rg->configuring;
 +/*	dev->ex_dev.table_to_table = rg->table_to_table; */
@@ -43,14 +47,13 @@
  	memcpy(dev->ex_dev.enclosure_logical_id, rg->enclosure_logical_id, 8);
  }
  
-@@ -1227,7 +1228,9 @@
- 					res = -ENODEV;
- 				}
- 			} else if (parent_phy->routing_attr == TABLE_ROUTING &&
--				   child_phy->routing_attr != SUBTRACTIVE_ROUTING) {
-+				   child_phy->routing_attr != SUBTRACTIVE_ROUTING &&
-+				   (child_ex->table_to_table == 0 ||
-+				    child_phy->routing_attr != TABLE_ROUTING)) {
- 				sas_print_parent_topology_bug(child, parent_phy, child_phy);
- 				res = -ENODEV;
- 			}
+@@ -1240,7 +1242,8 @@ static int sas_check_parent_topology(str
+ 			} else if (parent_phy->routing_attr == TABLE_ROUTING) {
+ 				if (child_phy->routing_attr == SUBTRACTIVE_ROUTING ||
+ 				    (child_phy->routing_attr == TABLE_ROUTING &&
+-				     child_ex->t2t_supp && parent_ex->t2t_supp)) {
++				     child_ex->t2t_supp && parent_ex->t2t_supp &&
++                                     child_ex->table_to_table)) {
+ 					/* All good */;
+ 				} else {
+ 					sas_print_parent_topology_bug(child, parent_phy, child_phy);
