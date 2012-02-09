@@ -556,8 +556,6 @@ int mdd_get_flags(const struct lu_env *env, struct mdd_object *obj)
         rc = mdd_la_get(env, obj, la, BYPASS_CAPA);
         if (rc == 0) {
                 mdd_flags_xlate(obj, la->la_flags);
-                if (S_ISDIR(la->la_mode) && la->la_nlink == 1)
-                        obj->mod_flags |= MNLINK_OBJ;
         }
         RETURN(rc);
 }
@@ -1517,6 +1515,29 @@ static int mdd_declare_attr_set(const struct lu_env *env,
                         return rc;
         }
 
+#ifdef CONFIG_FS_POSIX_ACL
+        if (ma->ma_attr.la_valid & LA_MODE) {
+                mdd_read_lock(env, obj, MOR_TGT_CHILD);
+                rc = mdo_xattr_get(env, obj, buf, XATTR_NAME_ACL_ACCESS,
+                                   BYPASS_CAPA);
+                mdd_read_unlock(env, obj);
+                if (rc == -EOPNOTSUPP || rc == -ENODATA)
+                        rc = 0;
+                else if (rc < 0)
+                        return rc;
+
+                if (rc != 0) {
+                        buf->lb_buf = NULL;
+                        buf->lb_len = rc;
+                        rc = mdo_declare_xattr_set(env, obj, buf,
+                                                   XATTR_NAME_ACL_ACCESS, 0,
+                                                   handle);
+                        if (rc)
+                                return rc;
+                }
+        }
+#endif
+
         /* basically the log is the same as in unlink case */
         if (lmm) {
                 __u16 stripe;
@@ -1945,11 +1966,11 @@ static int mdd_ref_del(const struct lu_env *env, struct md_object *obj,
         if (rc)
                 GOTO(cleanup, rc);
 
-        __mdd_ref_del(env, mdd_obj, handle, 0);
+        mdo_ref_del(env, mdd_obj, handle);
 
         if (S_ISDIR(lu_object_attr(&obj->mo_lu))) {
                 /* unlink dot */
-                __mdd_ref_del(env, mdd_obj, handle, 1);
+                mdo_ref_del(env, mdd_obj, handle);
         }
 
         LASSERT(ma->ma_attr.la_valid & LA_CTIME);
@@ -2161,7 +2182,7 @@ static int mdd_ref_add(const struct lu_env *env, struct md_object *obj,
         mdd_write_lock(env, mdd_obj, MOR_TGT_CHILD);
         rc = mdd_link_sanity_check(env, NULL, NULL, mdd_obj);
         if (rc == 0)
-                __mdd_ref_add(env, mdd_obj, handle);
+                mdo_ref_add(env, mdd_obj, handle);
         mdd_write_unlock(env, mdd_obj);
         if (rc == 0) {
                 LASSERT(ma->ma_attr.la_valid & LA_CTIME);
@@ -2340,7 +2361,7 @@ static int mdd_close(const struct lu_env *env, struct md_object *obj,
         struct mdd_device *mdd = mdo2mdd(obj);
         struct thandle    *handle = NULL;
         int rc;
-        int reset = 1;
+        int is_orphan = 0, reset = 1;
 
 #ifdef HAVE_QUOTA_SUPPORT
         struct obd_device *obd = mdo2mdd(obj)->mdd_obd_dev;
@@ -2398,6 +2419,7 @@ static int mdd_close(const struct lu_env *env, struct md_object *obj,
                         CDEBUG(D_HA, "Object "DFID" is deleted from orphan "
                                "list, OSS objects to be destroyed.\n",
                                PFID(mdd_object_fid(mdd_obj)));
+                        is_orphan = 1;
                 } else {
                         CERROR("Object "DFID" can not be deleted from orphan "
                                 "list, maybe cause OST objects can not be "
@@ -2413,7 +2435,7 @@ static int mdd_close(const struct lu_env *env, struct md_object *obj,
         rc = mdd_iattr_get(env, mdd_obj, ma);
         /* Object maybe not in orphan list originally, it is rare case for
          * mdd_finish_unlink() failure. */
-        if (rc == 0 && ma->ma_attr.la_nlink == 0) {
+        if (rc == 0 && (ma->ma_attr.la_nlink == 0 || is_orphan)) {
 #ifdef HAVE_QUOTA_SUPPORT
                 if (mds->mds_quota) {
                         quota_opc = FSFILT_OP_UNLINK_PARTIAL_CHILD;
