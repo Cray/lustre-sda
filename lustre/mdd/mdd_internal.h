@@ -105,7 +105,7 @@ struct mdd_device {
         struct obd_device               *mdd_obd_dev;
         struct lu_fid                    mdd_root_fid;
         struct dt_device_param           mdd_dt_conf;
-        struct dt_object                *mdd_orphans;
+        struct dt_object                *mdd_orphans; /* PENDING directory */
         struct dt_object                *mdd_capa;
         struct dt_txn_callback           mdd_txn_cb;
         cfs_proc_dir_entry_t            *mdd_proc_entry;
@@ -616,6 +616,11 @@ static inline void mdd_set_capainfo(const struct lu_env *env, int offset,
         ci->mc_capa[offset] = capa;
 }
 
+static inline const char *mdd_obj_dev_name(const struct mdd_object *obj)
+{
+        return lu_dev_name(obj->mod_obj.mo_lu.lo_dev);
+}
+
 #define MAX_ATIME_DIFF 60
 
 enum {
@@ -670,7 +675,11 @@ static inline int mdo_attr_set(const struct lu_env *env,
                                struct lustre_capa *capa)
 {
         struct dt_object *next = mdd_object_child(obj);
-        LASSERT(mdd_object_exists(obj));
+        if (mdd_object_exists(obj) == 0) {
+                CERROR("%s: object "DFID" not found: rc = -2\n",
+                       mdd_obj_dev_name(obj), PFID(mdd_object_fid(obj)));
+                return -ENOENT;
+        }
         return next->do_ops->do_attr_set(env, next, la, handle, capa);
 }
 
@@ -698,7 +707,11 @@ static inline int mdo_xattr_set(const struct lu_env *env,struct mdd_object *obj,
                                 struct lustre_capa *capa)
 {
         struct dt_object *next = mdd_object_child(obj);
-        LASSERT(mdd_object_exists(obj));
+        if (mdd_object_exists(obj) == 0) {
+                CERROR("%s: object "DFID" not found: rc = -2\n",
+                       mdd_obj_dev_name(obj), PFID(mdd_object_fid(obj)));
+                return -ENOENT;
+        }
         return next->do_ops->do_xattr_set(env, next, buf, name, fl, handle,
                                           capa);
 }
@@ -717,7 +730,11 @@ static inline int mdo_xattr_del(const struct lu_env *env,struct mdd_object *obj,
                                 struct lustre_capa *capa)
 {
         struct dt_object *next = mdd_object_child(obj);
-        LASSERT(mdd_object_exists(obj));
+        if (mdd_object_exists(obj) == 0) {
+                CERROR("%s: object "DFID" not found: rc = -2\n",
+                       mdd_obj_dev_name(obj), PFID(mdd_object_fid(obj)));
+                return -ENOENT;
+        }
         return next->do_ops->do_xattr_del(env, next, name, handle, capa);
 }
 
@@ -726,7 +743,11 @@ int mdo_xattr_list(const struct lu_env *env, struct mdd_object *obj,
                    struct lu_buf *buf, struct lustre_capa *capa)
 {
         struct dt_object *next = mdd_object_child(obj);
-        LASSERT(mdd_object_exists(obj));
+        if (mdd_object_exists(obj) == 0) {
+                CERROR("%s: object "DFID" not found: rc = -2\n",
+                       mdd_obj_dev_name(obj), PFID(mdd_object_fid(obj)));
+                return -ENOENT;
+        }
         return next->do_ops->do_xattr_list(env, next, buf, capa);
 }
 
@@ -787,7 +808,11 @@ static inline int mdo_ref_add(const struct lu_env *env, struct mdd_object *obj,
                               struct thandle *handle)
 {
         struct dt_object *next = mdd_object_child(obj);
-        LASSERT(mdd_object_exists(obj));
+        if (mdd_object_exists(obj) == 0) {
+                CERROR("%s: object "DFID" not found: rc = -2\n",
+                       mdd_obj_dev_name(obj), PFID(mdd_object_fid(obj)));
+                return -ENOENT;
+        }
         return next->do_ops->do_ref_add(env, next, handle);
 }
 
@@ -803,7 +828,11 @@ static inline int mdo_ref_del(const struct lu_env *env, struct mdd_object *obj,
                               struct thandle *handle)
 {
         struct dt_object *next = mdd_object_child(obj);
-        LASSERT(mdd_object_exists(obj));
+        if (mdd_object_exists(obj) == 0) {
+                CERROR("%s: object "DFID" not found: rc = -2\n",
+                       mdd_obj_dev_name(obj), PFID(mdd_object_fid(obj)));
+                return -ENOENT;
+        }
         return next->do_ops->do_ref_del(env, next, handle);
 }
 
@@ -852,7 +881,11 @@ static inline struct obd_capa *mdo_capa_get(const struct lu_env *env,
                                             __u64 opc)
 {
         struct dt_object *next = mdd_object_child(obj);
-        LASSERT(mdd_object_exists(obj));
+        if (mdd_object_exists(obj) == 0) {
+                CERROR("%s: object "DFID" not found: rc = -2\n",
+                       mdd_obj_dev_name(obj), PFID(mdd_object_fid(obj)));
+                return ERR_PTR(-ENOENT);
+        }
         return next->do_ops->do_capa_get(env, next, old, opc);
 }
 

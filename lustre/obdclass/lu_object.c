@@ -504,6 +504,7 @@ static struct lu_object *htable_lookup(struct lu_site *s,
         h = container_of0(hnode, struct lu_object_header, loh_hash);
         if (likely(!lu_object_is_dying(h))) {
                 lprocfs_counter_incr(s->ls_stats, LU_SS_CACHE_HIT);
+                cfs_list_del_init(&h->loh_lru);
                 return lu_object_top(h);
         }
 
@@ -600,8 +601,6 @@ static struct lu_object *lu_object_find_try(const struct lu_env *env,
         hs = s->ls_obj_hash;
         cfs_hash_bd_get_and_lock(hs, (void *)f, &bd, 1);
         o = htable_lookup(s, &bd, f, waiter, &version);
-        if (o != NULL && !cfs_list_empty(&o->lo_header->loh_lru))
-                cfs_list_del_init(&o->lo_header->loh_lru);
         cfs_hash_bd_unlock(hs, &bd, 1);
         if (o != NULL)
                 return o;
@@ -1612,6 +1611,52 @@ int lu_context_refill(struct lu_context *ctx)
 }
 EXPORT_SYMBOL(lu_context_refill);
 
+/**
+ * lu_ctx_tags/lu_ses_tags will be updated if there are new types of
+ * obd being added. Currently, this is only used on client side, specifically
+ * for echo device client, for other stack (like ptlrpc threads), context are
+ * predefined when the lu_device type are registered, during the module probe
+ * phase.
+ */
+__u32 lu_context_tags_default = 0;
+__u32 lu_session_tags_default = 0;
+
+void lu_context_tags_update(__u32 tags)
+{
+        cfs_spin_lock(&lu_keys_guard);
+        lu_context_tags_default |= tags;
+        key_set_version ++;
+        cfs_spin_unlock(&lu_keys_guard);
+}
+EXPORT_SYMBOL(lu_context_tags_update);
+
+void lu_context_tags_clear(__u32 tags)
+{
+        cfs_spin_lock(&lu_keys_guard);
+        lu_context_tags_default &= ~tags;
+        key_set_version ++;
+        cfs_spin_unlock(&lu_keys_guard);
+}
+EXPORT_SYMBOL(lu_context_tags_clear);
+
+void lu_session_tags_update(__u32 tags)
+{
+        cfs_spin_lock(&lu_keys_guard);
+        lu_session_tags_default |= tags;
+        key_set_version ++;
+        cfs_spin_unlock(&lu_keys_guard);
+}
+EXPORT_SYMBOL(lu_session_tags_update);
+
+void lu_session_tags_clear(__u32 tags)
+{
+        cfs_spin_lock(&lu_keys_guard);
+        lu_session_tags_default &= ~tags;
+        key_set_version ++;
+        cfs_spin_unlock(&lu_keys_guard);
+}
+EXPORT_SYMBOL(lu_session_tags_clear);
+
 int lu_env_init(struct lu_env *env, __u32 tags)
 {
         int result;
@@ -1642,6 +1687,34 @@ int lu_env_refill(struct lu_env *env)
         return result;
 }
 EXPORT_SYMBOL(lu_env_refill);
+
+/**
+ * Currently, this API will only be used by echo client.
+ * Because echo client and normal lustre client will share
+ * same cl_env cache. So echo client needs to refresh
+ * the env context after it get one from the cache, especially
+ * when normal client and echo client co-exist in the same client.
+ */
+int lu_env_refill_by_tags(struct lu_env *env, __u32 ctags,
+                          __u32 stags)
+{
+        int    result;
+
+        if ((env->le_ctx.lc_tags & ctags) != ctags) {
+                env->le_ctx.lc_version = 0;
+                env->le_ctx.lc_tags |= ctags;
+        }
+
+        if (env->le_ses && (env->le_ses->lc_tags & stags) != stags) {
+                env->le_ses->lc_version = 0;
+                env->le_ses->lc_tags |= stags;
+        }
+
+        result = lu_env_refill(env);
+
+        return result;
+}
+EXPORT_SYMBOL(lu_env_refill_by_tags);
 
 static struct cfs_shrinker *lu_site_shrinker = NULL;
 

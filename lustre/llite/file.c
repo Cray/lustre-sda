@@ -1849,17 +1849,9 @@ int ll_file_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
 
                 RETURN(0);
         }
-        case OBD_IOC_GETNAME: {
-                struct obd_device *obd =
-                                class_exp2obd(ll_i2sbi(inode)->ll_dt_exp);
-                if (!obd)
-                        RETURN(-EFAULT);
-                if (cfs_copy_to_user((void *)arg, obd->obd_name,
-                                     strlen(obd->obd_name) + 1))
-                        RETURN(-EFAULT);
-                RETURN(0);
-        }
-
+        case OBD_IOC_GETDTNAME:
+        case OBD_IOC_GETMDNAME:
+                RETURN(ll_get_obd_name(inode, cmd, arg));
         default: {
                 int err;
 
@@ -2078,8 +2070,9 @@ int ll_file_flock(struct file *file, int cmd, struct file_lock *file_lock)
                 einfo.ei_mode = LCK_PW;
                 break;
         default:
-                CERROR("unknown fcntl lock type: %d\n", file_lock->fl_type);
-                RETURN (-EINVAL);
+                CDEBUG(D_INFO, "Unknown fcntl lock type: %d\n",
+                        file_lock->fl_type);
+                RETURN (-ENOTSUPP);
         }
 
         switch (cmd) {

@@ -553,10 +553,12 @@ static void mdt_write_allow(struct mdt_object *o)
 }
 
 /* there can be no real transaction so prepare the fake one */
-static void mdt_empty_transno(struct mdt_thread_info* info)
+static void mdt_empty_transno(struct mdt_thread_info *info, int rc)
 {
-        struct mdt_device *mdt = info->mti_mdt;
-        struct ptlrpc_request *req = mdt_info_req(info);
+        struct mdt_device      *mdt = info->mti_mdt;
+        struct ptlrpc_request  *req = mdt_info_req(info);
+        struct tg_export_data  *ted;
+        struct lsd_client_data *lcd;
 
         ENTRY;
         /* transaction has occurred already */
@@ -579,6 +581,35 @@ static void mdt_empty_transno(struct mdt_thread_info* info)
 
         req->rq_transno = info->mti_transno;
         lustre_msg_set_transno(req->rq_repmsg, info->mti_transno);
+
+        /* update lcd in memory only for resent cases */
+        ted = &req->rq_export->exp_target_data;
+        LASSERT(ted);
+        cfs_mutex_down(&ted->ted_lcd_lock);
+        lcd = ted->ted_lcd;
+        if (lustre_msg_get_opc(req->rq_reqmsg) == MDS_CLOSE ||
+            lustre_msg_get_opc(req->rq_reqmsg) == MDS_DONE_WRITING) {
+                if (info->mti_transno != 0)
+                        lcd->lcd_last_close_transno = info->mti_transno;
+                lcd->lcd_last_close_xid = req->rq_xid;
+                lcd->lcd_last_close_result = rc;
+        } else {
+                /* VBR: save versions in last_rcvd for reconstruct. */
+                __u64 *pre_versions = lustre_msg_get_versions(req->rq_repmsg);
+                if (pre_versions) {
+                        lcd->lcd_pre_versions[0] = pre_versions[0];
+                        lcd->lcd_pre_versions[1] = pre_versions[1];
+                        lcd->lcd_pre_versions[2] = pre_versions[2];
+                        lcd->lcd_pre_versions[3] = pre_versions[3];
+                }
+                if (info->mti_transno != 0)
+                        lcd->lcd_last_transno = info->mti_transno;
+                lcd->lcd_last_xid = req->rq_xid;
+                lcd->lcd_last_result = rc;
+                lcd->lcd_last_data = info->mti_opdata;
+        }
+        cfs_mutex_up(&ted->ted_lcd_lock);
+
         EXIT;
 }
 
@@ -718,7 +749,7 @@ static int mdt_mfd_open(struct mdt_thread_info *info, struct mdt_object *p,
                         cfs_spin_unlock(&med->med_open_lock);
                 }
 
-                mdt_empty_transno(info);
+                mdt_empty_transno(info, rc);
         } else
                 rc = -ENOMEM;
 
@@ -726,9 +757,9 @@ static int mdt_mfd_open(struct mdt_thread_info *info, struct mdt_object *p,
 }
 
 
-static int mdt_finish_open(struct mdt_thread_info *info,
-                           struct mdt_object *p, struct mdt_object *o,
-                           __u64 flags, int created, struct ldlm_reply *rep)
+int mdt_finish_open(struct mdt_thread_info *info,
+                    struct mdt_object *p, struct mdt_object *o,
+                    __u64 flags, int created, struct ldlm_reply *rep)
 {
         struct ptlrpc_request   *req = mdt_info_req(info);
         struct obd_export       *exp = req->rq_export;
@@ -936,8 +967,7 @@ void mdt_reconstruct_open(struct mdt_thread_info *info,
                  * We failed after creation, but we do not know in which step
                  * we failed. So try to check the child object.
                  */
-                parent = mdt_object_find(env, mdt, rr->rr_fid1,
-                                         MDT_OBJ_MUST_EXIST);
+                parent = mdt_object_find(env, mdt, rr->rr_fid1);
                 if (IS_ERR(parent)) {
                         rc = PTR_ERR(parent);
                         LCONSOLE_WARN("Parent "DFID" lookup error %d."
@@ -948,8 +978,7 @@ void mdt_reconstruct_open(struct mdt_thread_info *info,
                         mdt_export_evict(exp);
                         RETURN_EXIT;
                 }
-                child = mdt_object_find(env, mdt, rr->rr_fid2,
-                                        MDT_OBJ_MAY_NOT_EXIST);
+                child = mdt_object_find(env, mdt, rr->rr_fid2);
                 if (IS_ERR(child)) {
                         rc = PTR_ERR(child);
                         LCONSOLE_WARN("Child "DFID" lookup error %d."
@@ -998,8 +1027,8 @@ out:
         LASSERT(ergo(rc < 0, lustre_msg_get_transno(req->rq_repmsg) == 0));
 }
 
-static int mdt_open_by_fid(struct mdt_thread_info* info,
-                           struct ldlm_reply *rep)
+int mdt_open_by_fid(struct mdt_thread_info* info,
+                    struct ldlm_reply *rep)
 {
         const struct lu_env     *env = info->mti_env;
         __u32                    flags = info->mti_spec.sp_cr_flags;
@@ -1009,10 +1038,9 @@ static int mdt_open_by_fid(struct mdt_thread_info* info,
         int                      rc;
         ENTRY;
 
-        o = mdt_object_find(info->mti_env, info->mti_mdt, rr->rr_fid2,
-                            MDT_OBJ_MUST_EXIST);
+        o = mdt_object_find(info->mti_env, info->mti_mdt, rr->rr_fid2);
         if (IS_ERR(o))
-                RETURN(PTR_ERR(o));
+                RETURN(rc = PTR_ERR(o));
 
         rc = mdt_object_exists(o);
         if (rc > 0) {
@@ -1023,7 +1051,9 @@ static int mdt_open_by_fid(struct mdt_thread_info* info,
                 rc = mo_attr_get(env, mdt_object_child(o), ma);
                 if (rc == 0)
                         rc = mdt_finish_open(info, NULL, o, flags, 0, rep);
-        } else if (rc < 0) {
+        } else if (rc == 0) {
+                rc = -ENOENT;
+        } else  {
                 /* the child object was created on remote server */
                 struct mdt_body *repbody;
                 repbody = req_capsule_server_get(info->mti_pill, &RMF_MDT_BODY);
@@ -1036,9 +1066,9 @@ static int mdt_open_by_fid(struct mdt_thread_info* info,
         RETURN(rc);
 }
 
-static int mdt_open_anon_by_fid(struct mdt_thread_info *info,
-                                struct ldlm_reply *rep,
-                                struct mdt_lock_handle *lhc)
+int mdt_open_anon_by_fid(struct mdt_thread_info *info,
+                         struct ldlm_reply *rep,
+                         struct mdt_lock_handle *lhc)
 {
         const struct lu_env     *env   = info->mti_env;
         struct mdt_device       *mdt   = info->mti_mdt;
@@ -1053,8 +1083,7 @@ static int mdt_open_anon_by_fid(struct mdt_thread_info *info,
 
         if (md_should_create(flags)) {
                 if (!lu_fid_eq(rr->rr_fid1, rr->rr_fid2)) {
-                        parent = mdt_object_find(env, mdt, rr->rr_fid1,
-                                                 MDT_OBJ_MUST_EXIST);
+                        parent = mdt_object_find(env, mdt, rr->rr_fid1);
                         if (IS_ERR(parent)) {
                                 CDEBUG(D_INODE, "Fail to find parent "DFID
                                        " for anonymous created %ld, try to"
@@ -1067,18 +1096,18 @@ static int mdt_open_anon_by_fid(struct mdt_thread_info *info,
                         ma->ma_need |= MA_PFID;
         }
 
-        o = mdt_object_find(env, mdt, rr->rr_fid2, MDT_OBJ_MUST_EXIST);
-        if (IS_ERR(o)) {
-                if (PTR_ERR(o) == -ENOENT)
-                        mdt_set_disposition(info, rep, (DISP_LOOKUP_EXECD |
-                                                        DISP_LOOKUP_NEG));
-                GOTO(out_parent, rc = PTR_ERR(o));
-        }
+        o = mdt_object_find(env, mdt, rr->rr_fid2);
+        if (IS_ERR(o))
+                RETURN(rc = PTR_ERR(o));
 
         rc = mdt_object_exists(o);
-        if (rc < 0) {
+        if (rc == 0) {
+                mdt_set_disposition(info, rep, (DISP_LOOKUP_EXECD |
+                                    DISP_LOOKUP_NEG));
+                GOTO(out, rc = -ENOENT);
+        } else if (rc < 0) {
                 CERROR("NFS remote open shouldn't happen.\n");
-                GOTO(out_child, rc);
+                GOTO(out, rc);
         }
         mdt_set_disposition(info, rep, (DISP_IT_EXECD |
                                         DISP_LOOKUP_EXECD |
@@ -1097,15 +1126,14 @@ static int mdt_open_anon_by_fid(struct mdt_thread_info *info,
                              MDS_INODELOCK_LOOKUP | MDS_INODELOCK_OPEN,
                              MDT_CROSS_LOCK);
         if (rc)
-                GOTO(out_child, rc);
+                GOTO(out, rc);
 
         rc = mo_attr_get(env, mdt_object_child(o), ma);
         if (rc)
-                GOTO(out_child, rc);
+                GOTO(out, rc);
 
         if (ma->ma_valid & MA_PFID) {
-                parent = mdt_object_find(env, mdt, &ma->ma_pfid,
-                                         MDT_OBJ_MUST_EXIST);
+                parent = mdt_object_find(env, mdt, &ma->ma_pfid);
                 if (IS_ERR(parent)) {
                         CDEBUG(D_INODE, "Fail to find parent "DFID
                                " for anonymous created %ld, try to"
@@ -1122,10 +1150,9 @@ static int mdt_open_anon_by_fid(struct mdt_thread_info *info,
         if (!(flags & MDS_OPEN_LOCK) || rc)
                 mdt_object_unlock(info, o, lhc, 1);
 
-        GOTO(out_child, rc);
-out_child:
+        GOTO(out, rc);
+out:
         mdt_object_put(env, o);
-out_parent:
         if (parent != NULL)
                 mdt_object_put(env, parent);
         return rc;
@@ -1138,17 +1165,16 @@ int mdt_pin(struct mdt_thread_info* info)
 }
 
 /* Cross-ref request. Currently it can only be a pure open (w/o create) */
-static int mdt_cross_open(struct mdt_thread_info* info,
-                          const struct lu_fid *fid,
-                          struct ldlm_reply *rep, __u32 flags)
+int mdt_cross_open(struct mdt_thread_info* info,
+                   const struct lu_fid *fid,
+                   struct ldlm_reply *rep, __u32 flags)
 {
         struct md_attr    *ma = &info->mti_attr;
         struct mdt_object *o;
         int                rc;
         ENTRY;
 
-        o = mdt_object_find(info->mti_env, info->mti_mdt, fid,
-                            MDT_OBJ_MAY_NOT_EXIST);
+        o = mdt_object_find(info->mti_env, info->mti_mdt, fid);
         if (IS_ERR(o))
                 RETURN(rc = PTR_ERR(o));
 
@@ -1240,7 +1266,7 @@ int mdt_reint_open(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
                ma->ma_attr.la_mode, msg_flags);
 
         if (req_is_replay(req) ||
-            (req->rq_export->exp_libclient && create_flags & MDS_OPEN_HAS_EA)) {
+            (req->rq_export->exp_libclient && create_flags&MDS_OPEN_HAS_EA)) {
                 /* This is a replay request or from liblustre with ea. */
                 result = mdt_open_by_fid(info, ldlm_rep);
 
@@ -1286,7 +1312,7 @@ int mdt_reint_open(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
                           LCK_PW : LCK_PR, rr->rr_name, rr->rr_namelen);
 
         parent = mdt_object_find_lock(info, rr->rr_fid1, lh,
-                                      MDS_INODELOCK_UPDATE, MDT_OBJ_MUST_EXIST);
+                                      MDS_INODELOCK_UPDATE);
         if (IS_ERR(parent))
                 GOTO(out, result = PTR_ERR(parent));
 
@@ -1330,8 +1356,7 @@ int mdt_reint_open(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
                 mdt_set_disposition(info, ldlm_rep, DISP_LOOKUP_POS);
         }
 
-        child = mdt_object_find(info->mti_env, mdt, child_fid,
-                                MDT_OBJ_MAY_NOT_EXIST);
+        child = mdt_object_find(info->mti_env, mdt, child_fid);
         if (IS_ERR(child))
                 GOTO(out_parent, result = PTR_ERR(child));
 
@@ -1634,7 +1659,7 @@ int mdt_close(struct mdt_thread_info *info)
                 ret = mdt_mfd_close(info, mfd);
                 if (repbody != NULL)
                         rc = mdt_handle_last_unlink(info, o, ma);
-                mdt_empty_transno(info);
+                mdt_empty_transno(info, rc);
                 mdt_object_put(info->mti_env, o);
         }
         if (repbody != NULL) {
@@ -1700,9 +1725,9 @@ int mdt_done_writing(struct mdt_thread_info *info)
                        info->mti_ioepoch->ioepoch);
                 /* If this is a replay, reconstruct the transno. */
                 if (lustre_msg_get_flags(req->rq_reqmsg) & MSG_REPLAY) {
-                        mdt_empty_transno(info);
                         if (info->mti_ioepoch->flags & MF_SOM_AU)
                                 rc = -EAGAIN;
+                        mdt_empty_transno(info, rc);
                 } else
                         rc = -ESTALE;
                 GOTO(error_ucred, rc);
@@ -1726,7 +1751,7 @@ int mdt_done_writing(struct mdt_thread_info *info)
         rc = mdt_mfd_close(info, mfd);
 
         OBD_FREE_LARGE(info->mti_attr.ma_lmm, info->mti_mdt->mdt_max_mdsize);
-        mdt_empty_transno(info);
+        mdt_empty_transno(info, rc);
 error_ucred:
         mdt_exit_ucred(info);
         RETURN(rc);
