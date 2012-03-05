@@ -42,6 +42,8 @@ init() {
         HAS_BODY=false
         HAS_SIGNOFF=false
         HAS_CHANGEID=false
+        BUG_ID_REQUIRED=false
+        HAS_BUG_ID=false
 
         IS_WRAPPING_UP=false
 
@@ -69,6 +71,13 @@ function ck_wrapup() {
         $HAS_SUMMARY    || error "missing commit summary line."
         $HAS_BODY       || error "missing commit description."
 
+        declare git_dir=$(git rev-parse --git-dir)
+        CONFIG_URL=$(sed -n '/url = /{;s@.*//@@p;q;}' $git_dir/config)
+        case "$CONFIG_URL" in
+        *'git.clusterstor.com/'* )
+                BUG_ID_REQUIRED=true
+                ;;
+        esac
         HAS_LAST_BLANK=false
         IS_WRAPPING_UP=true
 }
@@ -104,6 +113,21 @@ function do_innocuous() {
         ck_wrapup
         local txt=$(echo "${LINE#*: }" | grep -E "${EMAILPAT}")
         (( ${#txt} == 0 )) && error "invalid name and address"
+}
+
+# All "bug-id:" lines specify a bug identifier.
+# The identifier varies by originator.
+#
+function do_bug_id() {
+        ck_wrapup
+
+        case "$CONFIG_URL" in
+        *'git.clusterstor.com/'* )
+                [[ "$LINE" =~ ^Xyratex-bug-id: ]] || \
+                        error "-- commits to clusterstor need Xyratex bug id"
+                ;;
+        esac
+        HAS_BUG_ID=true
 }
 
 function do_default_line() {
@@ -207,6 +231,22 @@ usage() {
                 echo "$0: saved original commit comment to $SAVE" 1>&2
 }
 
+run_validations() {
+        unset LINE
+        $HAS_SIGNOFF || error "missing valid $SIGNOFF: line."
+        $BUG_ID_REQUIRED && {
+                $HAS_BUG_ID || \
+                        error "-- bug id required for commits to $CONFIG_URL"
+        }
+
+        if $HAS_ERROR; then
+                exec 3<&- 4>&-
+                usage
+                rm "$REVISED"
+                exit 1
+        fi
+}
+
 init ${1+"$@"}
 exec 3< "$ORIGINAL" 4> "$REVISED" || exit 1
 
@@ -251,7 +291,7 @@ while IFS= read -u3 LINE; do
                 if [[ "$LINE" =~ ^($INNOCUOUS): ]]; then
                         do_innocuous
                 elif [[ "$LINE" =~ ^[A-Za-z0-9_-]+-bug-id: ]]; then
-                        ck_wrapup
+                        do_bug_id
                 else
                         # Allow arbitrary external bug identifiers for tracking.
                         # I can't seem to find a pattern for the "case" that
@@ -266,15 +306,7 @@ done
 
 (( NUM <= 0 )) && die "empty commit message"
 
-unset LINE
-$HAS_SIGNOFF || error "missing valid $SIGNOFF: line."
-
-if $HAS_ERROR; then
-        exec 3<&- 4>&-
-        usage
-        rm "$REVISED"
-        exit 1
-fi
+run_validations
 
 $HAS_CHANGEID || new_changeid >&4
 exec 3<&- 4>&-
