@@ -29,8 +29,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011 Whamcloud, Inc.
- *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -1691,7 +1690,7 @@ int ptlrpc_check_set(const struct lu_env *env, struct ptlrpc_request_set *set)
                          * process the reply. Similarly if the RPC returned
                          * an error, and therefore the bulk will never arrive.
                          */
-                        if (req->rq_bulk == NULL || req->rq_status != 0) {
+                        if (req->rq_bulk == NULL || req->rq_status < 0) {
                                 ptlrpc_rqphase_move(req, RQ_PHASE_INTERPRET);
                                 GOTO(interpret, req->rq_status);
                         }
@@ -1709,7 +1708,7 @@ int ptlrpc_check_set(const struct lu_env *env, struct ptlrpc_request_set *set)
                          * was good after getting the REPLY for her GET or
                          * the ACK for her PUT. */
                         DEBUG_REQ(D_ERROR, req, "bulk transfer failed");
-                        LBUG();
+                        req->rq_status = -EIO;
                 }
 
                 ptlrpc_rqphase_move(req, RQ_PHASE_INTERPRET);

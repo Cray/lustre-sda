@@ -28,9 +28,8 @@
 /*
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
- */
-/*
- * Copyright (c) 2011 Whamcloud, Inc.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -1568,8 +1567,10 @@ void lustre_swab_connect(struct obd_connect_data *ocd)
         __swab64s(&ocd->ocd_ibits_known);
         __swab32s(&ocd->ocd_index);
         __swab32s(&ocd->ocd_brw_size);
-        __swab32s(&ocd->ocd_nllu);
-        __swab32s(&ocd->ocd_nllg);
+        /* ocd_blocksize and ocd_inodespace don't need to be swabbed because
+         * they are 8-byte values */
+        __swab16s(&ocd->ocd_grant_extent);
+        __swab32s(&ocd->ocd_unused);
         __swab64s(&ocd->ocd_transno);
         __swab32s(&ocd->ocd_group);
         __swab32s(&ocd->ocd_cksum_types);
@@ -1626,7 +1627,7 @@ void lustre_swab_obdo (struct obdo  *o)
         /* o_lcookie is swabbed elsewhere */
         __swab32s (&o->o_uid_h);
         __swab32s (&o->o_gid_h);
-        CLASSERT(offsetof(typeof(*o), o_padding_3) != 0);
+        __swab64s (&o->o_data_version);
         CLASSERT(offsetof(typeof(*o), o_padding_4) != 0);
         CLASSERT(offsetof(typeof(*o), o_padding_5) != 0);
         CLASSERT(offsetof(typeof(*o), o_padding_6) != 0);
@@ -2264,8 +2265,9 @@ static inline int rep_ptlrpc_body_swabbed(struct ptlrpc_request *req)
         }
 }
 
-void _debug_req(struct ptlrpc_request *req, __u32 mask,
-                struct libcfs_debug_msg_data *data, const char *fmt, ... )
+void _debug_req(struct ptlrpc_request *req,
+                struct libcfs_debug_msg_data *msgdata,
+                const char *fmt, ... )
 {
         int req_ok = req->rq_reqmsg != NULL;
         int rep_ok = req->rq_repmsg != NULL;
@@ -2283,8 +2285,7 @@ void _debug_req(struct ptlrpc_request *req, __u32 mask,
                 nid = req->rq_export->exp_connection->c_peer.nid;
 
         va_start(args, fmt);
-        libcfs_debug_vmsg2(data->msg_cdls, data->msg_subsys,mask,data->msg_file,
-                           data->msg_fn, data->msg_line, fmt, args,
+        libcfs_debug_vmsg2(msgdata, fmt, args,
                            " req@%p x"LPU64"/t"LPD64"("LPD64") o%d->%s@%s:%d/%d"
                            " lens %d/%d e %d to %d dl "CFS_TIME_T" ref %d "
                            "fl "REQ_FLAGS_FMT"/%x/%x rc %d/%d\n",

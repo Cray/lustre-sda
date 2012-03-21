@@ -29,8 +29,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011 Whamcloud, Inc.
- *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -145,6 +144,9 @@ static int vvp_mmap_locks(const struct lu_env *env,
         LASSERT(io->ci_type == CIT_READ || io->ci_type == CIT_WRITE);
 
         if (!cl_is_normalio(env, io))
+                RETURN(0);
+
+        if (vio->cui_iov == NULL) /* nfs or loop back device write */
                 RETURN(0);
 
         for (seg = 0; seg < vio->cui_nrsegs; seg++) {
@@ -552,6 +554,10 @@ static int vvp_io_read_start(const struct lu_env *env,
                 result = generic_file_splice_read(file, &pos,
                                 vio->u.splice.cui_pipe, cnt,
                                 vio->u.splice.cui_flags);
+                /* LU-1109: do splice read stripe by stripe otherwise if it
+                 * may make nfsd stuck if this read occupied all internal pipe
+                 * buffers. */
+                io->ci_continue = 0;
                 break;
 #endif
         default:

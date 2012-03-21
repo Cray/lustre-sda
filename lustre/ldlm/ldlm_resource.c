@@ -28,6 +28,8 @@
 /*
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -404,8 +406,8 @@ static unsigned ldlm_res_hop_fid_hash(cfs_hash_t *hs,
         __u32               val;
 
         fid.f_seq = id->name[LUSTRE_RES_ID_SEQ_OFF];
-        fid.f_oid = (__u32)id->name[LUSTRE_RES_ID_OID_OFF];
-        fid.f_ver = (__u32)id->name[LUSTRE_RES_ID_VER_OFF];
+        fid.f_oid = (__u32)id->name[LUSTRE_RES_ID_VER_OID_OFF];
+        fid.f_ver = (__u32)(id->name[LUSTRE_RES_ID_VER_OID_OFF] >> 32);
 
         hash = fid_flatten32(&fid);
         hash += (hash >> 4) + (hash << 12); /* mixing oid and seq */

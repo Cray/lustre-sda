@@ -28,6 +28,8 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -532,7 +534,7 @@ static int llog_catinfo_cb(struct llog_handle *cat,
         static char *out = NULL;
         static int remains = 0;
         struct llog_ctxt *ctxt = NULL;
-        struct llog_handle *handle;
+        struct llog_handle *handle = NULL;
         struct llog_logid *logid;
         struct llog_logid_rec *lir;
         int l, rc, index, count = 0;

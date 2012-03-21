@@ -28,9 +28,8 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
- */
-/*
- * Copyright (c) 2011 Whamcloud, Inc.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -223,8 +222,13 @@ check_ost_id(void)
         CHECK_VALUE_64X(FID_SEQ_START);
         CHECK_VALUE_64X(FID_SEQ_LOCAL_FILE);
         CHECK_VALUE_64X(FID_SEQ_DOT_LUSTRE);
+        CHECK_VALUE_64X(FID_SEQ_SPECIAL);
         CHECK_VALUE_64X(FID_SEQ_NORMAL);
         CHECK_VALUE_64X(FID_SEQ_LOV_DEFAULT);
+
+        CHECK_VALUE(FID_OID_SPECIAL_BFL);
+        CHECK_VALUE(FID_OID_DOT_LUSTRE);
+        CHECK_VALUE(FID_OID_DOT_LUSTRE_OBF);
 }
 
 static void
@@ -378,8 +382,10 @@ check_obd_connect_data(void)
         CHECK_MEMBER(obd_connect_data, ocd_index);
         CHECK_MEMBER(obd_connect_data, ocd_brw_size);
         CHECK_MEMBER(obd_connect_data, ocd_ibits_known);
-        CHECK_MEMBER(obd_connect_data, ocd_nllu);
-        CHECK_MEMBER(obd_connect_data, ocd_nllg);
+        CHECK_MEMBER(obd_connect_data, ocd_blocksize);
+        CHECK_MEMBER(obd_connect_data, ocd_inodespace);
+        CHECK_MEMBER(obd_connect_data, ocd_grant_extent);
+        CHECK_MEMBER(obd_connect_data, ocd_unused);
         CHECK_MEMBER(obd_connect_data, ocd_transno);
         CHECK_MEMBER(obd_connect_data, ocd_group);
         CHECK_MEMBER(obd_connect_data, ocd_cksum_types);
@@ -443,6 +449,9 @@ check_obd_connect_data(void)
         CHECK_DEFINE_64X(OBD_CONNECT_64BITHASH);
         CHECK_DEFINE_64X(OBD_CONNECT_MAXBYTES);
         CHECK_DEFINE_64X(OBD_CONNECT_IMP_RECOV);
+        CHECK_DEFINE_64X(OBD_CONNECT_JOBSTATS);
+        CHECK_DEFINE_64X(OBD_CONNECT_GRANT_PARAM);
+        CHECK_DEFINE_64X(OBD_CONNECT_EINPROGRESS);
 
         CHECK_VALUE_X(OBD_CKSUM_CRC32);
         CHECK_VALUE_X(OBD_CKSUM_ADLER);
@@ -479,7 +488,7 @@ check_obdo(void)
         CHECK_MEMBER(obdo, o_lcookie);
         CHECK_MEMBER(obdo, o_uid_h);
         CHECK_MEMBER(obdo, o_gid_h);
-        CHECK_MEMBER(obdo, o_padding_3);
+        CHECK_MEMBER(obdo, o_data_version);
         CHECK_MEMBER(obdo, o_padding_4);
         CHECK_MEMBER(obdo, o_padding_5);
         CHECK_MEMBER(obdo, o_padding_6);
@@ -531,6 +540,7 @@ check_obdo(void)
         CHECK_DEFINE_64X(OBD_MD_FLRMTLGETFACL);
         CHECK_DEFINE_64X(OBD_MD_FLRMTRSETFACL);
         CHECK_DEFINE_64X(OBD_MD_FLRMTRGETFACL);
+        CHECK_DEFINE_64X(OBD_MD_FLDATAVERSION);
 
         CHECK_CVALUE_X(OBD_FL_INLINEDATA);
         CHECK_CVALUE_X(OBD_FL_OBDMDEXISTS);
@@ -1967,6 +1977,11 @@ main(int argc, char **argv)
         CHECK_CVALUE(LDLM_FLOCK);
         CHECK_CVALUE(LDLM_IBITS);
         CHECK_CVALUE(LDLM_MAX_TYPE);
+
+        CHECK_CVALUE(LUSTRE_RES_ID_SEQ_OFF);
+        CHECK_CVALUE(LUSTRE_RES_ID_VER_OID_OFF);
+        /* CHECK_CVALUE(LUSTRE_RES_ID_WAS_VER_OFF); packed with OID */
+        CHECK_CVALUE(LUSTRE_RES_ID_HSH_OFF);
 
         CHECK_VALUE(OBD_PING);
         CHECK_VALUE(OBD_LOG_CANCEL);

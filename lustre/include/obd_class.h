@@ -28,9 +28,8 @@
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
- */
-/*
- * Copyright (c) 2011 Whamcloud, Inc.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -2047,17 +2046,15 @@ static inline int md_sync(struct obd_export *exp, const struct lu_fid *fid,
         RETURN(rc);
 }
 
-static inline int md_readpage(struct obd_export *exp, const struct lu_fid *fid,
-                              struct obd_capa *oc, __u64 offset,
-                              struct page **pages, unsigned npages,
+static inline int md_readpage(struct obd_export *exp, struct md_op_data *opdata,
+                              struct page **pages,
                               struct ptlrpc_request **request)
 {
         int rc;
         ENTRY;
         EXP_CHECK_MD_OP(exp, readpage);
         EXP_MD_COUNTER_INCREMENT(exp, readpage);
-        rc = MDP(exp->exp_obd, readpage)(exp, fid, oc, offset, pages, npages,
-                                         request);
+        rc = MDP(exp->exp_obd, readpage)(exp, opdata, pages, request);
         RETURN(rc);
 }
 

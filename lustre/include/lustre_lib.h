@@ -28,9 +28,8 @@
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
- */
-/*
- * Copyright (c) 2011 Whamcloud, Inc.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -560,6 +559,7 @@ static inline void obd_ioctl_freedata(char *buf, int len)
 
 #define OBD_IOC_GET_OBJ_VERSION        _IOR('f', 210, OBD_IOC_DATA_TYPE)
 
+/* <lustre/lustre_user.h> defines ioctl number 218 */
 #define OBD_IOC_GET_MNTOPT             _IOW('f', 220, mntopt_t)
 
 #define OBD_IOC_ECHO_MD                _IOR('f', 221, struct obd_ioctl_data)

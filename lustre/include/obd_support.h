@@ -29,7 +29,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011 Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -359,6 +359,7 @@ int obd_alloc_fail(const void *ptr, const char *name, const char *type,
 #define OBD_FAIL_PTLRPC_HPREQ_NOTIMEOUT  0x512
 #define OBD_FAIL_PTLRPC_DROP_REQ_OPC     0x513
 #define OBD_FAIL_PTLRPC_FINISH_REPLAY    0x514
+#define OBD_FAIL_PTLRPC_CLIENT_BULK_CB2  0x515
 
 #define OBD_FAIL_OBD_PING_NET            0x600
 #define OBD_FAIL_OBD_LOG_CANCEL_NET      0x601

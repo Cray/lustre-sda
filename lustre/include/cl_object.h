@@ -29,8 +29,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011 Whamcloud, Inc.
- *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -1065,10 +1064,10 @@ struct cl_page_operations {
  */
 #define CL_PAGE_DEBUG(mask, env, page, format, ...)                     \
 do {                                                                    \
-        static DECLARE_LU_CDEBUG_PRINT_INFO(__info, mask);              \
+        LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, mask, NULL);                \
                                                                         \
         if (cfs_cdebug_show(mask, DEBUG_SUBSYSTEM)) {                   \
-                cl_page_print(env, &__info, lu_cdebug_printer, page);   \
+                cl_page_print(env, &msgdata, lu_cdebug_printer, page);  \
                 CDEBUG(mask, format , ## __VA_ARGS__);                  \
         }                                                               \
 } while (0)
@@ -1076,14 +1075,14 @@ do {                                                                    \
 /**
  * Helper macro, dumping shorter information about \a page into a log.
  */
-#define CL_PAGE_HEADER(mask, env, page, format, ...)                    \
-do {                                                                    \
-        static DECLARE_LU_CDEBUG_PRINT_INFO(__info, mask);              \
-                                                                        \
-        if (cfs_cdebug_show(mask, DEBUG_SUBSYSTEM)) {                   \
-                cl_page_header_print(env, &__info, lu_cdebug_printer, page); \
-                CDEBUG(mask, format , ## __VA_ARGS__);                  \
-        }                                                               \
+#define CL_PAGE_HEADER(mask, env, page, format, ...)                          \
+do {                                                                          \
+        LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, mask, NULL);                      \
+                                                                              \
+        if (cfs_cdebug_show(mask, DEBUG_SUBSYSTEM)) {                         \
+                cl_page_header_print(env, &msgdata, lu_cdebug_printer, page); \
+                CDEBUG(mask, format , ## __VA_ARGS__);                        \
+        }                                                                     \
 } while (0)
 
 /** @} cl_page */
@@ -1443,7 +1442,9 @@ enum cl_lock_flags {
         /** cancellation is pending for this lock. */
         CLF_CANCELPEND = 1 << 1,
         /** destruction is pending for this lock. */
-        CLF_DOOMED     = 1 << 2
+        CLF_DOOMED     = 1 << 2,
+        /** from enqueue RPC reply upcall. */
+        CLF_FROM_UPCALL= 1 << 3,
 };
 
 /**
@@ -1791,10 +1792,10 @@ struct cl_lock_operations {
 
 #define CL_LOCK_DEBUG(mask, env, lock, format, ...)                     \
 do {                                                                    \
-        static DECLARE_LU_CDEBUG_PRINT_INFO(__info, mask);              \
+        LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, mask, NULL);                \
                                                                         \
         if (cfs_cdebug_show(mask, DEBUG_SUBSYSTEM)) {                   \
-                cl_lock_print(env, &__info, lu_cdebug_printer, lock);   \
+                cl_lock_print(env, &msgdata, lu_cdebug_printer, lock);  \
                 CDEBUG(mask, format , ## __VA_ARGS__);                  \
         }                                                               \
 } while (0)
@@ -2161,13 +2162,9 @@ enum cl_enq_flags {
          */
         CEF_AGL          = 0x00000020,
         /**
-         * do not trigger re-enqueue.
-         */
-        CEF_NO_REENQUEUE = 0x00000040,
-        /**
          * mask of enq_flags.
          */
-        CEF_MASK         = 0x0000007f,
+        CEF_MASK         = 0x0000003f,
 };
 
 /**

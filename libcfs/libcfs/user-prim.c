@@ -28,6 +28,8 @@
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -377,10 +379,10 @@ void *cfs_stack_trace_frame(struct cfs_stack_trace *trace, int frame_no)
 /* __linux__ */
 #endif
 
-void lbug_with_loc(const char *file, const char *func, const int line)
+void lbug_with_loc(struct libcfs_debug_msg_data *msgdata)
 {
         /* No libcfs_catastrophe in userspace! */
-        libcfs_debug_msg(NULL, 0, D_EMERG, file, func, line, "LBUG\n");
+        libcfs_debug_msg(msgdata, "LBUG\n");
         abort();
 }
 

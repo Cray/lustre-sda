@@ -28,9 +28,8 @@
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
- */
-/*
- * Copyright (c) 2011 Whamcloud, Inc.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -1302,6 +1301,10 @@ struct md_op_data {
 
         /* Operation type */
         __u32                   op_opc;
+
+        /* Used by readdir */
+        __u32                   op_npages;
+        __u64                   op_offset;
 };
 
 struct md_enqueue_info;
@@ -1572,9 +1575,8 @@ struct md_ops {
                          struct md_open_data **mod);
         int (*m_sync)(struct obd_export *, const struct lu_fid *,
                       struct obd_capa *, struct ptlrpc_request **);
-        int (*m_readpage)(struct obd_export *, const struct lu_fid *,
-                          struct obd_capa *, __u64, struct page **,
-                          unsigned, struct ptlrpc_request **);
+        int (*m_readpage)(struct obd_export *, struct md_op_data *,
+                          struct page **, struct ptlrpc_request **);
 
         int (*m_unlink)(struct obd_export *, struct md_op_data *,
                         struct ptlrpc_request **);

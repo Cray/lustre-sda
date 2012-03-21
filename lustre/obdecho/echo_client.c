@@ -29,8 +29,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011 Whamcloud, Inc.
- *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -784,7 +783,7 @@ static struct lu_device *echo_device_alloc(const struct lu_env *env,
         if (tgt == NULL) {
                 CERROR("Can not find tgt device %s\n",
                         lustre_cfg_string(cfg, 1));
-                GOTO(out, rc);
+                GOTO(out, rc = -ENODEV);
         }
 
         next = tgt->obd_lu_dev;

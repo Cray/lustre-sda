@@ -7,8 +7,9 @@ ONLY=${ONLY:-"$*"}
 ALWAYS_EXCEPT="                14b  19         22    28   29          35    $SANITYN_EXCEPT"
 # UPDATE THE COMMENT ABOVE WITH BUG NUMBERS WHEN CHANGING ALWAYS_EXCEPT!
 
-# bug number for skipped test:                                                    12652 12652
-grep -q 'Enterprise Server 10' /etc/SuSE-release && ALWAYS_EXCEPT="$ALWAYS_EXCEPT 11    14" || true
+# bug number for skipped test:        12652 12652
+grep -q 'Enterprise Server 10' /etc/SuSE-release 2> /dev/null &&
+	ALWAYS_EXCEPT="$ALWAYS_EXCEPT 11    14" || true
 
 # Tests that fail on uml
 [ "$UML" = "true" ] && EXCEPT="$EXCEPT 7"
@@ -30,6 +31,7 @@ export TMP=${TMP:-/tmp}
 MOUNT_2=${MOUNT_2:-"yes"}
 CHECK_GRANT=${CHECK_GRANT:-"yes"}
 GRANT_CHECK_LIST=${GRANT_CHECK_LIST:-""}
+TSTUSR=${TSTUSR:-"quota_usr"}
 
 SAVE_PWD=$PWD
 
@@ -134,8 +136,9 @@ test_2e() {
 run_test 2e "check chmod on root is propagated to others"
 
 test_3() {
-	( cd $DIR1 ; ln -s this/is/good $tfile )
-	[ "this/is/good" = "`perl -e 'print readlink("'$DIR2/$tfile'");'`" ] ||
+	local target="this/is/good"
+	ln -s $target $DIR1/$tfile || error "ln -s $target $DIR1/$tfile failed"
+	[ "$(ls -l $DIR2/$tfile | sed -e 's/.* -> //')" = "$target" ] ||
 		error "link $DIR2/$tfile not as expected"
 }
 run_test 3 "symlink on one mtpt, readlink on another ==========="
@@ -238,7 +241,6 @@ test_12() {
 run_test 12 "test lock ordering (link, stat, unlink) ==========="
 
 test_13() {	# bug 2451 - directory coherency
-       rm -rf $DIR1/d13
        mkdir $DIR1/d13 || error
        cd $DIR1/d13 || error
        ls
@@ -464,21 +466,25 @@ test_24b() {
 run_test 24b "lfs df should show both filesystems ==============="
 
 test_25() {
-	[ `lctl get_param -n mdc.*-mdc-*.connect_flags | grep -c acl` -lt 2 ] && \
-	    skip "must have acl, skipping" && return
+	[ `lctl get_param -n mdc.*-mdc-*.connect_flags | grep -c acl` -lt 2 ] &&
+		skip "must have acl, skipping" && return
 
 	mkdir -p $DIR1/$tdir
 	touch $DIR1/$tdir/f1 || error "touch $DIR1/$tdir/f1"
 	chmod 0755 $DIR1/$tdir/f1 || error "chmod 0755 $DIR1/$tdir/f1"
 
 	$RUNAS $CHECKSTAT $DIR2/$tdir/f1 || error "checkstat $DIR2/$tdir/f1 #1"
-	setfacl -m u:$RUNAS_ID:--- -m g:$RUNAS_GID:--- $DIR1/$tdir || error "setfacl $DIR2/$tdir #1"
+	setfacl -m u:$RUNAS_ID:--- -m g:$RUNAS_GID:--- $DIR1/$tdir ||
+		error "setfacl $DIR2/$tdir #1"
 	$RUNAS $CHECKSTAT $DIR2/$tdir/f1 && error "checkstat $DIR2/$tdir/f1 #2"
-	setfacl -m u:$RUNAS_ID:r-x -m g:$RUNAS_GID:r-x $DIR1/$tdir || error "setfacl $DIR2/$tdir #2"
+	setfacl -m u:$RUNAS_ID:r-x -m g:$RUNAS_GID:r-x $DIR1/$tdir ||
+		error "setfacl $DIR2/$tdir #2"
 	$RUNAS $CHECKSTAT $DIR2/$tdir/f1 || error "checkstat $DIR2/$tdir/f1 #3"
-	setfacl -m u:$RUNAS_ID:--- -m g:$RUNAS_GID:--- $DIR1/$tdir || error "setfacl $DIR2/$tdir #3"
+	setfacl -m u:$RUNAS_ID:--- -m g:$RUNAS_GID:--- $DIR1/$tdir ||
+		error "setfacl $DIR2/$tdir #3"
 	$RUNAS $CHECKSTAT $DIR2/$tdir/f1 && error "checkstat $DIR2/$tdir/f1 #4"
-	setfacl -x u:$RUNAS_ID: -x g:$RUNAS_GID: $DIR1/$tdir || error "setfacl $DIR2/$tdir #4"
+	setfacl -x u:$RUNAS_ID: -x g:$RUNAS_GID: $DIR1/$tdir ||
+		error "setfacl $DIR2/$tdir #4"
 	$RUNAS $CHECKSTAT $DIR2/$tdir/f1 || error "checkstat $DIR2/$tdir/f1 #5"
 
 	rm -rf $DIR1/$tdir
@@ -1871,6 +1877,53 @@ test_50() {
         [ $size -eq $trunc_size ] || error "wrong size"
 }
 run_test 50 "osc lvb attrs: enqueue vs. CP AST =============="
+
+test_60() {
+	# Create a file
+	mkdir -p $DIR1/$tdir
+	file1=$DIR1/$tdir/file
+	file2=$DIR2/$tdir/file
+
+	echo orig > $file2 || error "Could not create $file2"
+	version=$($LFS data_version $file1)
+
+	# Append data
+	echo append >> $file2 || error "Could not append to $file2"
+	version2=$($LFS data_version $file1)
+	[ "$version" != "$version2" ] ||
+	    error "append did not change data version: $version"
+
+	# Overwrite data
+	echo overwrite > $file2 || error "Could not overwrite $file2"
+	version3=$($LFS data_version $file1)
+	[ "$version2" != "$version3" ] ||
+	    error "overwrite did not change data version: $version2"
+
+	# Truncate before EOF
+	$TRUNCATE $file2 3 || error "Could not truncate $file2"
+	version4=$($LFS data_version $file1)
+	[ "$version3" != "$version4" ] ||
+	    error "truncate did not change data version: $version3"
+
+	# Truncate after EOF
+	$TRUNCATE $file2 123456 || error "Could not truncate $file2"
+	version5=$($LFS data_version $file1)
+	[ "$version4" != "$version5" ] ||
+	    error "truncate did not change data version: $version4"
+
+	# Chmod do not change version
+	chmod 400 $file2 || error "Could not chmod 400 $file2"
+	version6=$($LFS data_version $file1)
+	[ "$version5" == "$version6" ] ||
+	    error "chmod should not change data version: $version5 != $version6"
+
+	# Chown do not change version
+	chown $TSTUSR $file2 || error "Could not chown $TSTUSR $file2"
+	version7=$($LFS data_version $file1)
+	[ "$version5" == "$version7" ] ||
+	    error "chown should not change data version: $version5 != $version7"
+}
+run_test 60 "Verify data_version behaviour"
 
 log "cleanup: ======================================================"
 

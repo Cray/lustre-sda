@@ -29,8 +29,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011 Whamcloud, Inc.
- *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -265,7 +264,7 @@ static struct config_llog_data *config_recover_log_add(struct obd_device *obd,
         struct config_llog_data *cld;
         char logname[32];
 
-        if ((lsi->lsi_flags & LSI_SERVER) && IS_OST(lsi->lsi_ldd))
+        if ((lsi->lsi_flags & LSI_SERVER) && !IS_MDT(lsi->lsi_ldd))
                 return NULL;
 
         /* we have to use different llog for clients and mdts for cmd

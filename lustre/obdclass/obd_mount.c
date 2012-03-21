@@ -29,8 +29,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011 Whamcloud, Inc.
- *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -1603,8 +1602,23 @@ static void server_put_super(struct super_block *sb)
            should have put it on a different device. */
         if (IS_MGS(lsi->lsi_ldd)) {
                 /* if MDS start with --nomgs, don't stop MGS then */
-                if (!(lsi->lsi_lmd->lmd_flags & LMD_FLG_NOMGS))
+                if (!(lsi->lsi_lmd->lmd_flags & LMD_FLG_NOMGS)) {
+                        char *logname;
+
+                        OBD_ALLOC(logname, MGS_PARAM_MAXLEN);
+                        if (!logname) {
+                                LCONSOLE_WARN("Stopping mgs failed %d, please "
+                                              "try again.", -ENOMEM);
+                                return;
+                        }
+                        strcpy(logname, lsi->lsi_ldd->ldd_fsname);
+                        strcat(logname, "-params");
+                        /* tell the mgc to drop parameter config log */
+                        lustre_end_log(sb, logname, NULL);
+                        OBD_FREE(logname, MGS_PARAM_MAXLEN);
+
                         server_stop_mgs(sb);
+                }
         }
 
         /* Clean the mgc and sb */
@@ -1817,6 +1831,25 @@ static int server_fill_super(struct super_block *sb)
            Client will not finish until all servers are connected.
            Note - MGS-only server does NOT get a client, since there is no
            lustre fs associated - the MGS is for all lustre fs's */
+        } else if (IS_MGS(lsi->lsi_ldd) &&
+                   !(lsi->lsi_lmd->lmd_flags & LMD_FLG_NOMGS)){
+                struct config_llog_instance cfg;
+                char *logname;
+
+                OBD_ALLOC(logname, MGS_PARAM_MAXLEN);
+                if (logname == NULL)
+                        GOTO(out_mnt, rc = -ENOMEM);
+                strcpy(logname, lsi->lsi_ldd->ldd_fsname);
+                strcat(logname, "-params");
+
+                memset(&cfg, 0, sizeof(cfg));
+                rc = lustre_process_log(sb, logname, &cfg);
+                OBD_FREE(logname, MGS_PARAM_MAXLEN);
+                if (rc) {
+                        CERROR("failed to process parameters %s: %d\n",
+                               logname, rc);
+                        GOTO(out_mnt, rc);
+                }
         }
 
         rc = server_fill_super_common(sb);

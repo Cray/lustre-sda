@@ -28,6 +28,8 @@
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -790,7 +792,7 @@ static int close_quota_files(struct obd_quotactl *oqctl,
                 if (!Q_TYPESET(oqctl, i))
                         continue;
                 if (qinfo->qi_files[i] == NULL) {
-                        CWARN("quota[%d] is off already\n", i);
+                        CDEBUG(D_QUOTA, "quota[%d] is off already\n", i);
                         rc = -EALREADY;
                         continue;
                 }

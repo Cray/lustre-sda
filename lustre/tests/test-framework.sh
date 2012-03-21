@@ -133,10 +133,9 @@ init_test_env() {
     #[ -d /r ] && export ROOT=${ROOT:-/r}
     export TMP=${TMP:-$ROOT/tmp}
     export TESTSUITELOG=${TMP}/${TESTSUITE}.log
-    if [[ -z $LOGDIRSET ]]; then
-        export LOGDIR=${LOGDIR:-${TMP}/test_logs/}/$(date +%s)
-        export LOGDIRSET=true
-    fi
+    export LOGDIR=${LOGDIR:-${TMP}/test_logs/$(date +%s)}
+    export TESTLOG_PREFIX=$LOGDIR/$TESTSUITE
+
     export HOSTNAME=${HOSTNAME:-$(hostname -s)}
     if ! echo $PATH | grep -q $LUSTRE/utils; then
         export PATH=$LUSTRE/utils:$PATH
@@ -255,6 +254,13 @@ init_test_env() {
     [ "$TESTSUITELOG" ] && rm -f $TESTSUITELOG || true
     rm -f $TMP/*active
 }
+
+kernel_version() {
+    echo -n $((($1 << 16) | ($2 << 8) | $3))
+}
+
+export LINUX_VERSION=$(uname -r | sed -e "s/[-.]/ /3" -e "s/ .*//")
+export LINUX_VERSION_CODE=$(kernel_version ${LINUX_VERSION//\./ })
 
 case `uname -r` in
 2.4.*) EXT=".o"; USE_QUOTA=no; [ ! "$CLIENTONLY" ] && FSTYPE=ext3;;
@@ -585,7 +591,7 @@ ostdevlabel() {
 
 set_debug_size () {
     local dz=${1:-$DEBUG_SIZE}
-    local cpus=$(getconf _NPROCESSORS_CONF)
+    local cpus=$(($(cut -d "-" -f 2 /sys/devices/system/cpu/possible)+1))
 
     # bug 19944, adjust size to be -gt num_possible_cpus()
     # promise 2MB for every cpu at least
@@ -597,14 +603,13 @@ set_debug_size () {
 
 set_default_debug () {
     local debug=${1:-"$PTLDEBUG"}
-    local subsystem_debug=${2:-"$SUBSYSTEM"}
+    local subsys=${2:-"$SUBSYSTEM"}
     local debug_size=${3:-$DEBUG_SIZE}
 
-    lctl set_param debug="$debug"
-    lctl set_param subsystem_debug="${subsystem_debug# }"
+    [ -n "$debug" ] && lctl set_param debug="$debug" >/dev/null
+    [ -n "$subsys" ] && lctl set_param subsystem_debug="${subsys# }" >/dev/null
 
-    set_debug_size $debug_size
-    sync
+    [ -n "$debug_size" ] && set_debug_size $debug_size > /dev/null
 }
 
 set_default_debug_nodes () {
@@ -937,18 +942,16 @@ zconf_umount_clients() {
     do_nodes $clients "running=\\\$(grep -c $mnt' ' /proc/mounts);
 if [ \\\$running -ne 0 ] ; then
 echo Stopping client \\\$(hostname) $mnt opts:$force;
-lsof -t $mnt || need_kill=no;
+lsof $mnt || need_kill=no;
 if [ "x$force" != "x" -a "x\\\$need_kill" != "xno" ]; then
     pids=\\\$(lsof -t $mnt | sort -u);
     if [ -n \\\"\\\$pids\\\" ]; then
              kill -9 \\\$pids;
     fi
 fi;
-busy=\\\$(umount $force $mnt 2>&1 | grep -c "busy");
-if [ \\\$busy -ne 0 ] ; then
+while umount $force $mnt 2>&1 | grep -q "busy"; do
     echo "$mnt is still busy, wait one second" && sleep 1;
-    umount $force $mnt;
-fi
+done;
 fi"
 }
 
@@ -1108,11 +1111,15 @@ start_client_load() {
                               BREAK_ON_ERROR=$BREAK_ON_ERROR \
                               END_RUN_FILE=$END_RUN_FILE \
                               LOAD_PID_FILE=$LOAD_PID_FILE \
-                              TESTSUITELOG=$TESTSUITELOG \
+                              TESTLOG_PREFIX=$TESTLOG_PREFIX \
+                              TESTNAME=$TESTNAME \
                               run_${load}.sh" &
-    CLIENT_LOAD_PIDS="$CLIENT_LOAD_PIDS $!"
+    local ppid=$!
     log "Started client load: ${load} on $client"
 
+    # get the children process IDs
+    local pids=$(ps --ppid $ppid -o pid= | xargs)
+    CLIENT_LOAD_PIDS="$CLIENT_LOAD_PIDS $ppid $pids"
     return 0
 }
 
@@ -1129,14 +1136,14 @@ start_client_loads () {
     sleep 2
 }
 
-# only for remote client 
+# only for remote client
 check_client_load () {
     local client=$1
     local var=$(node_var_name $client)_load
     local TESTLOAD=run_${!var}.sh
 
     ps auxww | grep -v grep | grep $client | grep -q "$TESTLOAD" || return 1
-    
+
     # bug 18914: try to connect several times not only when
     # check ps, but  while check_catastrophe also
     local tries=3
@@ -1214,13 +1221,77 @@ restart_client_loads () {
             if [ "$rc" != 0 ]; then
                 log "Client load failed to restart on node $client, rc=$rc"
                 # failure one client load means test fail
-                # we do not need to check other 
+                # we do not need to check other
                 return $rc
             fi
         else
             return $rc
         fi
     done
+}
+
+# Start vmstat and save its process ID in a file.
+start_vmstat() {
+    local nodes=$1
+    local pid_file=$2
+
+    [ -z "$nodes" -o -z "$pid_file" ] && return 0
+
+    do_nodes $nodes \
+        "vmstat 1 > $TESTLOG_PREFIX.$TESTNAME.vmstat.\\\$(hostname -s).log \
+        2>/dev/null </dev/null & echo \\\$! > $pid_file"
+}
+
+# Display the nodes on which client loads failed.
+print_end_run_file() {
+    local file=$1
+    local node
+
+    [ -s $file ] || return 0
+
+    echo "Found the END_RUN_FILE file: $file"
+    cat $file
+
+    # A client load will stop if it finds the END_RUN_FILE file.
+    # That does not mean the client load actually failed though.
+    # The first node in END_RUN_FILE is the one we are interested in.
+    read node < $file
+
+    if [ -n "$node" ]; then
+        local var=$(node_var_name $node)_load
+
+        local prefix=$TESTLOG_PREFIX
+        [ -n "$TESTNAME" ] && prefix=$prefix.$TESTNAME
+        local stdout_log=$prefix.run_${!var}_stdout.$node.log
+        local debug_log=$(echo $stdout_log | sed 's/\(.*\)stdout/\1debug/')
+
+        echo "Client load ${!var} failed on node $node:"
+        echo "$stdout_log"
+        echo "$debug_log"
+    fi
+}
+
+# Stop the process which had its PID saved in a file.
+stop_process() {
+    local nodes=$1
+    local pid_file=$2
+
+    [ -z "$nodes" -o -z "$pid_file" ] && return 0
+
+    do_nodes $nodes "test -f $pid_file &&
+        { kill -s TERM \\\$(cat $pid_file); rm -f $pid_file; }" || true
+}
+
+# Stop all client loads.
+stop_client_loads() {
+    local nodes=${1:-$CLIENTS}
+    local pid_file=$2
+
+    # stop the client loads
+    stop_process $nodes $pid_file
+
+    # clean up the processes that started them
+    [ -n "$CLIENT_LOAD_PIDS" ] && kill -9 $CLIENT_LOAD_PIDS 2>/dev/null || true
 }
 # End recovery-scale functions
 
@@ -1256,7 +1327,8 @@ wait_update () {
 
         local RESULT
         local WAIT=0
-        local sleep=5
+        local sleep=1
+        local print=10
         while [ true ]; do
             RESULT=$(do_node $node "$TEST")
             if [ "$RESULT" == "$FINAL" ]; then
@@ -1265,7 +1337,8 @@ wait_update () {
                 return 0
             fi
             [ $WAIT -ge $MAX ] && break
-            echo "Waiting $((MAX - WAIT)) secs for update"
+            [ $((WAIT % print)) -eq 0 ] &&
+                echo "Waiting $((MAX - WAIT)) secs for update"
             WAIT=$((WAIT + sleep))
             sleep $sleep
         done
@@ -2255,6 +2328,7 @@ setupall() {
     [ "$DAEMONFILE" ] && $LCTL debug_daemon start $DAEMONFILE $DAEMONSIZE
     mount_client $MOUNT
     [ -n "$CLIENTS" ] && zconf_mount_clients $CLIENTS $MOUNT
+    clients_up
 
     if [ "$MOUNT_2" ]; then
         mount_client $MOUNT2
@@ -2698,7 +2772,8 @@ check_and_cleanup_lustre() {
     fi
 
     if is_mounted $MOUNT; then
-        [ -n "$DIR" ] && rm -rf $DIR/[Rdfs][0-9]*
+        [ -n "$DIR" ] && rm -rf $DIR/[Rdfs][0-9]* ||
+            error "remove sub-test dirs failed"
         [ "$ENABLE_QUOTA" ] && restore_quota_type || true
     fi
 
@@ -3060,9 +3135,10 @@ error_noexit() {
 
     log " ${TESTSUITE} ${TESTNAME}: @@@@@@ ${TYPE}: $@ "
 
+    mkdir -p $LOGDIR
     # We need to dump the logs on all nodes
     if $dump; then
-        gather_logs $(comma_list $(nodes_list)) 0
+        gather_logs $(comma_list $(nodes_list))
     fi
 
     debugrestore
@@ -4241,15 +4317,14 @@ cleanup_pools () {
 
 gather_logs () {
     local list=$1
-    local tar_logs=$2
 
     local ts=$(date +%s)
     local docp=true
     [ -f $LOGDIR/shared ] && docp=false
- 
+
     # dump lustre logs, dmesg
 
-    prefix="$LOGDIR/${TESTSUITE}.${TESTNAME}"
+    prefix="$TESTLOG_PREFIX.$TESTNAME"
     suffix="$ts.log"
     echo "Dumping lctl log to ${prefix}.*.${suffix}"
 
@@ -4265,20 +4340,7 @@ gather_logs () {
          dmesg > ${prefix}.dmesg.\\\$(hostname -s).${suffix}"
     if [ ! -f $LOGDIR/shared ]; then
         do_nodes $list rsync -az "${prefix}.*.${suffix}" $HOSTNAME:$LOGDIR
-      fi
-
-    if [ $tar_logs == 1 ]; then
-        local archive=$LOGDIR/${TESTSUITE}-$ts.tar.bz2
-        tar -jcf $archive $LOGDIR/*$ts* $LOGDIR/*${TESTSUITE}*
-
-        echo $archive
     fi
-}
-
-cleanup_logs () {
-    local list=${1:-$(comma_list $(nodes_list))}
-
-    [ -n ${TESTSUITE} ] && do_nodes $list "rm -f $TMP/*${TESTSUITE}*" || true
 }
 
 do_ls () {
@@ -4651,15 +4713,17 @@ init_logging() {
     mkdir -p $LOGDIR
     init_clients_lists
 
-    if check_shared_dir $LOGDIR; then
-        touch $LOGDIR/shared
-        echo "Logging to shared log directory: $LOGDIR"
-    else
-        echo "Logging to local directory: $LOGDIR"
-    fi
+    if [ ! -f $YAML_LOG ]; then       # If the yaml log already exists then we will just append to it
+      if check_shared_dir $LOGDIR; then
+          touch $LOGDIR/shared
+          echo "Logging to shared log directory: $LOGDIR"
+      else
+          echo "Logging to local directory: $LOGDIR"
+      fi
 
-    yml_nodes_file $LOGDIR >> $YAML_LOG
-    yml_results_file >> $YAML_LOG
+      yml_nodes_file $LOGDIR >> $YAML_LOG
+      yml_results_file >> $YAML_LOG
+    fi
 
     umask $SAVE_UMASK
 }

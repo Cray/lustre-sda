@@ -28,9 +28,8 @@
 /*
  * Copyright (c) 2001, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
- */
-/*
- * Copyright (c) 2011 Whamcloud, Inc.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -3159,6 +3158,7 @@ static int filter_getattr(struct obd_export *exp, struct obd_info *oinfo)
 {
         struct dentry *dentry = NULL;
         struct obd_device *obd;
+        __u64 curr_version;
         int rc = 0;
         ENTRY;
 
@@ -3180,6 +3180,13 @@ static int filter_getattr(struct obd_export *exp, struct obd_info *oinfo)
         /* Limit the valid bits in the return data to what we actually use */
         oinfo->oi_oa->o_valid = OBD_MD_FLID;
         obdo_from_inode(oinfo->oi_oa, dentry->d_inode, NULL, FILTER_VALID_FLAGS);
+
+        /* Store inode version in reply */
+        curr_version = fsfilt_get_version(exp->exp_obd, dentry->d_inode);
+        if ((__s64)curr_version != -EOPNOTSUPP) {
+                oinfo->oi_oa->o_valid |= OBD_MD_FLDATAVERSION;
+                oinfo->oi_oa->o_data_version = curr_version;
+        }
 
         f_dput(dentry);
         RETURN(rc);

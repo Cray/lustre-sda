@@ -28,9 +28,8 @@
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
- */
-/*
- * Copyright (c) 2011 Whamcloud, Inc.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -422,6 +421,8 @@ enum fid_seq {
         FID_SEQ_START      = 0x200000000ULL,
         FID_SEQ_LOCAL_FILE = 0x200000001ULL,
         FID_SEQ_DOT_LUSTRE = 0x200000002ULL,
+        /* XXX 0x200000003ULL is reserved for FID_SEQ_LLOG_OBJ */
+        FID_SEQ_SPECIAL    = 0x200000004ULL,
         FID_SEQ_NORMAL     = 0x200000400ULL,
         FID_SEQ_LOV_DEFAULT= 0xffffffffffffffffULL
 };
@@ -433,6 +434,17 @@ enum fid_seq {
 #define IDIF_MAX_OID                (1ULL << IDIF_OID_MAX_BITS)
 #define IDIF_OID_MASK               ((1ULL << IDIF_OID_MAX_BITS) - 1)
 
+/** OID for FID_SEQ_SPECIAL */
+enum special_oid {
+        /* Big Filesystem Lock to serialize rename operations */
+        FID_OID_SPECIAL_BFL     = 1UL,
+};
+
+/** OID for FID_SEQ_DOT_LUSTRE */
+enum dot_lustre_oid {
+        FID_OID_DOT_LUSTRE  = 1UL,
+        FID_OID_DOT_LUSTRE_OBF = 2UL,
+};
 
 static inline int fid_seq_is_mdt0(obd_seq seq)
 {
@@ -1105,6 +1117,14 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
                                                   * directory hash */
 #define OBD_CONNECT_MAXBYTES     0x8000000000ULL /* max stripe size */
 #define OBD_CONNECT_IMP_RECOV   0x10000000000ULL /* imp recovery support */
+#define OBD_CONNECT_JOBSTATS    0x20000000000ULL /* jobid in ptlrpc_body */
+#define OBD_CONNECT_GRANT_PARAM 0x40000000000ULL /* additional grant parameters
+                                                  * are passed at connect time
+                                                  * to have finer grant space
+                                                  * allocation */
+#define OBD_CONNECT_EINPROGRESS 0x80000000000ULL /* client can handle the
+                                                  * -EINPROGRESS error for write
+                                                  * RPC properly */
 
 #define OCD_HAS_FLAG(ocd, flg)  \
         (!!((ocd)->ocd_connect_flags & OBD_CONNECT_##flg))
@@ -1171,8 +1191,10 @@ struct obd_connect_data_v1 {
         __u32 ocd_index;         /* LOV index to connect to */
         __u32 ocd_brw_size;      /* Maximum BRW size in bytes */
         __u64 ocd_ibits_known;   /* inode bits this client understands */
-        __u32 ocd_nllu;          /* non-local-lustre-user */
-        __u32 ocd_nllg;          /* non-local-lustre-group */
+        __u8  ocd_blocksize;     /* log2 of the backend filesystem blocksize */
+        __u8  ocd_inodespace;    /* log2 of the per-inode space consumption */
+        __u16 ocd_grant_extent;  /* per-extent grant overhead, in 1K blocks */
+        __u32 ocd_unused;        /* also fix lustre_swab_connect */
         __u64 ocd_transno;       /* first transno from client to be replayed */
         __u32 ocd_group;         /* MDS group on OST */
         __u32 ocd_cksum_types;   /* supported checksum algorithms */
@@ -1188,8 +1210,10 @@ struct obd_connect_data {
         __u32 ocd_index;         /* LOV index to connect to */
         __u32 ocd_brw_size;      /* Maximum BRW size in bytes */
         __u64 ocd_ibits_known;   /* inode bits this client understands */
-        __u32 ocd_nllu;          /* non-local-lustre-user */
-        __u32 ocd_nllg;          /* non-local-lustre-group */
+        __u8  ocd_blocksize;     /* log2 of the backend filesystem blocksize */
+        __u8  ocd_inodespace;    /* log2 of the per-inode space consumption */
+        __u16 ocd_grant_extent;  /* per-extent grant overhead, in 1K blocks */
+        __u32 ocd_unused;        /* also fix lustre_swab_connect */
         __u64 ocd_transno;       /* first transno from client to be replayed */
         __u32 ocd_group;         /* MDS group on OST */
         __u32 ocd_cksum_types;   /* supported checksum algorithms */
@@ -1413,6 +1437,8 @@ struct lov_mds_md_v3 {            /* LOV EA mds/wire data (little-endian) */
 #define OBD_MD_FLRMTRSETFACL (0x0004000000000000ULL) /* lfs rsetfacl case */
 #define OBD_MD_FLRMTRGETFACL (0x0008000000000000ULL) /* lfs rgetfacl case */
 
+#define OBD_MD_FLDATAVERSION (0x0010000000000000ULL) /* iversion sum */
+
 #define OBD_MD_FLGETATTR (OBD_MD_FLID    | OBD_MD_FLATIME | OBD_MD_FLMTIME | \
                           OBD_MD_FLCTIME | OBD_MD_FLSIZE  | OBD_MD_FLBLKSZ | \
                           OBD_MD_FLMODE  | OBD_MD_FLTYPE  | OBD_MD_FLUID   | \
@@ -1564,6 +1590,16 @@ extern void lustre_swab_generic_32s (__u32 *val);
 #define MDS_INODELOCK_FULL ((1<<(MDS_INODELOCK_MAXSHIFT+1))-1)
 
 extern void lustre_swab_ll_fid (struct ll_fid *fid);
+
+/* NOTE: until Lustre 1.8.7/2.1.1 the fid_ver() was packed into name[2],
+ * but was moved into name[1] along with the OID to avoid consuming the
+ * name[2,3] fields that need to be used for the quota id (also a FID). */
+enum {
+        LUSTRE_RES_ID_SEQ_OFF = 0,
+        LUSTRE_RES_ID_VER_OID_OFF = 1,
+        LUSTRE_RES_ID_WAS_VER_OFF = 2, /* see note above */
+        LUSTRE_RES_ID_HSH_OFF = 3
+};
 
 #define MDS_STATUS_CONN 1
 #define MDS_STATUS_LOV 2
@@ -2716,12 +2752,17 @@ struct obdo {
         __u64                   o_ioepoch;      /* epoch in ost writes */
         __u32                   o_stripe_idx;   /* holds stripe idx */
         __u32                   o_parent_ver;
-        struct lustre_handle    o_handle;       /* brw: lock handle to prolong locks */
-        struct llog_cookie      o_lcookie;      /* destroy: unlink cookie from MDS */
-
+        struct lustre_handle    o_handle;       /* brw: lock handle to prolong
+                                                 * locks */
+        struct llog_cookie      o_lcookie;      /* destroy: unlink cookie from
+                                                 * MDS */
         __u32                   o_uid_h;
         __u32                   o_gid_h;
-        __u64                   o_padding_3;
+
+        __u64                   o_data_version; /* getattr: sum of iversion for
+                                                 * each stripe.
+                                                 * brw: grant space consumed on
+                                                 * the client for the write */
         __u64                   o_padding_4;
         __u64                   o_padding_5;
         __u64                   o_padding_6;
@@ -2733,6 +2774,7 @@ struct obdo {
 #define o_undirty o_mode
 #define o_dropped o_misc
 #define o_cksum   o_nlink
+#define o_grant_used o_data_version
 
 static inline void lustre_set_wire_obdo(struct obdo *wobdo, struct obdo *lobdo)
 {

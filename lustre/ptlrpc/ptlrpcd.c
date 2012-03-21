@@ -28,9 +28,8 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
- */
-/*
- * Copyright (c) 2011 Whamcloud, Inc.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -381,8 +380,8 @@ static int ptlrpcd_check(struct lu_env *env, struct ptlrpcd_ctl *pc)
                                         if (rc > 0)
                                                 CDEBUG(D_RPCTRACE, "transfer %d"
                                                        " async RPCs [%d->%d]\n",
-                                                        rc, pc->pc_index,
-                                                        partner->pc_index);
+                                                        rc, partner->pc_index,
+                                                        pc->pc_index);
                                 }
                                 ptlrpc_reqset_put(ps);
                         } while (rc == 0 && pc->pc_cursor != first);

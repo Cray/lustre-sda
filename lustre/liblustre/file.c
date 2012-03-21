@@ -28,6 +28,8 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -101,11 +103,6 @@ void llu_prep_md_op_data(struct md_op_data *op_data, struct inode *i1,
         op_data->op_namelen = namelen;
         op_data->op_mod_time = CFS_CURRENT_TIME;
         op_data->op_data = NULL;
-}
-
-void llu_finish_md_op_data(struct md_op_data *op_data)
-{
-        OBD_FREE_PTR(op_data);
 }
 
 void obdo_refresh_inode(struct inode *dst,

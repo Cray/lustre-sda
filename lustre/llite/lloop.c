@@ -29,8 +29,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011 Whamcloud, Inc.
- *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -648,15 +647,16 @@ static int lo_ioctl(struct block_device *bdev, fmode_t mode,
                     unsigned int cmd, unsigned long arg)
 {
         struct lloop_device *lo = bdev->bd_disk->private_data;
-        struct inode *inode = lo->lo_backing_file->f_dentry->d_inode;
+        struct inode *inode = NULL;
+        int err = 0;
 #else
 static int lo_ioctl(struct inode *inode, struct file *unused,
                     unsigned int cmd, unsigned long arg)
 {
         struct lloop_device *lo = inode->i_bdev->bd_disk->private_data;
         struct block_device *bdev = inode->i_bdev;
-#endif
         int err = 0;
+#endif
 
         cfs_down(&lloop_mutex);
         switch (cmd) {
@@ -670,6 +670,9 @@ static int lo_ioctl(struct inode *inode, struct file *unused,
         case LL_IOC_LLOOP_INFO: {
                 struct lu_fid fid;
 
+                LASSERT(lo->lo_backing_file != NULL);
+                if (inode == NULL)
+                        inode = lo->lo_backing_file->f_dentry->d_inode;
                 if (lo->lo_state == LLOOP_BOUND)
                         fid = ll_i2info(inode)->lli_fid;
                 else
