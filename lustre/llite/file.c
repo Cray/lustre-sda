@@ -768,7 +768,7 @@ int ll_extent_lock_cancel_cb(struct ldlm_lock *lock, struct ldlm_lock_desc *new,
                 LBUG();
         }
 
-        inode = ll_inode_from_lock(lock);
+        inode = ll_inode_from_resource(lock);
         if (inode == NULL)
                 RETURN(0);
         lli = ll_i2info(inode);
@@ -805,7 +805,7 @@ iput:
 int ll_async_completion_ast(struct ldlm_lock *lock, int flags, void *data)
 {
         /* XXX ALLOCATE - 160 bytes */
-        struct inode *inode = ll_inode_from_lock(lock);
+        struct inode *inode = ll_inode_from_resource(lock);
         struct ll_inode_info *lli = ll_i2info(inode);
         struct lustre_handle lockh = { 0 };
         struct ost_lvb *lvb;
@@ -859,7 +859,7 @@ iput:
 static int ll_glimpse_callback(struct ldlm_lock *lock, void *reqp)
 {
         struct ptlrpc_request *req = reqp;
-        struct inode *inode = ll_inode_from_lock(lock);
+        struct inode *inode = ll_inode_from_resource(lock);
         struct ll_inode_info *lli;
         struct lov_stripe_md *lsm;
         struct ost_lvb *lvb;

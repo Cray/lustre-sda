@@ -840,7 +840,6 @@ int ll_fill_super(struct super_block *sb);
 void ll_put_super(struct super_block *sb);
 void ll_kill_super(struct super_block *sb);
 int ll_cache_shrink(SHRINKER_FIRST_ARG int nr_to_scan, gfp_t gfp_mask);
-struct inode *ll_inode_from_lock(struct ldlm_lock *lock);
 struct inode *ll_inode_from_resource(struct ldlm_lock *lock);
 void ll_clear_inode(struct inode *inode);
 void ll_delete_inode(struct inode *inode);
