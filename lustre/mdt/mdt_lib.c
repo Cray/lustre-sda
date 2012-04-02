@@ -67,6 +67,7 @@ void mdt_exit_ucred(struct mdt_thread_info *info)
         struct md_ucred   *uc  = mdt_ucred(info);
         struct mdt_device *mdt = info->mti_mdt;
 
+        LASSERT(uc != NULL);
         if (uc->mu_valid != UCRED_INIT) {
                 uc->mu_suppgids[0] = uc->mu_suppgids[1] = -1;
                 if (uc->mu_ginfo) {
@@ -146,6 +147,7 @@ static int new_init_ucred(struct mdt_thread_info *info, ucred_init_type_t type,
         LASSERT(!req->rq_auth_usr_mdt);
         LASSERT(req->rq_user_desc);
         CLASSERT(sizeof(lnet_nid_t) == sizeof(__u64));
+        LASSERT(ucred != NULL);
 
         ucred->mu_valid = UCRED_INVALID;
 
@@ -324,6 +326,7 @@ int mdt_check_ucred(struct mdt_thread_info *info)
 
         ENTRY;
 
+        LASSERT(ucred != NULL);
         if ((ucred->mu_valid == UCRED_OLD) || (ucred->mu_valid == UCRED_NEW))
                 RETURN(0);
 
@@ -423,6 +426,7 @@ static int old_init_ucred(struct mdt_thread_info *info,
 
         CLASSERT(sizeof(lnet_nid_t) == sizeof(__u64));
 
+        LASSERT(uc != NULL);
         uc->mu_valid = UCRED_INVALID;
         uc->mu_o_uid = uc->mu_uid = body->uid;
         uc->mu_o_gid = uc->mu_gid = body->gid;
@@ -468,6 +472,7 @@ static int old_init_ucred_reint(struct mdt_thread_info *info)
         lnet_nid_t peernid = mdt_info_req(info)->rq_peer.nid;
         ENTRY;
 
+        LASSERT(uc != NULL);
         uc->mu_valid = UCRED_INVALID;
         uc->mu_o_uid = uc->mu_o_fsuid = uc->mu_uid = uc->mu_fsuid;
         uc->mu_o_gid = uc->mu_o_fsgid = uc->mu_gid = uc->mu_fsgid;
@@ -504,6 +509,7 @@ int mdt_init_ucred(struct mdt_thread_info *info, struct mdt_body *body)
         struct ptlrpc_request *req = mdt_info_req(info);
         struct md_ucred       *uc  = mdt_ucred(info);
 
+        LASSERT(uc != NULL);
         if ((uc->mu_valid == UCRED_OLD) || (uc->mu_valid == UCRED_NEW))
                 return 0;
 
@@ -520,6 +526,7 @@ int mdt_init_ucred_reint(struct mdt_thread_info *info)
         struct ptlrpc_request *req = mdt_info_req(info);
         struct md_ucred       *uc  = mdt_ucred(info);
 
+        LASSERT(uc != NULL);
         if ((uc->mu_valid == UCRED_OLD) || (uc->mu_valid == UCRED_NEW))
                 return 0;
 
@@ -788,6 +795,7 @@ static int mdt_setattr_unpack_rec(struct mdt_thread_info *info)
         if (rec == NULL)
                 RETURN(-EFAULT);
 
+        /* This prior initialization is needed for old_init_ucred_reint() */
         uc->mu_fsuid = rec->sa_fsuid;
         uc->mu_fsgid = rec->sa_fsgid;
         uc->mu_cap   = rec->sa_cap;
@@ -901,6 +909,7 @@ static int mdt_create_unpack(struct mdt_thread_info *info)
         if (rec == NULL)
                 RETURN(-EFAULT);
 
+        /* This prior initialization is needed for old_init_ucred_reint() */
         uc->mu_fsuid = rec->cr_fsuid;
         uc->mu_fsgid = rec->cr_fsgid;
         uc->mu_cap   = rec->cr_cap;
@@ -1003,6 +1012,7 @@ static int mdt_link_unpack(struct mdt_thread_info *info)
         if (rec == NULL)
                 RETURN(-EFAULT);
 
+        /* This prior initialization is needed for old_init_ucred_reint() */
         uc->mu_fsuid = rec->lk_fsuid;
         uc->mu_fsgid = rec->lk_fsgid;
         uc->mu_cap   = rec->lk_cap;
@@ -1053,6 +1063,7 @@ static int mdt_unlink_unpack(struct mdt_thread_info *info)
         if (rec == NULL)
                 RETURN(-EFAULT);
 
+        /* This prior initialization is needed for old_init_ucred_reint() */
         uc->mu_fsuid = rec->ul_fsuid;
         uc->mu_fsgid = rec->ul_fsgid;
         uc->mu_cap   = rec->ul_cap;
@@ -1110,6 +1121,7 @@ static int mdt_rename_unpack(struct mdt_thread_info *info)
         if (rec == NULL)
                 RETURN(-EFAULT);
 
+        /* This prior initialization is needed for old_init_ucred_reint() */
         uc->mu_fsuid = rec->rn_fsuid;
         uc->mu_fsgid = rec->rn_fsgid;
         uc->mu_cap   = rec->rn_cap;
@@ -1170,6 +1182,7 @@ static int mdt_open_unpack(struct mdt_thread_info *info)
         if (rec == NULL)
                 RETURN(-EFAULT);
 
+        /* This prior initialization is needed for old_init_ucred_reint() */
         uc->mu_fsuid = rec->cr_fsuid;
         uc->mu_fsgid = rec->cr_fsgid;
         uc->mu_cap   = rec->cr_cap;
@@ -1248,6 +1261,7 @@ static int mdt_setxattr_unpack(struct mdt_thread_info *info)
         if (rec == NULL)
                 RETURN(-EFAULT);
 
+        /* This prior initialization is needed for old_init_ucred_reint() */
         uc->mu_fsuid  = rec->sx_fsuid;
         uc->mu_fsgid  = rec->sx_fsgid;
         uc->mu_cap    = rec->sx_cap;

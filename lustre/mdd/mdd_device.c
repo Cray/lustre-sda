@@ -241,9 +241,8 @@ static int mdd_changelog_llog_init(struct mdd_device *mdd)
 void mdd_changelog_rec_fill(const struct lu_env *env,
                             struct llog_changelog_rec *rec)
 {
-        if (env->le_ses) {
-                struct md_ucred *uc = md_ucred(env);
-
+        struct md_ucred *uc = md_ucred_check(env);
+        if (uc) {
                 rec->cr.cr_uid = uc->mu_fsuid;
                 rec->cr.cr_gid = uc->mu_fsgid;
                 rec->cr.cr_clnid = uc->mu_nid;
@@ -2202,12 +2201,42 @@ static struct lu_context_key mdd_ucred_key = {
         .lct_fini = mdd_ucred_key_fini
 };
 
+/**
+ * Get ucred key if session exists and ucred key is allocated on it.
+ * Return NULL otherwise.
+ */
 struct md_ucred *md_ucred(const struct lu_env *env)
 {
-        LASSERT(env->le_ses != NULL);
+        if (!env->le_ses)
+                return NULL;
         return lu_context_key_get(env->le_ses, &mdd_ucred_key);
 }
 EXPORT_SYMBOL(md_ucred);
+
+/**
+ * Get ucred key and check if it is properly initialized.
+ * Return NULL otherwise.
+ */
+struct md_ucred *md_ucred_check(const struct lu_env *env)
+{
+        struct md_ucred *uc = md_ucred(env);
+        if (uc && uc->mu_valid != UCRED_OLD && uc->mu_valid != UCRED_NEW)
+                return NULL;
+        return uc;
+}
+EXPORT_SYMBOL(md_ucred_check);
+
+/**
+ * Get ucred key, which must exist and must be properly initialized.
+ * Assert otherwise.
+ */
+struct md_ucred *md_ucred_assert(const struct lu_env *env)
+{
+        struct md_ucred *uc = md_ucred_check(env);
+        LASSERT(uc != NULL);
+        return uc;
+}
+EXPORT_SYMBOL(md_ucred_assert);
 
 /*
  * context key constructor/destructor:
