@@ -350,7 +350,7 @@ static int config_log_add(struct obd_device *obd, char *logname,
         RETURN(0);
 }
 
-CFS_DECLARE_MUTEX(llog_process_lock);
+CFS_DEFINE_MUTEX(llog_process_lock);
 
 /** Stop watching for updates on this log.
  */
@@ -633,7 +633,9 @@ static int mgc_fs_setup(struct obd_device *obd, struct super_block *sb,
         }
 
         cli->cl_mgc_vfsmnt = mnt;
-        fsfilt_setup(obd, mnt->mnt_sb);
+        err = fsfilt_setup(obd, mnt->mnt_sb);
+        if (err)
+                GOTO(err_ops, err);
 
         OBD_SET_CTXT_MAGIC(&obd->obd_lvfs_ctxt);
         obd->obd_lvfs_ctxt.pwdmnt = mnt;

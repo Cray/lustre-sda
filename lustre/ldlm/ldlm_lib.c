@@ -226,6 +226,7 @@ void client_destroy_import(struct obd_import *imp)
         sptlrpc_import_sec_put(imp);
         class_import_put(imp);
 }
+EXPORT_SYMBOL(client_destroy_import);
 
 /* configure an RPC client OBD device
  *
@@ -428,6 +429,8 @@ int client_obd_cleanup(struct obd_device *obddev)
         ldlm_namespace_free_post(obddev->obd_namespace);
         obddev->obd_namespace = NULL;
 
+        LASSERT(obddev->u.cli.cl_import == NULL);
+
         ldlm_put_ref();
         RETURN(0);
 }
@@ -559,13 +562,6 @@ int client_disconnect_export(struct obd_export *exp)
         cfs_down_write(&cli->cl_sem);
 
         ptlrpc_invalidate_import(imp);
-
-        if (imp->imp_rq_pool) {
-                ptlrpc_free_rq_pool(imp->imp_rq_pool);
-                imp->imp_rq_pool = NULL;
-        }
-        client_destroy_import(imp);
-        cli->cl_import = NULL;
 
         EXIT;
 
@@ -857,7 +853,6 @@ int target_handle_connect(struct ptlrpc_request *req)
                 cfs_spin_lock(&export->exp_lock);
                 export->exp_connecting = 1;
                 cfs_spin_unlock(&export->exp_lock);
-                class_export_put(export);
                 LASSERT(export->exp_obd == target);
 
                 rc = target_handle_reconnect(&conn, export, &cluuid);
@@ -945,8 +940,12 @@ dont_check_exports:
                         rc = obd_connect(req->rq_svc_thread->t_env,
                                          &export, target, &cluuid, data,
                                          client_nid);
-                        if (rc == 0)
+                        if (rc == 0) {
                                 conn.cookie = export->exp_handle.h_cookie;
+                                /* LU-1092 reconnect put export refcount in the
+                                 * end, connect needs take one here too. */
+                                class_export_get(export);
+                        }
                 }
         } else {
                 rc = obd_reconnect(req->rq_svc_thread->t_env,
@@ -1036,7 +1035,9 @@ dont_check_exports:
                              &export->exp_connection->c_peer.nid,
                              &export->exp_nid_hash);
         }
-
+        /**
+          class_disconnect->class_export_recovery_cleanup() race
+         */
         if (target->obd_recovering && !export->exp_in_recovery) {
                 int has_transno;
                 __u64 transno = data->ocd_transno;
@@ -1129,6 +1130,8 @@ out:
                 cfs_spin_lock(&export->exp_lock);
                 export->exp_connecting = 0;
                 cfs_spin_unlock(&export->exp_lock);
+
+                class_export_put(export);
         }
         if (targref)
                 class_decref(targref, __FUNCTION__, cfs_current());

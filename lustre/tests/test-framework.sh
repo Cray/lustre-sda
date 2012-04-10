@@ -165,10 +165,14 @@ init_test_env() {
         export PATH=$LUSTRE/tests/mpi:$PATH
     fi
     export RSYNC_RSH=${RSYNC_RSH:-rsh}
+
     export LCTL=${LCTL:-"$LUSTRE/utils/lctl"}
     [ ! -f "$LCTL" ] && export LCTL=$(which lctl)
     export LFS=${LFS:-"$LUSTRE/utils/lfs"}
     [ ! -f "$LFS" ] && export LFS=$(which lfs)
+    SETSTRIPE=${SETSTRIPE:-"$LFS setstripe"}
+    GETSTRIPE=${GETSTRIPE:-"$LFS getstripe"}
+
     export L_GETIDENTITY=${L_GETIDENTITY:-"$LUSTRE/utils/l_getidentity"}
     if [ ! -f "$L_GETIDENTITY" ]; then
         if `which l_getidentity > /dev/null 2>&1`; then
@@ -185,7 +189,11 @@ init_test_env() {
     [ ! -f "$TUNEFS" ] && export TUNEFS=$(which tunefs.lustre)
     export CHECKSTAT="${CHECKSTAT:-"checkstat -v"} "
     export LUSTRE_RMMOD=${LUSTRE_RMMOD:-$LUSTRE/scripts/lustre_rmmod}
-    [ ! -f "$LUSTRE_RMMOD" ] && export LUSTRE_RMMOD=$(which lustre_rmmod 2> /dev/null)
+    [ ! -f "$LUSTRE_RMMOD" ] &&
+        export LUSTRE_RMMOD=$(which lustre_rmmod 2> /dev/null)
+    export LFS_MIGRATE=${LFS_MIGRATE:-$LUSTRE/scripts/lfs_migrate}
+    [ ! -f "$LFS_MIGRATE" ] &&
+        export LFS_MIGRATE=$(which lfs_migrate 2> /dev/null)
     export FSTYPE=${FSTYPE:-"ldiskfs"}
     export NAME=${NAME:-local}
     export LGSSD=${LGSSD:-"$LUSTRE/utils/gss/lgssd"}
@@ -591,7 +599,12 @@ ostdevlabel() {
 
 set_debug_size () {
     local dz=${1:-$DEBUG_SIZE}
-    local cpus=$(($(cut -d "-" -f 2 /sys/devices/system/cpu/possible)+1))
+
+    if [ -f /sys/devices/system/cpu/possible ]; then
+        local cpus=$(($(cut -d "-" -f 2 /sys/devices/system/cpu/possible)+1))
+    else
+        local cpus=$(getconf _NPROCESSORS_CONF)
+    fi
 
     # bug 19944, adjust size to be -gt num_possible_cpus()
     # promise 2MB for every cpu at least
@@ -1108,12 +1121,14 @@ start_client_load() {
     eval export ${var}=$load
 
     do_node $client "PATH=$PATH MOUNT=$MOUNT ERRORS_OK=$ERRORS_OK \
-                              BREAK_ON_ERROR=$BREAK_ON_ERROR \
-                              END_RUN_FILE=$END_RUN_FILE \
-                              LOAD_PID_FILE=$LOAD_PID_FILE \
-                              TESTLOG_PREFIX=$TESTLOG_PREFIX \
-                              TESTNAME=$TESTNAME \
-                              run_${load}.sh" &
+BREAK_ON_ERROR=$BREAK_ON_ERROR \
+END_RUN_FILE=$END_RUN_FILE \
+LOAD_PID_FILE=$LOAD_PID_FILE \
+TESTLOG_PREFIX=$TESTLOG_PREFIX \
+TESTNAME=$TESTNAME \
+DBENCH_LIB=$DBENCH_LIB \
+DBENCH_SRC=$DBENCH_SRC \
+run_${load}.sh" &
     local ppid=$!
     log "Started client load: ${load} on $client"
 
@@ -3472,7 +3487,7 @@ check_grant() {
 
     # get server grant
     server_grant=`do_nodes $(comma_list $(osts_nodes)) \
-                    "$LCTL get_param -n obdfilter.${FSNAME}-OST*.tot_granted" | \
+                    "$LCTL get_param -n obdfilter.${FSNAME}-OST*.tot_granted" |
                     awk '{total += $1} END{print total}'`
 
     # check whether client grant == server grant
@@ -3518,7 +3533,7 @@ index_from_ostuuid()
 
 mdtuuid_from_index()
 {
-    $LFS mdts $2 | awk '/^'$1'/ { print $2 }'
+    $LFS mdts $2 | sed -ne "/^$1: /s/.* \(.*\) .*$/\1/p"
 }
 
 remote_node () {
@@ -3914,25 +3929,6 @@ exit \\\$rc;"
     fi 
 }
 
-# $1 node
-# $2 file
-# $3 $RUNAS
-get_stripe_info() {
-        local tmp_file
-
-        stripe_size=0
-        stripe_count=0
-        stripe_index=0
-        tmp_file=$(mktemp)
-
-        do_facet $1 $3 lfs getstripe -v $2 > $tmp_file
-
-        stripe_size=`awk '$1 ~ /size/ {print $2}' $tmp_file`
-        stripe_count=`awk '$1 ~ /count/ {print $2}' $tmp_file`
-        stripe_index=`awk '$1 ~ /stripe_offset/ {print $2}' $tmp_file`
-        rm -f $tmp_file
-}
-
 # CMD: determine mds index where directory inode presents
 get_mds_dir () {
     local dir=$1
@@ -4305,7 +4301,7 @@ destroy_pools () {
 
     echo destroy the created pools: ${!listvar}
     for poolname in ${!listvar//,/ }; do
-        destroy_pool $fsname.$poolname 
+        destroy_pool $fsname.$poolname
     done
 }
 
@@ -4320,6 +4316,13 @@ gather_logs () {
 
     local ts=$(date +%s)
     local docp=true
+
+    if [[ ! -f "$YAML_LOG" ]]; then
+        # init_logging is not performed before gather_logs,
+        # so the $LOGDIR needs to be checked here
+        check_shared_dir $LOGDIR && touch $LOGDIR/shared
+    fi
+
     [ -f $LOGDIR/shared ] && docp=false
 
     # dump lustre logs, dmesg
@@ -4685,20 +4688,24 @@ check_logdir() {
         # Not found. Create local logdir
         mkdir -p $dir
     else
-        touch $dir/node.$(hostname -s).yml
+        touch $dir/check_file.$(hostname -s)
     fi
     return 0
 }
 
 check_write_access() {
     local dir=$1
+    local node
+    local file
+
     for node in $(nodes_list); do
-        if [ ! -f "$dir/node.$(short_hostname ${node}).yml" ]; then
+        file=$dir/check_file.$(short_hostname $node)
+        if [[ ! -f "$file" ]]; then
             # Logdir not accessible/writable from this node.
             return 1
         fi
+        rm -f $file || return 1
     done
-    rm -f $dir/node.*.yml
     return 0
 }
 

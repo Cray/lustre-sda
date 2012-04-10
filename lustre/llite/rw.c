@@ -80,8 +80,6 @@ void ll_truncate(struct inode *inode)
         CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p) to %llu\n", inode->i_ino,
                inode->i_generation, inode, i_size_read(inode));
 
-        ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_TRUNC, 1);
-
         EXIT;
         return;
 } /* ll_truncate */
@@ -541,7 +539,7 @@ static int ll_read_ahead_page(const struct lu_env *env, struct cl_io *io,
 #ifdef __GFP_NOWARN
         gfp_mask |= __GFP_NOWARN;
 #endif
-        vmpage = grab_cache_page_nowait_gfp(mapping, index, gfp_mask);
+        vmpage = grab_cache_page_nowait(mapping, index);
         if (vmpage != NULL) {
                 /* Check if vmpage was truncated or reclaimed */
                 if (vmpage->mapping == mapping) {

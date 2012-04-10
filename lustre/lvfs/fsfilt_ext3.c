@@ -1273,7 +1273,7 @@ int fsfilt_ext3_map_bm_inode_pages(struct inode *inode, struct page **page,
 int fsfilt_ext3_map_inode_pages(struct inode *inode, struct page **page,
                                 int pages, unsigned long *blocks,
                                 int *created, int create,
-                                cfs_semaphore_t *optional_sem)
+                                cfs_mutex_t *optional_mutex)
 {
         int rc;
 
@@ -1282,12 +1282,12 @@ int fsfilt_ext3_map_inode_pages(struct inode *inode, struct page **page,
                                                      blocks, created, create);
                 return rc;
         }
-        if (optional_sem != NULL)
-                cfs_down(optional_sem);
+        if (optional_mutex != NULL)
+                cfs_mutex_lock(optional_mutex);
         rc = fsfilt_ext3_map_bm_inode_pages(inode, page, pages, blocks,
                                             created, create);
-        if (optional_sem != NULL)
-                cfs_up(optional_sem);
+        if (optional_mutex != NULL)
+                cfs_mutex_unlock(optional_mutex);
 
         return rc;
 }
@@ -1450,6 +1450,12 @@ static int fsfilt_ext3_setup(struct super_block *sb)
         sbi->dx_unlock = fsfilt_ext3_dx_unlock;
 #endif
 #endif
+        if (!EXT3_HAS_COMPAT_FEATURE(sb,
+                                EXT3_FEATURE_COMPAT_HAS_JOURNAL)) {
+                CERROR("ext3 mounted without journal\n");
+                return -EINVAL;
+        }
+
 #ifdef S_PDIROPS
         CWARN("Enabling PDIROPS\n");
         set_opt(sbi->s_mount_opt, PDIROPS);

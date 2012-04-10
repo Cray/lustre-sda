@@ -1993,7 +1993,7 @@ test_46a() {
 	#second client see all ost's
 
 	mount_client $MOUNT2 || return 8
-	$LFS setstripe $MOUNT2 -c -1 || return 9
+	$LFS setstripe -c -1 $MOUNT2 || return 9
 	$LFS getstripe $MOUNT2 || return 10
 
 	echo "ok" > $MOUNT2/widestripe
@@ -2061,9 +2061,9 @@ cleanup_48() {
 test_48() { # bug 17636
 	reformat
 	setup_noconfig
-        check_mount || return 2
+	check_mount || return 2
 
-	$LFS setstripe $MOUNT -c -1 || return 9
+	$LFS setstripe -c -1 $MOUNT || return 9
 	$LFS getstripe $MOUNT || return 10
 
 	echo "ok" > $MOUNT/widestripe
@@ -2436,7 +2436,7 @@ test_52() {
 	[ $? -eq 0 ] || { error "Unable to create temporary file"; return 6; }
 	sleep 1
 
-	$LFS setstripe $DIR/$tdir -c -1 -s 1M
+	$LFS setstripe -c -1 -S 1M $DIR/$tdir
 	[ $? -eq 0 ] || { error "lfs setstripe failed"; return 7; }
 
 	for (( i=0; i < nrfiles; i++ )); do
@@ -2820,6 +2820,22 @@ test_61() { # LU-80
     $reformat && reformat
 }
 run_test 61 "large xattr"
+
+test_62() {
+    # MRP-118
+    local mdsdev=$(mdsdevname 1)
+    local ostdev=$(ostdevname 1)
+
+    echo "disable journal for mds"
+    do_facet mds tune2fs -O ^has_journal $mdsdev || error "tune2fs failed"
+    start_mds && error "MDT start should fail"
+    echo "disable journal for ost"
+    do_facet ost1 tune2fs -O ^has_journal $ostdev || error "tune2fs failed"
+    start_ost && error "OST start should fail"
+    cleanup || return $?
+    reformat_and_config
+}
+run_test 62 "start with disabled journal"
 
 if ! combined_mgs_mds ; then
 	stop mgs

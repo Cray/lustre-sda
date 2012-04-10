@@ -167,10 +167,6 @@ do {cfs_mutex_lock_nested(&(inode)->i_mutex, I_MUTEX_PARENT); } while(0)
 #define set_page_private(page, v) ((page)->private = (v))
 #endif
 
-#ifndef HAVE_GFP_T
-#define gfp_t int
-#endif
-
 #define lock_dentry(___dentry)          cfs_spin_lock(&(___dentry)->d_lock)
 #define unlock_dentry(___dentry)        cfs_spin_unlock(&(___dentry)->d_lock)
 
@@ -349,10 +345,6 @@ static inline int mapping_has_pages(struct address_space *mapping)
 #define UP_READ_I_ALLOC_SEM(i)    up_read(&(i)->i_alloc_sem)
 #define DOWN_READ_I_ALLOC_SEM(i)  down_read(&(i)->i_alloc_sem)
 #define LASSERT_I_ALLOC_SEM_READ_LOCKED(i) LASSERT(down_write_trylock(&(i)->i_alloc_sem) == 0)
-
-#ifndef HAVE_GRAB_CACHE_PAGE_NOWAIT_GFP
-#define grab_cache_page_nowait_gfp(x, y, z) grab_cache_page_nowait((x), (y))
-#endif
 
 #include <linux/mpage.h>        /* for generic_writepages */
 #ifndef HAVE_FILEMAP_FDATAWRITE_RANGE

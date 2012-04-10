@@ -65,6 +65,8 @@
          jbd2_journal_callback_set(handle, func, jcb)
 #endif
 
+/* fsfilt_{get|put}_ops */
+#include <lustre_fsfilt.h>
 
 /* LUSTRE_OSD_NAME */
 #include <obd.h>
@@ -96,6 +98,19 @@ struct osd_directory {
         struct iam_container od_container;
         struct iam_descr     od_descr;
 };
+
+/*
+ * Object Index (oi) instance.
+ */
+struct osd_oi {
+        /*
+         * underlying index object, where fid->id mapping in stored.
+         */
+        struct inode         *oi_inode;
+        struct osd_directory  oi_dir;
+};
+
+extern const int osd_dto_credits_noquota[];
 
 struct osd_object {
         struct dt_object        oo_dt;
@@ -189,13 +204,9 @@ struct osd_device {
         struct dt_device          od_dt_dev;
         /* information about underlying file system */
         struct lustre_mount_info *od_mount;
-        /*
-         * XXX temporary stuff for object index: directory where every object
-         * is named by its fid.
-         */
-        struct dt_object         *od_obj_area;
+        struct vfsmount          *od_mnt;
         /* object index */
-        struct osd_oi            *od_oi_table;
+        struct osd_oi           **od_oi_table;
         /* total number of OI containers */
         int                       od_oi_count;
         /*
@@ -221,6 +232,21 @@ struct osd_device {
          * It will be initialized, using mount param.
          */
         __u32                     od_iop_mode;
+
+        struct fsfilt_operations *od_fsops;
+
+        /*
+         * mapping for legacy OST objids
+         */
+        struct osd_compat_objid  *od_ost_map;
+
+        unsigned long long        od_readcache_max_filesize;
+        int                       od_read_cache;
+        int                       od_writethrough_cache;
+
+        struct brw_stats          od_brw_stats;
+        cfs_atomic_t              od_r_in_flight;
+        cfs_atomic_t              od_w_in_flight;
 };
 
 #define OSD_TRACK_DECLARES
@@ -311,12 +337,20 @@ enum dt_txn_op {
 
 #ifdef LPROCFS
 enum {
+        LPROC_OSD_READ_BYTES    = 0,
+        LPROC_OSD_WRITE_BYTES   = 1,
+        LPROC_OSD_GET_PAGE      = 2,
+        LPROC_OSD_NO_PAGE       = 3,
+        LPROC_OSD_CACHE_ACCESS  = 4,
+        LPROC_OSD_CACHE_HIT     = 5,
+        LPROC_OSD_CACHE_MISS    = 6,
+
 #if OSD_THANDLE_STATS
         LPROC_OSD_THANDLE_STARTING,
         LPROC_OSD_THANDLE_OPEN,
         LPROC_OSD_THANDLE_CLOSING,
 #endif
-        LPROC_OSD_NR
+        LPROC_OSD_LAST,
 };
 #endif
 
@@ -375,6 +409,25 @@ struct osd_it_iam {
         struct iam_iterator    oi_it;
 };
 
+#define MAX_BLOCKS_PER_PAGE (CFS_PAGE_SIZE / 512)
+
+struct osd_iobuf {
+        cfs_waitq_t        dr_wait;
+        cfs_atomic_t       dr_numreqs;  /* number of reqs being processed */
+        int                dr_max_pages;
+        int                dr_npages;
+        int                dr_error;
+        int                dr_frags;
+        unsigned int       dr_ignore_quota:1;
+        unsigned int       dr_elapsed_valid:1; /* we really did count time */
+        unsigned int       dr_rw:1;
+        struct page       *dr_pages[PTLRPC_MAX_BRW_PAGES];
+        unsigned long      dr_blocks[PTLRPC_MAX_BRW_PAGES*MAX_BLOCKS_PER_PAGE];
+        unsigned long      dr_start_time;
+        unsigned long      dr_elapsed;  /* how long io took */
+        struct osd_device *dr_dev;
+};
+
 struct osd_thread_info {
         const struct lu_env   *oti_env;
         /**
@@ -389,6 +442,8 @@ struct osd_thread_info {
 
         struct lu_fid          oti_fid;
         struct osd_inode_id    oti_id;
+        struct ost_id          oti_ostid;
+
         /*
          * XXX temporary: for ->i_op calls.
          */
@@ -446,6 +501,10 @@ struct osd_thread_info {
         struct lu_buf          oti_buf;
         /** used in osd_ea_fid_set() to set fid into common ea */
         struct lustre_mdt_attrs oti_mdt_attrs;
+        /** 0-copy IO */
+        struct osd_iobuf       oti_iobuf;
+        struct inode           oti_inode;
+        int                    oti_created[PTLRPC_MAX_BRW_PAGES];
 #ifdef HAVE_QUOTA_SUPPORT
         struct osd_ctxt        oti_ctxt;
 #endif
@@ -465,11 +524,38 @@ int osd_procfs_fini(struct osd_device *osd);
 void osd_lprocfs_time_start(const struct lu_env *env);
 void osd_lprocfs_time_end(const struct lu_env *env,
                           struct osd_device *osd, int op);
+void osd_brw_stats_update(struct osd_device *osd, struct osd_iobuf *iobuf);
+
 #endif
 int osd_statfs(const struct lu_env *env, struct dt_device *dev,
                cfs_kstatfs_t *sfs);
 int osd_object_auth(const struct lu_env *env, struct dt_object *dt,
                     struct lustre_capa *capa, __u64 opc);
+void osd_declare_qid(struct dt_object *dt, struct osd_thandle *oh,
+                     int type, uid_t id, struct inode *inode);
+struct inode *osd_iget(struct osd_thread_info *info,
+                       struct osd_device *dev,
+                       const struct osd_inode_id *id);
+
+int osd_compat_init(struct osd_device *dev);
+void osd_compat_fini(struct osd_device *dev);
+int osd_compat_objid_lookup(struct osd_thread_info *info,
+                            struct osd_device *osd,
+                            const struct lu_fid *fid, struct osd_inode_id *id);
+int osd_compat_objid_insert(struct osd_thread_info *info,
+                            struct osd_device *osd,
+                            const struct lu_fid *fid,
+                            const struct osd_inode_id *id, struct thandle *th);
+int osd_compat_objid_delete(struct osd_thread_info *info,
+                            struct osd_device *osd,
+                            const struct lu_fid *fid, struct thandle *th);
+int osd_compat_spec_lookup(struct osd_thread_info *info,
+                           struct osd_device *osd,
+                           const struct lu_fid *fid, struct osd_inode_id *id);
+int osd_compat_spec_insert(struct osd_thread_info *info,
+                           struct osd_device *osd,
+                           const struct lu_fid *fid,
+                           const struct osd_inode_id *id, struct thandle *th);
 
 /*
  * Invariants, assertions.
@@ -497,37 +583,17 @@ static inline int osd_invariant(const struct osd_object *obj)
 #define osd_invariant(obj) (1)
 #endif
 
-/* The on-disk extN format reserves inodes 0-11 for internal filesystem
- * use, and these inodes will be invisible on client side, so the valid
- * sequence for IGIF fid is 12-0xffffffff. But root inode (2#) will be seen
- * on server side (osd), and it should be valid too here.
- */
-#define OSD_ROOT_SEQ            2
-static inline int osd_fid_is_root(const struct lu_fid *fid)
+static inline struct osd_oi *osd_fid2oi(struct osd_device *osd,
+                                        const struct lu_fid *fid)
 {
-        return fid_seq(fid) == OSD_ROOT_SEQ;
-}
-
-static inline int osd_fid_is_igif(const struct lu_fid *fid)
-{
-        return fid_is_igif(fid) || osd_fid_is_root(fid);
-}
-
-static inline struct osd_oi *
-osd_fid2oi(struct osd_device *osd, const struct lu_fid *fid)
-{
-        if (!fid_is_norm(fid))
-                return NULL;
-
+        LASSERT(!fid_is_idif(fid));
+        LASSERT(!fid_is_igif(fid));
         LASSERT(osd->od_oi_table != NULL && osd->od_oi_count >= 1);
         /* It can work even od_oi_count equals to 1 although it's unexpected,
          * the only reason we set it to 1 is for performance measurement */
-        return &osd->od_oi_table[fid->f_seq & (osd->od_oi_count - 1)];
+        return osd->od_oi_table[fid->f_seq & (osd->od_oi_count - 1)];
 }
 
-/*
- * Helpers.
- */
 extern const struct lu_device_operations  osd_lu_ops;
 
 static inline int lu_device_is_osd(const struct lu_device *d)
@@ -589,6 +655,86 @@ extern struct lu_context_key osd_key;
 static inline struct osd_thread_info *osd_oti_get(const struct lu_env *env)
 {
         return lu_context_key_get(&env->le_ctx, &osd_key);
+}
+
+extern const struct dt_body_operations osd_body_ops_new;
+
+/**
+ * IAM Iterator
+ */
+static inline
+struct iam_path_descr *osd_it_ipd_get(const struct lu_env *env,
+                                      const struct iam_container *bag)
+{
+        return bag->ic_descr->id_ops->id_ipd_alloc(bag,
+                                           osd_oti_get(env)->oti_it_ipd);
+}
+
+static inline
+struct iam_path_descr *osd_idx_ipd_get(const struct lu_env *env,
+                                       const struct iam_container *bag)
+{
+        return bag->ic_descr->id_ops->id_ipd_alloc(bag,
+                                           osd_oti_get(env)->oti_idx_ipd);
+}
+
+static inline void osd_ipd_put(const struct lu_env *env,
+                               const struct iam_container *bag,
+                               struct iam_path_descr *ipd)
+{
+        bag->ic_descr->id_ops->id_ipd_free(ipd);
+}
+
+int osd_ldiskfs_read(struct inode *inode, void *buf, int size, loff_t *offs);
+
+static inline
+struct dentry *osd_child_dentry_by_inode(const struct lu_env *env,
+                                         struct inode *inode,
+                                         const char *name, const int namelen)
+{
+        struct osd_thread_info *info = osd_oti_get(env);
+        struct dentry *child_dentry = &info->oti_child_dentry;
+        struct dentry *obj_dentry = &info->oti_obj_dentry;
+
+        obj_dentry->d_inode = inode;
+        obj_dentry->d_sb = inode->i_sb;
+        obj_dentry->d_name.hash = 0;
+
+        child_dentry->d_name.hash = 0;
+        child_dentry->d_parent = obj_dentry;
+        child_dentry->d_name.name = name;
+        child_dentry->d_name.len = namelen;
+        return child_dentry;
+}
+
+/**
+ * Helper function to pack the fid, ldiskfs stores fid in packed format.
+ */
+static inline
+void osd_fid_pack(struct osd_fid_pack *pack, const struct dt_rec *fid,
+                  struct lu_fid *befider)
+{
+        fid_cpu_to_be(befider, (struct lu_fid *)fid);
+        memcpy(pack->fp_area, befider, sizeof(*befider));
+        pack->fp_len =  sizeof(*befider) + 1;
+}
+
+static inline
+int osd_fid_unpack(struct lu_fid *fid, const struct osd_fid_pack *pack)
+{
+        int result;
+
+        result = 0;
+        switch (pack->fp_len) {
+        case sizeof *fid + 1:
+                memcpy(fid, pack->fp_area, sizeof *fid);
+                fid_be_to_cpu(fid, fid);
+                break;
+        default:
+                CERROR("Unexpected packed fid size: %d\n", pack->fp_len);
+                result = -EIO;
+        }
+        return result;
 }
 
 #endif /* __KERNEL__ */

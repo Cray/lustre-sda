@@ -89,7 +89,7 @@ static struct ll_sb_info *ll_init_sbi(void)
                 RETURN(NULL);
 
         cfs_spin_lock_init(&sbi->ll_lock);
-        cfs_init_mutex(&sbi->ll_lco.lco_lock);
+        cfs_mutex_init(&sbi->ll_lco.lco_lock);
         cfs_spin_lock_init(&sbi->ll_pp_extent_lock);
         cfs_spin_lock_init(&sbi->ll_process_lock);
         sbi->ll_rw_stats_on = 0;
@@ -316,20 +316,7 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
         sb->s_blocksize = osfs->os_bsize;
         sb->s_blocksize_bits = log2(osfs->os_bsize);
         sb->s_magic = LL_SUPER_MAGIC;
-
-        /* for bug 11559. in $LINUX/fs/read_write.c, function do_sendfile():
-         *         retval = in_file->f_op->sendfile(...);
-         *         if (*ppos > max)
-         *                 retval = -EOVERFLOW;
-         *
-         * it will check if *ppos is greater than max. However, max equals to
-         * s_maxbytes, which is a negative integer in a x86_64 box since loff_t
-         * has been defined as a signed long long integer in linux kernel. */
-#if BITS_PER_LONG == 64
-        sb->s_maxbytes = PAGE_CACHE_MAXBYTES >> 1;
-#else
-        sb->s_maxbytes = PAGE_CACHE_MAXBYTES;
-#endif
+        sb->s_maxbytes = MAX_LFS_FILESIZE;
         sbi->ll_namelen = osfs->os_namelen;
         sbi->ll_max_rw_chunk = LL_DEFAULT_MAX_RW_CHUNK;
 
@@ -449,11 +436,11 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
                 GOTO(out_dt, err);
         }
 
-        cfs_mutex_down(&sbi->ll_lco.lco_lock);
+        cfs_mutex_lock(&sbi->ll_lco.lco_lock);
         sbi->ll_lco.lco_flags = data->ocd_connect_flags;
         sbi->ll_lco.lco_md_exp = sbi->ll_md_exp;
         sbi->ll_lco.lco_dt_exp = sbi->ll_dt_exp;
-        cfs_mutex_up(&sbi->ll_lco.lco_lock);
+        cfs_mutex_unlock(&sbi->ll_lco.lco_lock);
 
         fid_zero(&sbi->ll_root_fid);
         err = md_getstatus(sbi->ll_md_exp, &sbi->ll_root_fid, &oc);
@@ -857,10 +844,11 @@ void ll_lli_init(struct ll_inode_info *lli)
         lli->lli_inode_magic = LLI_INODE_MAGIC;
         lli->lli_flags = 0;
         lli->lli_ioepoch = 0;
+        lli->lli_maxbytes = MAX_LFS_FILESIZE;
         cfs_spin_lock_init(&lli->lli_lock);
         lli->lli_posix_acl = NULL;
         lli->lli_remote_perms = NULL;
-        cfs_sema_init(&lli->lli_rmtperm_sem, 1);
+        cfs_mutex_init(&lli->lli_rmtperm_mutex);
         /* Do not set lli_fid, it has been initialized already. */
         fid_zero(&lli->lli_pfid);
         CFS_INIT_LIST_HEAD(&lli->lli_close_list);
@@ -875,14 +863,14 @@ void ll_lli_init(struct ll_inode_info *lli)
         lli->lli_open_fd_read_count = 0;
         lli->lli_open_fd_write_count = 0;
         lli->lli_open_fd_exec_count = 0;
-        cfs_sema_init(&lli->lli_och_sem, 1);
+        cfs_mutex_init(&lli->lli_och_mutex);
         cfs_spin_lock_init(&lli->lli_agl_lock);
         lli->lli_smd = NULL;
         lli->lli_clob = NULL;
 
         LASSERT(lli->lli_vfs_inode.i_mode != 0);
         if (S_ISDIR(lli->lli_vfs_inode.i_mode)) {
-                cfs_sema_init(&lli->lli_readdir_sem, 1);
+                cfs_mutex_init(&lli->lli_readdir_mutex);
                 lli->lli_opendir_key = NULL;
                 lli->lli_sai = NULL;
                 lli->lli_sa_pos = 0;
@@ -893,9 +881,8 @@ void ll_lli_init(struct ll_inode_info *lli)
                 cfs_sema_init(&lli->lli_size_sem, 1);
                 lli->lli_size_sem_owner = NULL;
                 lli->lli_symlink_name = NULL;
-                lli->lli_maxbytes = PAGE_CACHE_MAXBYTES;
                 cfs_init_rwsem(&lli->lli_trunc_sem);
-                cfs_sema_init(&lli->lli_write_sem, 1);
+                cfs_mutex_init(&lli->lli_write_mutex);
                 lli->lli_async_rc = 0;
                 lli->lli_write_rc = 0;
                 cfs_init_rwsem(&lli->lli_glimpse_sem);
@@ -1334,12 +1321,20 @@ int ll_setattr_raw(struct dentry *dentry, struct iattr *attr)
 
         CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu valid %x\n", inode->i_ino,
                attr->ia_valid);
-        ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_SETATTR, 1);
 
         if (ia_valid & ATTR_SIZE) {
+                /* Check new size against VFS/VM file size limit and rlimit */
+                rc = inode_newsize_ok(inode, attr->ia_size);
+                if (rc)
+                        RETURN(rc);
+
+                /* The maximum Lustre file size is variable, based on the
+                 * OST maximum object size and number of stripes.  This
+                 * needs another check in addition to the VFS check above. */
                 if (attr->ia_size > ll_file_maxbytes(inode)) {
-                        CDEBUG(D_INODE, "file too large %llu > "LPU64"\n",
-                               attr->ia_size, ll_file_maxbytes(inode));
+                        CDEBUG(D_INODE,"file "DFID" too large %llu > "LPU64"\n",
+                               PFID(&lli->lli_fid), attr->ia_size,
+                               ll_file_maxbytes(inode));
                         RETURN(-EFBIG);
                 }
 
@@ -1416,23 +1411,30 @@ int ll_setattr_raw(struct dentry *dentry, struct iattr *attr)
         if (ia_valid & (ATTR_SIZE |
                         ATTR_ATIME | ATTR_ATIME_SET |
                         ATTR_MTIME | ATTR_MTIME_SET))
-                /* on truncate and utimes send attributes to osts, setting
-                 * mtime/atime to past will be performed under PW 0:EOF extent
-                 * lock (new_size:EOF for truncate)
-                 * it may seem excessive to send mtime/atime updates to osts
-                 * when not setting times to past, but it is necessary due to
-                 * possible time de-synchronization */
+                /* For truncate and utimes sending attributes to OSTs, setting
+                 * mtime/atime to the past will be performed under PW [0:EOF]
+                 * extent lock (new_size:EOF for truncate).  It may seem
+                 * excessive to send mtime/atime updates to OSTs when not
+                 * setting times to past, but it is necessary due to possible
+                 * time de-synchronization between MDT inode and OST objects */
                 rc = ll_setattr_ost(inode, attr);
         EXIT;
 out:
         if (op_data) {
-                if (op_data->op_ioepoch)
+                if (op_data->op_ioepoch) {
                         rc1 = ll_setattr_done_writing(inode, op_data, mod);
+                        if (!rc)
+                                rc = rc1;
+                }
                 ll_finish_md_op_data(op_data);
         }
         if (!S_ISDIR(inode->i_mode))
                 cfs_up_write(&lli->lli_trunc_sem);
-        return rc ? rc : rc1;
+
+        ll_stats_ops_tally(ll_i2sbi(inode), (ia_valid & ATTR_SIZE) ?
+                           LPROC_LL_TRUNC : LPROC_LL_SETATTR, 1);
+
+        return rc;
 }
 
 int ll_setattr(struct dentry *de, struct iattr *attr)
@@ -1603,7 +1605,7 @@ void ll_update_inode(struct inode *inode, struct lustre_md *md)
         if (lsm != NULL) {
                 LASSERT(S_ISREG(inode->i_mode));
 
-                cfs_down(&lli->lli_och_sem);
+                cfs_mutex_lock(&lli->lli_och_mutex);
                 if (lli->lli_smd == NULL) {
                         if (lsm->lsm_magic != LOV_MAGIC_V1 &&
                             lsm->lsm_magic != LOV_MAGIC_V3) {
@@ -1620,12 +1622,12 @@ void ll_update_inode(struct inode *inode, struct lustre_md *md)
                         cfs_spin_lock(&lli->lli_lock);
                         lli->lli_smd = lsm;
                         cfs_spin_unlock(&lli->lli_lock);
-                        cfs_up(&lli->lli_och_sem);
+                        cfs_mutex_unlock(&lli->lli_och_mutex);
                         lli->lli_maxbytes = lsm->lsm_maxbytes;
-                        if (lli->lli_maxbytes > PAGE_CACHE_MAXBYTES)
-                                lli->lli_maxbytes = PAGE_CACHE_MAXBYTES;
+                        if (lli->lli_maxbytes > MAX_LFS_FILESIZE)
+                                lli->lli_maxbytes = MAX_LFS_FILESIZE;
                 } else {
-                        cfs_up(&lli->lli_och_sem);
+                        cfs_mutex_unlock(&lli->lli_och_mutex);
                         LASSERT(lli->lli_smd->lsm_magic == lsm->lsm_magic &&
                                 lli->lli_smd->lsm_stripe_count ==
                                 lsm->lsm_stripe_count);
@@ -1927,8 +1929,7 @@ int ll_iocontrol(struct inode *inode, struct file *file,
                 oinfo.oi_oa->o_valid = OBD_MD_FLID | OBD_MD_FLFLAGS |
                                        OBD_MD_FLGROUP;
                 oinfo.oi_capa = ll_mdscapa_get(inode);
-                obdo_from_inode(oinfo.oi_oa, inode,
-                                &ll_i2info(inode)->lli_fid, 0);
+                obdo_set_parent_fid(oinfo.oi_oa, &ll_i2info(inode)->lli_fid);
                 rc = obd_setattr_rqset(sbi->ll_dt_exp, &oinfo, NULL);
                 capa_put(oinfo.oi_capa);
                 OBDO_FREE(oinfo.oi_oa);

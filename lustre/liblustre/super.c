@@ -153,8 +153,8 @@ void llu_update_inode(struct inode *inode, struct lustre_md *md)
                         cl_file_inode_init(inode, md);
                         lli->lli_smd = lsm;
                         lli->lli_maxbytes = lsm->lsm_maxbytes;
-                        if (lli->lli_maxbytes > PAGE_CACHE_MAXBYTES)
-                                lli->lli_maxbytes = PAGE_CACHE_MAXBYTES;
+                        if (lli->lli_maxbytes > MAX_LFS_FILESIZE)
+                                lli->lli_maxbytes = MAX_LFS_FILESIZE;
                 } else {
                         if (lov_stripe_md_cmp(lli->lli_smd, lsm)) {
                                 CERROR("lsm mismatch for inode %lld\n",
@@ -289,7 +289,7 @@ int llu_inode_getattr(struct inode *inode, struct obdo *obdo,
                                OBD_MD_FLBLKSZ | OBD_MD_FLMTIME |
                                OBD_MD_FLCTIME | OBD_MD_FLGROUP |
                                OBD_MD_FLATIME | OBD_MD_FLEPOCH;
-        obdo_from_inode(oinfo.oi_oa, NULL, &llu_i2info(inode)->lli_fid, 0);
+        obdo_set_parent_fid(oinfo.oi_oa, &llu_i2info(inode)->lli_fid);
         if (sync) {
                 oinfo.oi_oa->o_valid |= OBD_MD_FLFLAGS;
                 oinfo.oi_oa->o_flags |= OBD_FL_SRVLOCK;

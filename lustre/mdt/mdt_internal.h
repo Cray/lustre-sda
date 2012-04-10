@@ -189,9 +189,9 @@ struct mdt_object {
         int                     mot_ioepoch_count;
         int                     mot_writecount;
         /* Lock to protect object's IO epoch. */
-        cfs_semaphore_t         mot_ioepoch_sem;
+        cfs_mutex_t             mot_ioepoch_mutex;
         /* Lock to protect create_data */
-        cfs_semaphore_t         mot_lov_sem;
+        cfs_mutex_t             mot_lov_mutex;
 };
 
 enum mdt_object_flags {
@@ -463,9 +463,14 @@ static inline int mdt_object_exists(const struct mdt_object *o)
         return lu_object_exists(&o->mot_obj.mo_lu);
 }
 
-static inline const struct lu_fid *mdt_object_fid(struct mdt_object *o)
+static inline const struct lu_fid *mdt_object_fid(const struct mdt_object *o)
 {
         return lu_object_fid(&o->mot_obj.mo_lu);
+}
+
+static inline int mdt_object_obf(const struct mdt_object *o)
+{
+        return lu_fid_eq(mdt_object_fid(o), &LU_OBF_FID);
 }
 
 static inline struct lu_site *mdt_lu_site(const struct mdt_device *mdt)
@@ -678,15 +683,17 @@ int mdt_pack_remote_perm(struct mdt_thread_info *, struct mdt_object *, void *);
 
 extern struct lu_context_key       mdt_thread_key;
 /* debug issues helper starts here*/
-static inline void mdt_fail_write(const struct lu_env *env,
-                                  struct dt_device *dd, int id)
+static inline int mdt_fail_write(const struct lu_env *env,
+                                 struct dt_device *dd, int id)
 {
         if (OBD_FAIL_CHECK_ORSET(id, OBD_FAIL_ONCE)) {
                 CERROR(LUSTRE_MDT_NAME": cfs_fail_loc=%x, fail write ops\n",
                        id);
-                dd->dd_ops->dt_ro(env, dd);
+                return dd->dd_ops->dt_ro(env, dd);
                 /* We set FAIL_ONCE because we never "un-fail" a device */
         }
+
+        return 0;
 }
 
 static inline struct mdt_export_data *mdt_req2med(struct ptlrpc_request *req)

@@ -269,7 +269,7 @@ static inline int lockmode_compat(ldlm_mode_t exist_mode, ldlm_mode_t new_mode)
  * lr_lock
  *     ns_lock
  *
- * lr_lvb_sem
+ * lr_lvb_mutex
  *     lr_lock
  *
  */
@@ -602,7 +602,7 @@ struct ldlm_flock {
         __u64 end;
         __u64 owner;
         __u64 blocking_owner;
-        void *blocking_export;
+        struct obd_export *blocking_export;
         __u32 pid;
 };
 
@@ -615,7 +615,7 @@ typedef union {
 void ldlm_convert_policy_to_wire(ldlm_type_t type,
                                  const ldlm_policy_data_t *lpolicy,
                                  ldlm_wire_policy_data_t *wpolicy);
-void ldlm_convert_policy_to_local(ldlm_type_t type,
+void ldlm_convert_policy_to_local(struct obd_export *exp, ldlm_type_t type,
                                   const ldlm_wire_policy_data_t *wpolicy,
                                   ldlm_policy_data_t *lpolicy);
 
@@ -822,7 +822,7 @@ struct ldlm_resource {
 
         /* Server-side-only lock value block elements */
         /** to serialize lvbo_init */
-        cfs_semaphore_t        lr_lvb_sem;
+        cfs_mutex_t            lr_lvb_mutex;
         __u32                  lr_lvb_len;
         /** protect by lr_lock */
         void                  *lr_lvb_data;

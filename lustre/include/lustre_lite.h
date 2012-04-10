@@ -60,13 +60,6 @@
 #include <lustre_mds.h>
 #include <lustre_ha.h>
 
-#ifdef __KERNEL__
-
-/* careful, this is easy to screw up */
-#define PAGE_CACHE_MAXBYTES ((__u64)(~0UL) << CFS_PAGE_SHIFT)
-
-#endif
-
 /* 4UL * 1024 * 1024 */
 #define LL_MAX_BLKSIZE_BITS     (22)
 #define LL_MAX_BLKSIZE          (1UL<<LL_MAX_BLKSIZE_BITS)
@@ -132,7 +125,7 @@ struct lustre_client_ocd {
          * under ->lco_lock.
          */
         __u64              lco_flags;
-        cfs_semaphore_t    lco_lock;
+        cfs_mutex_t        lco_lock;
         struct obd_export *lco_md_exp;
         struct obd_export *lco_dt_exp;
 };

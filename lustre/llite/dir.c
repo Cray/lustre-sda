@@ -419,7 +419,7 @@ struct page *ll_get_dir_page(struct file *filp, struct inode *dir, __u64 hash,
         }
         ldlm_lock_dump_handle(D_OTHER, &lockh);
 
-        cfs_down(&lli->lli_readdir_sem);
+        cfs_mutex_lock(&lli->lli_readdir_mutex);
         page = ll_dir_page_locate(dir, &lhash, &start, &end);
         if (IS_ERR(page)) {
                 CERROR("dir page locate: "DFID" at "LPU64": rc %ld\n",
@@ -492,7 +492,7 @@ hash_collision:
                 goto fail;
         }
 out_unlock:
-        cfs_up(&lli->lli_readdir_sem);
+        cfs_mutex_unlock(&lli->lli_readdir_mutex);
         ldlm_lock_decref(&lockh, mode);
         return page;
 
@@ -525,7 +525,7 @@ int ll_readdir(struct file *filp, void *cookie, filldir_t filldir)
                 /*
                  * end-of-file.
                  */
-                RETURN(0);
+                GOTO(out, rc = 0);
 
         rc    = 0;
         done  = 0;
@@ -643,6 +643,10 @@ int ll_readdir(struct file *filp, void *cookie, filldir_t filldir)
         touch_atime(filp->f_vfsmnt, filp->f_dentry);
 
         ll_dir_chain_fini(&chain);
+
+out:
+        if (!rc)
+                ll_stats_ops_tally(sbi, LPROC_LL_READDIR, 1);
 
         RETURN(rc);
 }

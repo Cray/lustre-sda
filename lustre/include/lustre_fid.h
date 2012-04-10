@@ -109,11 +109,8 @@ enum local_oid {
         MDD_ORPHAN_OID          = 7UL,
         MDD_LOV_OBJ_OID         = 8UL,
         MDD_CAPA_KEYS_OID       = 9UL,
-        MDD_OBJECTS_OID         = 10UL,
         /** \see mdt_mod_init */
         MDT_LAST_RECV_OID       = 11UL,
-        /** \see osd_mod_init */
-        OSD_REM_OBJ_DIR_OID     = 12UL,
         OSD_FS_ROOT_OID         = 13UL,
         ACCT_USER_OID           = 15UL,
         ACCT_GROUP_OID          = 16UL,
@@ -124,12 +121,6 @@ enum local_oid {
         LLOG_CATALOGS_OID       = 4118UL,
         MGS_CONFIGS_OID         = 4119UL,
         OFD_HEALTH_CHECK_OID    = 4120UL,
-
-        /** first OID for first OI fid */
-        OSD_OI_FID_OID_FIRST    = 5000UL,
-        /** reserve enough in case we want to have more in the future */
-        OSD_OI_FID_OID_MAX      = OSD_OI_FID_OID_FIRST +
-                                  (1UL << OSD_OI_FID_OID_BITS_MAX),
 };
 
 static inline void lu_local_obj_fid(struct lu_fid *fid, __u32 oid)
@@ -155,7 +146,7 @@ struct lu_server_seq;
 struct lu_client_seq {
         /* Sequence-controller export. */
         struct obd_export      *lcs_exp;
-        cfs_semaphore_t         lcs_sem;
+        cfs_mutex_t             lcs_mutex;
 
         /*
          * Range of allowed for allocation sequeces. When using lu_client_seq on
@@ -220,8 +211,8 @@ struct lu_server_seq {
         /* Client interafce to request controller */
         struct lu_client_seq   *lss_cli;
 
-        /* Semaphore for protecting allocation */
-        cfs_semaphore_t         lss_sem;
+        /* Mutex for protecting allocation */
+        cfs_mutex_t             lss_mutex;
 
         /*
          * Service uuid, passed from MDT + seq name to form unique seq name to

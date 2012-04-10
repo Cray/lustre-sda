@@ -98,8 +98,8 @@ static int ost_validate_obdo(struct obd_export *exp, struct obdo *oa,
                 if (ioobj)
                         ioobj->ioo_seq = FID_SEQ_OST_MDT0;
         /* remove fid_seq_is_rsvd() after FID-on-OST allows SEQ > 9 */
-        } else if (oa == NULL ||
-                   !(fid_seq_is_rsvd(oa->o_seq) || fid_seq_is_idif(oa->o_seq))) {
+        } else if (oa == NULL || !(fid_seq_is_rsvd(oa->o_seq) ||
+                                   fid_seq_is_mdt0(oa->o_seq))) {
                 CERROR("%s: client %s sent invalid object "POSTID"\n",
                        exp->exp_obd->obd_name, obd_export_nid2str(exp),
                        oa ? oa->o_id : -1, oa ? oa->o_seq : -1);
@@ -998,7 +998,7 @@ static int ost_brw_write(struct ptlrpc_request *req, struct obd_trans_info *oti)
         no_reply = rc != 0;
 
 skip_transfer:
-        if (unlikely(client_cksum != 0 && rc == 0)) {
+        if (client_cksum != 0 && rc == 0) {
                 static int cksum_counter;
                 repbody->oa.o_valid |= OBD_MD_FLCKSUM | OBD_MD_FLFLAGS;
                 repbody->oa.o_flags &= ~OBD_FL_CKSUM_ALL;
@@ -1039,7 +1039,7 @@ skip_transfer:
          */
         repbody->oa.o_valid &= ~(OBD_MD_FLMTIME | OBD_MD_FLATIME);
 
-        if (unlikely(client_cksum != server_cksum && rc == 0 &&  !mmap)) {
+        if (unlikely(client_cksum != server_cksum && rc == 0 && !mmap)) {
                 int  new_cksum = ost_checksum_bulk(desc, OST_WRITE, cksum_type);
                 char *msg;
                 char *via;
@@ -2396,7 +2396,7 @@ static int ost_setup(struct obd_device *obd, struct lustre_cfg* lcfg)
         lprocfs_ost_init_vars(&lvars);
         lprocfs_obd_setup(obd, lvars.obd_vars);
 
-        cfs_sema_init(&ost->ost_health_sem, 1);
+        cfs_mutex_init(&ost->ost_health_mutex);
 
         if (oss_num_threads) {
                 /* If oss_num_threads is set, it is the min and the max. */
@@ -2513,13 +2513,13 @@ static int ost_cleanup(struct obd_device *obd)
         /* there is no recovery for OST OBD, all recovery is controlled by
          * obdfilter OBD */
         LASSERT(obd->obd_recovering == 0);
-        cfs_down(&ost->ost_health_sem);
+        cfs_mutex_lock(&ost->ost_health_mutex);
         ptlrpc_unregister_service(ost->ost_service);
         ptlrpc_unregister_service(ost->ost_create_service);
         ptlrpc_unregister_service(ost->ost_io_service);
         ost->ost_service = NULL;
         ost->ost_create_service = NULL;
-        cfs_up(&ost->ost_health_sem);
+        cfs_mutex_unlock(&ost->ost_health_mutex);
 
         lprocfs_obd_cleanup(obd);
 
@@ -2531,11 +2531,11 @@ static int ost_health_check(struct obd_device *obd)
         struct ost_obd *ost = &obd->u.ost;
         int rc = 0;
 
-        cfs_down(&ost->ost_health_sem);
+        cfs_mutex_lock(&ost->ost_health_mutex);
         rc |= ptlrpc_service_health_check(ost->ost_service);
         rc |= ptlrpc_service_health_check(ost->ost_create_service);
         rc |= ptlrpc_service_health_check(ost->ost_io_service);
-        cfs_up(&ost->ost_health_sem);
+        cfs_mutex_unlock(&ost->ost_health_mutex);
 
         /*
          * health_check to return 0 on healthy

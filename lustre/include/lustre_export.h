@@ -62,7 +62,7 @@ struct mdt_idmap_table;
  */
 struct tg_export_data {
         /** Protects led_lcd below */
-        cfs_semaphore_t         ted_lcd_lock;
+        cfs_mutex_t             ted_lcd_lock;
         /** Per-client data for each export */
         struct lsd_client_data *ted_lcd;
         /** Offset of record in last_rcvd file */
@@ -81,7 +81,7 @@ struct mdt_export_data {
         cfs_spinlock_t          med_open_lock; /* lock med_open_head, mfd_list*/
         /** Bitmask of all ibit locks this MDT understands */
         __u64                   med_ibits_known;
-        cfs_semaphore_t         med_idmap_sem;
+        cfs_mutex_t             med_idmap_mutex;
         struct lustre_idmap_table *med_idmap;
 };
 
@@ -213,8 +213,13 @@ struct obd_export {
         __u32                     exp_conn_cnt;
         /** Hash list of all ldlm locks granted on this export */
         cfs_hash_t               *exp_lock_hash;
-        /** lock to protect exp_lock_hash accesses */
-        cfs_spinlock_t            exp_lock_hash_lock;
+        /** Lock protecting access to exp_flock_wait_list */
+        cfs_rwlock_t              exp_flock_wait_lock;
+        /**
+         * Wait queue for Posix lock deadlock detection, added with
+         * ldlm_lock::l_flock_waitq.
+         */
+        cfs_list_t                exp_flock_wait_list;
         cfs_list_t                exp_outstanding_replies;
         cfs_list_t                exp_uncommitted_replies;
         cfs_spinlock_t            exp_uncommitted_replies_lock;

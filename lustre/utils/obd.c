@@ -561,8 +561,8 @@ static void shmem_total(int total_threads)
                         &shared_data->body.start_time);
         shmem_unlock();
 
-        printf("Total: total %llu threads %d sec %f %f/second\n", total,
-                total_threads, secs, total / secs);
+        printf("Total: total "LPU64" threads %d sec %f %f/second\n",
+               total, total_threads, secs, total / secs);
 
         return;
 }
@@ -1435,8 +1435,6 @@ int jt_obd_md_common(int argc, char **argv, int cmd)
                         data.ioc_count = MD_STEP_COUNT;
                 }
 
-                child_base_id += data.ioc_count;
-                count += data.ioc_count;
                 if (cmd == ECHO_MD_CREATE || cmd == ECHO_MD_MKDIR) {
                         /*Allocate fids for the create */
                         rc = jt_obd_alloc_fids(&fid_space, &fid,
@@ -1448,6 +1446,10 @@ int jt_obd_md_common(int argc, char **argv, int cmd)
                         data.ioc_obdo1.o_seq = fid.f_seq;
                         data.ioc_obdo1.o_id = fid.f_oid;
                 }
+
+                child_base_id += data.ioc_count;
+                count += data.ioc_count;
+
                 memset(buf, 0, sizeof(rawbuf));
                 rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
                 if (rc) {

@@ -464,7 +464,7 @@ static inline int fid_seq_is_mdt(const __u64 seq)
 
 static inline int fid_seq_is_rsvd(const __u64 seq)
 {
-        return seq <= FID_SEQ_RSVD;
+        return (seq > FID_SEQ_OST_MDT0 && seq <= FID_SEQ_RSVD);
 };
 
 static inline int fid_is_mdt0(const struct lu_fid *fid)
@@ -608,21 +608,24 @@ static inline int fid_ostid_unpack(struct lu_fid *fid, struct ost_id *ostid,
 }
 
 /* pack an IDIF FID into an ostid (id/seq) for the wire/disk */
-static inline void ostid_idif_pack(struct lu_fid *fid, struct ost_id *ostid)
+static inline void ostid_idif_pack(const struct lu_fid *fid,
+                                   struct ost_id *ostid)
 {
         ostid->oi_seq = FID_SEQ_OST_MDT0;
         ostid->oi_id  = fid_idif_id(fid->f_seq, fid->f_oid, fid->f_ver);
 }
 
 /* pack a non-IDIF FID into an ostid (id/seq) for the wire/disk */
-static inline void ostid_fid_pack(struct lu_fid *fid, struct ost_id *ostid)
+static inline void ostid_fid_pack(const struct lu_fid *fid,
+                                  struct ost_id *ostid)
 {
         ostid->oi_seq = fid_seq(fid);
         ostid->oi_id  = fid_ver_oid(fid);
 }
 
 /* pack any OST FID into an ostid (id/seq) for the wire/disk */
-static inline int fid_ostid_pack(struct lu_fid *fid, struct ost_id *ostid)
+static inline int fid_ostid_pack(const struct lu_fid *fid,
+                                 struct ost_id *ostid)
 {
         if (unlikely(fid_seq_is_igif(fid->f_seq))) {
                 CERROR("bad IGIF, "DFID"\n", PFID(fid));
@@ -758,7 +761,7 @@ static inline int fid_is_sane(const struct lu_fid *fid)
                 fid != NULL &&
                 ((fid_seq(fid) >= FID_SEQ_START && fid_oid(fid) != 0
                                                 && fid_ver(fid) == 0) ||
-                fid_is_igif(fid));
+                fid_is_igif(fid) || fid_seq_is_rsvd(fid_seq(fid)));
 }
 
 static inline int fid_is_zero(const struct lu_fid *fid)
@@ -775,8 +778,10 @@ static inline int lu_fid_eq(const struct lu_fid *f0,
         /* Check that there is no alignment padding. */
         CLASSERT(sizeof *f0 ==
                  sizeof f0->f_seq + sizeof f0->f_oid + sizeof f0->f_ver);
-        LASSERTF(fid_is_igif(f0) || fid_ver(f0) == 0, DFID, PFID(f0));
-        LASSERTF(fid_is_igif(f1) || fid_ver(f1) == 0, DFID, PFID(f1));
+        LASSERTF((fid_is_igif(f0) || fid_is_idif(f0)) ||
+                 fid_ver(f0) == 0, DFID, PFID(f0));
+        LASSERTF((fid_is_igif(f1) || fid_is_idif(f1)) ||
+                 fid_ver(f1) == 0, DFID, PFID(f1));
         return memcmp(f0, f1, sizeof *f0) == 0;
 }
 
@@ -1112,25 +1117,28 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
 #define OBD_CONNECT_SKIP_ORPHAN   0x400000000ULL /* don't reuse orphan objids */
 #define OBD_CONNECT_MAX_EASIZE    0x800000000ULL /* preserved for large EA */
 #define OBD_CONNECT_FULL20       0x1000000000ULL /* it is 2.0 client */
-#define OBD_CONNECT_LAYOUTLOCK   0x2000000000ULL /* client supports layout lock */
+#define OBD_CONNECT_LAYOUTLOCK   0x2000000000ULL /* client uses layout lock */
 #define OBD_CONNECT_64BITHASH    0x4000000000ULL /* client supports 64-bits
                                                   * directory hash */
 #define OBD_CONNECT_MAXBYTES     0x8000000000ULL /* max stripe size */
 #define OBD_CONNECT_IMP_RECOV   0x10000000000ULL /* imp recovery support */
 #define OBD_CONNECT_JOBSTATS    0x20000000000ULL /* jobid in ptlrpc_body */
-#define OBD_CONNECT_GRANT_PARAM 0x40000000000ULL /* additional grant parameters
-                                                  * are passed at connect time
-                                                  * to have finer grant space
-                                                  * allocation */
-#define OBD_CONNECT_EINPROGRESS 0x80000000000ULL /* client can handle the
-                                                  * -EINPROGRESS error for write
-                                                  * RPC properly */
+#define OBD_CONNECT_UMASK       0x40000000000ULL /* create uses client umask */
+#define OBD_CONNECT_EINPROGRESS 0x80000000000ULL /* client handles -EINPROGRESS
+                                                  * write RPC error properly */
+#define OBD_CONNECT_GRANT_PARAM 0x100000000000ULL/* extra grant params used for
+                                                  * finer space reservation */
+/* XXX README XXX:
+ * Please DO NOT add flag values here before first ensuring that this same
+ * flag value is not in use on some other branch.  Please clear any such
+ * changes with senior engineers before starting to use a new flag.  Then,
+ * submit a small patch against EVERY branch that ONLY adds the new flag
+ * and updates obd_connect_names[] for lprocfs_rd_connect_flags(), so it
+ * can be approved and landed easily to reserve the flag for future use. */
 
 #define OCD_HAS_FLAG(ocd, flg)  \
         (!!((ocd)->ocd_connect_flags & OBD_CONNECT_##flg))
 
-/* also update obd_connect_names[] for lprocfs_rd_connect_flags()
- * and lustre/utils/wirecheck.c */
 
 #ifdef HAVE_LRU_RESIZE_SUPPORT
 #define LRU_RESIZE_CONNECT_FLAG OBD_CONNECT_LRU_RESIZE
@@ -1240,6 +1248,13 @@ struct obd_connect_data {
         __u64 paddingE;          /* added 2.1.0. also fix lustre_swab_connect */
         __u64 paddingF;          /* added 2.1.0. also fix lustre_swab_connect */
 };
+/* XXX README XXX:
+ * Please DO NOT use any fields here before first ensuring that this same
+ * field is not in use on some other branch.  Please clear any such changes
+ * with senior engineers before starting to use a new field.  Then, submit
+ * a small patch against EVERY branch that ONLY adds the new field along with
+ * the matching OBD_CONNECT flag, so that can be approved and landed easily to
+ * reserve the flag for future use. */
 
 
 extern void lustre_swab_connect(struct obd_connect_data *ocd);
@@ -1365,6 +1380,7 @@ struct lov_mds_md_v1 {            /* LOV EA mds/wire data (little-endian) */
 #define XATTR_NAME_LMA          "trusted.lma"
 #define XATTR_NAME_LMV          "trusted.lmv"
 #define XATTR_NAME_LINK         "trusted.link"
+#define XATTR_NAME_FID          "trusted.fid"
 #define XATTR_NAME_VERSION      "trusted.version"
 
 
@@ -1928,6 +1944,7 @@ enum {
         MDS_CLOSE_CLEANUP = 1 << 6,
         MDS_KEEP_ORPHAN   = 1 << 7,
         MDS_RECOV_OPEN    = 1 << 8,
+        MDS_UNLINK_DESTROY = 1 << 9,  /* Destory ost object in mdd_unlink */
 };
 
 /* instance of mdt_reint_rec */

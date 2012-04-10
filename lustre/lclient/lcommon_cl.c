@@ -1000,8 +1000,8 @@ void ccc_req_attr_set(const struct lu_env *env,
                                 OBD_MD_FLUID|OBD_MD_FLGID;
                 }
         }
-        obdo_from_inode(oa, inode, &cl_i2info(inode)->lli_fid,
-                        valid_flags & flags);
+        obdo_from_inode(oa, inode, valid_flags & flags);
+        obdo_set_parent_fid(oa, &cl_i2info(inode)->lli_fid);
 }
 
 const struct cl_req_operations ccc_req_ops = {
@@ -1033,10 +1033,18 @@ int cl_setattr_ost(struct inode *inode, const struct iattr *attr,
         io->u.ci_setattr.sa_valid = attr->ia_valid;
         io->u.ci_setattr.sa_capa = capa;
 
-        if (cl_io_init(env, io, CIT_SETATTR, io->ci_obj) == 0)
+        if (cl_io_init(env, io, CIT_SETATTR, io->ci_obj) == 0) {
+                struct ccc_io *cio = ccc_env_io(env);
+
+                if (attr->ia_valid & ATTR_FILE)
+                        /* populate the file descriptor for ftruncate to honor
+                         * group lock - see LU-787 */
+                        cio->cui_fd = cl_iattr2fd(inode, attr);
+
                 result = cl_io_loop(env, io);
-        else
+        } else {
                 result = io->ci_result;
+        }
         cl_io_fini(env, io);
         cl_env_put(env, &refcheck);
         RETURN(result);

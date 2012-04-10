@@ -104,24 +104,15 @@ AC_DEFUN([LC_LUSTRE_VERSION_H],
 #
 # LC_FUNC_DEV_SET_RDONLY
 #
-# check for the old-style dev_set_rdonly which took an extra "devno" param
-# and can only set a single device to discard writes at one time
+# check whether dev_set_rdonly is exported.  This is needed until we
+# have another mechanism to fence IO from the underlying device.
 #
 AC_DEFUN([LC_FUNC_DEV_SET_RDONLY],
-[AC_MSG_CHECKING([if kernel has new dev_set_rdonly])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/fs.h>
-        #include <linux/blkdev.h>
+[LB_CHECK_SYMBOL_EXPORT([dev_set_rdonly],
+[block/ll_rw_block.c,block/blk-core.c],[
+        AC_DEFINE(HAVE_DEV_SET_RDONLY, 1, [kernel exports dev_set_rdonly])
 ],[
-        #ifndef HAVE_CLEAR_RDONLY_ON_PUT
-        #error needs to be patched by lustre kernel patches from Lustre version 1.4.3 or above.
-        #endif
-],[
-        AC_MSG_RESULT([yes])
-        AC_DEFINE(HAVE_DEV_SET_RDONLY, 1, [kernel has new dev_set_rdonly])
-],[
-        AC_MSG_ERROR([no, Linux kernel source needs to be patches by lustre
-kernel patches from Lustre version 1.4.3 or above.])
+        AC_MSG_WARN([kernel missing dev_set_rdonly patch for testing])
 ])
 ])
 
@@ -305,27 +296,6 @@ AC_DEFUN([LC_EXPORT_NODE_TO_CPUMASK],
                                             [node_to_cpumask is exported by
                                              the kernel])]) # i386
           ])
-
-#
-# LC_FUNC_GRAB_CACHE_PAGE_NOWAIT_GFP
-#
-# Check for our patched grab_cache_page_nowait_gfp() function
-# after 2.6.29 we can emulate this using add_to_page_cache_lru()
-#
-AC_DEFUN([LC_FUNC_GRAB_CACHE_PAGE_NOWAIT_GFP],
-[LB_CHECK_SYMBOL_EXPORT([grab_cache_page_nowait_gfp],
-[mm/filemap.c],[
-        AC_DEFINE(HAVE_GRAB_CACHE_PAGE_NOWAIT_GFP, 1,
-                  [kernel exports grab_cache_page_nowait_gfp])
-        ],
-        [LB_CHECK_SYMBOL_EXPORT([add_to_page_cache_lru],
-        [mm/filemap.c],[
-                AC_DEFINE(HAVE_ADD_TO_PAGE_CACHE_LRU, 1,
-                        [kernel exports add_to_page_cache_lru])
-        ],[
-        ])
-        ])
-])
 
 #
 #
@@ -1428,8 +1398,7 @@ LB_LINUX_TRY_COMPILE([
         #include <linux/exportfs.h>
 #endif
 ],[
-        struct export_operations exp;
-        memset(exp.fh_to_dentry, 0, sizeof(exp.fh_to_dentry));
+        do{ }while(sizeof(((struct export_operations *)0)->fh_to_dentry));
 ], [
         AC_MSG_RESULT([yes])
         AC_DEFINE(HAVE_FH_TO_DENTRY, 1,
@@ -1467,26 +1436,6 @@ AC_DEFUN([LC_EXPORT_BDI_INIT],
 ])
 ])
 
-# 2.6.25
-
-# 2.6.25 change define to inline
-AC_DEFUN([LC_MAPPING_CAP_WRITEBACK_DIRTY],
-[AC_MSG_CHECKING([if kernel have mapping_cap_writeback_dirty])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/backing-dev.h>
-],[
-        #ifndef mapping_cap_writeback_dirty
-        mapping_cap_writeback_dirty(NULL);
-        #endif
-],[
-        AC_MSG_RESULT([yes])
-        AC_DEFINE(HAVE_MAPPING_CAP_WRITEBACK_DIRTY, 1,
-                [kernel have mapping_cap_writeback_dirty])
-],[
-        AC_MSG_RESULT([no])
-])
-])
-
 # 2.6.26
 
 # 2.6.26 isn't export set_fs_pwd and change paramter in fs struct
@@ -1497,11 +1446,9 @@ LB_LINUX_TRY_COMPILE([
         #include <linux/spinlock.h>
         #include <linux/fs_struct.h>
 ],[
-        struct path path;
         struct fs_struct fs;
 
-        fs.pwd = path;
-        memset(&fs, 0, sizeof(fs));
+        fs.pwd = *((struct path *)sizeof(fs));
 ], [
         AC_MSG_RESULT([yes])
         AC_DEFINE(HAVE_FS_STRUCT_USE_PATH, 1,
@@ -1515,6 +1462,24 @@ LB_LINUX_TRY_COMPILE([
 #
 # 2.6.27
 #
+AC_DEFUN([LC_PGMKWRITE_USE_VMFAULT],
+[AC_MSG_CHECKING([kernel .page_mkwrite uses struct vm_fault *])
+tmp_flags="$EXTRA_KCFLAGS"
+EXTRA_KCFLAGS="-Werror"
+LB_LINUX_TRY_COMPILE([
+        #include <linux/mm.h>
+],[
+        ((struct vm_operations_struct *)0)->page_mkwrite((struct vm_area_struct *)0, (struct vm_fault *)0);
+], [
+        AC_MSG_RESULT([yes])
+        AC_DEFINE(HAVE_PGMKWRITE_USE_VMFAULT, 1,
+                [kernel vm_operation_struct.page_mkwrite uses struct vm_fault * as second parameter])
+],[
+        AC_MSG_RESULT([no])
+])
+EXTRA_KCFLAGS="$tmp_flags"
+])
+
 AC_DEFUN([LC_INODE_PERMISION_2ARGS],
 [AC_MSG_CHECKING([inode_operations->permission has two args])
 LB_LINUX_TRY_COMPILE([
@@ -1692,26 +1657,6 @@ AC_DEFUN([LC_HAVE_QUOTAIO_H],
         AC_MSG_RESULT([no])
 ])
 ])
-])
-])
-
-# sles10 sp2 need 5 parameter for vfs_symlink
-AC_DEFUN([LC_VFS_SYMLINK_5ARGS],
-[AC_MSG_CHECKING([vfs_symlink need 5 parameter])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/fs.h>
-],[
-        struct inode *dir = NULL;
-        struct dentry *dentry = NULL;
-        struct vfsmount *mnt = NULL;
-        const char * path = NULL;
-        vfs_symlink(dir, dentry, mnt, path, 0);
-],[
-        AC_DEFINE(HAVE_VFS_SYMLINK_5ARGS, 1,
-                [vfs_symlink need 5 parameteres])
-        AC_MSG_RESULT([yes])
-],[
-        AC_MSG_RESULT([no])
 ])
 ])
 
@@ -1972,6 +1917,7 @@ AC_DEFUN([LC_SET_CPUS_ALLOWED],
 # LC_D_OBTAIN_ALIAS
 # starting from 2.6.28 kernel replaces d_alloc_anon() with
 # d_obtain_alias() for getting anonymous dentries
+# RHEL5(2.6.18) has d_obtain_alias but SLES11SP0(2.6.27) not
 #
 AC_DEFUN([LC_D_OBTAIN_ALIAS],
 [AC_MSG_CHECKING([d_obtain_alias exist in kernel])
@@ -1987,6 +1933,19 @@ LB_LINUX_TRY_COMPILE([
         AC_MSG_RESULT([no])
 ])
 ])
+
+#
+# LC_EXPORT_GENERIC_ERROR_REMOVE_PAGE
+#
+AC_DEFUN([LC_EXPORT_GENERIC_ERROR_REMOVE_PAGE],
+         [LB_CHECK_SYMBOL_EXPORT(
+                        [generic_error_remove_page],
+                        [mm/truncate.c],
+                        [AC_DEFINE(HAS_GENERIC_ERROR_REMOVE_PAGE, 1,
+                                [kernel export generic_error_remove_page])],
+                        [])
+         ]
+)
 
 #
 # 2.6.36 fs_struct.lock use spinlock instead of rwlock.
@@ -2029,19 +1988,30 @@ LB_LINUX_TRY_COMPILE([
 
 #
 # 2.6.35 file_operations.fsync taken 2 arguments.
+# 3.0.0 file_operations.fsync takes 4 arguments.
 #
 AC_DEFUN([LC_FILE_FSYNC],
-[AC_MSG_CHECKING([if file_operations.fsync taken 2 arguments])
+[AC_MSG_CHECKING([if file_operations.fsync takes 4 or 2 arguments])
 LB_LINUX_TRY_COMPILE([
         #include <linux/fs.h>
 ],[
-        ((struct file_operations *)0)->fsync(NULL, 0);
+        ((struct file_operations *)0)->fsync(NULL, 0, 0, 0);
 ],[
-        AC_DEFINE(HAVE_FILE_FSYNC_2ARGS, 1,
-                [file_operations.fsync taken 2 arguments])
-        AC_MSG_RESULT([yes])
+        AC_DEFINE(HAVE_FILE_FSYNC_4ARGS, 1,
+                [file_operations.fsync takes 4 arguments])
+        AC_MSG_RESULT([yes, 4 args])
 ],[
-        AC_MSG_RESULT([no])
+        LB_LINUX_TRY_COMPILE([
+                #include <linux/fs.h>
+        ],[
+           ((struct file_operations *)0)->fsync(NULL, 0);
+        ],[
+                AC_DEFINE(HAVE_FILE_FSYNC_2ARGS, 1,
+                        [file_operations.fsync takes 2 arguments])
+                AC_MSG_RESULT([yes, 2 args])
+        ],[
+                AC_MSG_RESULT([no])
+        ])
 ])
 ])
 
@@ -2107,8 +2077,7 @@ AC_DEFUN([LC_REQUEST_QUEUE_UNPLUG_FN],
 LB_LINUX_TRY_COMPILE([
         #include <linux/blkdev.h>
 ],[
-        struct request_queue rq;
-        memset(rq.unplug_fn, 0, sizeof(rq.unplug_fn));
+        do{ }while(sizeof(((struct request_queue *)0)->unplug_fn));
 ],[
         AC_DEFINE(HAVE_REQUEST_QUEUE_UNPLUG_FN, 1,
                   [request_queue has unplug_fn field])
@@ -2170,7 +2139,6 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_EXPORT___D_REHASH
          LC_EXPORT_NODE_TO_CPUMASK
 
-         LC_FUNC_GRAB_CACHE_PAGE_NOWAIT_GFP
          LC_FILEMAP_POPULATE
          LC_BIT_SPINLOCK_H
 
@@ -2195,7 +2163,6 @@ AC_DEFUN([LC_PROG_LINUX],
 
          # 2.6.12
          LC_RW_TREE_LOCK
-         LC_EXPORT_SYNCHRONIZE_RCU
 
          # 2.6.15
          LC_INODE_I_MUTEX
@@ -2259,13 +2226,11 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_PROCFS_DELETED
          LC_EXPORT_BDI_INIT
 
-         #2.6.25
-         LC_MAPPING_CAP_WRITEBACK_DIRTY
-
          # 2.6.26
          LC_FS_STRUCT_USE_PATH
 
          # 2.6.27
+         LC_PGMKWRITE_USE_VMFAULT
          LC_INODE_PERMISION_2ARGS
          LC_FILE_REMOVE_SUID
          LC_TRYLOCKPAGE
@@ -2279,7 +2244,6 @@ AC_DEFUN([LC_PROG_LINUX],
          # 2.6.27.15-2 sles11
          LC_BI_HW_SEGMENTS
          LC_HAVE_QUOTAIO_H
-         LC_VFS_SYMLINK_5ARGS
          LC_BDI_NAME
          LC_SB_ANY_QUOTA_ACTIVE
          LC_SB_HAS_QUOTA_ACTIVE
@@ -2302,8 +2266,9 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_BLK_QUEUE_MAX_SEGMENTS
          LC_SET_CPUS_ALLOWED
          LC_CACHE_UPCALL
+         LC_EXPORT_GENERIC_ERROR_REMOVE_PAGE
 
-         # 2.6.35
+         # 2.6.35, 3.0.0
          LC_FILE_FSYNC
          LC_EXPORT_SIMPLE_SETATTR
 
@@ -2553,6 +2518,7 @@ if test x$enable_split != xno; then
 fi
 ])
 
+# RHEL5(2.6.18) has tux_info
 AC_DEFUN([LC_TASK_CLENV_TUX_INFO],
 [AC_MSG_CHECKING([tux_info])
 LB_LINUX_TRY_COMPILE([
@@ -2757,6 +2723,7 @@ lustre/doc/Makefile
 lustre/include/Makefile
 lustre/include/lustre_ver.h
 lustre/include/linux/Makefile
+lustre/include/darwin/Makefile
 lustre/include/lustre/Makefile
 lustre/kernel_patches/targets/2.6-rhel6.target
 lustre/kernel_patches/targets/2.6-rhel5.target

@@ -815,6 +815,7 @@ static int mdt_raw_lookup(struct mdt_thread_info *info,
         LASSERT(!info->mti_cross_ref);
 
         /* Only got the fid of this obj by name */
+        fid_zero(child_fid);
         rc = mdo_lookup(info->mti_env, next, lname, child_fid,
                         &info->mti_spec);
 #if 0
@@ -979,6 +980,7 @@ static int mdt_getattr_name_lock(struct mdt_thread_info *info,
                 }
 
                 /* step 2: lookup child's fid by name */
+                fid_zero(child_fid);
                 rc = mdo_lookup(info->mti_env, next, lname, child_fid,
                                 &info->mti_spec);
 
@@ -4821,8 +4823,8 @@ static struct lu_object *mdt_object_alloc(const struct lu_env *env,
                 lu_object_init(o, h, d);
                 lu_object_add_top(h, o);
                 o->lo_ops = &mdt_obj_ops;
-                cfs_sema_init(&mo->mot_ioepoch_sem, 1);
-                cfs_sema_init(&mo->mot_lov_sem, 1);
+                cfs_mutex_init(&mo->mot_ioepoch_mutex);
+                cfs_mutex_init(&mo->mot_lov_mutex);
                 RETURN(o);
         } else
                 RETURN(NULL);
@@ -5227,7 +5229,7 @@ static int mdt_init_export(struct obd_export *exp)
 
         CFS_INIT_LIST_HEAD(&med->med_open_head);
         cfs_spin_lock_init(&med->med_open_lock);
-        cfs_sema_init(&med->med_idmap_sem, 1);
+        cfs_mutex_init(&med->med_idmap_mutex);
         med->med_idmap = NULL;
         cfs_spin_lock(&exp->exp_lock);
         exp->exp_connecting = 1;
@@ -5552,7 +5554,7 @@ static int mdt_iocontrol(unsigned int cmd, struct obd_export *exp, int len,
                 rc = mdt_device_sync(&env, mdt);
                 break;
         case OBD_IOC_SET_READONLY:
-                dt->dd_ops->dt_ro(&env, dt);
+                rc = dt->dd_ops->dt_ro(&env, dt);
                 break;
         case OBD_IOC_ABORT_RECOVERY:
                 CERROR("Aborting recovery for device %s\n", obd->obd_name);

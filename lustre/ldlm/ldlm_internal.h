@@ -40,9 +40,9 @@
 
 extern cfs_atomic_t ldlm_srv_namespace_nr;
 extern cfs_atomic_t ldlm_cli_namespace_nr;
-extern cfs_semaphore_t ldlm_srv_namespace_lock;
+extern cfs_mutex_t ldlm_srv_namespace_lock;
 extern cfs_list_t ldlm_srv_namespace_list;
-extern cfs_semaphore_t ldlm_cli_namespace_lock;
+extern cfs_mutex_t ldlm_cli_namespace_lock;
 extern cfs_list_t ldlm_cli_namespace_list;
 
 static inline cfs_atomic_t *ldlm_namespace_nr(ldlm_side_t client)
@@ -57,7 +57,7 @@ static inline cfs_list_t *ldlm_namespace_list(ldlm_side_t client)
                 &ldlm_srv_namespace_list : &ldlm_cli_namespace_list;
 }
 
-static inline cfs_semaphore_t *ldlm_namespace_lock(ldlm_side_t client)
+static inline cfs_mutex_t *ldlm_namespace_lock(ldlm_side_t client)
 {
         return client == LDLM_NAMESPACE_SERVER ?
                 &ldlm_srv_namespace_lock : &ldlm_cli_namespace_lock;
@@ -288,7 +288,10 @@ void ldlm_extent_policy_wire_to_local(const ldlm_wire_policy_data_t *wpolicy,
                                      ldlm_policy_data_t *lpolicy);
 void ldlm_extent_policy_local_to_wire(const ldlm_policy_data_t *lpolicy,
                                      ldlm_wire_policy_data_t *wpolicy);
-void ldlm_flock_policy_wire_to_local(const ldlm_wire_policy_data_t *wpolicy,
+void ldlm_flock_policy_wire18_to_local(const ldlm_wire_policy_data_t *wpolicy,
                                      ldlm_policy_data_t *lpolicy);
+void ldlm_flock_policy_wire21_to_local(const ldlm_wire_policy_data_t *wpolicy,
+                                     ldlm_policy_data_t *lpolicy);
+
 void ldlm_flock_policy_local_to_wire(const ldlm_policy_data_t *lpolicy,
                                      ldlm_wire_policy_data_t *wpolicy);

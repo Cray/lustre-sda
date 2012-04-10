@@ -67,7 +67,7 @@
 
 /* This should not be "optimized" use ~0ULL because page->index is a long and
  * 32-bit systems are therefore limited to 16TB in a mapping */
-#define PAGE_CACHE_MAXBYTES ((__u64)(~0UL) << CFS_PAGE_SHIFT)
+#define MAX_LFS_FILESIZE ((__u64)(~0UL) << CFS_PAGE_SHIFT)
 struct ll_file_data {
         struct obd_client_handle fd_mds_och;
         __u32 fd_flags;
@@ -103,7 +103,6 @@ struct llu_inode_info {
 
         struct lov_stripe_md   *lli_smd;
         char                   *lli_symlink_name;
-        cfs_semaphore_t         lli_open_sem;
         __u64                   lli_maxbytes;
         unsigned long           lli_flags;
         __u64                   lli_ioepoch;
@@ -403,6 +402,12 @@ static inline struct slp_io *slp_env_io(const struct lu_env *env)
 #define cl_isize_read(inode)             (llu_i2stat(inode)->st_size)
 #define cl_isize_write(inode,kms)        do{llu_i2stat(inode)->st_size = kms;}while(0)
 #define cl_isize_write_nolock(inode,kms) cl_isize_write(inode,kms)
+
+static inline struct ll_file_data *cl_iattr2fd(struct inode *inode,
+                                               const struct iattr *attr)
+{
+        return llu_i2info(inode)->lli_file_data;
+}
 
 static inline void cl_isize_lock(struct inode *inode, int lsmlock)
 {
