@@ -5256,8 +5256,7 @@ cleanup_test102() {
 test_102a() {
 	local testfile=$DIR/xattr_testfile
 
-	rm -f $testfile
-        touch $testfile
+	touch $testfile
 
 	[ "$UID" != 0 ] && skip_env "must run as root" && return
 	[ -z "`lctl get_param -n mdc.*-mdc-*.connect_flags | grep xattr`" ] &&
@@ -5267,40 +5266,48 @@ test_102a() {
 		skip_env "could not find setfattr" && return
 
 	echo "set/get xattr..."
-        setfattr -n trusted.name1 -v value1 $testfile || error
-        [ "`getfattr -n trusted.name1 $testfile 2> /dev/null | \
-        grep "trusted.name1"`" == "trusted.name1=\"value1\"" ] || error
+	setfattr -n trusted.name1 -v value1 $testfile || error
+	getfattr -n trusted.name1 $testfile 2> /dev/null |
+	  grep "trusted.name1=.value1" ||
+		error "$testfile missing trusted.name1=value1"
 
-        setfattr -n user.author1 -v author1 $testfile || error
-        [ "`getfattr -n user.author1 $testfile 2> /dev/null | \
-        grep "user.author1"`" == "user.author1=\"author1\"" ] || error
+	setfattr -n user.author1 -v author1 $testfile || error
+	getfattr -n user.author1 $testfile 2> /dev/null |
+	  grep "user.author1=.author1" ||
+		error "$testfile missing trusted.author1=author1"
 
 	echo "listxattr..."
-        setfattr -n trusted.name2 -v value2 $testfile || error
-        setfattr -n trusted.name3 -v value3 $testfile || error
-        [ `getfattr -d -m "^trusted" $testfile 2> /dev/null | \
-        grep "trusted.name" | wc -l` -eq 3 ] || error
+	setfattr -n trusted.name2 -v value2 $testfile ||
+		error "$testfile unable to set trusted.name2"
+	setfattr -n trusted.name3 -v value3 $testfile ||
+		error "$testfile unable to set trusted.name3"
+	[ $(getfattr -d -m "^trusted" $testfile 2> /dev/null |
+	    grep "trusted.name" | wc -l) -eq 3 ] ||
+		error "$testfile missing 3 trusted.name xattrs"
 
-
-        setfattr -n user.author2 -v author2 $testfile || error
-        setfattr -n user.author3 -v author3 $testfile || error
-        [ `getfattr -d -m "^user" $testfile 2> /dev/null | \
-        grep "user" | wc -l` -eq 3 ] || error
+	setfattr -n user.author2 -v author2 $testfile ||
+		error "$testfile unable to set user.author2"
+	setfattr -n user.author3 -v author3 $testfile ||
+		error "$testfile unable to set user.author3"
+	[ $(getfattr -d -m "^user" $testfile 2> /dev/null |
+	    grep "user.author" | wc -l) -eq 3 ] ||
+		error "$testfile missing 3 user.author xattrs"
 
 	echo "remove xattr..."
-        setfattr -x trusted.name1 $testfile || error
-        getfattr -d -m trusted $testfile 2> /dev/null | \
-        grep "trusted.name1" && error || true
+	setfattr -x trusted.name1 $testfile ||
+		error "$testfile error deleting trusted.name1"
+	getfattr -d -m trusted $testfile 2> /dev/null | grep "trusted.name1" &&
+		error "$testfile did not delete trusted.name1 xattr"
 
-        setfattr -x user.author1 $testfile || error
-        getfattr -d -m user $testfile 2> /dev/null | \
-        grep "user.author1" && error || true
+	setfattr -x user.author1 $testfile ||
+		error "$testfile error deleting user.author1"
+	getfattr -d -m user $testfile 2> /dev/null | grep "user.author1" &&
+		error "$testfile did not delete trusted.name1 xattr"
 
 	# b10667: setting lustre special xattr be silently discarded
 	echo "set lustre special xattr ..."
-	setfattr -n "trusted.lov" -v "invalid value" $testfile || error
-
-	rm -f $testfile
+	setfattr -n "trusted.lov" -v "invalid value" $testfile ||
+		error "$testfile allowed setting trusted.lov"
 }
 run_test 102a "user xattr test =================================="
 
@@ -5360,59 +5367,34 @@ test_102c() {
 run_test 102c "non-root getfattr/setfattr for lustre.lov EAs ==========="
 
 compare_stripe_info1() {
-	local stripe_index_all_zero=1
+	local stripe_index_all_zero=true
 
-	for num in 1 2 3 4
-	do
- 		for count in `seq 1 $STRIPE_COUNT`
-		do
-			for offset in `seq 0 $[$STRIPE_COUNT - 1]`
-			do
-				local size=`expr $STRIPE_SIZE \* $num`
+	for num in 1 2 3 4; do
+		for count in $(seq 1 $STRIPE_COUNT); do
+			for offset in $(seq 0 $[$STRIPE_COUNT - 1]); do
+				local size=$((STRIPE_SIZE * num))
 				local file=file"$num-$offset-$count"
-				get_stripe_info client $PWD/$file "$1"
-				if [ $stripe_size -ne $size ]; then
-					error "$file: different stripe size $stripe_size, expected $size" && return
-				fi
-				if [ $stripe_count -ne $count ]; then
-					error "$file: different stripe count $stripe_count, expected $count" && return
-				fi
-				if [ $stripe_index -ne 0 ]; then
-				       stripe_index_all_zero=0
-				fi
+				stripe_size=$(lfs getstripe -S $PWD/$file)
+				[ $stripe_size -ne $size ] &&
+				    error "$file: size $stripe_size != $size"
+				stripe_count=$(lfs getstripe -c $PWD/$file)
+				# allow fewer stripes to be created, ORI-601
+				[ $stripe_count -lt $(((3 * count + 3) / 4)) ]&&
+				    error "$file: count $stripe_count != $count"
+				stripe_index=$(lfs getstripe -i $PWD/$file)
+				[ $stripe_index -ne 0 ] &&
+					stripe_index_all_zero=false
 			done
 		done
 	done
-	[ $stripe_index_all_zero -eq 1 ] && error "all files are being extracted starting from OST index 0"
+	$stripe_index_all_zero &&
+		error "all files are being extracted starting from OST index 0"
 	return 0
 }
 
-compare_stripe_info2() {
-	for num in 1 2 3 4
-	do
-		for count in `seq 1 $STRIPE_COUNT`
-		do
-			for offset in `seq 0 $[$STRIPE_COUNT - 1]`
-			do
-				local size=`expr $STRIPE_SIZE \* $num`
-				local file=file"$num-$offset-$count"
-				get_stripe_info client $PWD/$file
-				if [ $stripe_size -ne $size ]; then
-					error "$file: different stripe size $stripe_size, expected $size" && return
-				fi
-				if [ $stripe_count -ne $count ]; then
-					error "$file: different stripe count $stripe_count, expected $count" && return
-				fi
-				if [ $stripe_index -ne $offset ]; then
-					error "$file: different stripe offset $stripe_index, expected $offset" && return
-				fi
-			done
-		done
-	done
-}
-
 find_lustre_tar() {
-	[ -n "$(which tar 2>/dev/null)" ] && strings $(which tar) | grep -q lustre && echo tar
+	[ -n "$(which tar 2>/dev/null)" ] &&
+		strings $(which tar) | grep -q "lustre" && echo tar
 }
 
 test_102d() {
@@ -7371,6 +7353,9 @@ test_133b() {
 	# extra mdt stats verification.
 	chmod 444 ${testdir}/${tfile} || error "chmod failed"
 	check_stats $SINGLEMDS "setattr" 1
+	do_facet $SINGLEMDS $LCTL set_param mdt.*.md_stats=clear
+	ls -l ${testdir}/${tfile} > /dev/null|| error "ls failed"
+	check_stats $SINGLEMDS "getattr" 1
 	$LFS df || error "lfs failed"
 	check_stats $SINGLEMDS "statfs" 1
 
@@ -7453,7 +7438,7 @@ size_in_KMGT() {
 
 get_rename_size() {
     local size=$1
-    local sample=$(do_facet $SINGLEMDS $LCTL get_param mdt.*.rename_stats | \
+    local sample=$(do_facet $SINGLEMDS $LCTL get_param mdt.*.rename_stats |
                    awk '/ '${size}'/ {print $4}' | sed -e "s/,//g")
     echo $sample
 }
@@ -7470,9 +7455,9 @@ test_133d() {
     mkdir -p ${testdir2} || error "mkdir failed"
 
     createmany -o $testdir1/test 512 || error "createmany failed"
-    local testdir1_size=$(ls -l $DIR/${tdir} | \
+    local testdir1_size=$(ls -l $DIR/${tdir} |
                           awk '/stats_testdir1/ {print $5}')
-    local testdir2_size=$(ls -l $DIR/${tdir} | \
+    local testdir2_size=$(ls -l $DIR/${tdir} |
                           awk '/stats_testdir2/ {print $5}')
 
     testdir1_size=$(order_2 $testdir1_size)
@@ -7481,27 +7466,31 @@ test_133d() {
     testdir1_size=$(size_in_KMGT $testdir1_size)
     testdir2_size=$(size_in_KMGT $testdir2_size)
 
+    echo "source rename dir size: ${testdir1_size}"
+    echo "target rename dir size: ${testdir2_size}"
+
     # check samedir rename size
     mv ${testdir1}/test0 ${testdir1}/test_0
-    local samedir=$(do_facet $SINGLEMDS $LCTL get_param mdt.*.rename_stats | \
-                    grep 'same_dir')
+    local cmd="do_facet $SINGLEMDS $LCTL get_param mdt.*.rename_stats"
+    eval $cmd || error "$cmd failed"
+    local samedir=$($cmd | grep 'same_dir')
     local same_sample=$(get_rename_size $testdir1_size)
     [ -z "$samedir" ] && error "samedir_rename_size count error"
-    [ $same_sample -eq 1 ] || error "samedir_rename_size count error"
+    [ "$same_sample" -eq 1 ] || error "samedir_rename_size error $same_sample"
     echo "Check same dir rename stats success"
 
-    # check crossdir rename size
     do_facet $SINGLEMDS $LCTL set_param mdt.*.rename_stats=clear
+
+    # check crossdir rename size
     mv ${testdir1}/test_0 ${testdir2}/test_0
-    local crossdir=$(do_facet $SINGLEMDS $LCTL get_param mdt.*.rename_stats | \
-                     grep 'crossdir')
+    eval $cmd || error "$cmd failed"
+    local crossdir=$($cmd | grep 'crossdir')
     local src_sample=$(get_rename_size $testdir1_size)
     local tgt_sample=$(get_rename_size $testdir2_size)
     [ -z "$crossdir" ] && error "crossdir_rename_size count error"
-    [ $src_sample -eq 1 ] || error "crossdir_rename_size count error"
-    [ $tgt_sample -eq 1 ] || error "crossdir_rename_size count error"
+    [ "$src_sample" -eq 1 ] || error "crossdir_rename_size error $src_sample"
+    [ "$tgt_sample" -eq 1 ] || error "crossdir_rename_size error $tgt_sample"
     echo "Check cross dir rename stats success"
-
     rm -rf $DIR/${tdir}
 }
 run_test 133d "Verifying rename_stats ========================================"

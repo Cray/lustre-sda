@@ -138,14 +138,6 @@ do {cfs_mutex_lock_nested(&(inode)->i_mutex, I_MUTEX_PARENT); } while(0)
 #define LOCK_INODE_MUTEX_PARENT(inode) LOCK_INODE_MUTEX(inode)
 #endif /* HAVE_INODE_I_MUTEX */
 
-#ifdef HAVE_SEQ_LOCK
-#define LL_SEQ_LOCK(seq) cfs_mutex_lock(&(seq)->lock)
-#define LL_SEQ_UNLOCK(seq) cfs_mutex_unlock(&(seq)->lock)
-#else
-#define LL_SEQ_LOCK(seq) cfs_down(&(seq)->sem)
-#define LL_SEQ_UNLOCK(seq) cfs_up(&(seq)->sem)
-#endif
-
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,15)
 #define d_child d_u.d_child
 #define d_rcu d_u.d_rcu
@@ -273,14 +265,6 @@ static inline int cfs_cleanup_group_info(void)
 extern void __d_rehash(struct dentry *dentry, int lock);
 #endif
 
-#ifdef HAVE_CAN_SLEEP_ARG
-#define ll_flock_lock_file_wait(file, lock, can_sleep) \
-        flock_lock_file_wait(file, lock, can_sleep)
-#else
-#define ll_flock_lock_file_wait(file, lock, can_sleep) \
-        flock_lock_file_wait(file, lock)
-#endif
-
 #define CheckWriteback(page, cmd) \
         ((!PageWriteback(page) && (cmd & OBD_BRW_READ)) || \
          (PageWriteback(page) && (cmd & OBD_BRW_WRITE)))
@@ -347,59 +331,6 @@ static inline int mapping_has_pages(struct address_space *mapping)
 #define LASSERT_I_ALLOC_SEM_READ_LOCKED(i) LASSERT(down_write_trylock(&(i)->i_alloc_sem) == 0)
 
 #include <linux/mpage.h>        /* for generic_writepages */
-#ifndef HAVE_FILEMAP_FDATAWRITE_RANGE
-#include <linux/backing-dev.h>  /* for mapping->backing_dev_info */
-static inline int filemap_fdatawrite_range(struct address_space *mapping,
-                                           loff_t start, loff_t end)
-{
-        int rc;
-        struct writeback_control wbc = {
-                .sync_mode = WB_SYNC_ALL,
-                .nr_to_write = (end - start + PAGE_SIZE - 1) >> PAGE_SHIFT,
-        };
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
-        wbc.range_start = start;
-        wbc.range_end = end;
-#else
-        wbc.start = start;
-        wbc.end = end;
-#endif
-
-#ifdef HAVE_MAPPING_CAP_WRITEBACK_DIRTY
-        if (!mapping_cap_writeback_dirty(mapping))
-                rc = 0;
-#else
-        if (mapping->backing_dev_info->memory_backed)
-                rc = 0;
-#endif
-        /* do_writepages() */
-        else if (mapping->a_ops->writepages)
-                rc = mapping->a_ops->writepages(mapping, &wbc);
-        else
-                rc = generic_writepages(mapping, &wbc);
-        return rc;
-}
-#else
-int filemap_fdatawrite_range(struct address_space *mapping,
-                             loff_t start, loff_t end);
-#endif /* HAVE_FILEMAP_FDATAWRITE_RANGE */
-
-#ifdef HAVE_VFS_KERN_MOUNT
-static inline struct vfsmount *
-ll_kern_mount(const char *fstype, int flags, const char *name, void *data)
-{
-        struct file_system_type *type = get_fs_type(fstype);
-        struct vfsmount *mnt;
-        if (!type)
-                return ERR_PTR(-ENODEV);
-        mnt = vfs_kern_mount(type, flags, name, data);
-        cfs_module_put(type->owner);
-        return mnt;
-}
-#else
-#define ll_kern_mount(fstype, flags, name, data) do_kern_mount((fstype), (flags), (name), (data))
-#endif
 
 #ifndef HAVE_ATOMIC_MNT_COUNT
 static inline unsigned int mnt_get_count(struct vfsmount *mnt)
@@ -925,6 +856,13 @@ static inline int ll_quota_off(struct super_block *sb, int off, int remount)
 # define TIMES_SET_FLAGS (ATTR_MTIME_SET | ATTR_ATIME_SET | ATTR_TIMES_SET)
 #else
 # define TIMES_SET_FLAGS (ATTR_MTIME_SET | ATTR_ATIME_SET)
+#endif
+
+#ifndef HAVE_SELINUX_IS_ENABLED
+static inline bool selinux_is_enabled(void)
+{
+        return 0;
+}
 #endif
 
 #endif /* __KERNEL__ */

@@ -224,7 +224,7 @@ struct osd_device {
          * statfs optimization: we cache a bit.
          */
         cfs_time_t                od_osfs_age;
-        cfs_kstatfs_t             od_kstatfs;
+        struct obd_statfs         od_statfs;
         cfs_spinlock_t            od_osfs_lock;
 
         /**
@@ -254,11 +254,13 @@ struct osd_device {
 #define OSD_DECLARE_OP(oh, op)   {                               \
         LASSERT(oh->ot_handle == NULL);                          \
         ((oh)->ot_declare_ ##op)++; }
-#define OSD_EXEC_OP(handle, op)     {                            \
+#define OSD_EXEC_OP(handle,op)      {                            \
         struct osd_thandle *oh;                                  \
         oh = container_of0(handle, struct osd_thandle, ot_super);\
-        LASSERT((oh)->ot_declare_ ##op > 0);                     \
-        ((oh)->ot_declare_ ##op)--; }
+        if (((oh)->ot_declare_ ##op) > 0) {                      \
+                ((oh)->ot_declare_ ##op)--;                      \
+        }                                                        \
+        }
 #else
 #define OSD_DECLARE_OP(oh, op)
 #define OSD_EXEC_OP(oh, op)
@@ -479,6 +481,8 @@ struct osd_thread_info {
         /** pre-allocated buffer used by oti_it_ea, size OSD_IT_EA_BUFSIZE */
         void                  *oti_it_ea_buf;
 
+        cfs_kstatfs_t          oti_ksfs;
+
         /** IAM iterator for index operation. */
         struct iam_iterator    oti_idx_it;
 
@@ -528,7 +532,7 @@ void osd_brw_stats_update(struct osd_device *osd, struct osd_iobuf *iobuf);
 
 #endif
 int osd_statfs(const struct lu_env *env, struct dt_device *dev,
-               cfs_kstatfs_t *sfs);
+               struct obd_statfs *sfs);
 int osd_object_auth(const struct lu_env *env, struct dt_object *dt,
                     struct lustre_capa *capa, __u64 opc);
 void osd_declare_qid(struct dt_object *dt, struct osd_thandle *oh,

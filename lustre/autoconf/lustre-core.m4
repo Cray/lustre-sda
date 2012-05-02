@@ -379,24 +379,6 @@ AC_TRY_RUN([
 CFLAGS="$tmp_flags"
 ])
 
-# added in 2.6.16
-#
-AC_DEFUN([LC_STRUCT_INTENT_FILE],
-[AC_MSG_CHECKING([if struct open_intent has a file field])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/fs.h>
-        #include <linux/namei.h>
-],[
-        struct open_intent intent;
-        &intent.file;
-],[
-        AC_MSG_RESULT([yes])
-        AC_DEFINE(HAVE_FILE_IN_STRUCT_INTENT, 1, [struct open_intent has a file field])
-],[
-        AC_MSG_RESULT([no])
-])
-])
-
 #
 # LC_CAPA_CRYPTO
 #
@@ -447,25 +429,9 @@ AC_DEFUN([LC_CONFIG_GSS_KEYRING],
  fi
 ])
 
-AC_DEFUN([LC_SUNRPC_CACHE],
-[AC_MSG_CHECKING([if sunrpc struct cache_head uses kref])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/sunrpc/cache.h>
-],[
-        struct cache_head ch;
-        &ch.ref.refcount;
-],[
-        AC_MSG_RESULT([yes])
-        AC_DEFINE(HAVE_SUNRPC_CACHE_V2, 1, [sunrpc cache facility v2])
-],[
-        AC_MSG_RESULT([no])
-])
-])
-
 AC_DEFUN([LC_CONFIG_SUNRPC],
 [LB_LINUX_CONFIG_IM([SUNRPC],[],
                     [AC_MSG_ERROR([kernel SUNRPC support is required by using GSS.])])
- LC_SUNRPC_CACHE
 ])
 
 #
@@ -506,50 +472,6 @@ AC_DEFUN([LC_CONFIG_GSS],
 
         AC_KERBEROS_V5
  fi
-])
-
-#
-# LC_FUNC_HAVE_CAN_SLEEP_ARG
-#
-# 2.6.5 kernel has third arg can_sleep in fs/locks.c: flock_lock_file_wait()
-#
-AC_DEFUN([LC_FUNC_HAVE_CAN_SLEEP_ARG],
-[AC_MSG_CHECKING([if kernel has third arg can_sleep in fs/locks.c: flock_lock_file_wait()])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/fs.h>
-],[
-        int cansleep;
-        struct file *file;
-        struct file_lock *file_lock;
-        flock_lock_file_wait(file, file_lock, cansleep);
-],[
-        AC_DEFINE(HAVE_CAN_SLEEP_ARG, 1,
-                [kernel has third arg can_sleep in fs/locks.c: flock_lock_file_wait()])
-        AC_MSG_RESULT([yes])
-],[
-        AC_MSG_RESULT([no])
-])
-])
-
-#
-# LC_FUNC_F_OP_FLOCK
-#
-# rhel4.2 kernel has f_op->flock field
-#
-AC_DEFUN([LC_FUNC_F_OP_FLOCK],
-[AC_MSG_CHECKING([if struct file_operations has flock field])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/fs.h>
-],[
-        struct file_operations ll_file_operations_flock;
-        ll_file_operations_flock.flock = NULL;
-],[
-        AC_DEFINE(HAVE_F_OP_FLOCK, 1,
-                [struct file_operations has flock field])
-        AC_MSG_RESULT([yes])
-],[
-        AC_MSG_RESULT([no])
-])
 ])
 
 AC_DEFUN([LC_QUOTA_READ],
@@ -840,47 +762,8 @@ LB_LINUX_TRY_COMPILE([
 EXTRA_KCFLAGS="$tmp_flags"
 ])
 
-#
-# LC_VFS_KERN_MOUNT
-# starting from 2.6.18 kernel don't export do_kern_mount
-# and want to use vfs_kern_mount instead.
-#
-AC_DEFUN([LC_VFS_KERN_MOUNT],
-[AC_MSG_CHECKING([vfs_kern_mount exist in kernel])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/mount.h>
-],[
-        vfs_kern_mount(NULL, 0, NULL, NULL);
-],[
-        AC_DEFINE(HAVE_VFS_KERN_MOUNT, 1,
-                [vfs_kern_mount exist in kernel])
-        AC_MSG_RESULT([yes])
-],[
-        AC_MSG_RESULT([no])
-])
-])
-
-#
-# LC_INVALIDATEPAGE_RETURN_INT
-# 2.6.17 changes return type for invalidatepage to 'void' from 'int'
-#
-AC_DEFUN([LC_INVALIDATEPAGE_RETURN_INT],
-[AC_MSG_CHECKING([invalidatepage has return int])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/buffer_head.h>
-],[
-	int rc = block_invalidatepage(NULL, 0);
-],[
-	AC_MSG_RESULT(yes)
-	AC_DEFINE(HAVE_INVALIDATEPAGE_RETURN_INT, 1,
-		[Define if return type of invalidatepage should be int])
-],[
-	AC_MSG_RESULT(no)
-])
-])
-
 # LC_UMOUNTBEGIN_HAS_VFSMOUNT
-# after 2.6.18 umount_begin has different parameters
+# 2.6.18~2.6.25 umount_begin has different parameters
 AC_DEFUN([LC_UMOUNTBEGIN_HAS_VFSMOUNT],
 [AC_MSG_CHECKING([if umount_begin needs vfsmount parameter instead of super_block])
 tmp_flags="$EXTRA_KCFLAGS"
@@ -907,39 +790,6 @@ LB_LINUX_TRY_COMPILE([
 	AC_MSG_RESULT(no)
 ])
 EXTRA_KCFLAGS="$tmp_flags"
-])
-
-# LC_SEQ_LOCK
-# after 2.6.18 seq_file has lock intead of sem
-AC_DEFUN([LC_SEQ_LOCK],
-[AC_MSG_CHECKING([if struct seq_file has lock field])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/seq_file.h>
-],[
-	struct seq_file seq;
-
-	mutex_unlock(&seq.lock);
-],[
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_SEQ_LOCK, 1,
-                [after 2.6.18 seq_file has lock intead of sem])
-],[
-        AC_MSG_RESULT(NO)
-])
-])
-
-#
-# LC_EXPORT_FILEMAP_FDATAWRITE_RANGE
-#
-# No standard kernels export this
-#
-AC_DEFUN([LC_EXPORT_FILEMAP_FDATAWRITE_RANGE],
-[LB_CHECK_SYMBOL_EXPORT([filemap_fdatawrite_range],
-[mm/filemap.c],[
-AC_DEFINE(HAVE_FILEMAP_FDATAWRITE_RANGE, 1,
-            [filemap_fdatawrite_range is exported by the kernel])
-],[
-])
 ])
 
 # LC_FLUSH_OWNER_ID
@@ -1913,6 +1763,22 @@ AC_DEFUN([LC_SET_CPUS_ALLOWED],
                            [set_cpus_allowed is exported by the kernel])],
                 [AC_MSG_RESULT([no])] )])
 
+# 2.6.32 introduces selinux_is_enabled()
+AC_DEFUN([LC_SELINUX_IS_ENABLED],
+[AC_MSG_CHECKING([if selinux_is_enabled is available])
+LB_LINUX_TRY_COMPILE([
+        #include <linux/selinux.h>
+],[
+        selinux_is_enabled();
+],[
+        AC_MSG_RESULT([yes])
+        AC_DEFINE(HAVE_SELINUX_IS_ENABLED, 1,
+                [selinux_is_enabled is defined])
+],[
+        AC_MSG_RESULT([no])
+])
+])
+
 #
 # LC_D_OBTAIN_ALIAS
 # starting from 2.6.28 kernel replaces d_alloc_anon() with
@@ -2144,13 +2010,9 @@ AC_DEFUN([LC_PROG_LINUX],
 
          LC_CONST_ACL_SIZE
 
-         LC_STRUCT_INTENT_FILE
-
          LC_CAPA_CRYPTO
          LC_CONFIG_RMTCLIENT
          LC_CONFIG_GSS
-         LC_FUNC_HAVE_CAN_SLEEP_ARG
-         LC_FUNC_F_OP_FLOCK
          LC_QUOTA_READ
          LC_COOKIE_FOLLOW_LINK
          LC_FUNC_RCU
@@ -2177,11 +2039,7 @@ AC_DEFUN([LC_PROG_LINUX],
          # 2.6.18
          LC_NR_PAGECACHE
          LC_STATFS_DENTRY_PARAM
-         LC_VFS_KERN_MOUNT
-         LC_INVALIDATEPAGE_RETURN_INT
          LC_UMOUNTBEGIN_HAS_VFSMOUNT
-         LC_SEQ_LOCK
-         LC_EXPORT_FILEMAP_FDATAWRITE_RANGE
          LC_FLUSH_OWNER_ID
          if test x$enable_server = xyes ; then
                 LC_EXPORT_INVALIDATE_MAPPING_PAGES
@@ -2267,6 +2125,7 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_SET_CPUS_ALLOWED
          LC_CACHE_UPCALL
          LC_EXPORT_GENERIC_ERROR_REMOVE_PAGE
+         LC_SELINUX_IS_ENABLED
 
          # 2.6.35, 3.0.0
          LC_FILE_FSYNC

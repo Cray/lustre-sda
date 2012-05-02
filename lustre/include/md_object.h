@@ -183,6 +183,7 @@ struct md_attr {
         struct lustre_capa     *ma_capa;
         struct md_som_data     *ma_som;
         int                     ma_lmm_size;
+        int                     ma_big_lmm_used:1;
         int                     ma_lmv_size;
         int                     ma_acl_size;
         int                     ma_cookie_size;
@@ -365,7 +366,7 @@ struct md_device_operations {
                                int *md_size, int *cookie_size);
 
         int (*mdo_statfs)(const struct lu_env *env, struct md_device *m,
-                          cfs_kstatfs_t *sfs);
+                          struct obd_statfs *sfs);
 
         int (*mdo_init_capa_ctxt)(const struct lu_env *env, struct md_device *m,
                                   int mode, unsigned long timeout, __u32 alg,
