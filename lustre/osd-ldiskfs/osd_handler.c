@@ -110,10 +110,13 @@ static int osd_object_invariant(const struct lu_object *l)
 static inline void
 osd_push_ctxt(const struct lu_env *env, struct osd_ctxt *save)
 {
-        struct md_ucred *uc = md_ucred(env);
+        struct md_ucred *uc = md_ucred_check(env);
         struct cred     *tc;
 
-        LASSERT(uc != NULL);
+        if (uc == NULL) {
+                CWARN("ucred is not initialized\n");
+                return;
+        }
 
         save->oc_uid = current_fsuid();
         save->oc_gid = current_fsgid();
@@ -128,9 +131,12 @@ osd_push_ctxt(const struct lu_env *env, struct osd_ctxt *save)
 }
 
 static inline void
-osd_pop_ctxt(struct osd_ctxt *save)
+osd_pop_ctxt(const struct lu_env *env, struct osd_ctxt *save)
 {
         struct cred *tc;
+
+        if (md_ucred_check(env) == NULL)
+                return;
 
         if ((tc = prepare_creds())) {
                 tc->fsuid         = save->oc_uid;
@@ -1340,7 +1346,7 @@ static int osd_inode_setattr(const struct lu_env *env,
                 iattr.ia_gid = attr->la_gid;
                 osd_push_ctxt(env, save);
                 rc = ll_vfs_dq_transfer(inode, &iattr) ? -EDQUOT : 0;
-                osd_pop_ctxt(save);
+                osd_pop_ctxt(env, save);
                 if (rc != 0)
                         return rc;
         }
@@ -1475,7 +1481,7 @@ static int osd_mkfile(struct osd_thread_info *info, struct osd_object *obj,
                                               osd_sb(osd)->s_root->d_inode,
                                      mode);
 #ifdef HAVE_QUOTA_SUPPORT
-        osd_pop_ctxt(save);
+        osd_pop_ctxt(info->oti_env, save);
 #endif
         if (!IS_ERR(inode)) {
                 /* Do not update file c/mtime in ldiskfs.
@@ -1690,16 +1696,16 @@ static int __osd_oi_insert(const struct lu_env *env, struct osd_object *obj,
         struct osd_thread_info *info = osd_oti_get(env);
         struct osd_inode_id    *id   = &info->oti_id;
         struct osd_device      *osd  = osd_obj2dev(obj);
-        struct md_ucred        *uc   = md_ucred(env);
+        struct md_ucred        *uc   = md_ucred_check(env);
+        cfs_cap_t               ignore_quota;
 
         LASSERT(obj->oo_inode != NULL);
-        LASSERT(uc != NULL);
 
         id->oii_ino = obj->oo_inode->i_ino;
         id->oii_gen = obj->oo_inode->i_generation;
 
-        return osd_oi_insert(info, osd, fid, id, th,
-                             uc->mu_cap & CFS_CAP_SYS_RESOURCE_MASK);
+        ignore_quota = uc ? uc->mu_cap & CFS_CAP_SYS_RESOURCE_MASK : 1;
+        return osd_oi_insert(info, osd, fid, id, th, ignore_quota);
 }
 
 static int osd_declare_object_create(const struct lu_env *env,
