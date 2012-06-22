@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -109,12 +107,13 @@
 #define LDD_F_ONDISK_MASK  (LDD_F_SV_TYPE_MASK | LDD_F_IAM_DIR)
 
 enum ldd_mount_type {
-        LDD_MT_EXT3 = 0,
-        LDD_MT_LDISKFS,
-        LDD_MT_SMFS,
-        LDD_MT_REISERFS,
-        LDD_MT_LDISKFS2,
-        LDD_MT_LAST
+	LDD_MT_EXT3 = 0,
+	LDD_MT_LDISKFS,
+	LDD_MT_SMFS,
+	LDD_MT_REISERFS,
+	LDD_MT_LDISKFS2,
+	LDD_MT_ZFS,
+	LDD_MT_LAST
 };
 
 static inline char *mt_str(enum ldd_mount_type mt)
@@ -216,6 +215,7 @@ struct lustre_mount_data {
                                         existing MGS services */
 #define LMD_FLG_WRITECONF    0x0040  /* Rewrite config log */
 #define LMD_FLG_NOIR         0x0080  /* NO imperative recovery */
+#define LMD_FLG_NOSCRUB	     0x0100  /* Do not trigger scrub automatically */
 
 #define lmd_is_client(x) ((x)->lmd_flags & LMD_FLG_CLIENT)
 
@@ -478,6 +478,7 @@ struct lustre_sb_info {
 #define     s2lsi_nocast(sb) ((sb)->s_fs_info)
 
 #define     get_profile_name(sb)   (s2lsi(sb)->lsi_lmd->lmd_profile)
+#define	    get_mount_flags(sb)	   (s2lsi(sb)->lsi_lmd->lmd_flags)
 
 #endif /* __KERNEL__ */
 

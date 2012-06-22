@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -50,6 +48,8 @@
 #include <lustre_export.h>
 
 #define MGSSELF_NAME    "_mgs"
+
+#define MGS_SERVICE_WATCHDOG_FACTOR 2
 
 /* -- imperative recovery control data structures -- */
 /**

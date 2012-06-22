@@ -418,12 +418,12 @@ else
 		        #include <rdma/ib_verbs.h>
 		        #include <rdma/ib_fmr_pool.h>
 		],[
-		        struct rdma_cm_id          *cm_id;
-		        struct rdma_conn_param      conn_param;
-		        struct ib_device_attr       device_attr;
-		        struct ib_qp_attr           qp_attr;
-		        struct ib_pool_fmr          pool_fmr;
-		        enum   ib_cm_rej_reason     rej_reason;
+		        struct rdma_cm_id      *cm_idi __attribute__ ((unused));
+		        struct rdma_conn_param  conn_param __attribute__ ((unused));
+		        struct ib_device_attr   device_attr __attribute__ ((unused));
+		        struct ib_qp_attr       qp_attr __attribute__ ((unused));
+		        struct ib_pool_fmr      pool_fmr __attribute__ ((unused));
+		        enum   ib_cm_rej_reason rej_reason __attribute__ ((unused));
 
 			rdma_destroy_id(NULL);
 		],[
@@ -551,7 +551,7 @@ LB_LINUX_TRY_COMPILE([
         size_t *lenp = NULL;
         loff_t *ppos = NULL;
 
-        proc_handler *proc_handler;
+        proc_handler *proc_handler = NULL;
         proc_handler(table, write, buffer, lenp, ppos);
 
 ],[
@@ -636,11 +636,6 @@ AC_CHECK_FUNCS([gethostbyname socket connect])
 
 # lnet/utils/debug.c
 AC_CHECK_HEADERS([linux/version.h])
-
-AC_CHECK_TYPE([spinlock_t],
-	[AC_DEFINE(HAVE_SPINLOCK_T, 1, [spinlock_t is defined])],
-	[],
-	[#include <linux/spinlock.h>])
 
 # lnet/utils/wirecheck.c
 AC_CHECK_FUNCS([strnlen])

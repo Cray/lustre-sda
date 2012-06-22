@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -474,7 +472,8 @@ static int filter_preprw_read(int cmd, struct obd_export *exp, struct obdo *oa,
         if (exp->exp_nid_stats && exp->exp_nid_stats->nid_stats)
                 lprocfs_counter_add(exp->exp_nid_stats->nid_stats,
                                     LPROC_FILTER_READ_BYTES, tot_bytes);
-
+	filter_counter_incr(exp, LPROC_FILTER_STATS_READ,
+			    oti ? oti->oti_jobid : NULL, tot_bytes);
         EXIT;
 
  cleanup:
@@ -698,7 +697,7 @@ static int filter_preprw_write(int cmd, struct obd_export *exp, struct obdo *oa,
                                 noa->o_valid = OBD_MD_FLID;
                         }
 
-                        if (filter_create(exp, noa, NULL, oti) == 0) {
+                        if (filter_create(NULL, exp, noa, NULL, oti) == 0) {
                                 f_dput(dentry);
                                 dentry = filter_fid2dentry(exp->exp_obd, NULL,
                                                            obj->ioo_seq,
@@ -866,6 +865,8 @@ static int filter_preprw_write(int cmd, struct obd_export *exp, struct obdo *oa,
         if (exp->exp_nid_stats && exp->exp_nid_stats->nid_stats)
                 lprocfs_counter_add(exp->exp_nid_stats->nid_stats,
                                     LPROC_FILTER_WRITE_BYTES, tot_bytes);
+	filter_counter_incr(exp, LPROC_FILTER_STATS_WRITE,
+			    oti ? oti->oti_jobid : NULL, tot_bytes);
         EXIT;
 cleanup:
         switch(cleanup_phase) {
@@ -903,8 +904,8 @@ cleanup:
         return rc;
 }
 
-int filter_preprw(int cmd, struct obd_export *exp, struct obdo *oa,
-                  int objcount, struct obd_ioobj *obj,
+int filter_preprw(const struct lu_env *env, int cmd, struct obd_export *exp,
+                  struct obdo *oa, int objcount, struct obd_ioobj *obj,
                   struct niobuf_remote *nb, int *npages,
                   struct niobuf_local *res, struct obd_trans_info *oti,
                   struct lustre_capa *capa)
@@ -998,8 +999,8 @@ void filter_grant_commit(struct obd_export *exp, int niocount,
         cfs_spin_unlock(&exp->exp_obd->obd_osfs_lock);
 }
 
-int filter_commitrw(int cmd, struct obd_export *exp, struct obdo *oa,
-                    int objcount, struct obd_ioobj *obj,
+int filter_commitrw(const struct lu_env *env, int cmd, struct obd_export *exp,
+                    struct obdo *oa, int objcount, struct obd_ioobj *obj,
                     struct niobuf_remote *nb, int npages,
                     struct niobuf_local *res, struct obd_trans_info *oti,
                     int rc)
@@ -1013,4 +1014,3 @@ int filter_commitrw(int cmd, struct obd_export *exp, struct obdo *oa,
         LBUG();
         return -EPROTO;
 }
-

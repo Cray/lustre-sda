@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -42,9 +40,6 @@
  * Author: Wang Di <wangdi@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_MDS
 
 #include <linux/module.h>
@@ -1141,12 +1136,12 @@ static int mdd_name_insert(const struct lu_env *env,
         const char *name = lname->ln_name;
         struct lu_attr   *la = &mdd_env_info(env)->mti_la_for_fix;
         struct mdd_object *mdd_obj = md2mdd_obj(pobj);
-        struct mdd_device *mdd = mdo2mdd(pobj);
         struct dynlock_handle *dlh;
         struct thandle *handle;
         int is_dir = S_ISDIR(ma->ma_attr.la_mode);
 #ifdef HAVE_QUOTA_SUPPORT
         struct md_ucred *uc = md_ucred_assert(env);
+        struct mdd_device *mdd = mdo2mdd(pobj);
         struct obd_device *obd = mdd->mdd_obd_dev;
         struct obd_export *exp = md_quota(env)->mq_exp;
         struct mds_obd *mds = &obd->u.mds;
@@ -2002,6 +1997,9 @@ static int mdd_create(const struct lu_env *env,
         }
 #endif
 
+        if (OBD_FAIL_CHECK(OBD_FAIL_MDS_DQACQ_NET))
+                GOTO(out_pending, rc = -EINPROGRESS);
+
         /*
          * No RPC inside the transaction, so OST objects should be created at
          * first.
@@ -2196,6 +2194,10 @@ out_pending:
                               quota_opc);
         }
 #endif
+        /* The child object shouldn't be cached anymore */
+        if (rc)
+                cfs_set_bit(LU_OBJECT_HEARD_BANSHEE,
+                            &child->mo_lu.lo_header->loh_flags);
         return rc;
 }
 

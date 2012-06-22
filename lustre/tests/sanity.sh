@@ -1,6 +1,4 @@
 #!/bin/bash
-# -*- mode: Bash; tab-width: 4; indent-tabs-mode: t; -*-
-# vim:autoindent:shiftwidth=4:tabstop=4:
 #
 # Run select tests by setting ONLY, or as arguments to the script.
 # Skip specific tests by setting EXCEPT.
@@ -37,6 +35,7 @@ LCTL=${LCTL:-lctl}
 MCREATE=${MCREATE:-mcreate}
 OPENFILE=${OPENFILE:-openfile}
 OPENUNLINK=${OPENUNLINK:-openunlink}
+export MULTIOP=${MULTIOP:-multiop}
 READS=${READS:-"reads"}
 MUNLINK=${MUNLINK:-munlink}
 SOCKETSERVER=${SOCKETSERVER:-socketserver}
@@ -692,13 +691,13 @@ run_test 24k "touch .../R11a/f; mv .../R11a/f .../R11a/d ======="
 # bug 2429 - rename foo foo foo creates invalid file
 test_24l() {
 	f="$DIR/f24l"
-	multiop $f OcNs || error
+	$MULTIOP $f OcNs || error
 }
 run_test 24l "Renaming a file to itself ========================"
 
 test_24m() {
 	f="$DIR/f24m"
-	multiop $f OcLN ${f}2 ${f}2 || error "link ${f}2 ${f}2 failed"
+	$MULTIOP $f OcLN ${f}2 ${f}2 || error "link ${f}2 ${f}2 failed"
 	# on ext3 this does not remove either the source or target files
 	# though the "expected" operation would be to remove the source
 	$CHECKSTAT -t file ${f} || error "${f} missing"
@@ -775,7 +774,7 @@ test_24t() {
 run_test 24t "mkdir .../R16a/b/c; rename .../R16a/b/c .../R16a ="
 
 test_24u() { # bug12192
-        multiop $DIR/$tfile C2w$((2048 * 1024))c || error
+        $MULTIOP $DIR/$tfile C2w$((2048 * 1024))c || error
         $CHECKSTAT -s $((2048 * 1024)) $DIR/$tfile || error "wrong file size"
 }
 run_test 24u "create stripe file"
@@ -1544,7 +1543,7 @@ run_test 31a "open-unlink file =================================="
 test_31b() {
 	touch $DIR/f31 || error
 	ln $DIR/f31 $DIR/f31b || error
-	multiop $DIR/f31b Ouc || error
+	$MULTIOP $DIR/f31b Ouc || error
 	$CHECKSTAT -t file $DIR/f31 || error
 }
 run_test 31b "unlink file with multiple links while open ======="
@@ -1554,7 +1553,7 @@ test_31c() {
 	ln $DIR/f31 $DIR/f31c || error
 	multiop_bg_pause $DIR/f31 O_uc || return 1
 	MULTIPID=$!
-	multiop $DIR/f31c Ouc
+	$MULTIOP $DIR/f31c Ouc
 	kill -USR1 $MULTIPID
 	wait $MULTIPID
 }
@@ -2065,7 +2064,7 @@ test_34h() {
 	local sz=1000
 
 	dd if=/dev/zero of=$DIR/$tfile bs=1M count=10 || error
-	multiop $DIR/$tfile OG${gid}T${sz}g${gid}c &
+	$MULTIOP $DIR/$tfile OG${gid}T${sz}g${gid}c &
 	MULTIPID=$!
 	sleep 2
 
@@ -2426,6 +2425,7 @@ test_39i() {
 run_test 39i "write, rename, stat =============================="
 
 test_39j() {
+	start_full_debug_logging
 	touch $DIR1/$tfile
 	sleep 1
 
@@ -2446,6 +2446,7 @@ test_39j() {
 		cancel_lru_locks osc
 		if [ $i = 0 ] ; then echo "repeat after cancel_lru_locks"; fi
 	done
+	stop_full_debug_logging
 }
 run_test 39j "write, rename, close, stat ======================="
 
@@ -2780,7 +2781,7 @@ run_test 42e "verify sub-RPC writes are not done synchronously"
 test_43() {
 	mkdir -p $DIR/$tdir
 	cp -p /bin/ls $DIR/$tdir/$tfile
-	multiop $DIR/$tdir/$tfile Ow_c &
+	$MULTIOP $DIR/$tdir/$tfile Ow_c &
 	pid=$!
 	# give multiop a chance to open
 	sleep 1
@@ -2792,10 +2793,10 @@ run_test 43 "execution of file opened for write should return -ETXTBSY"
 
 test_43a() {
         mkdir -p $DIR/d43
-	cp -p `which multiop` $DIR/d43/multiop || cp -p multiop $DIR/d43/multiop
+	cp -p `which $MULTIOP` $DIR/d43/multiop || cp -p multiop $DIR/d43/multiop
         MULTIOP_PROG=$DIR/d43/multiop multiop_bg_pause $TMP/test43.junk O_c || return 1
         MULTIOP_PID=$!
-        multiop $DIR/d43/multiop Oc && error "expected error, got success"
+        $MULTIOP $DIR/d43/multiop Oc && error "expected error, got success"
         kill -USR1 $MULTIOP_PID || return 2
         wait $MULTIOP_PID || return 3
         rm $TMP/test43.junk
@@ -2804,7 +2805,7 @@ run_test 43a "open(RDWR) of file being executed should return -ETXTBSY"
 
 test_43b() {
         mkdir -p $DIR/d43
-	cp -p `which multiop` $DIR/d43/multiop || cp -p multiop $DIR/d43/multiop
+	cp -p `which $MULTIOP` $DIR/d43/multiop || cp -p multiop $DIR/d43/multiop
         MULTIOP_PROG=$DIR/d43/multiop multiop_bg_pause $TMP/test43.junk O_c || return 1
         MULTIOP_PID=$!
         $TRUNCATE $DIR/d43/multiop 0 && error "expected error, got success"
@@ -3028,6 +3029,30 @@ test_48e() { # bug 4134
 	$TRACE rm $DIR/d48e || error "rm '$DIR/d48e' failed"
 }
 run_test 48e "Access to recreated parent subdir (should return errors)"
+
+test_49() { # LU-1030
+	# get ost1 size - lustre-OST0000
+	ost1_size=$(do_facet ost1 lfs df |grep ${ost1_svc} |awk '{print $4}')
+	# write 800M at maximum
+	[ $ost1_size -gt 819200 ] && ost1_size=819200
+
+	lfs setstripe -c 1 -i 0 $DIR/$tfile
+	dd if=/dev/zero of=$DIR/$tfile bs=4k count=$((ost1_size >> 2)) &
+	local dd_pid=$!
+
+	# change max_pages_per_rpc while writing the file
+	local osc1_mppc=osc.$(get_osc_import_name client ost1).max_pages_per_rpc
+	local orig_mppc=`$LCTL get_param -n $osc1_mppc`
+	# loop until dd process exits
+	while ps ax -opid | grep -q $dd_pid; do
+		$LCTL set_param $osc1_mppc=$((RANDOM % 256 + 1))
+		sleep $((RANDOM % 5 + 1))
+	done
+	# restore original max_pages_per_rpc
+	$LCTL set_param $osc1_mppc=$orig_mppc
+	rm $DIR/$tfile || error "rm $DIR/$tfile failed"
+}
+run_test 49 "Change max_pages_per_rpc won't break osc extent"
 
 test_50() {
 	# bug 1485
@@ -4019,7 +4044,7 @@ test_61() {
 	f="$DIR/f61"
 	dd if=/dev/zero of=$f bs=`page_size` count=1
 	cancel_lru_locks osc
-	multiop $f OSMWUc || error
+	$MULTIOP $f OSMWUc || error
 	sync
 }
 run_test 61 "mmap() writes don't make sync hang ================"
@@ -4065,7 +4090,7 @@ test_63b() {
 
 	#define OBD_FAIL_OSC_BRW_PREP_REQ        0x406
 	lctl set_param fail_loc=0x80000406
-	multiop $DIR/$tfile Owy && \
+	$MULTIOP $DIR/$tfile Owy && \
 		error "sync didn't return ENOMEM"
 	sync; sleep 2; sync	# do a real sync this time to flush page
 	lctl get_param -n llite.*.dump_page_cache | grep locked && \
@@ -4435,11 +4460,11 @@ test_73() {
 	pid1=$!
 
 	lctl set_param fail_loc=0x80000129
-	multiop $DIR/d73-1/f73-2 Oc &
+	$MULTIOP $DIR/d73-1/f73-2 Oc &
 	sleep 1
 	lctl set_param fail_loc=0
 
-	multiop $DIR/d73-2/f73-3 Oc &
+	$MULTIOP $DIR/d73-2/f73-3 Oc &
 	pid3=$!
 
 	kill -USR1 $pid1
@@ -4815,7 +4840,7 @@ test_81a() { # LU-456
 
         # write should trigger a retry and success
         $SETSTRIPE -i 0 -c 1 $DIR/$tfile
-        multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
+        $MULTIOP $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
         RC=$?
         if [ $RC -ne 0 ] ; then
                 error "write should success, but failed for $RC"
@@ -4831,7 +4856,7 @@ test_81b() { # LU-456
 
         # write should retry several times and return -ENOSPC finally
         $SETSTRIPE -i 0 -c 1 $DIR/$tfile
-        multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
+        $MULTIOP $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
         RC=$?
         ENOSPC=28
         if [ $RC -ne $ENOSPC ] ; then
@@ -4840,6 +4865,27 @@ test_81b() { # LU-456
 }
 run_test 81b "OST should return -ENOSPC when retry still fails ======="
 
+test_82() { # LU-1031
+	dd if=/dev/zero of=$DIR/$tfile bs=1M count=10
+	local gid1=14091995
+	local gid2=16022000
+
+	multiop_bg_pause $DIR/$tfile OG${gid1}_g${gid1}c || return 1
+	local MULTIPID1=$!
+	multiop_bg_pause $DIR/$tfile O_G${gid2}r10g${gid2}c || return 2
+	local MULTIPID2=$!
+	kill -USR1 $MULTIPID2
+	sleep 2
+	if [[ `ps h -o comm -p $MULTIPID2` == "" ]]; then
+		error "First grouplock does not block second one"
+	else
+		echo "Second grouplock blocks first one"
+	fi
+	kill -USR1 $MULTIPID1
+	wait $MULTIPID1
+	wait $MULTIPID2
+}
+run_test 82 "Basic grouplock test ==============================="
 
 test_99a() {
         [ -z "$(which cvs 2>/dev/null)" ] && skip_env "could not find cvs" && \
@@ -5524,6 +5570,22 @@ test_102k() {
 }
 run_test 102k "setfattr without parameter of value shouldn't cause a crash"
 
+test_102l() {
+	# LU-532 trusted. xattr is invisible to non-root
+	local testfile=$DIR/$tfile
+
+	touch $testfile
+
+	echo "listxattr as user..."
+	chown $RUNAS_ID $testfile
+	$RUNAS getfattr -d -m '.*' $testfile 2>&1 |
+	    grep -q "trusted" &&
+		error "$testfile trusted xattrs are user visible"
+
+	return 0;
+}
+run_test 102l "listxattr filter test =================================="
+
 cleanup_test102
 
 run_acl_subtest()
@@ -5885,7 +5947,7 @@ test_118a() #bug 11710
 {
 	reset_async
 
- 	multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
+	$MULTIOP $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
 	DIRTY=$(lctl get_param -n llite.*.dump_page_cache | grep -c dirty)
         WRITEBACK=$(lctl get_param -n llite.*.dump_page_cache | grep -c writeback)
 
@@ -5905,7 +5967,7 @@ test_118b()
 
 	#define OBD_FAIL_OST_ENOENT 0x217
 	set_nodes_failloc "$(osts_nodes)" 0x217
-	multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
+	$MULTIOP $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
 	RC=$?
 	set_nodes_failloc "$(osts_nodes)" 0
         DIRTY=$(lctl get_param -n llite.*.dump_page_cache | grep -c dirty)
@@ -5926,7 +5988,7 @@ test_118b()
 
 	# Due to the above error the OSC will issue all RPCs syncronously
 	# until a subsequent RPC completes successfully without error.
-	multiop $DIR/$tfile Ow4096yc
+	$MULTIOP $DIR/$tfile Ow4096yc
 	rm -f $DIR/$tfile
 
 	return 0
@@ -5943,7 +6005,7 @@ test_118c()
 	set_nodes_failloc "$(osts_nodes)" 0x216
 
 	# multiop should block due to fsync until pages are written
-	multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c &
+	$MULTIOP $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c &
 	MULTIPID=$!
 	sleep 1
 
@@ -5986,7 +6048,7 @@ test_118d()
 	#define OBD_FAIL_OST_BRW_PAUSE_BULK
 	set_nodes_failloc "$(osts_nodes)" 0x214
 	# multiop should block due to fsync until pages are written
-	multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c &
+	$MULTIOP $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c &
 	MULTIPID=$!
 	sleep 1
 
@@ -6023,7 +6085,7 @@ test_118f() {
         lctl set_param fail_loc=0x8000040a
 
 	# Should simulate EINVAL error which is fatal
-        multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
+        $MULTIOP $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
         RC=$?
 	if [[ $RC -eq 0 ]]; then
 		error "Must return error due to dropped pages, rc=$RC"
@@ -6058,7 +6120,7 @@ test_118g() {
 	lctl set_param fail_loc=0x406
 
 	# simulate local -ENOMEM
-	multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
+	$MULTIOP $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
 	RC=$?
 
 	lctl set_param fail_loc=0
@@ -6094,7 +6156,7 @@ test_118h() {
 	#define OBD_FAIL_OST_BRW_WRITE_BULK      0x20e
         set_nodes_failloc "$(osts_nodes)" 0x20e
 	# Should simulate ENOMEM error which is recoverable and should be handled by timeout
-        multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
+        $MULTIOP $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
         RC=$?
 
         set_nodes_failloc "$(osts_nodes)" 0
@@ -6130,7 +6192,7 @@ test_118i() {
         set_nodes_failloc "$(osts_nodes)" 0x20e
 
 	# Should simulate ENOMEM error which is recoverable and should be handled by timeout
-        multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c &
+        $MULTIOP $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c &
 	PID=$!
 	sleep 5
 	set_nodes_failloc "$(osts_nodes)" 0
@@ -6168,7 +6230,7 @@ test_118j() {
         set_nodes_failloc "$(osts_nodes)" 0x220
 
 	# return -EIO from OST
-        multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
+        $MULTIOP $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
         RC=$?
         set_nodes_failloc "$(osts_nodes)" 0x0
 	if [[ $RC -eq 0 ]]; then
@@ -6220,7 +6282,7 @@ test_118l()
 {
 	# LU-646
 	mkdir -p $DIR/$tdir
-	multiop $DIR/$tdir Dy || error "fsync dir failed"
+	$MULTIOP $DIR/$tdir Dy || error "fsync dir failed"
 	rm -rf $DIR/$tdir
 }
 run_test 118l "fsync dir ========="
@@ -6250,7 +6312,7 @@ test_119b() # bug 11737
         $SETSTRIPE -c 2 $DIR/$tfile || error "setstripe failed"
         dd if=/dev/zero of=$DIR/$tfile bs=1M count=1 seek=1 || error "dd failed"
         sync
-        multiop $DIR/$tfile oO_RDONLY:O_DIRECT:r$((2048 * 1024)) || \
+        $MULTIOP $DIR/$tfile oO_RDONLY:O_DIRECT:r$((2048 * 1024)) || \
                 error "direct read failed"
         rm -f $DIR/$tfile
 }
@@ -6888,7 +6950,7 @@ test_129() {
 	I=0
 	J=0
 	while [ ! $I -gt $((MAX * MDSCOUNT)) ]; do
-		multiop $DIR/$tdir/$J Oc
+		$MULTIOP $DIR/$tdir/$J Oc
 		rc=$?
 		if [ $rc -eq $EFBIG ]; then
 			set_dir_limits 0
@@ -7300,6 +7362,9 @@ check_stats() {
 test_133a() {
 	remote_ost_nodsh && skip "remote OST with nodsh" && return
 	remote_mds_nodsh && skip "remote MDS with nodsh" && return
+
+	do_facet $SINGLEMDS $LCTL list_param mdt.*.rename_stats ||
+		{ skip "MDS doesn't support rename stats"; return; }
 	local testdir=$DIR/${tdir}/stats_testdir
 	mkdir -p $DIR/${tdir}
 
@@ -7446,6 +7511,9 @@ get_rename_size() {
 test_133d() {
     remote_ost_nodsh && skip "remote OST with nodsh" && return
     remote_mds_nodsh && skip "remote MDS with nodsh" && return
+    do_facet $SINGLEMDS $LCTL list_param mdt.*.rename_stats ||
+        { skip "MDS doesn't support rename stats"; return; }
+
     local testdir1=$DIR/${tdir}/stats_testdir1
     local testdir2=$DIR/${tdir}/stats_testdir2
 
@@ -7649,7 +7717,7 @@ test_152() {
 run_test 152 "test read/write with enomem ============================"
 
 test_153() {
-        multiop $DIR/$tfile Ow4096Ycu || error "multiop failed"
+        $MULTIOP $DIR/$tfile Ow4096Ycu || error "multiop failed"
 }
 run_test 153 "test if fdatasync does not crash ======================="
 
@@ -7996,6 +8064,8 @@ changelog_chmask()
 
 test_160() {
     remote_mds_nodsh && skip "remote MDS with nodsh" && return
+    [ $(lustre_version_code $SINGLEMDS) -ge $(version_code 2.2.0) ] ||
+        { skip "Need MDS version at least 2.2.0"; return; }
     USER=$(do_facet $SINGLEMDS $LCTL --device $MDT0 changelog_register -n)
     echo "Registered as changelog user $USER"
     do_facet $SINGLEMDS $LCTL get_param -n mdd.$MDT0.changelog_users | \
@@ -8212,11 +8282,11 @@ run_test 163 "kernel <-> userspace comms"
 test_169() {
 	# do directio so as not to populate the page cache
 	log "creating a 10 Mb file"
-	multiop $DIR/$tfile oO_CREAT:O_DIRECT:O_RDWR:w$((10*1048576))c || error "multiop failed while creating a file"
+	$MULTIOP $DIR/$tfile oO_CREAT:O_DIRECT:O_RDWR:w$((10*1048576))c || error "multiop failed while creating a file"
 	log "starting reads"
 	dd if=$DIR/$tfile of=/dev/null bs=4096 &
 	log "truncating the file"
-	multiop $DIR/$tfile oO_TRUNC:c || error "multiop failed while truncating the file"
+	$MULTIOP $DIR/$tfile oO_TRUNC:c || error "multiop failed while truncating the file"
 	log "killing dd"
 	kill %+ || true # reads might have finished
 	echo "wait until dd is finished"
@@ -8401,6 +8471,32 @@ test_181() { # bug 22177
 	return 0
 }
 run_test 181 "Test open-unlinked dir ========================"
+
+test_182() {
+	# disable MDC RPC lock wouldn't crash client
+	local fcount=1000
+	local tcount=4
+
+	mkdir -p $DIR/$tdir || error "creating dir $DIR/$tdir"
+#define OBD_FAIL_MDC_RPCS_SEM		0x804
+	$LCTL set_param fail_loc=0x804
+
+	for (( i=0; i < $tcount; i++ )) ; do
+		mkdir $DIR/$tdir/$i
+		createmany -o $DIR/$tdir/$i/f- $fcount &
+	done
+	wait
+
+	for (( i=0; i < $tcount; i++ )) ; do
+		unlinkmany $DIR/$tdir/$i/f- $fcount &
+	done
+	wait
+
+	rm -rf $DIR/$tdir
+
+	$LCTL set_param fail_loc=0
+}
+run_test 182 "Disable MDC RPCs semaphore wouldn't crash client ================"
 
 # OST pools tests
 POOL=${POOL:-cea1}
@@ -8700,6 +8796,106 @@ test_204h() {
 }
 run_test 204h "Print raw stripe count and size ============="
 
+# Figure out which job scheduler is being used, if any,
+# or use a fake one
+if [ -n "$SLURM_JOB_ID" ]; then # SLURM
+	JOBENV=SLURM_JOB_ID
+elif [ -n "$LSB_JOBID" ]; then # Load Sharing Facility
+	JOBENV=LSB_JOBID
+elif [ -n "$PBS_JOBID" ]; then # PBS/Maui/Moab
+	JOBENV=PBS_JOBID
+elif [ -n "$LOADL_STEPID" ]; then # LoadLeveller
+	JOBENV=LOADL_STEP_ID
+elif [ -n "$JOB_ID" ]; then # Sun Grid Engine
+	JOBENV=JOB_ID
+else
+	JOBENV=FAKE_JOBID
+fi
+
+verify_jobstats() {
+	local cmd=$1
+	local target=$2
+
+	# clear old jobstats
+	do_facet $SINGLEMDS lctl set_param mdt.*.job_stats="clear"
+	do_facet ost0 lctl set_param obdfilter.*.job_stats="clear"
+
+	# use a new JobID for this test, or we might see an old one
+	[ "$JOBENV" = "FAKE_JOBID" ] && FAKE_JOBID=test_id.$testnum.$RANDOM
+
+	JOBVAL=${!JOBENV}
+	log "Test: $cmd"
+	log "Using JobID environment variable $JOBENV=$JOBVAL"
+
+	if [ $JOBENV = "FAKE_JOBID" ]; then
+		FAKE_JOBID=$JOBVAL $cmd
+	else
+		$cmd
+	fi
+
+	if [ "$target" = "mdt" -o "$target" = "both" ]; then
+		FACET="$SINGLEMDS" # will need to get MDS number for DNE
+		do_facet $FACET lctl get_param mdt.*.job_stats |
+			grep $JOBVAL || error "No job stats found on MDT $FACET"
+	fi
+	if [ "$target" = "ost" -o "$target" = "both" ]; then
+		FACET=ost0
+		do_facet $FACET lctl get_param obdfilter.*.job_stats |
+			grep $JOBVAL || error "No job stats found on OST $FACET"
+	fi
+}
+
+test_205() { # Job stats
+	local cmd
+	OLD_JOBENV=`$LCTL get_param -n jobid_var`
+	if [ $OLD_JOBENV != $JOBENV ]; then
+		do_facet mgs $LCTL conf_param $FSNAME.sys.jobid_var=$JOBENV
+		wait_update $HOSTNAME "$LCTL get_param -n jobid_var" \
+			$JOBENV || return 1
+	fi
+
+	# mkdir
+	cmd="mkdir $DIR/$tfile"
+	verify_jobstats "$cmd" "mdt"
+	# rmdir
+	cmd="rm -fr $DIR/$tfile"
+	verify_jobstats "$cmd" "mdt"
+	# mknod
+	cmd="mknod $DIR/$tfile c 1 3"
+	verify_jobstats "$cmd" "mdt"
+	# unlink
+	cmd="rm -f $DIR/$tfile"
+	verify_jobstats "$cmd" "mdt"
+	# open & close
+	cmd="$SETSTRIPE -i 0 -c 1 $DIR/$tfile"
+	verify_jobstats "$cmd" "mdt"
+	# setattr
+	cmd="touch $DIR/$tfile"
+	verify_jobstats "$cmd" "both"
+	# write
+	cmd="dd if=/dev/zero of=$DIR/$tfile bs=1M count=1 oflag=sync"
+	verify_jobstats "$cmd" "ost"
+	# read
+	cmd="dd if=$DIR/$tfile of=/dev/null bs=1M count=1 iflag=direct"
+	verify_jobstats "$cmd" "ost"
+	# truncate
+	cmd="$TRUNCATE $DIR/$tfile 0"
+	verify_jobstats "$cmd" "both"
+	# rename
+	cmd="mv -f $DIR/$tfile $DIR/jobstats_test_rename"
+	verify_jobstats "$cmd" "mdt"
+
+	# cleanup
+	rm -f $DIR/jobstats_test_rename
+
+	if [ $OLD_JOBENV != $JOBENV ]; then
+		do_facet mgs $LCTL conf_param $FSNAME.sys.jobid_var=$OLD_JOBENV
+		wait_update $HOSTNAME "$LCTL get_param -n jobid_var" \
+			$OLD_JOBENV || return 1
+	fi
+}
+run_test 205 "Verify job stats"
+
 test_212() {
 	size=`date +%s`
 	size=$((size % 8192 + 1))
@@ -8779,12 +8975,12 @@ check_lnet_proc_entry() {
 }
 
 test_215() { # for bugs 18102, 21079, 21517
-	local N='(0|[1-9][0-9]*)'   # non-negative numeric
-	local P='[1-9][0-9]*'       # positive numeric
-	local I='(0|-?[1-9][0-9]*)' # any numeric (0 | >0 | <0)
-	local NET='[a-z][a-z0-9]*'  # LNET net like o2ib2
-	local ADDR='[0-9.]+'        # LNET addr like 10.0.0.1
-	local NID="$ADDR@$NET"      # LNET nid like 10.0.0.1@o2ib2
+	local N='(0|[1-9][0-9]*)'       # non-negative numeric
+	local P='[1-9][0-9]*'           # positive numeric
+	local I='(0|-?[1-9][0-9]*|NA)'  # any numeric (0 | >0 | <0) or NA if no value
+	local NET='[a-z][a-z0-9]*'      # LNET net like o2ib2
+	local ADDR='[0-9.]+'            # LNET addr like 10.0.0.1
+	local NID="$ADDR@$NET"          # LNET nid like 10.0.0.1@o2ib2
 
 	local L1 # regexp for 1st line
 	local L2 # regexp for 2nd line (optional)
@@ -8918,11 +9114,11 @@ run_test 217 "check lctl ping for hostnames with hiphen ('-')"
 test_218() {
        # do directio so as not to populate the page cache
        log "creating a 10 Mb file"
-       multiop $DIR/$tfile oO_CREAT:O_DIRECT:O_RDWR:w$((10*1048576))c || error "multiop failed while creating a file"
+       $MULTIOP $DIR/$tfile oO_CREAT:O_DIRECT:O_RDWR:w$((10*1048576))c || error "multiop failed while creating a file"
        log "starting reads"
        dd if=$DIR/$tfile of=/dev/null bs=4096 &
        log "truncating the file"
-       multiop $DIR/$tfile oO_TRUNC:c || error "multiop failed while truncating the file"
+       $MULTIOP $DIR/$tfile oO_TRUNC:c || error "multiop failed while truncating the file"
        log "killing dd"
        kill %+ || true # reads might have finished
        echo "wait until dd is finished"
@@ -9082,6 +9278,8 @@ test_225a () {
        if [ -z ${MDSSURVEY} ]; then
               skip_env "mds-survey not found" && return
        fi
+       [ $(lustre_version_code $SINGLEMDS) -ge $(version_code 2.2.51) ] ||
+            { skip "Need MDS version at least 2.2.51"; return; }
 
        local mds=$(facet_host $SINGLEMDS)
        local target=$(do_nodes $mds 'lctl dl' | \
@@ -9104,6 +9302,8 @@ test_225b () {
        if [ -z ${MDSSURVEY} ]; then
               skip_env "mds-survey not found" && return
        fi
+       [ $(lustre_version_code $SINGLEMDS) -ge $(version_code 2.2.51) ] ||
+            { skip "Need MDS version at least 2.2.51"; return; }
 
        if [ $($LCTL dl | grep -c osc) -eq 0 ]; then
               skip_env "Need to mount OST to test" && return
@@ -9125,6 +9325,59 @@ test_225b () {
        rm -f ${TMP}/mds_survey*
 }
 run_test 225b "Metadata survey sanity with stripe_count = 1"
+
+mcreate_path2fid () {
+	local mode=$1
+	local major=$2
+	local minor=$3
+	local name=$4
+	local desc=$5
+	local path=$DIR/$tdir/$name
+	local fid
+	local rc
+	local fid_path
+
+	$MCREATE --mode=$1 --major=$2 --minor=$3 $path || \
+		error "error: cannot create $desc"
+
+	fid=$($LFS path2fid $path)
+	rc=$?
+	[ $rc -ne 0 ] && error "error: cannot get fid of a $desc"
+
+	fid_path=$($LFS fid2path $DIR $fid)
+	rc=$?
+	[ $rc -ne 0 ] && error "error: cannot get path of a $desc by fid"
+
+	[ "$path" == "$fid_path" ] || \
+		error "error: fid2path returned \`$fid_path', expected \`$path'"
+}
+
+test_226 () {
+	rm -rf $DIR/$tdir
+	mkdir -p $DIR/$tdir
+
+	mcreate_path2fid 0010666 0 0 fifo "FIFO"
+	mcreate_path2fid 0020666 1 3 null "character special file (null)"
+	mcreate_path2fid 0020666 1 255 none "character special file (no device)"
+	mcreate_path2fid 0040666 0 0 dir "directory"
+	mcreate_path2fid 0060666 7 0 loop0 "block special file (loop)"
+	mcreate_path2fid 0100666 0 0 file "regular file"
+	mcreate_path2fid 0120666 0 0 link "symbolic link"
+	mcreate_path2fid 0140666 0 0 sock "socket"
+}
+run_test 226 "call path2fid and fid2path on files of all type"
+
+# LU-1299 Executing or running ldd on a truncated executable does not
+# cause an out-of-memory condition.
+test_227() {
+	dd if=`which date` of=$MOUNT/date bs=1k count=1
+	chmod +x $MOUNT/date
+
+	$MOUNT/date > /dev/null
+	ldd $MOUNT/date > /dev/null
+	rm -f $MOUNT/date
+}
+run_test 227 "running truncated executable does not cause OOM"
 
 #
 # tests that do cleanup/setup should be run at the end

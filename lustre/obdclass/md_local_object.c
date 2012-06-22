@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -43,9 +41,6 @@
  */
 
 #define DEBUG_SUBSYSTEM S_CLASS
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 
 #include <obd_support.h>
 #include <lustre_disk.h>
@@ -91,7 +86,7 @@ LU_KEY_INIT(llod_global, struct llo_thread_info);
 LU_KEY_FINI(llod_global, struct llo_thread_info);
 
 static struct lu_context_key llod_key = {
-        .lct_tags = LCT_MD_THREAD | LCT_DT_THREAD,
+        .lct_tags = LCT_MD_THREAD,
         .lct_init = llod_global_key_init,
         .lct_fini = llod_global_key_fini
 };

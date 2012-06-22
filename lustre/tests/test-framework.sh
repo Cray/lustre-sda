@@ -1,5 +1,6 @@
 #!/bin/bash
-# vim:expandtab:shiftwidth=4:softtabstop=4:tabstop=4:
+# -*- mode: Bash; tab-width: 4; indent-tabs-mode: t; -*-
+# vim:shiftwidth=4:softtabstop=4:tabstop=4:
 
 trap 'print_summary && touch $TF_FAIL && \
     echo "test-framework exiting on error"' ERR
@@ -263,12 +264,15 @@ init_test_env() {
     rm -f $TMP/*active
 }
 
-kernel_version() {
+version_code() {
+    # split arguments like "1.8.6-wc3" into "1", "8", "6", "wc3"
+    eval set -- $(tr "[:punct:]" " " <<< $*)
+
     echo -n $((($1 << 16) | ($2 << 8) | $3))
 }
 
 export LINUX_VERSION=$(uname -r | sed -e "s/[-.]/ /3" -e "s/ .*//")
-export LINUX_VERSION_CODE=$(kernel_version ${LINUX_VERSION//\./ })
+export LINUX_VERSION_CODE=$(version_code ${LINUX_VERSION//\./ })
 
 case `uname -r` in
 2.4.*) EXT=".o"; USE_QUOTA=no; [ ! "$CLIENTONLY" ] && FSTYPE=ext3;;
@@ -374,7 +378,6 @@ load_modules_local() {
     load_module obdclass/obdclass
     load_module ptlrpc/ptlrpc
     load_module ptlrpc/gss/ptlrpc_gss
-    [ "$USE_QUOTA" = "yes" -a "$LQUOTA" != "no" ] && load_module quota/lquota $LQUOTAOPTS
     load_module fld/fld
     load_module fid/fid
     load_module lmv/lmv
@@ -393,6 +396,7 @@ load_modules_local() {
                 { modprobe exportfs 2> /dev/null || true; }
             load_module ../ldiskfs/ldiskfs/ldiskfs
         fi
+        [ "$USE_QUOTA" = "yes" -a "$LQUOTA" != "no" ] && load_module quota/lquota $LQUOTAOPTS
         load_module mgs/mgs
         load_module mds/mds
         load_module mdd/mdd
@@ -401,7 +405,11 @@ load_modules_local() {
         load_module cmm/cmm
         load_module osd-ldiskfs/osd_ldiskfs
         load_module ost/ost
-        load_module obdfilter/obdfilter
+		if [ "x$USE_OFD" = "xyes" ]; then
+			load_module ofd/ofd
+		else
+			load_module obdfilter/obdfilter
+		fi
     fi
 
 
@@ -647,27 +655,41 @@ set_default_debug_facet () {
 
 # Facet functions
 mount_facets () {
-    local facets=${1:-$(get_facets)}
-    local facet
+	local facets=${1:-$(get_facets)}
+	local facet
 
-    for facet in ${facets//,/ }; do
-        mount_facet $facet || error "Restart of $facet failed!"
-    done
+	for facet in ${facets//,/ }; do
+		mount_facet $facet
+		local RC=$?
+		[ $RC -eq 0 ] && continue
+
+		if [ "$TESTSUITE.$TESTNAME" = "replay-dual.test_0a" ]; then
+			skip "Restart of $facet failed!." && touch $LU482_FAILED
+		else
+			error "Restart of $facet failed!"
+		fi
+		return $RC
+	done
 }
 
 mount_facet() {
-    local facet=$1
-    shift
-    local dev=$(facet_active $facet)_dev
-    local opt=${facet}_opt
-    local mntpt=$(facet_mntpt $facet)
+	local facet=$1
+	shift
+	local dev=$(facet_active $facet)_dev
+	local opt=${facet}_opt
+	local mntpt=$(facet_mntpt $facet)
 
-    echo "Starting ${facet}: ${!opt} $@ ${!dev} $mntpt"
-    do_facet ${facet} "mkdir -p $mntpt; mount -t lustre ${!opt} $@ ${!dev} $mntpt"
-    RC=${PIPESTATUS[0]}
-    if [ $RC -ne 0 ]; then
-        echo "mount -t lustre $@ ${!dev} $mntpt"
-        echo "Start of ${!dev} on ${facet} failed ${RC}"
+	echo "Starting ${facet}: ${!opt} $@ ${!dev} $mntpt"
+	# for testing LU-482 error handling in mount_facets() and test_0a()
+	if [ -f $TMP/test-lu482-trigger ]; then
+		RC=2
+	else
+		do_facet ${facet} "mkdir -p $mntpt; mount -t lustre ${!opt} \
+				   $@ ${!dev} $mntpt"
+		RC=${PIPESTATUS[0]}
+	fi
+	if [ $RC -ne 0 ]; then
+		echo "Start of ${!dev} on ${facet} failed ${RC}"
     else
         set_default_debug_facet $facet
 
@@ -867,7 +889,7 @@ sanity_mount_check_nodes () {
     local rc=0
     for mnt in $mnts ; do
         do_nodes $nodes "running=\\\$(grep -c $mnt' ' /proc/mounts);
-mpts=\\\$(mount | grep -w -c $mnt);
+mpts=\\\$(mount | grep -c $mnt' ');
 if [ \\\$running -ne \\\$mpts ]; then
     echo \\\$(hostname) env are INSANE!;
     exit 1;
@@ -937,7 +959,7 @@ fi;
 exit \\\$rc" || return ${PIPESTATUS[0]}
 
     echo "Started clients $clients: "
-    do_nodes $clients "mount | grep -w $mnt"
+    do_nodes $clients "mount | grep $mnt' '"
 
     set_default_debug_nodes $clients
 
@@ -2452,12 +2474,6 @@ osc_ensure_active () {
 }
 
 init_param_vars () {
-    if ! remote_ost_nodsh && ! remote_mds_nodsh; then
-        export MDSVER=$(do_facet $SINGLEMDS "lctl get_param version" | cut -d. -f1,2)
-        export OSTVER=$(do_facet ost1 "lctl get_param version" | cut -d. -f1,2)
-        export CLIVER=$(lctl get_param version | cut -d. -f 1,2)
-    fi
-
     remote_mds_nodsh ||
         TIMEOUT=$(do_facet $SINGLEMDS "lctl get_param -n timeout")
 
@@ -3707,7 +3723,8 @@ is_patchless ()
 }
 
 check_versions () {
-    [ "$MDSVER" = "$CLIVER" -a "$OSTVER" = "$CLIVER" ]
+    [ "$(lustre_version_code client)" = "$(lustre_version_code $SINGLEMDS)" -a \
+      "$(lustre_version_code client)" = "$(lustre_version_code ost1)" ]
 }
 
 get_node_count() {
@@ -3819,7 +3836,7 @@ fi"
 # Run multiop in the background, but wait for it to print
 # "PAUSING" to its stdout before returning from this function.
 multiop_bg_pause() {
-    MULTIOP_PROG=${MULTIOP_PROG:-multiop}
+    MULTIOP_PROG=${MULTIOP_PROG:-$MULTIOP}
     FILE=$1
     ARGS=$2
 
@@ -3993,19 +4010,12 @@ get_clientosc_proc_path() {
 
 get_lustre_version () {
     local facet=${1:-"$SINGLEMDS"}    
-    do_facet $facet $LCTL get_param -n version |  awk '/^lustre:/ {print $2}'
+    do_facet $facet $LCTL get_param -n version | awk '/^lustre:/ {print $2}'
 }
 
-get_mds_version_major () {
+lustre_version_code() {
     local facet=${1:-"$SINGLEMDS"}
-    local version=$(get_lustre_version $facet)
-    echo $version | awk -F. '{print $1}'
-}
-
-get_mds_version_minor () {
-    local facet=${1:-"$SINGLEMDS"}
-    local version=$(get_lustre_version $facet)
-    echo $version | awk -F. '{print $2}'
+    version_code $(get_lustre_version $1)
 }
 
 # If the 2.0 MDS was mounted on 1.8 device, then the OSC and LOV names
@@ -4014,10 +4024,8 @@ get_mds_version_minor () {
 # mdt osc: fsname-OSTXXXX-osc
 mds_on_old_device() {
     local mds=${1:-"$SINGLEMDS"}
-    local major=$(get_mds_version_major $mds)
-    local minor=$(get_mds_version_minor $mds)
 
-    if [ $major -ge 2 ] || [ $major -eq 1 -a $minor -gt 8 ]; then
+    if [ $(lustre_version_code $mds) -gt $(version_code 1.9.0) ]; then
         do_facet $mds "lctl list_param osc.$FSNAME-OST*-osc \
             > /dev/null 2>&1" && return 0
     fi
@@ -4032,9 +4040,8 @@ get_mdtosc_proc_path() {
     local mdt_label=$(convert_facet2label $mds_facet)
     local mdt_index=$(echo $mdt_label | sed -e 's/^.*-//')
 
-    local major=$(get_mds_version_major $mds_facet)
-    local minor=$(get_mds_version_minor $mds_facet)
-    if [ $major -le 1 -a $minor -le 8 ] || mds_on_old_device $mds_facet; then
+    if [ $(lustre_version_code $mds_facet) -le $(version_code 1.8.0) ] ||
+       mds_on_old_device $mds_facet; then
         echo "${ost_label}-osc"
     else
         echo "${ost_label}-osc-${mdt_index}"
@@ -4120,10 +4127,7 @@ wait_import_state() {
 # the value depends on configure options, and it is not stored in /proc.
 # obd_support.h:
 # #define CONNECTION_SWITCH_MIN 5U
-# #ifndef CRAY_XT3
 # #define INITIAL_CONNECT_TIMEOUT max(CONNECTION_SWITCH_MIN,obd_timeout/20)
-# #else
-# #define INITIAL_CONNECT_TIMEOUT max(CONNECTION_SWITCH_MIN,obd_timeout/2)
 
 request_timeout () {
     local facet=$1

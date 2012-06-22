@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -751,7 +749,7 @@ int lst_test_add_ioctl(lstio_test_args_t *args)
                 goto out;
 
         LIBCFS_ALLOC(dstgrp, args->lstio_tes_dgrp_nmlen + 1);
-        if (srcgrp == NULL) 
+	 if (dstgrp == NULL)
                 goto out;
 
         if (args->lstio_tes_param != NULL) {

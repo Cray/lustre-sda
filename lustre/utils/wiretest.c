@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -500,6 +498,12 @@ void lustre_assert_wire_constants(void)
                  (long long)FID_SEQ_LOCAL_FILE);
         LASSERTF(FID_SEQ_DOT_LUSTRE == 0x0000000200000002ULL, "found 0x%.16llxULL\n",
                  (long long)FID_SEQ_DOT_LUSTRE);
+        LASSERTF(FID_SEQ_SPECIAL == 0x0000000200000004ULL, "found 0x%.16llxULL\n",
+                 (long long)FID_SEQ_SPECIAL);
+        LASSERTF(FID_SEQ_QUOTA == 0x0000000200000005ULL, "found 0x%.16llxULL\n",
+                 (long long)FID_SEQ_QUOTA);
+        LASSERTF(FID_SEQ_QUOTA_GLB == 0x0000000200000006ULL, "found 0x%.16llxULL\n",
+                 (long long)FID_SEQ_QUOTA_GLB);
         LASSERTF(FID_SEQ_NORMAL == 0x0000000200000400ULL, "found 0x%.16llxULL\n",
                  (long long)FID_SEQ_NORMAL);
         LASSERTF(FID_SEQ_LOV_DEFAULT == 0xffffffffffffffffULL, "found 0x%.16llxULL\n",
@@ -641,7 +645,7 @@ void lustre_assert_wire_constants(void)
                  LUSTRE_MSG_MAGIC_V2_SWABBED);
 
         /* Checks for struct ptlrpc_body */
-        LASSERTF((int)sizeof(struct ptlrpc_body) == 152, "found %lld\n",
+	LASSERTF((int)sizeof(struct ptlrpc_body) == 184, " found %lld\n",
                  (long long)(int)sizeof(struct ptlrpc_body));
         LASSERTF((int)offsetof(struct ptlrpc_body, pb_handle) == 0, "found %lld\n",
                  (long long)(int)offsetof(struct ptlrpc_body, pb_handle));
@@ -699,14 +703,14 @@ void lustre_assert_wire_constants(void)
                  (long long)(int)offsetof(struct ptlrpc_body, pb_service_time));
         LASSERTF((int)sizeof(((struct ptlrpc_body *)0)->pb_service_time) == 4, "found %lld\n",
                  (long long)(int)sizeof(((struct ptlrpc_body *)0)->pb_service_time));
-        LASSERTF((int)offsetof(struct ptlrpc_body, pb_slv) == 80, "found %lld\n",
-                 (long long)(int)offsetof(struct ptlrpc_body, pb_slv));
-        LASSERTF((int)sizeof(((struct ptlrpc_body *)0)->pb_slv) == 8, "found %lld\n",
-                 (long long)(int)sizeof(((struct ptlrpc_body *)0)->pb_slv));
-        LASSERTF((int)offsetof(struct ptlrpc_body, pb_limit) == 76, "found %lld\n",
+	LASSERTF((int)offsetof(struct ptlrpc_body, pb_limit) == 76, " found %lld\n",
                  (long long)(int)offsetof(struct ptlrpc_body, pb_limit));
         LASSERTF((int)sizeof(((struct ptlrpc_body *)0)->pb_limit) == 4, "found %lld\n",
                  (long long)(int)sizeof(((struct ptlrpc_body *)0)->pb_limit));
+	LASSERTF((int)offsetof(struct ptlrpc_body, pb_slv) == 80, " found %lld\n",
+		 (long long)(int)offsetof(struct ptlrpc_body, pb_slv));
+	LASSERTF((int)sizeof(((struct ptlrpc_body *)0)->pb_slv) == 8, " found %lld\n",
+		 (long long)(int)sizeof(((struct ptlrpc_body *)0)->pb_slv));
         CLASSERT(PTLRPC_NUM_VERSIONS == 4);
         LASSERTF((int)offsetof(struct ptlrpc_body, pb_pre_versions[4]) == 120, "found %lld\n",
                  (long long)(int)offsetof(struct ptlrpc_body, pb_pre_versions[4]));
@@ -716,6 +720,12 @@ void lustre_assert_wire_constants(void)
                  (long long)(int)offsetof(struct ptlrpc_body, pb_padding[4]));
         LASSERTF((int)sizeof(((struct ptlrpc_body *)0)->pb_padding[4]) == 8, "found %lld\n",
                  (long long)(int)sizeof(((struct ptlrpc_body *)0)->pb_padding[4]));
+	CLASSERT(JOBSTATS_JOBID_SIZE == 32);
+	LASSERTF((int)offsetof(struct ptlrpc_body, pb_jobid) == 152, " found %lld\n",
+		 (long long)(int)offsetof(struct ptlrpc_body, pb_jobid));
+	LASSERTF((int)sizeof(((struct ptlrpc_body *)0)->pb_jobid) == 32, " found %lld\n",
+		 (long long)(int)sizeof(((struct ptlrpc_body *)0)->pb_jobid));
+
         LASSERTF(MSG_PTLRPC_BODY_OFF == 0, "found %lld\n",
                  (long long)MSG_PTLRPC_BODY_OFF);
         LASSERTF(REQ_REC_OFF == 1, "found %lld\n",

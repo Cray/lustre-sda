@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -40,9 +38,6 @@
  * Author: Nikita Danilov <nikita@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_MDS
 
 #include <linux/module.h>
@@ -60,8 +55,6 @@
 
 void lu_igif_to_id(const struct lu_fid *fid, struct osd_inode_id *id)
 {
-        LASSERT(fid_is_igif(fid));
-        id->oii_ino = lu_igif_ino(fid);
-        id->oii_gen = lu_igif_gen(fid);
+	LASSERT(fid_is_igif(fid));
+	osd_id_gen(id, lu_igif_ino(fid), lu_igif_gen(fid));
 }
-

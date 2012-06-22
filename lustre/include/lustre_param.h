@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -84,6 +82,7 @@ int do_lcfg(char *cfgname, lnet_nid_t nid, int cmd,
 #define PARAM_AT_EXTRA             "at_extra="         /* global */
 #define PARAM_AT_EARLY_MARGIN      "at_early_margin="  /* global */
 #define PARAM_AT_HISTORY           "at_history="       /* global */
+#define PARAM_JOBID_VAR		   "jobid_var="	       /* global */
 #define PARAM_MGSNODE              "mgsnode="          /* only at mounttime */
 #define PARAM_FAILNODE             "failover.node="    /* add failover nid */
 #define PARAM_FAILMODE             "failover.mode="    /* initial mount only */

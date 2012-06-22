@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -229,6 +227,15 @@ struct ll_inode_info {
                         cfs_time_t                      f_glimpse_time;
                         cfs_list_t                      f_agl_list;
                         __u64                           f_agl_index;
+			/*
+			 * whenever a process try to read/write the file, the
+			 * jobid of the process will be saved here, and it'll
+			 * be packed into the write PRC when flush later.
+			 *
+			 * so the read/write statistics for jobid will not be
+			 * accurate if the file is shared by different jobs.
+			 */
+			char                     f_jobid[JOBSTATS_JOBID_SIZE];
                 } f;
 
 #define lli_size_sem            u.f.f_size_sem
@@ -243,6 +250,7 @@ struct ll_inode_info {
 #define lli_glimpse_time        u.f.f_glimpse_time
 #define lli_agl_list            u.f.f_agl_list
 #define lli_agl_index           u.f.f_agl_index
+#define lli_jobid               u.f.f_jobid
 
         } u;
 
@@ -665,12 +673,13 @@ struct lookup_intent *ll_convert_intent(struct open_intent *oit,
                                         int lookup_flags);
 int ll_lookup_it_finish(struct ptlrpc_request *request,
                         struct lookup_intent *it, void *data);
-struct dentry *ll_find_alias(struct inode *inode, struct dentry *de);
+struct dentry *ll_splice_alias(struct inode *inode, struct dentry *de);
 
 /* llite/rw.c */
 int ll_prepare_write(struct file *, struct page *, unsigned from, unsigned to);
 int ll_commit_write(struct file *, struct page *, unsigned from, unsigned to);
 int ll_writepage(struct page *page, struct writeback_control *wbc);
+int ll_writepages(struct address_space *, struct writeback_control *wbc);
 void ll_removepage(struct page *page);
 int ll_readpage(struct file *file, struct page *page);
 void ll_readahead_init(struct inode *inode, struct ll_readahead_state *ras);
@@ -760,16 +769,21 @@ int ll_put_grouplock(struct inode *inode, struct file *file, unsigned long arg);
 int ll_fid2path(struct obd_export *exp, void *arg);
 
 /* llite/dcache.c */
+
 int ll_dops_init(struct dentry *de, int block, int init_sa);
-extern cfs_spinlock_t ll_lookup_lock;
 extern struct dentry_operations ll_d_ops;
 void ll_intent_drop_lock(struct lookup_intent *);
 void ll_intent_release(struct lookup_intent *);
-int ll_drop_dentry(struct dentry *dentry);
-void ll_unhash_aliases(struct inode *);
+void ll_invalidate_aliases(struct inode *);
 void ll_frob_intent(struct lookup_intent **itp, struct lookup_intent *deft);
 void ll_lookup_finish_locks(struct lookup_intent *it, struct dentry *dentry);
+#ifdef HAVE_D_COMPARE_7ARGS
+int ll_dcompare(const struct dentry *parent, const struct inode *pinode,
+		const struct dentry *dentry, const struct inode *inode,
+		unsigned int len, const char *str, const struct qstr *d_name);
+#else
 int ll_dcompare(struct dentry *parent, struct qstr *d_name, struct qstr *name);
+#endif
 int ll_revalidate_it_finish(struct ptlrpc_request *request,
                             struct lookup_intent *it, struct dentry *de);
 
@@ -1031,7 +1045,8 @@ struct ll_lock_tree_node * ll_node_from_inode(struct inode *inode, __u64 start,
                                               __u64 end, ldlm_mode_t mode);
 void policy_from_vma(ldlm_policy_data_t *policy,
                 struct vm_area_struct *vma, unsigned long addr, size_t count);
-struct vm_area_struct *our_vma(unsigned long addr, size_t count);
+struct vm_area_struct *our_vma(struct mm_struct *mm, unsigned long addr,
+                               size_t count);
 
 static inline void ll_invalidate_page(struct page *vmpage)
 {
@@ -1267,7 +1282,7 @@ ll_statahead_enter(struct inode *dir, struct dentry **dentryp, int only_unplug)
         struct ll_dentry_data *ldd;
 
         if (ll_i2sbi(dir)->ll_sa_max == 0)
-                return -ENOTSUPP;
+                return -EAGAIN;
 
         lli = ll_i2info(dir);
         /* not the same process, don't statahead */
@@ -1393,6 +1408,9 @@ static inline int cl_merge_lvb(struct inode *inode)
 
 struct obd_capa *cl_capa_lookup(struct inode *inode, enum cl_req_type crt);
 
+int cl_sync_file_range(struct inode *inode, loff_t start, loff_t end,
+		       enum cl_fsync_mode mode);
+
 /** direct write pages */
 struct ll_dio_pages {
         /** page array to be written. we don't support
@@ -1448,28 +1466,57 @@ static inline void ll_set_lock_data(struct obd_export *exp, struct inode *inode,
                 *bits = it->d.lustre.it_lock_bits;
 }
 
-static inline void ll_dentry_rehash(struct dentry *dentry, int locked)
+static inline void ll_lock_dcache(struct inode *inode)
 {
-        if (!locked) {
-                cfs_spin_lock(&ll_lookup_lock);
-                spin_lock(&dcache_lock);
-        }
-        if (d_unhashed(dentry))
-                d_rehash_cond(dentry, 0);
-        if (!locked) {
-                spin_unlock(&dcache_lock);
-                cfs_spin_unlock(&ll_lookup_lock);
-        }
+#ifdef HAVE_DCACHE_LOCK
+	spin_lock(&dcache_lock);
+#else
+	spin_lock(&inode->i_lock);
+#endif
 }
 
-static inline void ll_dentry_reset_flags(struct dentry *dentry, __u64 bits)
+static inline void ll_unlock_dcache(struct inode *inode)
 {
-        if (bits & MDS_INODELOCK_LOOKUP &&
-            dentry->d_flags & DCACHE_LUSTRE_INVALID) {
-                lock_dentry(dentry);
-                dentry->d_flags &= ~DCACHE_LUSTRE_INVALID;
-                unlock_dentry(dentry);
-        }
+#ifdef HAVE_DCACHE_LOCK
+	spin_unlock(&dcache_lock);
+#else
+	spin_unlock(&inode->i_lock);
+#endif
+}
+
+static inline int d_lustre_invalid(const struct dentry *dentry)
+{
+	return dentry->d_flags & DCACHE_LUSTRE_INVALID;
+}
+
+static inline void __d_lustre_invalidate(struct dentry *dentry)
+{
+	dentry->d_flags |= DCACHE_LUSTRE_INVALID;
+}
+
+/*
+ * Mark dentry INVALID, if dentry refcount is zero (this is normally case for
+ * ll_md_blocking_ast), unhash this dentry, and let dcache to reclaim it later;
+ * else dput() of the last refcount will unhash this dentry and kill it.
+ */
+static inline void d_lustre_invalidate(struct dentry *dentry)
+{
+	CDEBUG(D_DENTRY, "invalidate dentry %.*s (%p) parent %p inode %p "
+	       "refc %d\n", dentry->d_name.len, dentry->d_name.name, dentry,
+	       dentry->d_parent, dentry->d_inode, d_refcount(dentry));
+
+	spin_lock(&dentry->d_lock);
+	__d_lustre_invalidate(dentry);
+	if (d_refcount(dentry) == 0)
+		__d_drop(dentry);
+	spin_unlock(&dentry->d_lock);
+}
+
+static inline void d_lustre_revalidate(struct dentry *dentry)
+{
+	spin_lock(&dentry->d_lock);
+	dentry->d_flags &= ~DCACHE_LUSTRE_INVALID;
+	spin_unlock(&dentry->d_lock);
 }
 
 #if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2,7,50,0)

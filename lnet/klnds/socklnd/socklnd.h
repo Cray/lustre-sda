@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  *
  * Copyright (c) 2011, Whamcloud, Inc.
@@ -28,10 +26,6 @@
  */
 
 #define DEBUG_PORTAL_ALLOC
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
-
 #define DEBUG_SUBSYSTEM S_LND
 
 #if defined(__linux__)

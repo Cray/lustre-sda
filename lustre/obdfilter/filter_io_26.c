@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -693,6 +691,9 @@ int filter_commitrw_write(struct obd_export *exp, struct obdo *oa,
         if (rc == -ENOTCONN)
                 GOTO(cleanup, rc);
 
+        if (OBD_FAIL_CHECK(OBD_FAIL_OST_DQACQ_NET))
+                GOTO(cleanup, rc = -EINPROGRESS);
+
         push_ctxt(&saved, &obd->obd_lvfs_ctxt, NULL);
         cleanup_phase = 2;
 
@@ -757,6 +758,11 @@ retry:
                 iattr.ia_valid = save & ~(ATTR_UID | ATTR_GID);
         }
 
+	CDEBUG(D_INODE, "FID "DFID" to write: s="LPU64" m="LPU64" a="LPU64
+			" c="LPU64" b="LPU64"\n",
+			oa->o_id, (__u32)oa->o_seq, (__u32)oa->o_seq,
+			oa->o_size, oa->o_mtime, oa->o_atime, oa->o_ctime,
+			oa->o_blocks);
         /* filter_direct_io drops i_mutex */
         rc = filter_direct_io(OBD_BRW_WRITE, res->dentry, iobuf, exp, &iattr,
                               oti, sync_journal_commit ? &wait_handle : NULL);
@@ -771,6 +777,11 @@ retry:
         obdo_from_inode(oa, inode, (rc == 0 ? FILTER_VALID_FLAGS : 0) |
                                    OBD_MD_FLUID | OBD_MD_FLGID);
 
+	CDEBUG(D_INODE, "FID "DFID" after write: s="LPU64" m="LPU64" a="LPU64
+			" c="LPU64" b="LPU64"\n",
+			oa->o_id, (__u32)oa->o_seq, (__u32)oa->o_seq,
+			oa->o_size, oa->o_mtime, oa->o_atime, oa->o_ctime,
+			oa->o_blocks);
         lquota_getflag(filter_quota_interface_ref, obd, oa);
 
         fsfilt_check_slow(obd, now, "direct_io");

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -2797,11 +2795,11 @@ static int lfs_data_version(int argc, char **argv)
                 return rc;
         }
 
-        printf("%llu\n", data_version);
+	printf(LPU64 "\n", data_version);
 
-        close(fd);
+	close(fd);
 
-        return 0;
+	return 0;
 }
 
 int main(int argc, char **argv)

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -48,10 +46,6 @@
  */
 
 #define DEBUG_SUBSYSTEM S_LOG
-
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 
 #ifdef __KERNEL__
 # include <libcfs/libcfs.h>
@@ -110,7 +104,7 @@ static struct llog_canceld_ctxt *llcd_alloc(struct llog_commit_master *lcm)
          */
         size = CFS_PAGE_SIZE - lustre_msg_size(LUSTRE_MSG_MAGIC_V2, 1, NULL);
         overhead =  offsetof(struct llog_canceld_ctxt, llcd_cookies);
-        OBD_SLAB_ALLOC(llcd, llcd_cache, CFS_ALLOC_STD, size + overhead);
+	OBD_SLAB_ALLOC_GFP(llcd, llcd_cache, size + overhead, CFS_ALLOC_STD);
         if (!llcd)
                 return NULL;
 

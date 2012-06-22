@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -44,9 +42,6 @@
  */
 
 #define DEBUG_SUBSYSTEM S_CLASS
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 
 #include <obd.h>
 #include <dt_object.h>
@@ -70,7 +65,7 @@ LU_KEY_INIT(dt_global, struct dt_thread_info);
 LU_KEY_FINI(dt_global, struct dt_thread_info);
 
 static struct lu_context_key dt_key = {
-        .lct_tags = LCT_MD_THREAD|LCT_DT_THREAD,
+        .lct_tags = LCT_MD_THREAD | LCT_DT_THREAD | LCT_MG_THREAD | LCT_LOCAL,
         .lct_init = dt_global_key_init,
         .lct_fini = dt_global_key_fini
 };
@@ -376,6 +371,61 @@ struct dt_object *dt_store_open(const struct lu_env *env,
 }
 EXPORT_SYMBOL(dt_store_open);
 
+struct dt_object *dt_find_or_create(const struct lu_env *env,
+                                    struct dt_device *dt,
+                                    const struct lu_fid *fid,
+                                    struct dt_object_format *dof,
+                                    struct lu_attr *at)
+{
+        struct dt_object *dto;
+        struct thandle *th;
+        int rc;
+
+        ENTRY;
+
+        dto = dt_locate(env, dt, fid);
+        if (IS_ERR(dto))
+                RETURN(dto);
+
+        LASSERT(dto != NULL);
+        if (dt_object_exists(dto))
+                RETURN(dto);
+
+        th = dt_trans_create(env, dt);
+        if (IS_ERR(th))
+                GOTO(out, rc = PTR_ERR(th));
+
+        rc = dt_declare_create(env, dto, at, NULL, dof, th);
+        if (rc)
+                GOTO(trans_stop, rc);
+
+        rc = dt_trans_start_local(env, dt, th);
+        if (rc)
+                GOTO(trans_stop, rc);
+
+        dt_write_lock(env, dto, 0);
+        if (dt_object_exists(dto))
+                GOTO(unlock, rc = 0);
+
+        CDEBUG(D_OTHER, "create new object "DFID"\n", PFID(fid));
+
+        rc = dt_create(env, dto, at, NULL, dof, th);
+        if (rc)
+                GOTO(unlock, rc);
+        LASSERT(dt_object_exists(dto));
+unlock:
+        dt_write_unlock(env, dto);
+trans_stop:
+        dt_trans_stop(env, dt, th);
+out:
+        if (rc) {
+                lu_object_put(env, &dto->do_lu);
+                RETURN(ERR_PTR(rc));
+        }
+        RETURN(dto);
+}
+EXPORT_SYMBOL(dt_find_or_create);
+
 /* dt class init function. */
 int dt_global_init(void)
 {
@@ -391,6 +441,38 @@ void dt_global_fini(void)
         lu_context_key_degister(&dt_key);
 }
 
+/**
+ * Generic read helper. May return an error for partial reads.
+ *
+ * \param env  lustre environment
+ * \param dt   object to be read
+ * \param buf  lu_buf to be filled, with buffer pointer and length
+ * \param pos position to start reading, updated as data is read
+ *
+ * \retval real size of data read
+ * \retval -ve errno on failure
+ */
+int dt_read(const struct lu_env *env, struct dt_object *dt,
+            struct lu_buf *buf, loff_t *pos)
+{
+        LASSERTF(dt != NULL, "dt is NULL when we want to read record\n");
+        return dt->do_body_ops->dbo_read(env, dt, buf, pos, BYPASS_CAPA);
+}
+EXPORT_SYMBOL(dt_read);
+
+/**
+ * Read structures of fixed size from storage.  Unlike dt_read(), using
+ * dt_record_read() will return an error for partial reads.
+ *
+ * \param env  lustre environment
+ * \param dt   object to be read
+ * \param buf  lu_buf to be filled, with buffer pointer and length
+ * \param pos position to start reading, updated as data is read
+ *
+ * \retval 0 on successfully reading full buffer
+ * \retval -EFAULT on short read
+ * \retval -ve errno on failure
+ */
 int dt_record_read(const struct lu_env *env, struct dt_object *dt,
                    struct lu_buf *buf, loff_t *pos)
 {
@@ -452,7 +534,7 @@ void dt_version_set(const struct lu_env *env, struct dt_object *o,
         vbuf.lb_len = sizeof(version);
 
         rc = dt_xattr_set(env, o, &vbuf, xname, 0, th, BYPASS_CAPA);
-        if (rc != 0)
+        if (rc < 0)
                 CDEBUG(D_INODE, "Can't set version, rc %d\n", rc);
         return;
 }
@@ -479,3 +561,6 @@ EXPORT_SYMBOL(dt_version_get);
 
 const struct dt_index_features dt_directory_features;
 EXPORT_SYMBOL(dt_directory_features);
+
+const struct dt_index_features dt_otable_features;
+EXPORT_SYMBOL(dt_otable_features);

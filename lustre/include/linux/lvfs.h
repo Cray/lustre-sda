@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -113,7 +111,7 @@ static inline void l_dput(struct dentry *de)
         if (!de || IS_ERR(de))
                 return;
         //shrink_dcache_parent(de);
-        LASSERT(cfs_atomic_read(&de->d_count) > 0);
+	LASSERT(d_refcount(de) > 0);
         dput(de);
 }
 

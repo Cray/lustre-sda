@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -46,9 +44,6 @@
  * Author: Yury Umanets <umka@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_MDS
 
 #include "mdt_internal.h"
@@ -308,14 +303,17 @@ static int mdt_md_create(struct mdt_thread_info *info)
         lname = mdt_name(info->mti_env, (char *)rr->rr_name, rr->rr_namelen);
         rc = mdt_lookup_version_check(info, parent, lname,
                                       &info->mti_tmp_fid1, 1);
-        /* -ENOENT is expected here */
-        if (rc != 0 && rc != -ENOENT)
-                GOTO(out_put_parent, rc);
+	if (rc == 0)
+		GOTO(out_put_parent, rc = -EEXIST);
 
-        /* save version of file name for replay, it must be ENOENT here */
-        mdt_enoent_version_save(info, 1);
+	/* -ENOENT is expected here */
+	if (rc != -ENOENT)
+		GOTO(out_put_parent, rc);
 
-        child = mdt_object_find(info->mti_env, mdt, rr->rr_fid2);
+	/* save version of file name for replay, it must be ENOENT here */
+	mdt_enoent_version_save(info, 1);
+
+	child = mdt_object_new(info->mti_env, mdt, rr->rr_fid2);
         if (likely(!IS_ERR(child))) {
                 struct md_object *next = mdt_object_child(parent);
 
@@ -339,11 +337,11 @@ static int mdt_md_create(struct mdt_thread_info *info)
                 info->mti_spec.sp_cr_mode =
                         mdt_dlm_mode2mdl_mode(lh->mlh_pdo_mode);
 
-                /*
-                 * Do perform lookup sanity check. We do not know if name exists
-                 * or not.
-                 */
-                info->mti_spec.sp_cr_lookup = 1;
+		/*
+		 * Do not perform lookup sanity check. We know that name does
+		 * not exist.
+		 */
+		info->mti_spec.sp_cr_lookup = 0;
                 info->mti_spec.sp_feat = &dt_directory_features;
 
                 rc = mdo_create(info->mti_env, next, lname,
@@ -597,7 +595,7 @@ out_put:
         mdt_object_put(info->mti_env, mo);
 out:
         if (rc == 0)
-                mdt_counter_incr(req->rq_export, LPROC_MDT_SETATTR);
+		mdt_counter_incr(req, LPROC_MDT_SETATTR);
 
         mdt_client_compatibility(info);
         rc2 = mdt_fix_reply(info);
@@ -627,7 +625,7 @@ static int mdt_reint_create(struct mdt_thread_info *info,
                         rc = mdt_md_mkobj(info);
                 } else {
                         LASSERT(info->mti_rr.rr_namelen > 0);
-                        mdt_counter_incr(req->rq_export, LPROC_MDT_MKDIR);
+			mdt_counter_incr(req, LPROC_MDT_MKDIR);
                         rc = mdt_md_create(info);
                 }
                 break;
@@ -640,7 +638,7 @@ static int mdt_reint_create(struct mdt_thread_info *info,
         case S_IFSOCK:{
                 /* Special file should stay on the same node as parent. */
                 LASSERT(info->mti_rr.rr_namelen > 0);
-                mdt_counter_incr(req->rq_export, LPROC_MDT_MKNOD);
+		mdt_counter_incr(req, LPROC_MDT_MKNOD);
                 rc = mdt_md_create(info);
                 break;
         }
@@ -772,7 +770,7 @@ static int mdt_reint_unlink(struct mdt_thread_info *info,
         if (ma->ma_valid & MA_INODE) {
                 switch (ma->ma_attr.la_mode & S_IFMT) {
                 case S_IFDIR:
-                        mdt_counter_incr(req->rq_export, LPROC_MDT_RMDIR);
+			mdt_counter_incr(req, LPROC_MDT_RMDIR);
                         break;
                 case S_IFREG:
                 case S_IFLNK:
@@ -780,7 +778,7 @@ static int mdt_reint_unlink(struct mdt_thread_info *info,
                 case S_IFBLK:
                 case S_IFIFO:
                 case S_IFSOCK:
-                        mdt_counter_incr(req->rq_export, LPROC_MDT_UNLINK);
+			mdt_counter_incr(req, LPROC_MDT_UNLINK);
                         break;
                 default:
                         LASSERTF(0, "bad file type %o unlinking\n",
@@ -899,7 +897,7 @@ static int mdt_reint_link(struct mdt_thread_info *info,
                       mdt_object_child(ms), lname, ma);
 
         if (rc == 0)
-                mdt_counter_incr(req->rq_export, LPROC_MDT_LINK);
+		mdt_counter_incr(req, LPROC_MDT_LINK);
 
         EXIT;
 out_unlock_child:
@@ -1294,11 +1292,11 @@ static int mdt_reint_rename(struct mdt_thread_info *info,
 
         /* handle last link of tgt object */
         if (rc == 0) {
-                mdt_counter_incr(req->rq_export, LPROC_MDT_RENAME);
+		mdt_counter_incr(req, LPROC_MDT_RENAME);
                 if (mnew)
                         mdt_handle_last_unlink(info, mnew, ma);
 
-                mdt_rename_counter_tally(info, info->mti_mdt, req->rq_export,
+		mdt_rename_counter_tally(info, info->mti_mdt, req,
                                          msrcdir, mtgtdir);
         }
 

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -40,9 +38,6 @@
  * Author: Eric Mei <ericm@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-#define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_SEC
 
 #include <libcfs/libcfs.h>
@@ -425,8 +420,8 @@ static int enc_pools_add_pages(int npages)
                         goto out_pools;
 
                 for (j = 0; j < PAGES_PER_POOL && alloced < npages; j++) {
-                        pools[i][j] = cfs_alloc_page(CFS_ALLOC_IO |
-                                                     CFS_ALLOC_HIGH);
+			pools[i][j] = cfs_alloc_page(CFS_ALLOC_IO |
+						     CFS_ALLOC_HIGHMEM);
                         if (pools[i][j] == NULL)
                                 goto out_pools;
 

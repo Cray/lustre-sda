@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -36,9 +34,6 @@
  * Lustre is a trademark of Sun Microsystems, Inc.
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_LOV
 
 #ifdef __KERNEL__
@@ -201,11 +196,11 @@ static int qos_calc_ppo(struct obd_device *obd)
                         lov->lov_qos.lq_active_oss_count++;
                 lov->lov_tgts[i]->ltd_qos.ltq_oss->lqo_bavail += temp;
 
-                /* per-OST penalty is prio * TGT_bavail / (num_ost - 1) / 2 */
-                temp >>= 1;
-                do_div(temp, num_active);
-                lov->lov_tgts[i]->ltd_qos.ltq_penalty_per_obj =
-                        (temp * prio_wide) >> 8;
+		/* per-OST penalty is prio * TGT_bavail / (num_ost - 1) / 2 */
+		temp >>= 1;
+		lov_do_div64(temp, num_active);
+		lov->lov_tgts[i]->ltd_qos.ltq_penalty_per_obj =
+			(temp * prio_wide) >> 8;
 
                 age = (now - lov->lov_tgts[i]->ltd_qos.ltq_used) >> 3;
                 if (lov->lov_qos.lq_reset || age > 32 * lov->desc.ld_qos_maxage)
@@ -234,9 +229,9 @@ static int qos_calc_ppo(struct obd_device *obd)
 
         /* Per-OSS penalty is prio * oss_avail / oss_osts / (num_oss - 1) / 2 */
         cfs_list_for_each_entry(oss, &lov->lov_qos.lq_oss_list, lqo_oss_list) {
-                temp = oss->lqo_bavail >> 1;
-                do_div(temp, oss->lqo_ost_count * num_active);
-                oss->lqo_penalty_per_obj = (temp * prio_wide) >> 8;
+		temp = oss->lqo_bavail >> 1;
+		lov_do_div64(temp, oss->lqo_ost_count * num_active);
+		oss->lqo_penalty_per_obj = (temp * prio_wide) >> 8;
 
                 age = (now - oss->lqo_used) >> 3;
                 if (lov->lov_qos.lq_reset || age > 32 * lov->desc.ld_qos_maxage)
@@ -525,7 +520,7 @@ static int lov_check_and_create_object(struct lov_obd *lov, int ost_idx,
 
         if (stripe >= lsm->lsm_stripe_count) {
                 req->rq_idx = ost_idx;
-                rc = obd_create(lov->lov_tgts[ost_idx]->ltd_exp,
+                rc = obd_create(NULL, lov->lov_tgts[ost_idx]->ltd_exp,
                                 req->rq_oi.oi_oa, &req->rq_oi.oi_md,
                                 oti);
         }
@@ -1203,7 +1198,7 @@ void qos_statfs_update(struct obd_device *obd, __u64 max_age, int wait)
         if (!set)
                 GOTO(out_failed, rc = -ENOMEM);
 
-        rc = obd_statfs_async(obd, oinfo, max_age, set);
+        rc = obd_statfs_async(obd->obd_self_export, oinfo, max_age, set);
         if (rc || cfs_list_empty(&set->set_requests)) {
                 if (rc)
                         CWARN("statfs failed with %d\n", rc);

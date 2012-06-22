@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -513,8 +511,8 @@ static int mds_lov_get_objid(struct obd_device * obd,
                 size = sizeof(lastid);
                 lastid.idx = idx;
                 lastid.data = &data[off];
-                rc = obd_get_info(lov_exp, sizeof(KEY_LAST_ID), KEY_LAST_ID,
-                                  &size, &lastid, NULL);
+                rc = obd_get_info(NULL, lov_exp, sizeof(KEY_LAST_ID),
+                                  KEY_LAST_ID, &size, &lastid, NULL);
                 if (rc)
                         GOTO(out, rc);
 
@@ -550,7 +548,7 @@ int mds_lov_clear_orphans(struct mds_obd *mds, struct obd_uuid *ost_uuid)
         if (ost_uuid != NULL)
                 oti.oti_ost_uuid = ost_uuid;
 
-        rc = obd_create(mds->mds_lov_exp, &oa, &empty_ea, &oti);
+        rc = obd_create(NULL, mds->mds_lov_exp, &oa, &empty_ea, &oti);
 
         RETURN(rc);
 }
@@ -567,7 +565,7 @@ static int mds_lov_set_one_nextid(struct obd_device *obd, __u32 idx, obd_id *id)
 
         info.idx = idx;
         info.data = id;
-        rc = obd_set_info_async(mds->mds_lov_exp, sizeof(KEY_NEXT_ID),
+        rc = obd_set_info_async(NULL, mds->mds_lov_exp, sizeof(KEY_NEXT_ID),
                                 KEY_NEXT_ID, sizeof(info), &info, NULL);
         if (rc)
                 CERROR ("%s: mds_lov_set_nextid failed (%d)\n",
@@ -590,8 +588,8 @@ static int mds_lov_update_desc(struct obd_device *obd, int idx,
         if (!ld)
                 RETURN(-ENOMEM);
 
-        rc = obd_get_info(mds->mds_lov_exp, sizeof(KEY_LOVDESC), KEY_LOVDESC,
-                          &valsize, ld, NULL);
+        rc = obd_get_info(NULL, mds->mds_lov_exp, sizeof(KEY_LOVDESC),
+                          KEY_LOVDESC, &valsize, ld, NULL);
         if (rc)
                 GOTO(out, rc);
 
@@ -803,8 +801,9 @@ static int mds_propagate_capa_keys(struct mds_obd *mds, struct obd_uuid *uuid)
                 DEBUG_CAPA_KEY(D_SEC, key, "propagate");
 
                 info.capa = key;
-                rc = obd_set_info_async(mds->mds_lov_exp, sizeof(KEY_CAPA_KEY),
-                                        KEY_CAPA_KEY, sizeof(info), &info, NULL);
+                rc = obd_set_info_async(NULL, mds->mds_lov_exp,
+                                        sizeof(KEY_CAPA_KEY), KEY_CAPA_KEY,
+                                        sizeof(info), &info, NULL);
                 if (rc) {
                         DEBUG_CAPA_KEY(D_ERROR, key,
                                        "propagate failed (rc = %d) for", rc);
@@ -853,7 +852,7 @@ static int __mds_lov_synchronize(void *data)
         mgi.group = mdt_to_obd_objseq(mds->mds_id);
         mgi.uuid = uuid;
 
-        rc = obd_set_info_async(mds->mds_lov_exp, sizeof(KEY_MDS_CONN),
+        rc = obd_set_info_async(NULL, mds->mds_lov_exp, sizeof(KEY_MDS_CONN),
                                 KEY_MDS_CONN, sizeof(mgi), &mgi, NULL);
         if (rc != 0)
                 GOTO(out, rc);
@@ -898,7 +897,6 @@ static int __mds_lov_synchronize(void *data)
 #endif
         EXIT;
 out:
-        cfs_up_read(&mds->mds_notify_lock);
         if (rc) {
                 /* Deactivate it for safety */
                 CERROR("%s sync failed %d, deactivating\n", obd_uuid2str(uuid),
@@ -908,6 +906,7 @@ out:
                         obd_notify(mds->mds_lov_obd, watched,
                                    OBD_NOTIFY_INACTIVE, NULL);
         }
+	cfs_up_read(&mds->mds_notify_lock);
 
         class_decref(obd, "mds_lov_synchronize", obd);
         return rc;

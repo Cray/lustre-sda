@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -304,7 +302,7 @@ int llu_objects_destroy(struct ptlrpc_request *req, struct inode *dir)
                 }
         }
 
-        rc = obd_destroy(llu_i2obdexp(dir), oa, lsm, &oti, NULL, NULL);
+        rc = obd_destroy(NULL, llu_i2obdexp(dir), oa, lsm, &oti, NULL, NULL);
         OBDO_FREE(oa);
         if (rc)
                 CERROR("obd destroy objid 0x"LPX64" error %d\n",

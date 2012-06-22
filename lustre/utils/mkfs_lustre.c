@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -623,10 +621,11 @@ static void enable_default_ext4_features(struct mkfs_opts *mop, char *anchor,
                 append_unique(anchor, user_spec ? "," : " -O ",
                               "extents", NULL, sizeof(mop->mo_mkfsopts));
                 append_unique(anchor, ",", "uninit_bg", NULL, maxbuflen);
-        } else if (IS_MDT(&mop->mo_ldd)) {
-                append_unique(anchor, user_spec ? "," : " -O ",
-                              "dirdata", NULL, maxbuflen);
-                append_unique(anchor, ",", "uninit_bg", NULL, maxbuflen);
+	} else if (IS_MDT(&mop->mo_ldd)) {
+		append_unique(anchor, user_spec ? "," : " -O ",
+			      "dirdata", NULL, maxbuflen);
+		append_unique(anchor, ",", "uninit_bg", NULL, maxbuflen);
+		append_unique(anchor, ",", "^extents", NULL, maxbuflen);
         } else {
                 append_unique(anchor, user_spec ? "," : " -O ",
                               "uninit_bg", NULL, maxbuflen);

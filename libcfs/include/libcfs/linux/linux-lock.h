@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -228,15 +226,6 @@ typedef struct mutex cfs_mutex_t;
 #define cfs_mutex_trylock(x)                mutex_trylock(x)
 #define cfs_mutex_is_locked(x)              mutex_is_locked(x)
 #define cfs_mutex_destroy(x)                mutex_destroy(x)
-
-/*
- * Kernel locking primitives
- *
- * - lock_kernel
- * - unlock_kernel
- */
-#define cfs_lock_kernel()      lock_kernel()
-#define cfs_unlock_kernel()    unlock_kernel()
 
 #ifndef lockdep_set_class
 

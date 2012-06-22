@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -37,9 +35,6 @@
  */
 
 #define DEBUG_SUBSYSTEM S_CLASS
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #ifndef __KERNEL__
 # include <liblustre.h>
 #else
@@ -87,6 +82,55 @@ int at_extra = 30;
 
 cfs_atomic_t obd_dirty_pages;
 cfs_atomic_t obd_dirty_transit_pages;
+
+char obd_jobid_var[JOBSTATS_JOBID_VAR_MAX_LEN + 1] = JOBSTATS_DISABLE;
+EXPORT_SYMBOL(obd_jobid_var);
+
+/* Get jobid of current process by reading the environment variable
+ * stored in between the "env_start" & "env_end" of task struct.
+ *
+ * TODO:
+ * It's better to cache the jobid for later use if there is any
+ * efficient way, the cl_env code probably could be reused for this
+ * purpose.
+ *
+ * If some job scheduler doesn't store jobid in the "env_start/end",
+ * then an upcall could be issued here to get the jobid by utilizing
+ * the userspace tools/api. Then, the jobid must be cached.
+ */
+int lustre_get_jobid(char *jobid)
+{
+#ifdef __KERNEL__
+	int jobid_len = JOBSTATS_JOBID_SIZE;
+#endif
+	int ret = 0;
+	ENTRY;
+
+	memset(jobid, 0, JOBSTATS_JOBID_SIZE);
+	/* Jobstats isn't enabled */
+	if (!memcmp(obd_jobid_var, JOBSTATS_DISABLE,
+		    strlen(JOBSTATS_DISABLE))) {
+		RETURN(0);
+	}
+
+	/* Use process name + fsuid as jobid */
+	if (!memcmp(obd_jobid_var, JOBSTATS_PROCNAME_UID,
+		    strlen(JOBSTATS_PROCNAME_UID))) {
+		snprintf(jobid, JOBSTATS_JOBID_SIZE, "%s_%u",
+			 cfs_curproc_comm(), cfs_curproc_fsuid());
+		RETURN(0);
+	}
+
+#ifdef __KERNEL__
+	ret = cfs_get_environ(obd_jobid_var, jobid, &jobid_len);
+	if (ret) {
+		CDEBUG((ret != -ENOENT && ret != -EINVAL) ? D_ERROR : D_INFO,
+		       "Get jobid for (%s) failed(%d).\n", obd_jobid_var, ret);
+	}
+#endif
+	RETURN(ret);
+}
+EXPORT_SYMBOL(lustre_get_jobid);
 
 static inline void obd_data2conn(struct lustre_handle *conn,
                                  struct obd_ioctl_data *data)
@@ -367,7 +411,6 @@ EXPORT_SYMBOL(at_extra);
 EXPORT_SYMBOL(at_early_margin);
 EXPORT_SYMBOL(at_history);
 EXPORT_SYMBOL(ptlrpc_put_connection_superhack);
-
 EXPORT_SYMBOL(proc_lustre_root);
 
 /* uuid.c */

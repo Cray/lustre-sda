@@ -1,6 +1,4 @@
 #!/bin/bash
-# -*- mode: Bash; tab-width: 4; indent-tabs-mode: t; -*-
-# vim:autoindent:shiftwidth=4:tabstop=4:
 
 # FIXME - there is no reason to use all of these different
 #   return codes, espcially when most of them are mapped to something
@@ -29,6 +27,7 @@ PTLDEBUG=${PTLDEBUG:--1}
 SAVE_PWD=$PWD
 LUSTRE=${LUSTRE:-`dirname $0`/..}
 RLUSTRE=${RLUSTRE:-$LUSTRE}
+export MULTIOP=${MULTIOP:-multiop}
 
 . $LUSTRE/tests/test-framework.sh
 init_test_env $@
@@ -2767,6 +2766,9 @@ run_test 60 "check mkfs.lustre --mkfsoptions -E -O options setting"
 
 test_61() { # LU-80
     local reformat=false
+
+    [ $(lustre_version_code $SINGLEMDS) -ge $(version_code 2.1.53) ] ||
+        { skip "Need MDS version at least 2.1.53"; return 0; }
 
     if ! large_xattr_enabled; then
         reformat=true

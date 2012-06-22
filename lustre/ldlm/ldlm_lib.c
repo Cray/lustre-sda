@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -36,9 +34,6 @@
  * Lustre is a trademark of Sun Microsystems, Inc.
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_LDLM
 
 #ifdef __KERNEL__
@@ -318,6 +313,8 @@ int client_obd_setup(struct obd_device *obddev, struct lustre_cfg *lcfg)
         CFS_INIT_LIST_HEAD(&cli->cl_loi_write_list);
         CFS_INIT_LIST_HEAD(&cli->cl_loi_read_list);
         client_obd_list_lock_init(&cli->cl_loi_list_lock);
+	cfs_atomic_set(&cli->cl_pending_w_pages, 0);
+	cfs_atomic_set(&cli->cl_pending_r_pages, 0);
         cli->cl_r_in_flight = 0;
         cli->cl_w_in_flight = 0;
 
@@ -657,14 +654,13 @@ static int target_handle_reconnect(struct lustre_handle *conn,
                          * doing a valid reconnect from the same client. */
                         RETURN(EALREADY);
                 } else {
-                        LCONSOLE_WARN("%s: The server has already connected "
-                                      "client %s (at %s) with handle " LPX64
-                                      ", rejecting a client with the same "
-                                      "uuid trying to reconnect with "
-                                      "handle " LPX64, target->obd_name,
-                                      obd_uuid2str(&exp->exp_client_uuid),
-                                      obd_export_nid2str(exp),
-                                      hdl->cookie, conn->cookie);
+			LCONSOLE_WARN("%s: already connected client %s (at %s) "
+				      "with handle "LPX64". Rejecting client "
+				      "with the same UUID trying to reconnect "
+				      "with handle "LPX64"\n", target->obd_name,
+				      obd_uuid2str(&exp->exp_client_uuid),
+				      obd_export_nid2str(exp),
+				      hdl->cookie, conn->cookie);
                         memset(conn, 0, sizeof *conn);
                         /* target_handle_connect() treats EALREADY and
                          * -EALREADY differently.  -EALREADY is an error
@@ -1121,8 +1117,9 @@ dont_check_exports:
 
         if (export->exp_imp_reverse != NULL) {
                 /* destroyed import can be still referenced in ctxt */
-                obd_set_info_async(export, sizeof(KEY_REVIMP_UPD),
-                                   KEY_REVIMP_UPD, 0, NULL, NULL);
+                obd_set_info_async(req->rq_svc_thread->t_env, export,
+                                   sizeof(KEY_REVIMP_UPD), KEY_REVIMP_UPD,
+                                   0, NULL, NULL);
 
                 client_destroy_import(export->exp_imp_reverse);
         }
@@ -1694,8 +1691,8 @@ repeat:
         } else if (obd->obd_recovery_expired) {
                 obd->obd_recovery_expired = 0;
                 /** If some clients died being recovered, evict them */
-                CDEBUG(D_WARNING,
-                       "recovery is timed out, evict stale exports\n");
+                LCONSOLE_WARN("%s: recovery is timed out, "
+                              "evict stale exports\n", obd->obd_name);
                 /** evict cexports with no replay in queue, they are stalled */
                 class_disconnect_stale_exports(obd, health_check);
                 /** continue with VBR */
@@ -1879,7 +1876,7 @@ static int target_recovery_thread(void *arg)
                 RETURN(-ENOMEM);
         }
 
-        rc = lu_context_init(&env->le_ctx, LCT_MD_THREAD);
+        rc = lu_context_init(&env->le_ctx, LCT_MD_THREAD | LCT_DT_THREAD);
         if (rc) {
                 OBD_FREE_PTR(thread);
                 OBD_FREE_PTR(env);
@@ -2179,8 +2176,9 @@ int target_queue_recovery_request(struct ptlrpc_request *req,
          * Also, a resent, replayed request that has already been
          * handled will pass through here and be processed immediately.
          */
-        CWARN("Next recovery transno: "LPU64", current: "LPU64", replaying\n",
-              obd->obd_next_recovery_transno, transno);
+        CDEBUG(D_HA, "Next recovery transno: "LPU64
+               ", current: "LPU64", replaying\n",
+               obd->obd_next_recovery_transno, transno);
         cfs_spin_lock(&obd->obd_recovery_task_lock);
         if (transno < obd->obd_next_recovery_transno) {
                 /* Processing the queue right now, don't re-add. */
@@ -2241,7 +2239,7 @@ int target_queue_recovery_request(struct ptlrpc_request *req,
 
 int target_handle_ping(struct ptlrpc_request *req)
 {
-        obd_ping(req->rq_export);
+        obd_ping(req->rq_svc_thread->t_env, req->rq_export);
         return req_capsule_server_pack(&req->rq_pill);
 }
 
@@ -2618,7 +2616,7 @@ void ldlm_dump_export_locks(struct obd_export *exp)
             CERROR("dumping locks for export %p,"
                    "ignore if the unmount doesn't hang\n", exp);
             cfs_list_for_each_entry(lock, &exp->exp_locks_list, l_exp_refs_link)
-                ldlm_lock_dump(D_ERROR, lock, 0);
+                LDLM_ERROR(lock, "lock:");
         }
         cfs_spin_unlock(&exp->exp_locks_list_guard);
 }

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -34,9 +32,6 @@
  * Lustre is a trademark of Sun Microsystems, Inc.
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_LOV
 
 #ifdef __KERNEL__
@@ -72,6 +67,11 @@ int lov_merge_lvb_kms(struct lov_stripe_md *lsm,
         LASSERT(lsm->lsm_lock_owner == cfs_curproc_pid());
 #endif
 
+	CDEBUG(D_INODE, "MDT FID "DFID" initial value: s="LPU64" m="LPU64
+	       " a="LPU64" c="LPU64" b="LPU64"\n",
+	       lsm->lsm_object_seq, (__u32)lsm->lsm_object_id,
+	       (__u32)(lsm->lsm_object_id >> 32), lvb->lvb_size,
+	       lvb->lvb_mtime, lvb->lvb_atime, lvb->lvb_ctime, lvb->lvb_blocks);
         for (i = 0; i < lsm->lsm_stripe_count; i++) {
                 struct lov_oinfo *loi = lsm->lsm_oinfo[i];
                 obd_size lov_size, tmpsize;
@@ -100,6 +100,13 @@ int lov_merge_lvb_kms(struct lov_stripe_md *lsm,
                         current_atime = loi->loi_lvb.lvb_atime;
                 if (loi->loi_lvb.lvb_ctime > current_ctime)
                         current_ctime = loi->loi_lvb.lvb_ctime;
+		CDEBUG(D_INODE, "MDT FID "DFID" on OST[%u]: s="LPU64" m="LPU64
+		       " a="LPU64" c="LPU64" b="LPU64"\n",
+		       lsm->lsm_object_seq, (__u32)lsm->lsm_object_id,
+		       (__u32)(lsm->lsm_object_id >> 32), loi->loi_ost_idx,
+		       loi->loi_lvb.lvb_size, loi->loi_lvb.lvb_mtime,
+		       loi->loi_lvb.lvb_atime, loi->loi_lvb.lvb_ctime,
+		       loi->loi_lvb.lvb_blocks);
         }
 
         *kms_place = kms;
@@ -130,9 +137,11 @@ int lov_merge_lvb(struct obd_export *exp,
         rc = lov_merge_lvb_kms(lsm, lvb, &kms);
         if (kms_only)
                 lvb->lvb_size = kms;
-        CDEBUG(D_INODE, "merged: "LPU64" "LPU64" "LPU64" "LPU64" "LPU64"\n",
-               lvb->lvb_size, lvb->lvb_mtime, lvb->lvb_atime,
-               lvb->lvb_ctime, lvb->lvb_blocks);
+	CDEBUG(D_INODE, "merged for FID "DFID" s="LPU64" m="LPU64" a="LPU64
+	       " c="LPU64" b="LPU64"\n",
+	       lsm->lsm_object_seq, (__u32)lsm->lsm_object_id,
+	       (__u32)(lsm->lsm_object_id >> 32), lvb->lvb_size, lvb->lvb_mtime,
+	       lvb->lvb_atime, lvb->lvb_ctime, lvb->lvb_blocks);
         RETURN(rc);
 }
 

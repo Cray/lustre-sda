@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -97,22 +95,11 @@ void ldlm_namespace_free_post(struct ldlm_namespace *ns);
 /* ldlm_lock.c */
 
 struct ldlm_cb_set_arg {
-        int          type;      /* LDLM_BL_CALLBACK or LDLM_CP_CALLBACK */
-        unsigned int threshold; /* threshold to wake up the waiting proc */
-        cfs_atomic_t rpcs;      /* # of inflight rpcs in set */
-        cfs_atomic_t restart;
-        cfs_atomic_t refcount;
-        cfs_waitq_t  waitq;
+	struct ptlrpc_request_set *set;
+	int                        type; /* LDLM_{CP,BL}_CALLBACK */
+	cfs_atomic_t               restart;
+	cfs_list_t                *list;
 };
-
-static inline void ldlm_csa_put(struct ldlm_cb_set_arg *arg)
-{
-        if (cfs_atomic_dec_and_test(&arg->refcount)) {
-                LASSERT(cfs_atomic_read(&arg->rpcs) == 0);
-
-                OBD_FREE_PTR(arg);
-        }
-}
 
 typedef enum {
         LDLM_WORK_BL_AST,
@@ -134,8 +121,10 @@ void ldlm_lock_decref_internal(struct ldlm_lock *, __u32 mode);
 void ldlm_lock_decref_internal_nolock(struct ldlm_lock *, __u32 mode);
 void ldlm_add_ast_work_item(struct ldlm_lock *lock, struct ldlm_lock *new,
                             cfs_list_t *work_list);
+#ifdef HAVE_SERVER_SUPPORT
 int ldlm_reprocess_queue(struct ldlm_resource *res, cfs_list_t *queue,
                          cfs_list_t *work_list);
+#endif
 int ldlm_run_ast_work(struct ldlm_namespace *ns, cfs_list_t *rpc_list,
                       ldlm_desc_ast_t ast_type);
 int ldlm_lock_remove_from_lru(struct ldlm_lock *lock);
@@ -156,24 +145,28 @@ int ldlm_bl_to_thread_list(struct ldlm_namespace *ns, struct ldlm_lock_desc *ld,
 void ldlm_handle_bl_callback(struct ldlm_namespace *ns,
                              struct ldlm_lock_desc *ld, struct ldlm_lock *lock);
 
+#ifdef HAVE_SERVER_SUPPORT
 /* ldlm_plain.c */
 int ldlm_process_plain_lock(struct ldlm_lock *lock, int *flags, int first_enq,
-                            ldlm_error_t *err, cfs_list_t *work_list);
-
-/* ldlm_extent.c */
-int ldlm_process_extent_lock(struct ldlm_lock *lock, int *flags, int first_enq,
-                             ldlm_error_t *err, cfs_list_t *work_list);
-void ldlm_extent_add_lock(struct ldlm_resource *res, struct ldlm_lock *lock);
-void ldlm_extent_unlink_lock(struct ldlm_lock *lock);
-
-/* ldlm_flock.c */
-int ldlm_process_flock_lock(struct ldlm_lock *req, int *flags, int first_enq,
                             ldlm_error_t *err, cfs_list_t *work_list);
 
 /* ldlm_inodebits.c */
 int ldlm_process_inodebits_lock(struct ldlm_lock *lock, int *flags,
                                 int first_enq, ldlm_error_t *err,
                                 cfs_list_t *work_list);
+#endif
+
+/* ldlm_extent.c */
+#ifdef HAVE_SERVER_SUPPORT
+int ldlm_process_extent_lock(struct ldlm_lock *lock, int *flags, int first_enq,
+                             ldlm_error_t *err, cfs_list_t *work_list);
+#endif
+void ldlm_extent_add_lock(struct ldlm_resource *res, struct ldlm_lock *lock);
+void ldlm_extent_unlink_lock(struct ldlm_lock *lock);
+
+/* ldlm_flock.c */
+int ldlm_process_flock_lock(struct ldlm_lock *req, int *flags, int first_enq,
+                            ldlm_error_t *err, cfs_list_t *work_list);
 
 /* l_lock.c */
 void l_check_ns_lock(struct ldlm_namespace *ns);

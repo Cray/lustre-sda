@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -43,9 +41,6 @@
  */
 
 #define DEBUG_SUBSYSTEM S_CLASS
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 
 #ifdef __KERNEL__
 #ifndef AUTOCONF_INCLUDED
@@ -88,7 +83,6 @@
 #include <lustre_ver.h>
 #include <lustre/lustre_build_version.h>
 #ifdef __KERNEL__
-#include <linux/lustre_version.h>
 
 int proc_version;
 
@@ -202,13 +196,8 @@ static int obd_class_release(struct inode * inode, struct file * file)
 }
 
 /* to control /dev/obd */
-#ifdef HAVE_UNLOCKED_IOCTL
 static long obd_class_ioctl(struct file *filp, unsigned int cmd,
-                            unsigned long arg)
-#else
-static int obd_class_ioctl(struct inode *inode, struct file *filp,
-                           unsigned int cmd, unsigned long arg)
-#endif
+			    unsigned long arg)
 {
         int err = 0;
         ENTRY;
@@ -226,14 +215,10 @@ static int obd_class_ioctl(struct inode *inode, struct file *filp,
 
 /* declare character device */
 static struct file_operations obd_psdev_fops = {
-        .owner   = THIS_MODULE,
-#if HAVE_UNLOCKED_IOCTL
-        .unlocked_ioctl = obd_class_ioctl, /* unlocked_ioctl */
-#else
-        .ioctl   = obd_class_ioctl,     /* ioctl */
-#endif
-        .open    = obd_class_open,      /* open */
-        .release = obd_class_release,   /* release */
+	.owner          = THIS_MODULE,
+	.unlocked_ioctl = obd_class_ioctl, /* unlocked_ioctl */
+	.open           = obd_class_open,      /* open */
+	.release        = obd_class_release,   /* release */
 };
 
 /* modules setup */
@@ -307,7 +292,7 @@ static int obd_proc_read_health(char *page, char **start, off_t off,
                 class_incref(obd, __FUNCTION__, cfs_current());
                 cfs_read_unlock(&obd_dev_lock);
 
-                if (obd_health_check(obd)) {
+                if (obd_health_check(NULL, obd)) {
                         rc += snprintf(page + rc, count - rc,
                                        "device %s reported unhealthy\n",
                                        obd->obd_name);
@@ -324,14 +309,34 @@ static int obd_proc_read_health(char *page, char **start, off_t off,
         return rc;
 }
 
+static int obd_proc_rd_jobid_var(char *page, char **start, off_t off,
+				int count, int *eof, void *data)
+{
+	return snprintf(page, count, "%s\n", obd_jobid_var);
+}
+
+static int obd_proc_wr_jobid_var(struct file *file, const char *buffer,
+				unsigned long count, void *data)
+{
+	if (!count || count > JOBSTATS_JOBID_VAR_MAX_LEN)
+		return -EINVAL;
+
+	memset(obd_jobid_var, 0, JOBSTATS_JOBID_VAR_MAX_LEN + 1);
+	/* Trim the trailing '\n' if any */
+	memcpy(obd_jobid_var, buffer, count - (buffer[count - 1] == '\n'));
+	return count;
+}
+
 /* Root for /proc/fs/lustre */
 struct proc_dir_entry *proc_lustre_root = NULL;
 
 struct lprocfs_vars lprocfs_base[] = {
-        { "version", obd_proc_read_version, NULL, NULL },
-        { "pinger", obd_proc_read_pinger, NULL, NULL },
-        { "health_check", obd_proc_read_health, NULL, NULL },
-        { 0 }
+	{ "version", obd_proc_read_version, NULL, NULL },
+	{ "pinger", obd_proc_read_pinger, NULL, NULL },
+	{ "health_check", obd_proc_read_health, NULL, NULL },
+	{ "jobid_var", obd_proc_rd_jobid_var,
+		       obd_proc_wr_jobid_var, NULL },
+	{ 0 }
 };
 #else
 #define lprocfs_base NULL
@@ -445,18 +450,4 @@ int class_procfs_clean(void)
         }
         RETURN(0);
 }
-
-
-/* Check that we're building against the appropriate version of the Lustre
- * kernel patch */
-#include <linux/lustre_version.h>
-#ifdef LUSTRE_KERNEL_VERSION
-#define LUSTRE_MIN_VERSION 45
-#define LUSTRE_MAX_VERSION 47
-#if (LUSTRE_KERNEL_VERSION < LUSTRE_MIN_VERSION)
-# error Cannot continue: Your Lustre kernel patch is older than the sources
-#elif (LUSTRE_KERNEL_VERSION > LUSTRE_MAX_VERSION)
-# error Cannot continue: Your Lustre sources are older than the kernel patch
-#endif
-#endif
 #endif

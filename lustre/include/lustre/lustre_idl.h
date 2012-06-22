@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -423,6 +421,8 @@ enum fid_seq {
         FID_SEQ_DOT_LUSTRE = 0x200000002ULL,
         /* XXX 0x200000003ULL is reserved for FID_SEQ_LLOG_OBJ */
         FID_SEQ_SPECIAL    = 0x200000004ULL,
+        FID_SEQ_QUOTA      = 0x200000005ULL,
+        FID_SEQ_QUOTA_GLB  = 0x200000006ULL,
         FID_SEQ_NORMAL     = 0x200000400ULL,
         FID_SEQ_LOV_DEFAULT= 0xffffffffffffffffULL
 };
@@ -994,7 +994,33 @@ struct lustre_msg_v2 {
 
 /* without gss, ptlrpc_body is put at the first buffer. */
 #define PTLRPC_NUM_VERSIONS     4
-struct ptlrpc_body {
+#define JOBSTATS_JOBID_SIZE     32  /* 32 bytes string */
+struct ptlrpc_body_v3 {
+	struct lustre_handle pb_handle;
+	__u32 pb_type;
+	__u32 pb_version;
+	__u32 pb_opc;
+	__u32 pb_status;
+	__u64 pb_last_xid;
+	__u64 pb_last_seen;
+	__u64 pb_last_committed;
+	__u64 pb_transno;
+	__u32 pb_flags;
+	__u32 pb_op_flags;
+	__u32 pb_conn_cnt;
+	__u32 pb_timeout;  /* for req, the deadline, for rep, the service est */
+	__u32 pb_service_time; /* for rep, actual service time */
+	__u32 pb_limit;
+	__u64 pb_slv;
+	/* VBR: pre-versions */
+	__u64 pb_pre_versions[PTLRPC_NUM_VERSIONS];
+	/* padding for future needs */
+	__u64 pb_padding[4];
+	char  pb_jobid[JOBSTATS_JOBID_SIZE];
+};
+#define ptlrpc_body     ptlrpc_body_v3
+
+struct ptlrpc_body_v2 {
         struct lustre_handle pb_handle;
         __u32 pb_type;
         __u32 pb_version;
@@ -1158,7 +1184,8 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
                                 OBD_CONNECT_FID | LRU_RESIZE_CONNECT_FLAG | \
                                 OBD_CONNECT_VBR | OBD_CONNECT_LOV_V3 | \
                                 OBD_CONNECT_SOM | OBD_CONNECT_FULL20 | \
-                                OBD_CONNECT_64BITHASH)
+                                OBD_CONNECT_64BITHASH | \
+				OBD_CONNECT_EINPROGRESS | OBD_CONNECT_JOBSTATS)
 #define OST_CONNECT_SUPPORTED  (OBD_CONNECT_SRVLOCK | OBD_CONNECT_GRANT | \
                                 OBD_CONNECT_REQPORTAL | OBD_CONNECT_VERSION | \
                                 OBD_CONNECT_TRUNCLOCK | OBD_CONNECT_INDEX | \
@@ -1172,7 +1199,8 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
                                 OBD_CONNECT_MDS | OBD_CONNECT_SKIP_ORPHAN | \
                                 OBD_CONNECT_GRANT_SHRINK | OBD_CONNECT_FULL20 | \
                                 OBD_CONNECT_64BITHASH | OBD_CONNECT_MAXBYTES | \
-                                OBD_CONNECT_MAX_EASIZE)
+                                OBD_CONNECT_MAX_EASIZE | \
+				OBD_CONNECT_EINPROGRESS | OBD_CONNECT_JOBSTATS)
 #define ECHO_CONNECT_SUPPORTED (0)
 #define MGS_CONNECT_SUPPORTED  (OBD_CONNECT_VERSION | OBD_CONNECT_AT | \
                                 OBD_CONNECT_FULL20 | OBD_CONNECT_IMP_RECOV)
@@ -1447,6 +1475,7 @@ struct lov_mds_md_v3 {            /* LOV EA mds/wire data (little-endian) */
 #define OBD_MD_FLCROSSREF    (0x0000100000000000ULL) /* Cross-ref case */
 #define OBD_MD_FLGETATTRLOCK (0x0000200000000000ULL) /* Get IOEpoch attributes
                                                       * under lock */
+#define OBD_MD_FLOBJCOUNT    (0x0000400000000000ULL) /* for multiple destroy */
 
 #define OBD_MD_FLRMTLSETFACL (0x0001000000000000ULL) /* lfs lsetfacl case */
 #define OBD_MD_FLRMTLGETFACL (0x0002000000000000ULL) /* lfs lgetfacl case */
@@ -1526,8 +1555,6 @@ struct ost_lvb {
         obd_time  lvb_ctime;
         __u64     lvb_blocks;
 };
-
-extern void lustre_swab_ost_lvb(struct ost_lvb *);
 
 /*
  *   MDS REQ RECORDS
@@ -2333,6 +2360,15 @@ typedef union {
 } ldlm_wire_policy_data_t;
 
 extern void lustre_swab_ldlm_policy_data (ldlm_wire_policy_data_t *d);
+
+/* Similarly to ldlm_wire_policy_data_t, there is one common swabber for all
+ * LVB types. As a result, any new LVB structure must match the fields of the
+ * ost_lvb structure. */
+union ldlm_wire_lvb {
+        struct ost_lvb l_ost;
+};
+
+extern void lustre_swab_lvb(union ldlm_wire_lvb *);
 
 struct ldlm_intent {
         __u64 opc;

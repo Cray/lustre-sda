@@ -1,4 +1,6 @@
 #!/bin/bash
+# -*- mode: Bash; tab-width: 4; indent-tabs-mode: t; -*-
+# vim:shiftwidth=4:softtabstop=4:tabstop=4:
 
 set -e
 
@@ -11,6 +13,7 @@ LUSTRE=${LUSTRE:-$(cd $(dirname $0)/..; echo $PWD)}
 SETUP=${SETUP:-""}
 CLEANUP=${CLEANUP:-""}
 MOUNT_2=${MOUNT_2:-"yes"}
+export MULTIOP=${MULTIOP:-multiop}
 . $LUSTRE/tests/test-framework.sh
 
 init_test_env $@
@@ -25,7 +28,7 @@ build_test_filter
 
 check_and_setup_lustre
 MOUNTED=$(mounted_lustre_filesystems)
-if ! $(echo $MOUNTED | grep -w -q $MOUNT2); then
+if ! $(echo $MOUNTED' ' | grep -w -q $MOUNT2' '); then
     zconf_mount $HOSTNAME $MOUNT2
     MOUNTED2=yes
 fi
@@ -36,28 +39,49 @@ rm -rf $DIR/[df][0-9]*
 [ "$DAEMONFILE" ] && $LCTL debug_daemon start $DAEMONFILE $DAEMONSIZE
 
 # LU-482 Avert LVM and VM inability to flush caches in pre .33 kernels
-if [ $LINUX_VERSION_CODE -lt $(kernel_version 2 6 33) ]; then
-    sync
-    do_facet $SINGLEMDS sync
+if [ $LINUX_VERSION_CODE -lt $(version_code 2.6.33) ]; then
+	sync
+	do_facet $SINGLEMDS "sync; sleep 10; sync; sleep 10; sync"
 fi
 
+LU482_FAILED=$(mktemp -u $TMP/$TESTSUITE.lu482.XXXXXX)
 test_0a() {
-    touch $MOUNT2/$tfile-A # force sync FLD/SEQ update before barrier
-    replay_barrier $SINGLEMDS
+	echo "Check file is LU482_FAILED=$LU482_FAILED"
+	touch $MOUNT2/$tfile-A # force sync FLD/SEQ update before barrier
+	replay_barrier $SINGLEMDS
 #define OBD_FAIL_PTLRPC_FINISH_REPLAY | OBD_FAIL_ONCE
-    touch $MOUNT2/$tfile
-    createmany -o $MOUNT1/$tfile- 50
-    $LCTL set_param fail_loc=0x80000514
-    facet_failover $SINGLEMDS
-    client_up || return 1
-    umount -f $MOUNT2
-    client_up || return 1
-    zconf_mount `hostname` $MOUNT2 || error "mount2 fais"
-    unlinkmany $MOUNT1/$tfile- 50 || return 2
-    rm $MOUNT2/$tfile || return 3
-    rm $MOUNT2/$tfile-A || return 4
+	touch $MOUNT2/$tfile
+	createmany -o $MOUNT1/$tfile- 50
+	$LCTL set_param fail_loc=0x80000514
+	facet_failover $SINGLEMDS
+	[ -f "$LU482_FAILED" ] && skip "LU-482 failure" && return 0
+	client_up || return 1
+	umount -f $MOUNT2
+	client_up || return 1
+	zconf_mount `hostname` $MOUNT2 || error "mount2 fais"
+	unlinkmany $MOUNT1/$tfile- 50 || return 2
+	rm $MOUNT2/$tfile || return 3
+	rm $MOUNT2/$tfile-A || return 4
 }
 run_test 0a "expired recovery with lost client"
+
+if [ -f "$LU482_FAILED" ]; then
+	log "Found check file $LU482_FAILED, aborting test script"
+	rm -vf "$LU482_FAILED"
+	complete $(basename $0) $SECONDS
+	do_nodes $CLIENTS umount -f $MOUNT2 || true
+	do_nodes $CLIENTS umount -f $MOUNT || true
+	# copied from stopall, but avoid the MDS recovery
+    for num in `seq $OSTCOUNT`; do
+        stop ost$num -f
+        rm -f $TMP/ost${num}active
+    done
+    if ! combined_mgs_mds ; then
+        stop mgs
+    fi
+
+	exit_status
+fi
 
 test_0b() {
     replay_barrier $SINGLEMDS

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -55,6 +53,7 @@ cfs_mem_cache_t *osc_object_kmem;
 cfs_mem_cache_t *osc_thread_kmem;
 cfs_mem_cache_t *osc_session_kmem;
 cfs_mem_cache_t *osc_req_kmem;
+cfs_mem_cache_t *osc_extent_kmem;
 
 struct lu_kmem_descr osc_caches[] = {
         {
@@ -88,6 +87,11 @@ struct lu_kmem_descr osc_caches[] = {
                 .ckd_size  = sizeof (struct osc_req)
         },
         {
+		.ckd_cache = &osc_extent_kmem,
+		.ckd_name  = "osc_extent_kmem",
+		.ckd_size  = sizeof (struct osc_extent)
+	},
+	{
                 .ckd_cache = NULL
         }
 };

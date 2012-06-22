@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -38,6 +36,7 @@
  * Implementation of cl_io for VVP layer.
  *
  *   Author: Nikita Danilov <nikita.danilov@sun.com>
+ *   Author: Jinshan Xiong <jinshan.xiong@whamcloud.com>
  */
 
 #define DEBUG_SUBSYSTEM S_LLITE
@@ -132,6 +131,7 @@ static int vvp_mmap_locks(const struct lu_env *env,
                           struct ccc_io *vio, struct cl_io *io)
 {
         struct ccc_thread_info *cti = ccc_env_info(env);
+        struct mm_struct       *mm = current->mm;
         struct vm_area_struct  *vma;
         struct cl_lock_descr   *descr = &cti->cti_descr;
         ldlm_policy_data_t      policy;
@@ -149,6 +149,10 @@ static int vvp_mmap_locks(const struct lu_env *env,
         if (vio->cui_iov == NULL) /* nfs or loop back device write */
                 RETURN(0);
 
+        /* No MM (e.g. NFS)? No vmas too. */
+        if (mm == NULL)
+                RETURN(0);
+
         for (seg = 0; seg < vio->cui_nrsegs; seg++) {
                 const struct iovec *iv = &vio->cui_iov[seg];
 
@@ -159,12 +163,14 @@ static int vvp_mmap_locks(const struct lu_env *env,
 
                 count += addr & (~CFS_PAGE_MASK);
                 addr &= CFS_PAGE_MASK;
-                while((vma = our_vma(addr, count)) != NULL) {
+
+                down_read(&mm->mmap_sem);
+                while((vma = our_vma(mm, addr, count)) != NULL) {
                         struct inode *inode = vma->vm_file->f_dentry->d_inode;
                         int flags = CEF_MUST;
 
                         if (ll_file_nolock(vma->vm_file)) {
-                                /* 
+                                /*
                                  * For no lock case, a lockless lock will be
                                  * generated.
                                  */
@@ -199,6 +205,7 @@ static int vvp_mmap_locks(const struct lu_env *env,
                         count -= vma->vm_end - addr;
                         addr = vma->vm_end;
                 }
+                up_read(&mm->mmap_sem);
         }
         RETURN(0);
 }
@@ -341,44 +348,8 @@ static int vvp_io_setattr_trunc(const struct lu_env *env,
                                 const struct cl_io_slice *ios,
                                 struct inode *inode, loff_t size)
 {
-        struct vvp_io        *vio   = cl2vvp_io(env, ios);
-        struct cl_io         *io    = ios->cis_io;
-        struct cl_object     *obj   = ios->cis_obj;
-        pgoff_t               start = cl_index(obj, size);
-        int                   result;
-
-        DOWN_WRITE_I_ALLOC_SEM(inode);
-
-        result = vvp_do_vmtruncate(inode, size);
-
-        /*
-         * If a page is partially truncated, keep it owned across truncate to
-         * prevent... races.
-         *
-         * XXX this properly belongs to osc, because races in question are OST
-         * specific.
-         */
-        if (cl_offset(obj, start) != size) {
-                struct cl_object_header *hdr;
-
-                hdr = cl_object_header(obj);
-                cfs_spin_lock(&hdr->coh_page_guard);
-                vio->cui_partpage = cl_page_lookup(hdr, start);
-                cfs_spin_unlock(&hdr->coh_page_guard);
-
-                if (vio->cui_partpage != NULL)
-                        /*
-                         * Wait for the transfer completion for a partially
-                         * truncated page to avoid dead-locking an OST with
-                         * the concurrent page-wise overlapping WRITE and
-                         * PUNCH requests. BUG:17397.
-                         *
-                         * Partial page is disowned in vvp_io_trunc_end().
-                         */
-                        cl_page_own(env, io, vio->cui_partpage);
-        } else
-                vio->cui_partpage = NULL;
-        return result;
+	DOWN_WRITE_I_ALLOC_SEM(inode);
+	return 0;
 }
 
 static int vvp_io_setattr_time(const struct lu_env *env,
@@ -428,23 +399,15 @@ static int vvp_io_setattr_start(const struct lu_env *env,
 static void vvp_io_setattr_end(const struct lu_env *env,
                                const struct cl_io_slice *ios)
 {
-        struct vvp_io        *vio   = cl2vvp_io(env, ios);
         struct cl_io         *io    = ios->cis_io;
         struct inode         *inode = ccc_object_inode(io->ci_obj);
 
         if (!cl_io_is_trunc(io))
                 return;
-        if (vio->cui_partpage != NULL) {
-                cl_page_disown(env, ios->cis_io, vio->cui_partpage);
-                cl_page_put(env, vio->cui_partpage);
-                vio->cui_partpage = NULL;
-        }
 
-        /*
-         * Do vmtruncate again, to remove possible stale pages populated by
-         * competing read threads. bz20645.
-         */
-        vvp_do_vmtruncate(inode, io->u.ci_setattr.sa_attr.lvb_size);
+	/* Truncate in memory pages - they must be clean pages because osc
+	 * has already notified to destroy osc_extents. */
+	vvp_do_vmtruncate(inode, io->u.ci_setattr.sa_attr.lvb_size);
 }
 
 static void vvp_io_setattr_fini(const struct lu_env *env,
@@ -715,6 +678,11 @@ static int vvp_io_fault_start(const struct lu_env *env,
 
         /* must return locked page */
         if (fio->ft_mkwrite) {
+		/* we grab alloc_sem to exclude truncate case.
+		 * Otherwise, we could add dirty pages into osc cache
+		 * while truncate is on-going. */
+		DOWN_READ_I_ALLOC_SEM(inode);
+
                 LASSERT(cfio->ft_vmpage != NULL);
                 lock_page(cfio->ft_vmpage);
         } else {
@@ -760,15 +728,22 @@ static int vvp_io_fault_start(const struct lu_env *env,
                          * started before the page is really made dirty, we
                          * still have chance to detect it. */
                         result = cl_page_cache_add(env, io, page, CRT_WRITE);
-                        if (result < 0) {
-                                cl_page_unassume(env, io, page);
-                                cl_page_put(env, page);
+			LASSERT(cl_page_is_owned(page, io));
 
-                                /* we're in big trouble, what can we do now? */
-                                if (result == -EDQUOT)
-                                        result = -ENOSPC;
-                                GOTO(out, result);
-                        }
+			vmpage = NULL;
+			if (result < 0) {
+				cl_page_unmap(env, io, page);
+				cl_page_discard(env, io, page);
+				cl_page_disown(env, io, page);
+
+				cl_page_put(env, page);
+
+				/* we're in big trouble, what can we do now? */
+				if (result == -EDQUOT)
+					result = -ENOSPC;
+				GOTO(out, result);
+			} else
+				cl_page_disown(env, io, page);
                 }
         }
 
@@ -789,11 +764,23 @@ static int vvp_io_fault_start(const struct lu_env *env,
 
 out:
         /* return unlocked vmpage to avoid deadlocking */
-        unlock_page(vmpage);
+	if (vmpage != NULL)
+		unlock_page(vmpage);
+	if (fio->ft_mkwrite)
+		UP_READ_I_ALLOC_SEM(inode);
 #ifdef HAVE_VM_OP_FAULT
-        cfio->fault.ft_flags &= ~VM_FAULT_LOCKED;
+	cfio->fault.ft_flags &= ~VM_FAULT_LOCKED;
 #endif
-        return result;
+	return result;
+}
+
+static int vvp_io_fsync_start(const struct lu_env *env,
+			      const struct cl_io_slice *ios)
+{
+	/* we should mark TOWRITE bit to each dirty page in radix tree to
+	 * verify pages have been written, but this is difficult because of
+	 * race. */
+	return 0;
 }
 
 static int vvp_io_read_page(const struct lu_env *env,
@@ -861,7 +848,7 @@ static int vvp_page_sync_io(const struct lu_env *env, struct cl_io *io,
         queue = &io->ci_queue;
         cl_2queue_init_page(queue, page);
 
-        result = cl_io_submit_sync(env, io, crt, queue, CRP_NORMAL, 0);
+	result = cl_io_submit_sync(env, io, crt, queue, 0);
         LASSERT(cl_page_is_owned(page, io));
 
         if (crt == CRT_READ)
@@ -1036,6 +1023,7 @@ static int vvp_io_commit_write(const struct lu_env *env,
                         }
                         if (need_clip)
                                 cl_page_clip(env, pg, 0, to);
+			clear_page_dirty_for_io(vmpage);
                         result = vvp_page_sync_io(env, io, pg, cp, CRT_WRITE);
                         if (result)
                                 CERROR("Write page %lu of inode %p failed %d\n",
@@ -1094,6 +1082,10 @@ static const struct cl_io_operations vvp_io_ops = {
                         .cio_start     = vvp_io_fault_start,
                         .cio_end       = ccc_io_end
                 },
+		[CIT_FSYNC] = {
+			.cio_start  = vvp_io_fsync_start,
+			.cio_fini   = vvp_io_fini
+		},
                 [CIT_MISC] = {
                         .cio_fini   = vvp_io_fini
                 }
@@ -1119,6 +1111,7 @@ int vvp_io_init(const struct lu_env *env, struct cl_object *obj,
         result = 0;
         if (io->ci_type == CIT_READ || io->ci_type == CIT_WRITE) {
                 size_t count;
+		struct ll_inode_info *lli = ll_i2info(ccc_object_inode(obj));
 
                 count = io->u.ci_rw.crw_count;
                 /* "If nbyte is 0, read() will return 0 and have no other
@@ -1129,6 +1122,13 @@ int vvp_io_init(const struct lu_env *env, struct cl_object *obj,
                         cio->cui_tot_count = count;
                         cio->cui_tot_nrsegs = 0;
                 }
+		/* for read/write, we store the jobid in the inode, and
+		 * it'll be fetched by osc when building RPC.
+		 *
+		 * it's not accurate if the file is shared by different
+		 * jobs.
+		 */
+		lustre_get_jobid(lli->lli_jobid);
         } else if (io->ci_type == CIT_SETATTR) {
                 if (!cl_io_is_trunc(io))
                         io->ci_lockreq = CILR_MANDATORY;

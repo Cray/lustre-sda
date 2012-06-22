@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -200,13 +198,18 @@ struct lustre_mount_info *server_get_mount_2(const char *name)
 
 static void unlock_mntput(struct vfsmount *mnt)
 {
-        if (kernel_locked()) {
-                cfs_unlock_kernel();
-                mntput(mnt);
-                cfs_lock_kernel();
-        } else {
-                mntput(mnt);
-        }
+#ifdef HAVE_KERNEL_LOCKED
+	/* for kernel < 2.6.37 */
+	if (kernel_locked()) {
+		unlock_kernel();
+		mntput(mnt);
+		lock_kernel();
+	} else {
+		mntput(mnt);
+	}
+#else
+	mntput(mnt);
+#endif
 }
 
 static int lustre_put_lsi(struct super_block *sb);
@@ -650,7 +653,7 @@ static int lustre_start_mgc(struct super_block *sb)
 
         obd = class_name2obd(mgcname);
         if (obd && !obd->obd_stopping) {
-                rc = obd_set_info_async(obd->obd_self_export,
+                rc = obd_set_info_async(NULL, obd->obd_self_export,
                                         strlen(KEY_MGSSEC), KEY_MGSSEC,
                                         strlen(mgssec), mgssec, NULL);
                 if (rc)
@@ -665,7 +668,7 @@ static int lustre_start_mgc(struct super_block *sb)
                         int vallen = sizeof(*data);
                         __u32 *flags = &lsi->lsi_lmd->lmd_flags;
 
-                        rc = obd_get_info(obd->obd_self_export,
+                        rc = obd_get_info(NULL, obd->obd_self_export,
                                           strlen(KEY_CONN_DATA), KEY_CONN_DATA,
                                           &vallen, data, NULL);
                         LASSERT(rc == 0);
@@ -699,7 +702,7 @@ static int lustre_start_mgc(struct super_block *sb)
                    if at all possible. */
                 recov_bk++;
                 CDEBUG(D_MOUNT, "%s: Set MGC reconnect %d\n", mgcname,recov_bk);
-                rc = obd_set_info_async(obd->obd_self_export,
+                rc = obd_set_info_async(NULL, obd->obd_self_export,
                                         sizeof(KEY_INIT_RECOV_BACKUP),
                                         KEY_INIT_RECOV_BACKUP,
                                         sizeof(recov_bk), &recov_bk, NULL);
@@ -794,7 +797,7 @@ static int lustre_start_mgc(struct super_block *sb)
                 GOTO(out_free, rc = -ENOTCONN);
         }
 
-        rc = obd_set_info_async(obd->obd_self_export,
+        rc = obd_set_info_async(NULL, obd->obd_self_export,
                                 strlen(KEY_MGSSEC), KEY_MGSSEC,
                                 strlen(mgssec), mgssec, NULL);
         if (rc)
@@ -806,7 +809,7 @@ static int lustre_start_mgc(struct super_block *sb)
 
         /* Try all connections, but only once. */
         recov_bk = 1;
-        rc = obd_set_info_async(obd->obd_self_export,
+        rc = obd_set_info_async(NULL, obd->obd_self_export,
                                 sizeof(KEY_INIT_RECOV_BACKUP),
                                 KEY_INIT_RECOV_BACKUP,
                                 sizeof(recov_bk), &recov_bk, NULL);
@@ -927,7 +930,7 @@ static int server_mgc_set_fs(struct obd_device *mgc, struct super_block *sb)
         CDEBUG(D_MOUNT, "Set mgc disk for %s\n", lsi->lsi_lmd->lmd_dev);
 
         /* cl_mgc_sem in mgc insures we sleep if the mgc_fs is busy */
-        rc = obd_set_info_async(mgc->obd_self_export,
+        rc = obd_set_info_async(NULL, mgc->obd_self_export,
                                 sizeof(KEY_SET_FS), KEY_SET_FS,
                                 sizeof(*sb), sb, NULL);
         if (rc) {
@@ -944,7 +947,7 @@ static int server_mgc_clear_fs(struct obd_device *mgc)
 
         CDEBUG(D_MOUNT, "Unassign mgc disk\n");
 
-        rc = obd_set_info_async(mgc->obd_self_export,
+        rc = obd_set_info_async(NULL, mgc->obd_self_export,
                                 sizeof(KEY_CLEAR_FS), KEY_CLEAR_FS,
                                 0, NULL, NULL);
         RETURN(rc);
@@ -1092,7 +1095,7 @@ int server_register_target(struct super_block *sb)
 
         /* Register the target */
         /* FIXME use mgc_process_config instead */
-        rc = obd_set_info_async(mgc->u.cli.cl_mgc_mgsexp,
+        rc = obd_set_info_async(NULL, mgc->u.cli.cl_mgc_mgsexp,
                                 sizeof(KEY_REGISTER_TARGET), KEY_REGISTER_TARGET,
                                 sizeof(*mti), mti, NULL);
         if (rc) {
@@ -1175,7 +1178,7 @@ static int server_notify_target(struct super_block *sb, struct obd_device *obd)
         mti->mti_flags |= LDD_F_OPC_READY;
 
         /* FIXME use mgc_process_config instead */
-        rc = obd_set_info_async(mgc->u.cli.cl_mgc_mgsexp,
+        rc = obd_set_info_async(NULL, mgc->u.cli.cl_mgc_mgsexp,
                                 sizeof(KEY_REGISTER_TARGET),
                                 KEY_REGISTER_TARGET,
                                 sizeof(*mti), mti, NULL);
@@ -1545,7 +1548,7 @@ static void server_wait_finished(struct vfsmount *mnt)
                        (mnt_get_count(mnt) == 1),
                        cfs_time_seconds(3),
                        rc);
-               cfs_block_sigs(blocked);
+	       cfs_restore_sigs(blocked);
                if (rc < 0) {
                        LCONSOLE_EMERG("Danger: interrupted umount %s with "
                                       "%d refs!\n", mnt->mnt_devname,
@@ -1614,23 +1617,8 @@ static void server_put_super(struct super_block *sb)
            should have put it on a different device. */
         if (IS_MGS(lsi->lsi_ldd)) {
                 /* if MDS start with --nomgs, don't stop MGS then */
-                if (!(lsi->lsi_lmd->lmd_flags & LMD_FLG_NOMGS)) {
-                        char *logname;
-
-                        OBD_ALLOC(logname, MGS_PARAM_MAXLEN);
-                        if (!logname) {
-                                LCONSOLE_WARN("Stopping mgs failed %d, please "
-                                              "try again.", -ENOMEM);
-                                return;
-                        }
-                        strcpy(logname, lsi->lsi_ldd->ldd_fsname);
-                        strcat(logname, "-params");
-                        /* tell the mgc to drop parameter config log */
-                        lustre_end_log(sb, logname, NULL);
-                        OBD_FREE(logname, MGS_PARAM_MAXLEN);
-
+                if (!(lsi->lsi_lmd->lmd_flags & LMD_FLG_NOMGS))
                         server_stop_mgs(sb);
-                }
         }
 
         /* Clean the mgc and sb */
@@ -1843,25 +1831,6 @@ static int server_fill_super(struct super_block *sb)
            Client will not finish until all servers are connected.
            Note - MGS-only server does NOT get a client, since there is no
            lustre fs associated - the MGS is for all lustre fs's */
-        } else if (IS_MGS(lsi->lsi_ldd) &&
-                   !(lsi->lsi_lmd->lmd_flags & LMD_FLG_NOMGS)){
-                struct config_llog_instance cfg;
-                char *logname;
-
-                OBD_ALLOC(logname, MGS_PARAM_MAXLEN);
-                if (logname == NULL)
-                        GOTO(out_mnt, rc = -ENOMEM);
-                strcpy(logname, lsi->lsi_ldd->ldd_fsname);
-                strcat(logname, "-params");
-
-                memset(&cfg, 0, sizeof(cfg));
-                rc = lustre_process_log(sb, logname, &cfg);
-                OBD_FREE(logname, MGS_PARAM_MAXLEN);
-                if (rc) {
-                        CERROR("failed to process parameters %s: %d\n",
-                               logname, rc);
-                        GOTO(out_mnt, rc);
-                }
         }
 
         rc = server_fill_super_common(sb);
@@ -2195,6 +2164,9 @@ static int lmd_parse(char *options, struct lustre_mount_data *lmd)
                 } else if (strncmp(s1, "nomgs", 5) == 0) {
                         lmd->lmd_flags |= LMD_FLG_NOMGS;
                         clear++;
+		} else if (strncmp(s1, "noscrub", 7) == 0) {
+			lmd->lmd_flags |= LMD_FLG_NOSCRUB;
+			clear++;
                 } else if (strncmp(s1, "writeconf", 9) == 0) {
                         lmd->lmd_flags |= LMD_FLG_WRITECONF;
                         clear++;

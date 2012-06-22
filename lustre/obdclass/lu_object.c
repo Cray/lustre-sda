@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -45,9 +43,6 @@
  */
 
 #define DEBUG_SUBSYSTEM S_CLASS
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 
 #include <libcfs/libcfs.h>
 
@@ -372,7 +367,8 @@ LU_KEY_INIT_FINI(lu_global, struct lu_cdebug_data);
  * lu_global_init().
  */
 struct lu_context_key lu_global_key = {
-        .lct_tags = LCT_MD_THREAD|LCT_DT_THREAD|LCT_CL_THREAD,
+        .lct_tags = LCT_MD_THREAD | LCT_DT_THREAD |
+                    LCT_MG_THREAD | LCT_CL_THREAD,
         .lct_init = lu_global_key_init,
         .lct_fini = lu_global_key_fini
 };

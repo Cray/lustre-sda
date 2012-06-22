@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -136,8 +134,6 @@ extern int echo_client_init(void);
 
 
 /* general stuff */
-
-#define EXPORT_SYMBOL(S)
 
 typedef __u64 kdev_t;
 
@@ -296,8 +292,6 @@ int cfs_curproc_is_in_groups(gid_t gid);
         ret;                                                            \
 }
 
-#define cfs_lock_kernel() do {} while (0)
-#define cfs_unlock_kernel() do {} while (0)
 #define daemonize(l) do {} while (0)
 #define sigfillset(l) do {} while (0)
 #define recalc_sigpending(l) do {} while (0)

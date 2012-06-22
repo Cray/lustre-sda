@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -77,7 +75,7 @@
 #define lustre_swab_ost_last_id NULL
 #define lustre_swab_fiemap NULL
 #define lustre_swab_qdata NULL
-#define lustre_swab_ost_lvb NULL
+#define lustre_swab_lvb NULL
 #define lustre_swab_mgs_config_body NULL
 #define lustre_swab_mgs_config_res NULL
 #define dump_rniobuf NULL

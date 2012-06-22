@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -35,9 +33,7 @@
  * This file is part of Lustre, http://www.lustre.org/
  * Lustre is a trademark of Sun Microsystems, Inc.
  */
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
+
 #define DEBUG_SUBSYSTEM S_LQUOTA
 
 #ifdef __KERNEL__
@@ -64,7 +60,6 @@
 #include <lustre_quota.h>
 #include "quota_internal.h"
 
-#ifdef HAVE_QUOTA_SUPPORT
 #ifdef __KERNEL__
 
 int mds_quota_ctl(struct obd_device *obd, struct obd_export *unused,
@@ -291,4 +286,3 @@ adjust:
         RETURN(rc);
 }
 #endif /* __KERNEL__ */
-#endif

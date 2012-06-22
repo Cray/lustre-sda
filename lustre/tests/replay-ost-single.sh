@@ -1,4 +1,6 @@
 #!/bin/bash
+# -*- mode: Bash; tab-width: 4; indent-tabs-mode: t; -*-
+# vim:shiftwidth=4:softtabstop=4:tabstop=4:
 
 set -e
 
@@ -244,6 +246,99 @@ test_7() {
     (( $before <= $after + 40 )) || return 3	# take OST logs into account
 }
 run_test 7 "Fail OST before obd_destroy"
+
+test_8a() {
+    verify=$ROOT/tmp/verify-$$
+    dd if=/dev/urandom of=$verify bs=4096 count=1280 ||
+        error "Create verify file failed"
+#define OBD_FAIL_OST_DQACQ_NET           0x230
+    do_facet ost1 "lctl set_param fail_loc=0x230"
+    dd if=$verify of=$TDIR/$tfile bs=4096 count=1280 oflag=sync &
+    ddpid=$!
+    sleep $TIMEOUT  # wait for the io to become redo io
+    if ! ps -p $ddpid  > /dev/null 2>&1; then
+            error "redo io finished incorrectly"
+            return 1
+    fi
+    do_facet ost1 "lctl set_param fail_loc=0"
+    wait $ddpid || return 1
+    cancel_lru_locks osc
+    cmp $verify $TDIR/$tfile || return 2
+    rm -f $verify $TDIR/$tfile
+}
+run_test 8a "Verify redo io: redo io when get -EINPROGRESS error"
+
+test_8b() {
+    verify=$ROOT/tmp/verify-$$
+    dd if=/dev/urandom of=$verify bs=4096 count=1280 ||
+        error "Create verify file failed"
+#define OBD_FAIL_OST_DQACQ_NET           0x230
+    do_facet ost1 "lctl set_param fail_loc=0x230"
+    dd if=$verify of=$TDIR/$tfile bs=4096 count=1280 oflag=sync &
+    ddpid=$!
+    sleep $TIMEOUT  # wait for the io to become redo io
+    fail ost1
+    do_facet ost1 "lctl set_param fail_loc=0"
+    wait $ddpid || return 1
+    cancel_lru_locks osc
+    cmp $verify $TDIR/$tfile || return 2
+    rm -f $verify $TDIR/$tfile
+}
+run_test 8b "Verify redo io: redo io should success after recovery"
+
+test_8c() {
+    verify=$ROOT/tmp/verify-$$
+    dd if=/dev/urandom of=$verify bs=4096 count=1280 ||
+        error "Create verify file failed"
+#define OBD_FAIL_OST_DQACQ_NET           0x230
+    do_facet ost1 "lctl set_param fail_loc=0x230"
+    dd if=$verify of=$TDIR/$tfile bs=4096 count=1280 oflag=sync &
+    ddpid=$!
+    sleep $TIMEOUT  # wait for the io to become redo io
+    ost_evict_client
+    # allow recovery to complete
+    sleep $((TIMEOUT + 2))
+    do_facet ost1 "lctl set_param fail_loc=0"
+    wait $ddpid
+    cancel_lru_locks osc
+    cmp $verify $TDIR/$tfile && return 2
+    rm -f $verify $TDIR/$tfile
+}
+run_test 8c "Verify redo io: redo io should fail after eviction"
+
+
+test_9d() {
+#define OBD_FAIL_MDS_DQACQ_NET           0x187
+    do_facet $SINGLEMDS "lctl set_param fail_loc=0x187"
+    # test the non-intent create path
+    mcreate $TDIR/$tfile &
+    cpid=$!
+    sleep $TIMEOUT
+    if ! ps -p $cpid  > /dev/null 2>&1; then
+            error "mknod finished incorrectly"
+            return 1
+    fi
+    do_facet $SINGLEMDS "lctl set_param fail_loc=0"
+    wait $cpid || return 2
+    stat $TDIR/$tfile || error "mknod failed"
+
+    rm $TDIR/$tfile
+
+#define OBD_FAIL_MDS_DQACQ_NET           0x187
+    do_facet $SINGLEMDS "lctl set_param fail_loc=0x187"
+    # test the intent create path
+    openfile -f O_RDWR:O_CREAT $TDIR/$tfile &
+    cpid=$!
+    sleep $TIMEOUT
+    if ! ps -p $cpid > /dev/null 2>&1; then
+            error "open finished incorrectly"
+            return 3
+    fi
+    do_facet $SINGLEMDS "lctl set_param fail_loc=0"
+    wait $cpid || return 4
+    stat $TDIR/$tfile || error "open failed"
+}
+run_test 9d "Verify redo creation on -EINPROGRESS"
 
 complete $(basename $0) $SECONDS
 check_and_cleanup_lustre

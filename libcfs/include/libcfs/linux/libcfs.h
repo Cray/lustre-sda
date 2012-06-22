@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -47,6 +45,7 @@
 
 
 #include <stdarg.h>
+#include <libcfs/linux/linux-cpu.h>
 #include <libcfs/linux/linux-time.h>
 #include <libcfs/linux/linux-mem.h>
 #include <libcfs/linux/linux-prim.h>
@@ -63,6 +62,7 @@
 #include <linux/types.h>
 #include <asm/timex.h>
 #include <linux/sched.h> /* THREAD_SIZE */
+#include <linux/rbtree.h>
 
 #define CFS_THREAD_SIZE   THREAD_SIZE
 #define LUSTRE_TRACE_SIZE (THREAD_SIZE >> 5)
@@ -81,9 +81,8 @@
 #define __CHECK_STACK(msgdata, mask, cdls)                              \
 do {                                                                    \
         if (unlikely(CDEBUG_STACK() > libcfs_stack)) {                  \
+                LIBCFS_DEBUG_MSG_DATA_INIT(msgdata, D_WARNING, NULL);   \
                 libcfs_stack = CDEBUG_STACK();                          \
-                (msgdata)->msg_mask = D_WARNING;                        \
-                (msgdata)->msg_cdls = NULL;                             \
                 libcfs_debug_msg(msgdata,                               \
                                  "maximum lustre stack %lu\n",          \
                                  CDEBUG_STACK());                       \

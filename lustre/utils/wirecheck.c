@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -223,6 +221,8 @@ check_ost_id(void)
         CHECK_VALUE_64X(FID_SEQ_LOCAL_FILE);
         CHECK_VALUE_64X(FID_SEQ_DOT_LUSTRE);
         CHECK_VALUE_64X(FID_SEQ_SPECIAL);
+        CHECK_VALUE_64X(FID_SEQ_QUOTA);
+        CHECK_VALUE_64X(FID_SEQ_QUOTA_GLB);
         CHECK_VALUE_64X(FID_SEQ_NORMAL);
         CHECK_VALUE_64X(FID_SEQ_LOV_DEFAULT);
 
@@ -320,11 +320,13 @@ check_ptlrpc_body(void)
         CHECK_MEMBER(ptlrpc_body, pb_conn_cnt);
         CHECK_MEMBER(ptlrpc_body, pb_timeout);
         CHECK_MEMBER(ptlrpc_body, pb_service_time);
-        CHECK_MEMBER(ptlrpc_body, pb_slv);
         CHECK_MEMBER(ptlrpc_body, pb_limit);
+	CHECK_MEMBER(ptlrpc_body, pb_slv);
         CHECK_CVALUE(PTLRPC_NUM_VERSIONS);
         CHECK_MEMBER(ptlrpc_body, pb_pre_versions[PTLRPC_NUM_VERSIONS]);
         CHECK_MEMBER(ptlrpc_body, pb_padding[4]);
+	CHECK_CVALUE(JOBSTATS_JOBID_SIZE);
+	CHECK_MEMBER(ptlrpc_body, pb_jobid);
 
         CHECK_VALUE(MSG_PTLRPC_BODY_OFF);
         CHECK_VALUE(REQ_REC_OFF);

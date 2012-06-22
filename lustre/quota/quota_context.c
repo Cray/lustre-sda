@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -42,10 +40,6 @@
  * Author: Niu YaWei <niu@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
-
 #define DEBUG_SUBSYSTEM S_LQUOTA
 
 #include <linux/version.h>
@@ -65,8 +59,6 @@
 static int hash_lqs_cur_bits = HASH_LQS_CUR_BITS;
 CFS_MODULE_PARM(hash_lqs_cur_bits, "i", int, 0444,
                 "the current bits of lqs hash");
-
-#ifdef HAVE_QUOTA_SUPPORT
 
 static cfs_hash_ops_t lqs_hash_ops;
 
@@ -252,7 +244,7 @@ check_cur_qunit(struct obd_device *obd,
         int ret = 0;
         ENTRY;
 
-        if (!ll_sb_any_quota_active(sb))
+        if (!ll_sb_has_quota_active(sb, QDATA_IS_GRP(qdata)))
                 RETURN(0);
 
         cfs_spin_lock(&qctxt->lqc_lock);
@@ -381,9 +373,6 @@ int compute_remquota(struct obd_device *obd, struct lustre_quota_ctxt *qctxt,
         struct obd_quotactl *qctl;
         int ret = QUOTA_RET_OK;
         ENTRY;
-
-        if (!ll_sb_any_quota_active(sb))
-                RETURN(QUOTA_RET_NOQUOTA);
 
         /* ignore root user */
         if (qdata->qd_id == 0 && QDATA_IS_GRP(qdata) == USRQUOTA)
@@ -529,7 +518,7 @@ void* quota_barrier(struct lustre_quota_ctxt *qctxt,
         struct lustre_qunit *qunit, *find_qunit;
         int cycle = 1;
 
-        OBD_SLAB_ALLOC(qunit, qunit_cachep, CFS_ALLOC_IO, sizeof(*qunit));
+	OBD_SLAB_ALLOC_PTR(qunit, qunit_cachep);
         if (qunit == NULL) {
                 CERROR("locating %sunit failed for %sid %u\n",
                        isblk ? "b" : "i", oqctl->qc_type ? "g" : "u",
@@ -936,6 +925,56 @@ revoke_lqs_rec(struct lustre_qunit_size *lqs, struct qunit_data *qdata, int opc)
         cfs_spin_unlock(&lqs->lqs_lock);
 }
 
+static int verify_cur_qunit(struct obd_device *obd,
+			    struct lustre_quota_ctxt *qctxt,
+			    struct qunit_data *qdata, int opc)
+{
+	struct obd_quotactl *qctl;
+	__u64 limit;
+	int ret = 0;
+	ENTRY;
+
+	/* extra quota acquire can be tolerated. */
+	if (opc == QUOTA_DQACQ)
+		RETURN(ret);
+
+	OBD_ALLOC_PTR(qctl);
+	if (qctl == NULL) {
+		CERROR("Fail to allocate mem!\n");
+		RETURN(-ENOMEM);
+	}
+
+	qctl->qc_cmd = Q_GETQUOTA;
+	qctl->qc_id = qdata->qd_id;
+	qctl->qc_type = QDATA_IS_GRP(qdata);
+	ret = fsfilt_quotactl(obd, qctxt->lqc_sb, qctl);
+	if (ret) {
+		/* -ESRCH means no limit */
+		CDEBUG(ret == -ESRCH ? D_QUOTA : D_ERROR,
+		       "Can't get quota usage! rc:%d\n", ret);
+		GOTO(out, ret);
+	}
+
+	if (QDATA_IS_BLK(qdata))
+		limit = qctl->qc_dqblk.dqb_bhardlimit << QUOTABLOCK_BITS;
+	else
+		limit = qctl->qc_dqblk.dqb_ihardlimit;
+
+	if (limit <= qdata->qd_count) {
+		CDEBUG(D_QUOTA, "drop extra release. id(%u), flag(%u), "
+		       "type(%c), isblk(%c), count("LPU64"), "
+		       "qd_qunit("LPU64"), hardlimit("LPU64").\n",
+		       qdata->qd_id, qdata->qd_flags,
+		       QDATA_IS_GRP(qdata) ? 'g' : 'u',
+		       QDATA_IS_BLK(qdata) ? 'b' : 'i',
+		       qdata->qd_count, qdata->qd_qunit, limit);
+		ret = -EAGAIN;
+	}
+out:
+	OBD_FREE_PTR(qctl);
+	RETURN(ret);
+}
+
 static int
 schedule_dqacq(struct obd_device *obd, struct lustre_quota_ctxt *qctxt,
                struct qunit_data *qdata, int opc, int wait,
@@ -994,6 +1033,41 @@ schedule_dqacq(struct obd_device *obd, struct lustre_quota_ctxt *qctxt,
         lqs_getref(lqs);
         /* this is for quota_search_lqs */
         lqs_putref(lqs);
+
+	/* LU-1493
+	 *
+	 * There is a race between the check_cur_qunit() and the
+	 * dqacq_completion(): check_cur_qunit() read hardlimit
+	 * and calculate how much quota need be acquired/released
+	 * based on the hardlimit, however, the hardlimit can be
+	 * changed by the dqacq_completion() at anytime. So that
+	 * could result in extra quota acquire/release when there
+	 * is inflight dqacq.
+	 *
+	 * In general, such extra dqacq dosen't bring fatal error,
+	 * unless an extra release is going to release more than
+	 * 'hardlimit' quota.
+	 *
+	 * To minimize the code changes (anyway, it'll be totally
+	 * rewritten in the new quota design), we just do one more
+	 * check here to avoid the extra release which could bring
+	 * fatal error. A better solution could be calculating the
+	 * qd_count here and removing the lqs_blk/ino_rec stuff.
+	 */
+	rc = verify_cur_qunit(obd, qctxt, qdata, opc);
+	if (rc) {
+		cfs_spin_lock(&qunit_hash_lock);
+		remove_qunit_nolock(qunit);
+		cfs_spin_unlock(&qunit_hash_lock);
+
+		compute_lqs_after_removing_qunit(qunit);
+		/* this is for qunit_get() */
+		qunit_put(qunit);
+		/* this for alloc_qunit() */
+		qunit_put(qunit);
+		/* drop this extra release silently */
+		RETURN(0);
+	}
 
         QDATA_DEBUG(qdata, "obd(%s): send %s quota req\n",
                     obd->obd_name, (opc == QUOTA_DQACQ) ? "acq" : "rel");
@@ -1145,8 +1219,31 @@ qctxt_adjust_qunit(struct obd_device *obd, struct lustre_quota_ctxt *qctxt,
         struct qunit_data qdata[MAXQUOTAS];
         ENTRY;
 
-        if (quota_is_set(obd, id, isblk ? QB_SET : QI_SET) == 0)
-                RETURN(0);
+	/* XXX In quota_chk_acq_common(), we do something like:
+	 *
+	 *     while (quota_check_common() & QUOTA_RET_ACQUOTA) {
+	 *            rc = qctxt_adjust_qunit();
+	 *     }
+	 *
+	 *     to make sure the slave acquired enough quota from master.
+	 *
+	 *     Unfortunately, qctxt_adjust_qunit() checks QB/QI_SET to
+	 *     decide if do real DQACQ or not, but quota_check_common()
+	 *     doesn't check QB/QI_SET flags. This inconsistence could
+	 *     lead into an infinite loop.
+	 *
+	 *     We can't fix it by simply adding QB/QI_SET checking in the
+	 *     quota_check_common(), since we must guarantee that the
+	 *     paried quota_pending_commit() has same QB/QI_SET, but the
+	 *     flags can be actually cleared at any time...
+	 *
+	 *     A quick non-intrusive solution is to just skip the
+	 *     QB/QI_SET checking here when the @wait is non-zero.
+	 *     (If the @wait is non-zero, the caller must have already
+	 *     checked the QB/QI_SET).
+	 */
+	if (!wait && quota_is_set(obd, id, isblk ? QB_SET : QI_SET) == 0)
+		RETURN(0);
 
         for (i = 0; i < MAXQUOTAS; i++) {
                 qdata[i].qd_id = id[i];
@@ -1648,4 +1745,3 @@ static cfs_hash_ops_t lqs_hash_ops = {
         .hs_put_locked  = lqs_put_locked,
         .hs_exit        = lqs_exit
 };
-#endif /* HAVE_QUOTA_SUPPORT */

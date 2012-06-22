@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -42,9 +40,6 @@
  * Author: Jinshan Xiong <jinshan.xiong@whamcloud.com>
  */
 
-#ifndef EXPORT_SYMTAB
-#define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_MGS
 #define D_MGS D_CONFIG
 
@@ -151,10 +146,7 @@ static int mgs_nidtbl_read(struct obd_device *unused, struct mgs_nidtbl *tbl,
 
                         /* check if we need to consume remaining bytes. */
                         if (last_in_unit != NULL && bytes_in_unit) {
-                                /* entry has been swapped. */
-                                __swab32s(&last_in_unit->mne_length);
                                 last_in_unit->mne_length += bytes_in_unit;
-                                __swab32s(&last_in_unit->mne_length);
                                 rc  += bytes_in_unit;
                                 buf += bytes_in_unit;
                                 last_in_unit = NULL;
@@ -200,7 +192,6 @@ static int mgs_nidtbl_read(struct obd_device *unused, struct mgs_nidtbl *tbl,
                 entry->mne_nid_count = mti->mti_nid_count;
                 memcpy(entry->u.nids, mti->mti_nids,
                        mti->mti_nid_count * sizeof(lnet_nid_t));
-                lustre_swab_mgs_nidtbl_entry(entry);
 
                 version = tgt->mnt_version;
                 rc     += entry_len;

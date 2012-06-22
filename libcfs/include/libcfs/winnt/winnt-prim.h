@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -862,6 +860,7 @@ libcfs_arch_cleanup(void);
 #define CFS_NR_CPUS                 (32)
 #define smp_num_cpus                ((CCHAR)KeNumberProcessors)
 #define cfs_num_possible_cpus()     smp_num_cpus
+#define cfs_num_present_cpus()      smp_num_cpus
 #define cfs_num_online_cpus()       smp_num_cpus
 #define cfs_smp_processor_id()	    ((USHORT)KeGetCurrentProcessorNumber())
 #define smp_call_function(f, a, n, w)		do {} while(0)
@@ -900,9 +899,6 @@ libcfs_arch_cleanup(void);
 #ifndef unlikely
 #define unlikely(exp) (exp)
 #endif
-
-#define cfs_lock_kernel()               do {} while(0)
-#define cfs_unlock_kernel()             do {} while(0)
 
 #define local_irq_save(x)
 #define local_irq_restore(x)

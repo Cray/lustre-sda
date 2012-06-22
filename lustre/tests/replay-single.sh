@@ -7,6 +7,7 @@ set -e
 # This test needs to be run on the client
 #
 SAVE_PWD=$PWD
+export MULTIOP=${MULTIOP:-multiop}
 LUSTRE=${LUSTRE:-$(cd $(dirname $0)/..; echo $PWD)}
 SETUP=${SETUP:-}
 CLEANUP=${CLEANUP:-}
@@ -36,7 +37,7 @@ assert_DIR
 rm -rf $DIR/[df][0-9]*
 
 # LU-482 Avert LVM and VM inability to flush caches in pre .33 kernels
-if [ $LINUX_VERSION_CODE -lt $(kernel_version 2 6 33) ]; then
+if [ $LINUX_VERSION_CODE -lt $(version_code 2.6.33) ]; then
     sync
     do_facet $SINGLEMDS sync
 fi

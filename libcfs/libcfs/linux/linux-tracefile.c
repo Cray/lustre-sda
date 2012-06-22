@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -63,8 +61,8 @@ int cfs_tracefile_init_arch()
 	memset(cfs_trace_data, 0, sizeof(cfs_trace_data));
 	for (i = 0; i < CFS_TCD_TYPE_MAX; i++) {
 		cfs_trace_data[i] =
-                        kmalloc(sizeof(union cfs_trace_data_union) * NR_CPUS,
-                                GFP_KERNEL);
+			kmalloc(sizeof(union cfs_trace_data_union) *
+				cfs_num_possible_cpus(), GFP_KERNEL);
 		if (cfs_trace_data[i] == NULL)
 			goto out;
 
@@ -78,11 +76,11 @@ int cfs_tracefile_init_arch()
 		tcd->tcd_cpu = j;
 	}
 
-	for (i = 0; i < num_possible_cpus(); i++)
+	for (i = 0; i < cfs_num_possible_cpus(); i++)
 		for (j = 0; j < 3; j++) {
-                        cfs_trace_console_buffers[i][j] =
-                                kmalloc(CFS_TRACE_CONSOLE_BUFFER_SIZE,
-                                        GFP_KERNEL);
+			cfs_trace_console_buffers[i][j] =
+				kmalloc(CFS_TRACE_CONSOLE_BUFFER_SIZE,
+					GFP_KERNEL);
 
 			if (cfs_trace_console_buffers[i][j] == NULL)
 				goto out;
@@ -94,7 +92,6 @@ out:
 	cfs_tracefile_fini_arch();
 	printk(KERN_ERR "lnet: Not enough memory\n");
 	return -ENOMEM;
-
 }
 
 void cfs_tracefile_fini_arch()
@@ -102,7 +99,7 @@ void cfs_tracefile_fini_arch()
 	int    i;
 	int    j;
 
-	for (i = 0; i < num_possible_cpus(); i++)
+	for (i = 0; i < cfs_num_possible_cpus(); i++)
 		for (j = 0; j < 3; j++)
 			if (cfs_trace_console_buffers[i][j] != NULL) {
 				kfree(cfs_trace_console_buffers[i][j]);
@@ -147,25 +144,35 @@ cfs_trace_buf_type_t cfs_trace_buf_idx_get()
 		return CFS_TCD_TYPE_PROC;
 }
 
-int cfs_trace_lock_tcd(struct cfs_trace_cpu_data *tcd)
+/*
+ * The walking argument indicates the locking comes from all tcd types
+ * iterator and we must lock it and dissable local irqs to avoid deadlocks
+ * with other interrupt locks that might be happening. See LU-1311
+ * for details.
+ */
+int cfs_trace_lock_tcd(struct cfs_trace_cpu_data *tcd, int walking)
 {
 	__LASSERT(tcd->tcd_type < CFS_TCD_TYPE_MAX);
         if (tcd->tcd_type == CFS_TCD_TYPE_IRQ)
                 cfs_spin_lock_irqsave(&tcd->tcd_lock, tcd->tcd_lock_flags);
         else if (tcd->tcd_type == CFS_TCD_TYPE_SOFTIRQ)
                 cfs_spin_lock_bh(&tcd->tcd_lock);
+        else if (unlikely(walking))
+                cfs_spin_lock_irq(&tcd->tcd_lock);
         else
                 cfs_spin_lock(&tcd->tcd_lock);
 	return 1;
 }
 
-void cfs_trace_unlock_tcd(struct cfs_trace_cpu_data *tcd)
+void cfs_trace_unlock_tcd(struct cfs_trace_cpu_data *tcd, int walking)
 {
 	__LASSERT(tcd->tcd_type < CFS_TCD_TYPE_MAX);
         if (tcd->tcd_type == CFS_TCD_TYPE_IRQ)
                 cfs_spin_unlock_irqrestore(&tcd->tcd_lock, tcd->tcd_lock_flags);
         else if (tcd->tcd_type == CFS_TCD_TYPE_SOFTIRQ)
                 cfs_spin_unlock_bh(&tcd->tcd_lock);
+        else if (unlikely(walking))
+                cfs_spin_unlock_irq(&tcd->tcd_lock);
         else
                 cfs_spin_unlock(&tcd->tcd_lock);
 }

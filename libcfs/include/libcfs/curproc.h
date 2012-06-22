@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -75,6 +73,7 @@ char  *cfs_curproc_comm(void);
 
 /* check if task is running in compat mode.*/
 int cfs_curproc_is_32bit(void);
+int cfs_get_environ(const char *key, char *value, int *val_len);
 #endif
 
 typedef __u32 cfs_cap_t;

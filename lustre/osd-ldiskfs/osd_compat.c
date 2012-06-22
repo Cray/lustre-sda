@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -57,6 +55,7 @@
 #include <lvfs.h>
 
 #include "osd_internal.h"
+#include "osd_oi.h"
 
 struct osd_compat_objid_seq {
         /* protects on-fly initialization */
@@ -180,7 +179,7 @@ int osd_last_rcvd_subdir_count(struct osd_device *osd)
         struct dentry        *dlast;
         loff_t                off;
         int                   rc = 0;
-        int                   count = 0;
+	int                   count = FILTER_SUBDIR_COUNT;
 
         ENTRY;
 
@@ -197,20 +196,19 @@ int osd_last_rcvd_subdir_count(struct osd_device *osd)
                 CDEBUG(D_INFO, "read last_rcvd header, uuid = %s, "
                        "subdir count = %d\n", lsd.lsd_uuid,
                        lsd.lsd_subdir_count);
-                count = le16_to_cpu(lsd.lsd_subdir_count);
-        } else if (rc != 0) {
-                CERROR("Can't read last_rcvd file, rc = %d\n", rc);
-                if (rc > 0)
-                        rc = -EFAULT;
-                goto out;
-        } else {
-                count = FILTER_SUBDIR_COUNT;
-        }
-
-        rc = count;
+		if (le16_to_cpu(lsd.lsd_subdir_count) > 0)
+			count = le16_to_cpu(lsd.lsd_subdir_count);
+	} else if (rc != 0) {
+		CERROR("Can't read last_rcvd file, rc = %d\n", rc);
+		if (rc > 0)
+			rc = -EFAULT;
+		dput(dlast);
+		return rc;
+	}
 out:
-        dput(dlast);
-        return rc;
+	dput(dlast);
+	LASSERT(count > 0);
+	return count;
 }
 
 void osd_compat_fini(struct osd_device *dev)
@@ -244,26 +242,28 @@ void osd_compat_fini(struct osd_device *dev)
  */
 int osd_compat_init(struct osd_device *dev)
 {
-        struct lvfs_run_ctxt  new;
-        struct lvfs_run_ctxt  save;
-        struct dentry        *rootd = osd_sb(dev)->s_root;
-        struct dentry        *d;
-        int                   rc;
-        int                   i;
+	struct lvfs_run_ctxt  new;
+	struct lvfs_run_ctxt  save;
+	struct dentry	     *rootd = osd_sb(dev)->s_root;
+	struct dentry	     *d;
+	int		      rc;
+	int		      i;
 
-        ENTRY;
+	ENTRY;
 
-        /* to get subdir count from last_rcvd */
-        rc = osd_last_rcvd_subdir_count(dev);
-        if (rc <= 0)
-                RETURN(rc);
+	OBD_ALLOC_PTR(dev->od_ost_map);
+	if (dev->od_ost_map == NULL)
+		RETURN(-ENOMEM);
+
+	/* to get subdir count from last_rcvd */
+	rc = osd_last_rcvd_subdir_count(dev);
+	if (rc < 0) {
+		OBD_FREE_PTR(dev->od_ost_map);
+		RETURN(rc);
+	}
 
         dev->od_ost_map->subdir_count = rc;
         rc = 0;
-
-        OBD_ALLOC_PTR(dev->od_ost_map);
-        if (dev->od_ost_map == NULL)
-                RETURN(-ENOMEM);
 
         LASSERT(dev->od_fsops);
         osd_push_ctxt(dev, &new, &save);
@@ -343,8 +343,7 @@ int osd_compat_add_entry(struct osd_thread_info *info, struct osd_device *osd,
 
         inode = &info->oti_inode;
         inode->i_sb = osd_sb(osd);
-        inode->i_ino = id->oii_ino;
-        inode->i_generation = id->oii_gen;
+	osd_id_to_inode(inode, id);
 
         child = &info->oti_child_dentry;
         child->d_name.hash = 0;
@@ -368,12 +367,12 @@ int osd_compat_objid_lookup(struct osd_thread_info *info,
         struct dentry              *d;
         struct dentry              *d_seq;
         struct ost_id              *ostid = &info->oti_ostid;
-        int                         rc = 0;
         int                         dirn;
         char                        name[32];
         struct ldiskfs_dir_entry_2 *de;
         struct buffer_head         *bh;
         struct inode               *dir;
+	struct inode		   *inode;
         ENTRY;
 
         /* on the very first lookup we find and open directories */
@@ -404,25 +403,18 @@ int osd_compat_objid_lookup(struct osd_thread_info *info,
         bh = osd_ldiskfs_find_entry(dir, d_seq, &de, NULL);
         UNLOCK_INODE_MUTEX(dir);
 
-        rc = -ENOENT;
-        if (bh) {
-                struct inode *inode;
+	if (bh == NULL)
+		RETURN(-ENOENT);
 
-                id->oii_ino = le32_to_cpu(de->inode);
-                brelse(bh);
+	osd_id_gen(id, le32_to_cpu(de->inode), OSD_OII_NOGEN);
+	brelse(bh);
 
-                id->oii_gen = OSD_OII_NOGEN;
-                inode = osd_iget(info, dev, id);
+	inode = osd_iget(info, dev, id);
+	if (IS_ERR(inode))
+		RETURN(PTR_ERR(inode));
 
-                if (IS_ERR(inode))
-                        GOTO(cleanup, rc = PTR_ERR(inode));
-                rc = 0;
-                id->oii_gen = inode->i_generation;
-                iput(inode);
-        }
-
-cleanup:
-        RETURN(rc);
+	iput(inode);
+	RETURN(0);
 }
 
 int osd_compat_objid_insert(struct osd_thread_info *info,
@@ -498,12 +490,12 @@ static const struct named_oid oids[] = {
         { MDD_ORPHAN_OID,       "" /* "PENDING" */ },
         { MDD_LOV_OBJ_OID,      "" /* LOV_OBJID */ },
         { MDD_CAPA_KEYS_OID,    "" /* CAPA_KEYS */ },
-        { MDT_LAST_RECV_OID,    "" /* LAST_RCVD */ },
+	{ MDT_LAST_RECV_OID,    LAST_RCVD },
         { OFD_LAST_RECV_OID,    "" /* LAST_RCVD */ },
-        { OFD_LAST_GROUP_OID,   "" /* "LAST_GROUP" */ },
+	{ OFD_LAST_GROUP_OID,   "LAST_GROUP" },
         { LLOG_CATALOGS_OID,    "" /* "CATALOGS" */ },
         { MGS_CONFIGS_OID,      "" /* MOUNT_CONFIGS_DIR */ },
-        { OFD_HEALTH_CHECK_OID, "" /* HEALTH_CHECK */ },
+	{ OFD_HEALTH_CHECK_OID, HEALTH_CHECK },
         { 0,                    NULL }
 };
 
@@ -550,33 +542,33 @@ int osd_compat_spec_insert(struct osd_thread_info *info,
 }
 
 int osd_compat_spec_lookup(struct osd_thread_info *info,
-                           struct osd_device *osd, const struct lu_fid *fid,
-                           struct osd_inode_id *id)
+			   struct osd_device *osd, const struct lu_fid *fid,
+			   struct osd_inode_id *id)
 {
-        struct dentry *dentry;
-        char          *name;
-        int            rc = -ERESTART;
+	struct dentry *dentry;
+	struct inode  *inode;
+	char	      *name;
+	int	       rc = -ENOENT;
+	ENTRY;
 
-        ENTRY;
+	name = oid2name(fid_oid(fid));
+	if (name == NULL || strlen(name) == 0)
+		RETURN(-ENOENT);
 
-        name = oid2name(fid_oid(fid));
-        if (name == NULL || strlen(name) == 0)
-                return -ERESTART;
+	dentry = ll_lookup_one_len(name, osd_sb(osd)->s_root, strlen(name));
+	if (!IS_ERR(dentry)) {
+		inode = dentry->d_inode;
+		if (inode) {
+			if (is_bad_inode(inode)) {
+				rc = -EIO;
+			} else {
+				osd_id_gen(id, inode->i_ino,
+					   inode->i_generation);
+				rc = 0;
+			}
+		}
+		dput(dentry);
+	}
 
-        dentry = ll_lookup_one_len(name, osd_sb(osd)->s_root, strlen(name));
-        if (!IS_ERR(dentry)) {
-                if (dentry->d_inode) {
-                        if (is_bad_inode(dentry->d_inode)) {
-                                rc = -EIO;
-                        } else {
-                                id->oii_ino = dentry->d_inode->i_ino;
-                                id->oii_gen = dentry->d_inode->i_generation;
-                                rc = 0;
-                        }
-                }
-                dput(dentry);
-        }
-
-        RETURN(rc);
+	RETURN(rc);
 }
-

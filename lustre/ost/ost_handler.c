@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -41,9 +39,6 @@
  * Author: Phil Schwan <phil@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_OST
 
 #include <linux/module.h>
@@ -189,7 +184,8 @@ static int ost_destroy(struct obd_export *exp, struct ptlrpc_request *req,
         memcpy(&repbody->oa, &body->oa, sizeof(body->oa));
 
         /* Do the destroy and set the reply status accordingly  */
-        req->rq_status = obd_destroy(exp, &repbody->oa, NULL, oti, NULL, capa);
+        req->rq_status = obd_destroy(req->rq_svc_thread->t_env, exp,
+                                     &repbody->oa, NULL, oti, NULL, capa);
         RETURN(0);
 }
 
@@ -288,7 +284,7 @@ static int ost_getattr(struct obd_export *exp, struct ptlrpc_request *req)
         oinfo->oi_oa = &repbody->oa;
         oinfo->oi_capa = capa;
 
-        req->rq_status = obd_getattr(exp, oinfo);
+        req->rq_status = obd_getattr(req->rq_svc_thread->t_env, exp, oinfo);
 
         OBD_FREE_PTR(oinfo);
 
@@ -311,7 +307,8 @@ static int ost_statfs(struct ptlrpc_request *req)
 
         osfs = req_capsule_server_get(&req->rq_pill, &RMF_OBD_STATFS);
 
-        req->rq_status = obd_statfs(req->rq_export->exp_obd, osfs,
+        req->rq_status = obd_statfs(req->rq_svc_thread->t_env, req->rq_export,
+                                    osfs,
                                     cfs_time_shift_64(-OBD_STATFS_CACHE_SECONDS),
                                     0);
         if (req->rq_status != 0)
@@ -343,7 +340,8 @@ static int ost_create(struct obd_export *exp, struct ptlrpc_request *req,
         repbody->oa = body->oa;
         oti->oti_logcookies = &body->oa.o_lcookie;
 
-        req->rq_status = obd_create(exp, &repbody->oa, NULL, oti);
+        req->rq_status = obd_create(req->rq_svc_thread->t_env, exp,
+                                    &repbody->oa, NULL, oti);
         //obd_log_cancel(conn, NULL, 1, oti->oti_logcookies, 0);
         RETURN(0);
 }
@@ -416,7 +414,8 @@ static int ost_punch(struct obd_export *exp, struct ptlrpc_request *req,
                 oinfo->oi_capa = capa;
                 oinfo->oi_flags = OBD_FL_PUNCH;
 
-                req->rq_status = obd_punch(exp, oinfo, oti, NULL);
+                req->rq_status = obd_punch(req->rq_svc_thread->t_env, exp,
+                                           oinfo, oti, NULL);
                 OBD_FREE_PTR(oinfo);
 unlock:
                 ost_lock_put(exp, &lh, LCK_PW);
@@ -426,7 +425,8 @@ unlock:
         RETURN(rc);
 }
 
-static int ost_sync(struct obd_export *exp, struct ptlrpc_request *req)
+static int ost_sync(struct obd_export *exp, struct ptlrpc_request *req,
+		    struct obd_trans_info *oti)
 {
         struct ost_body *body, *repbody;
         struct obd_info *oinfo;
@@ -463,8 +463,10 @@ static int ost_sync(struct obd_export *exp, struct ptlrpc_request *req)
 
         oinfo->oi_oa = &repbody->oa;
         oinfo->oi_capa = capa;
-        req->rq_status = obd_sync(exp, oinfo, repbody->oa.o_size,
-                                  repbody->oa.o_blocks, NULL);
+	oinfo->oi_jobid = oti->oti_jobid;
+        req->rq_status = obd_sync(req->rq_svc_thread->t_env, exp, oinfo,
+                                  repbody->oa.o_size, repbody->oa.o_blocks,
+                                  NULL);
         OBD_FREE_PTR(oinfo);
 
         ost_drop_id(exp, &repbody->oa);
@@ -509,7 +511,8 @@ static int ost_setattr(struct obd_export *exp, struct ptlrpc_request *req,
         oinfo->oi_oa = &repbody->oa;
         oinfo->oi_capa = capa;
 
-        req->rq_status = obd_setattr(exp, oinfo, oti);
+        req->rq_status = obd_setattr(req->rq_svc_thread->t_env, exp, oinfo,
+                                     oti);
 
         OBD_FREE_PTR(oinfo);
 
@@ -731,8 +734,9 @@ static int ost_brw_read(struct ptlrpc_request *req, struct obd_trans_info *oti)
         memcpy(&repbody->oa, &body->oa, sizeof(repbody->oa));
 
         npages = OST_THREAD_POOL_SIZE;
-        rc = obd_preprw(OBD_BRW_READ, exp, &repbody->oa, 1, ioo,
-                        remote_nb, &npages, local_nb, oti, capa);
+        rc = obd_preprw(req->rq_svc_thread->t_env, OBD_BRW_READ, exp,
+                        &repbody->oa, 1, ioo, remote_nb, &npages, local_nb,
+                        oti, capa);
         if (rc != 0)
                 GOTO(out_lock, rc);
 
@@ -790,8 +794,9 @@ static int ost_brw_read(struct ptlrpc_request *req, struct obd_trans_info *oti)
 
 out_commitrw:
         /* Must commit after prep above in all cases */
-        rc = obd_commitrw(OBD_BRW_READ, exp, &repbody->oa, 1, ioo,
-                          remote_nb, npages, local_nb, oti, rc);
+        rc = obd_commitrw(req->rq_svc_thread->t_env, OBD_BRW_READ, exp,
+                          &repbody->oa, 1, ioo, remote_nb, npages, local_nb,
+                          oti, rc);
 
         if (rc == 0)
                 ost_drop_id(exp, &repbody->oa);
@@ -972,8 +977,9 @@ static int ost_brw_write(struct ptlrpc_request *req, struct obd_trans_info *oti)
         memcpy(&repbody->oa, &body->oa, sizeof(repbody->oa));
 
         npages = OST_THREAD_POOL_SIZE;
-        rc = obd_preprw(OBD_BRW_WRITE, exp, &repbody->oa, objcount,
-                        ioo, remote_nb, &npages, local_nb, oti, capa);
+        rc = obd_preprw(req->rq_svc_thread->t_env, OBD_BRW_WRITE, exp,
+                        &repbody->oa, objcount, ioo, remote_nb, &npages,
+                        local_nb, oti, capa);
         if (rc != 0)
                 GOTO(out_lock, rc);
 
@@ -1018,8 +1024,9 @@ skip_transfer:
         }
 
         /* Must commit after prep above in all cases */
-        rc = obd_commitrw(OBD_BRW_WRITE, exp, &repbody->oa, objcount, ioo,
-                          remote_nb, npages, local_nb, oti, rc);
+        rc = obd_commitrw(req->rq_svc_thread->t_env, OBD_BRW_WRITE, exp,
+                          &repbody->oa, objcount, ioo, remote_nb, npages,
+                          local_nb, oti, rc);
         if (rc == -ENOTCONN)
                 /* quota acquire process has been given up because
                  * either the client has been evicted or the client
@@ -1205,7 +1212,8 @@ static int ost_set_info(struct obd_export *exp, struct ptlrpc_request *req)
 
         /* OBD will also check if KEY_IS(KEY_GRANT_SHRINK), and will cast val to
          * a struct ost_body * value */
-        rc = obd_set_info_async(exp, keylen, key, vallen, val, NULL);
+        rc = obd_set_info_async(req->rq_svc_thread->t_env, exp, keylen,
+                                key, vallen, val, NULL);
 out:
         lustre_msg_set_status(req->rq_repmsg, 0);
         RETURN(rc);
@@ -1235,7 +1243,8 @@ static int ost_get_info(struct obd_export *exp, struct ptlrpc_request *req)
                         RETURN(rc);
         }
 
-        rc = obd_get_info(exp, keylen, key, &replylen, NULL, NULL);
+        rc = obd_get_info(req->rq_svc_thread->t_env, exp, keylen, key,
+                          &replylen, NULL, NULL);
         if (rc)
                 RETURN(rc);
 
@@ -1251,7 +1260,8 @@ static int ost_get_info(struct obd_export *exp, struct ptlrpc_request *req)
                 RETURN(-ENOMEM);
 
         /* call again to fill in the reply buffer */
-        rc = obd_get_info(exp, keylen, key, &replylen, reply, NULL);
+        rc = obd_get_info(req->rq_svc_thread->t_env, exp, keylen, key,
+                          &replylen, reply, NULL);
 
         lustre_msg_set_status(req->rq_repmsg, 0);
         RETURN(rc);
@@ -1512,52 +1522,58 @@ static int ost_connect_check_sptlrpc(struct ptlrpc_request *req)
 
 /* Ensure that data and metadata are synced to the disk when lock is cancelled
  * (if requested) */
-int ost_blocking_ast(struct ldlm_lock *lock,
-                             struct ldlm_lock_desc *desc,
-                             void *data, int flag)
+int ost_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
+		     void *data, int flag)
 {
-        __u32 sync_lock_cancel = 0;
-        __u32 len = sizeof(sync_lock_cancel);
-        int rc = 0;
-        ENTRY;
+	struct lu_env	env;
+	__u32		sync_lock_cancel = 0;
+	__u32		len = sizeof(sync_lock_cancel);
+	int		rc = 0;
 
-        rc = obd_get_info(lock->l_export, sizeof(KEY_SYNC_LOCK_CANCEL),
-                          KEY_SYNC_LOCK_CANCEL, &len, &sync_lock_cancel, NULL);
+	ENTRY;
 
-        if (!rc && flag == LDLM_CB_CANCELING &&
-            (lock->l_granted_mode & (LCK_PW|LCK_GROUP)) &&
-            (sync_lock_cancel == ALWAYS_SYNC_ON_CANCEL ||
-             (sync_lock_cancel == BLOCKING_SYNC_ON_CANCEL &&
-              lock->l_flags & LDLM_FL_CBPENDING))) {
-                struct obd_info *oinfo;
-                struct obdo *oa;
-                int rc;
+	rc = lu_env_init(&env, LCT_DT_THREAD);
+	if (unlikely(rc != 0))
+		RETURN(rc);
 
-                OBD_ALLOC_PTR(oinfo);
-                if (!oinfo)
-                        RETURN(-ENOMEM);
-                OBDO_ALLOC(oa);
-                if (!oa) {
-                        OBD_FREE_PTR(oinfo);
-                        RETURN(-ENOMEM);
-                }
-                oa->o_id = lock->l_resource->lr_name.name[0];
-                oa->o_seq = lock->l_resource->lr_name.name[1];
-                oa->o_valid = OBD_MD_FLID|OBD_MD_FLGROUP;
-                oinfo->oi_oa = oa;
+	rc = obd_get_info(&env, lock->l_export, sizeof(KEY_SYNC_LOCK_CANCEL),
+			  KEY_SYNC_LOCK_CANCEL, &len, &sync_lock_cancel, NULL);
+	if (rc == 0 && flag == LDLM_CB_CANCELING &&
+	    (lock->l_granted_mode & (LCK_PW|LCK_GROUP)) &&
+	    (sync_lock_cancel == ALWAYS_SYNC_ON_CANCEL ||
+	     (sync_lock_cancel == BLOCKING_SYNC_ON_CANCEL &&
+	      lock->l_flags & LDLM_FL_CBPENDING))) {
+		struct obd_info	*oinfo;
+		struct obdo	*oa;
+		int		 rc;
 
-                rc = obd_sync(lock->l_export, oinfo,
-                              lock->l_policy_data.l_extent.start,
-                              lock->l_policy_data.l_extent.end, NULL);
-                if (rc)
-                        CERROR("Error %d syncing data on lock cancel\n", rc);
+		OBD_ALLOC_PTR(oinfo);
+		if (!oinfo)
+			GOTO(out_env, rc = -ENOMEM);
+		OBDO_ALLOC(oa);
+		if (!oa) {
+			OBD_FREE_PTR(oinfo);
+			GOTO(out_env, rc = -ENOMEM);
+		}
+		oa->o_id = lock->l_resource->lr_name.name[0];
+		oa->o_seq = lock->l_resource->lr_name.name[1];
+		oa->o_valid = OBD_MD_FLID|OBD_MD_FLGROUP;
+		oinfo->oi_oa = oa;
 
-                OBDO_FREE(oa);
-                OBD_FREE_PTR(oinfo);
-        }
+		rc = obd_sync(&env, lock->l_export, oinfo,
+			      lock->l_policy_data.l_extent.start,
+			      lock->l_policy_data.l_extent.end, NULL);
+		if (rc)
+			CERROR("Error %d syncing data on lock cancel\n", rc);
 
-        rc = ldlm_server_blocking_ast(lock, desc, data, flag);
-        RETURN(rc);
+		OBDO_FREE(oa);
+		OBD_FREE_PTR(oinfo);
+	}
+
+	rc = ldlm_server_blocking_ast(lock, desc, data, flag);
+out_env:
+	lu_env_fini(&env);
+	RETURN(rc);
 }
 
 static int ost_filter_recovery_request(struct ptlrpc_request *req,
@@ -1684,8 +1700,10 @@ static inline int prolong_timeout(struct ptlrpc_request *req)
 static void ost_prolong_lock_one(struct ost_prolong_data *opd,
                                  struct ldlm_lock *lock)
 {
-        LASSERT(lock->l_req_mode == lock->l_granted_mode);
-        LASSERT(lock->l_export == opd->opd_exp);
+	LASSERT(lock->l_export == opd->opd_exp);
+
+	if (lock->l_destroyed) /* lock already cancelled */
+		return;
 
         /* XXX: never try to grab resource lock here because we're inside
          * exp_bl_list_lock; in ldlm_lockd.c to handle waiting list we take
@@ -2108,6 +2126,10 @@ int ost_handle(struct ptlrpc_request *req)
         if (rc)
                 RETURN(rc);
 
+	if (req && req->rq_reqmsg && req->rq_export &&
+	    (req->rq_export->exp_connect_flags & OBD_CONNECT_JOBSTATS))
+		oti->oti_jobid = lustre_msg_get_jobid(req->rq_reqmsg);
+
         switch (lustre_msg_get_opc(req->rq_reqmsg)) {
         case OST_CONNECT: {
                 CDEBUG(D_INODE, "connect\n");
@@ -2222,7 +2244,7 @@ int ost_handle(struct ptlrpc_request *req)
                 req_capsule_set(&req->rq_pill, &RQF_OST_SYNC);
                 if (OBD_FAIL_CHECK(OBD_FAIL_OST_SYNC_NET))
                         RETURN(0);
-                rc = ost_sync(req->rq_export, req);
+		rc = ost_sync(req->rq_export, req, oti);
                 break;
         case OST_SET_INFO:
                 DEBUG_REQ(D_INODE, req, "set_info");
@@ -2384,14 +2406,13 @@ static int ost_thread_init(struct ptlrpc_thread *thread)
 /* Sigh - really, this is an OSS, the _server_, not the _target_ */
 static int ost_setup(struct obd_device *obd, struct lustre_cfg* lcfg)
 {
-        struct ost_obd *ost = &obd->u.ost;
-        struct lprocfs_static_vars lvars;
-        int oss_min_threads;
-        int oss_max_threads;
-        int oss_min_create_threads;
-        int oss_max_create_threads;
-        int rc;
-        ENTRY;
+	static struct ptlrpc_service_conf	svc_conf;
+	struct ost_obd *ost = &obd->u.ost;
+	struct lprocfs_static_vars lvars;
+	int oss_min_threads = OSS_THREADS_MIN;
+	int oss_max_threads = OSS_THREADS_MAX;
+	int rc;
+	ENTRY;
 
         rc = cfs_cleanup_group_info();
         if (rc)
@@ -2402,99 +2423,123 @@ static int ost_setup(struct obd_device *obd, struct lustre_cfg* lcfg)
 
         cfs_mutex_init(&ost->ost_health_mutex);
 
-        if (oss_num_threads) {
-                /* If oss_num_threads is set, it is the min and the max. */
-                if (oss_num_threads > OSS_THREADS_MAX)
-                        oss_num_threads = OSS_THREADS_MAX;
-                if (oss_num_threads < OSS_THREADS_MIN)
-                        oss_num_threads = OSS_THREADS_MIN;
-                oss_max_threads = oss_min_threads = oss_num_threads;
-        } else {
-                /* Base min threads on memory and cpus */
-                oss_min_threads =
-                        cfs_num_possible_cpus() * CFS_NUM_CACHEPAGES >>
-                        (27 - CFS_PAGE_SHIFT);
-                if (oss_min_threads < OSS_THREADS_MIN)
-                        oss_min_threads = OSS_THREADS_MIN;
-                /* Insure a 4x range for dynamic threads */
-                if (oss_min_threads > OSS_THREADS_MAX / 4)
-                        oss_min_threads = OSS_THREADS_MAX / 4;
-                oss_max_threads = min(OSS_THREADS_MAX, oss_min_threads * 4 + 1);
+	if (oss_num_threads == 0) {
+		/* Base min threads on memory and cpus */
+		oss_min_threads =
+			cfs_num_online_cpus() * CFS_NUM_CACHEPAGES >>
+			(27 - CFS_PAGE_SHIFT);
+		if (oss_min_threads < OSS_THREADS_MIN)
+			oss_min_threads = OSS_THREADS_MIN;
+		/* Insure a 4x range for dynamic threads */
+		if (oss_min_threads > OSS_THREADS_MAX / 4)
+			oss_min_threads = OSS_THREADS_MAX / 4;
+		oss_max_threads = min(OSS_THREADS_MAX, oss_min_threads * 4 + 1);
         }
 
-        ost->ost_service =
-                ptlrpc_init_svc(OST_NBUFS, OST_BUFSIZE, OST_MAXREQSIZE,
-                                OST_MAXREPSIZE, OST_REQUEST_PORTAL,
-                                OSC_REPLY_PORTAL, OSS_SERVICE_WATCHDOG_FACTOR,
-                                ost_handle, LUSTRE_OSS_NAME,
-                                obd->obd_proc_entry, target_print_req,
-                                oss_min_threads, oss_max_threads,
-                                "ll_ost", LCT_DT_THREAD, NULL);
-        if (ost->ost_service == NULL) {
-                CERROR("failed to start service\n");
-                GOTO(out_lprocfs, rc = -ENOMEM);
+	svc_conf = (typeof(svc_conf)) {
+		.psc_name		= LUSTRE_OSS_NAME,
+		.psc_watchdog_factor	= OSS_SERVICE_WATCHDOG_FACTOR,
+		.psc_buf		= {
+			.bc_nbufs		= OST_NBUFS,
+			.bc_buf_size		= OST_BUFSIZE,
+			.bc_req_max_size	= OST_MAXREQSIZE,
+			.bc_rep_max_size	= OST_MAXREPSIZE,
+			.bc_req_portal		= OST_REQUEST_PORTAL,
+			.bc_rep_portal		= OSC_REPLY_PORTAL,
+		},
+		.psc_thr		= {
+			.tc_thr_name		= "ll_ost",
+			.tc_nthrs_min		= oss_min_threads,
+			.tc_nthrs_max		= oss_max_threads,
+			.tc_nthrs_user		= oss_num_threads,
+			.tc_ctx_tags		= LCT_DT_THREAD,
+		},
+		.psc_ops		= {
+			.so_req_handler		= ost_handle,
+			.so_req_printer		= target_print_req,
+		},
+	};
+	ost->ost_service = ptlrpc_register_service(&svc_conf,
+						   obd->obd_proc_entry);
+	if (IS_ERR(ost->ost_service)) {
+		rc = PTR_ERR(ost->ost_service);
+		CERROR("failed to start service: %d\n", rc);
+		GOTO(out_lprocfs, rc);
         }
 
-        rc = ptlrpc_start_threads(ost->ost_service);
-        if (rc)
-                GOTO(out_service, rc = -EINVAL);
-
-        if (oss_num_create_threads) {
-                if (oss_num_create_threads > OSS_MAX_CREATE_THREADS)
-                        oss_num_create_threads = OSS_MAX_CREATE_THREADS;
-                if (oss_num_create_threads < OSS_MIN_CREATE_THREADS)
-                        oss_num_create_threads = OSS_MIN_CREATE_THREADS;
-                oss_min_create_threads = oss_max_create_threads =
-                        oss_num_create_threads;
-        } else {
-                oss_min_create_threads = OSS_MIN_CREATE_THREADS;
-                oss_max_create_threads = OSS_MAX_CREATE_THREADS;
+	memset(&svc_conf, 0, sizeof(svc_conf));
+	svc_conf = (typeof(svc_conf)) {
+		.psc_name		= "ost_create",
+		.psc_watchdog_factor	= OSS_SERVICE_WATCHDOG_FACTOR,
+		.psc_buf		= {
+			.bc_nbufs		= OST_NBUFS,
+			.bc_buf_size		= OST_BUFSIZE,
+			.bc_req_max_size	= OST_MAXREQSIZE,
+			.bc_rep_max_size	= OST_MAXREPSIZE,
+			.bc_req_portal		= OST_CREATE_PORTAL,
+			.bc_rep_portal		= OSC_REPLY_PORTAL,
+		},
+		.psc_thr		= {
+			.tc_thr_name		= "ll_ost_create",
+			.tc_nthrs_min		= OSS_CR_THREADS_MIN,
+			.tc_nthrs_max		= OSS_CR_THREADS_MAX,
+			.tc_nthrs_user		= oss_num_create_threads,
+			.tc_ctx_tags		= LCT_DT_THREAD,
+		},
+		.psc_ops		= {
+			.so_req_handler		= ost_handle,
+			.so_req_printer		= target_print_req,
+		},
+	};
+	ost->ost_create_service = ptlrpc_register_service(&svc_conf,
+							  obd->obd_proc_entry);
+	if (IS_ERR(ost->ost_create_service)) {
+		rc = PTR_ERR(ost->ost_create_service);
+		CERROR("failed to start OST create service: %d\n", rc);
+		GOTO(out_service, rc);
         }
 
-        ost->ost_create_service =
-                ptlrpc_init_svc(OST_NBUFS, OST_BUFSIZE, OST_MAXREQSIZE,
-                                OST_MAXREPSIZE, OST_CREATE_PORTAL,
-                                OSC_REPLY_PORTAL, OSS_SERVICE_WATCHDOG_FACTOR,
-                                ost_handle, "ost_create",
-                                obd->obd_proc_entry, target_print_req,
-                                oss_min_create_threads, oss_max_create_threads,
-                                "ll_ost_creat", LCT_DT_THREAD, NULL);
-        if (ost->ost_create_service == NULL) {
-                CERROR("failed to start OST create service\n");
-                GOTO(out_service, rc = -ENOMEM);
+	memset(&svc_conf, 0, sizeof(svc_conf));
+	svc_conf = (typeof(svc_conf)) {
+		.psc_name		= "ost_io",
+		.psc_watchdog_factor	= OSS_SERVICE_WATCHDOG_FACTOR,
+		.psc_buf		= {
+			.bc_nbufs		= OST_NBUFS,
+			.bc_buf_size		= OST_BUFSIZE,
+			.bc_req_max_size	= OST_MAXREQSIZE,
+			.bc_rep_max_size	= OST_MAXREPSIZE,
+			.bc_req_portal		= OST_IO_PORTAL,
+			.bc_rep_portal		= OSC_REPLY_PORTAL,
+		},
+		.psc_thr		= {
+			.tc_thr_name		= "ll_ost_io",
+			.tc_nthrs_min		= oss_min_threads,
+			.tc_nthrs_max		= oss_max_threads,
+			.tc_nthrs_user		= oss_num_threads,
+			.tc_cpu_affinity	= 1,
+			.tc_ctx_tags		= LCT_DT_THREAD,
+		},
+		.psc_ops		= {
+			.so_thr_init		= ost_thread_init,
+			.so_thr_done		= ost_thread_done,
+			.so_req_handler		= ost_handle,
+			.so_hpreq_handler	= ost_hpreq_handler,
+			.so_req_printer		= target_print_req,
+		},
+	};
+	ost->ost_io_service = ptlrpc_register_service(&svc_conf,
+						      obd->obd_proc_entry);
+	if (IS_ERR(ost->ost_io_service)) {
+		rc = PTR_ERR(ost->ost_io_service);
+		CERROR("failed to start OST I/O service: %d\n", rc);
+		ost->ost_io_service = NULL;
+		GOTO(out_create, rc);
         }
-
-        rc = ptlrpc_start_threads(ost->ost_create_service);
-        if (rc)
-                GOTO(out_create, rc = -EINVAL);
-
-        ost->ost_io_service =
-                ptlrpc_init_svc(OST_NBUFS, OST_BUFSIZE, OST_MAXREQSIZE,
-                                OST_MAXREPSIZE, OST_IO_PORTAL,
-                                OSC_REPLY_PORTAL, OSS_SERVICE_WATCHDOG_FACTOR,
-                                ost_handle, "ost_io",
-                                obd->obd_proc_entry, target_print_req,
-                                oss_min_threads, oss_max_threads,
-                                "ll_ost_io", LCT_DT_THREAD, ost_hpreq_handler);
-        if (ost->ost_io_service == NULL) {
-                CERROR("failed to start OST I/O service\n");
-                GOTO(out_create, rc = -ENOMEM);
-        }
-
-        ost->ost_io_service->srv_init = ost_thread_init;
-        ost->ost_io_service->srv_done = ost_thread_done;
-        ost->ost_io_service->srv_cpu_affinity = 1;
-        rc = ptlrpc_start_threads(ost->ost_io_service);
-        if (rc)
-                GOTO(out_io, rc = -EINVAL);
 
         ping_evictor_start();
 
         RETURN(0);
 
-out_io:
-        ptlrpc_unregister_service(ost->ost_io_service);
-        ost->ost_io_service = NULL;
 out_create:
         ptlrpc_unregister_service(ost->ost_create_service);
         ost->ost_create_service = NULL;
@@ -2523,6 +2568,8 @@ static int ost_cleanup(struct obd_device *obd)
         ptlrpc_unregister_service(ost->ost_io_service);
         ost->ost_service = NULL;
         ost->ost_create_service = NULL;
+	ost->ost_io_service = NULL;
+
         cfs_mutex_unlock(&ost->ost_health_mutex);
 
         lprocfs_obd_cleanup(obd);
@@ -2530,7 +2577,7 @@ static int ost_cleanup(struct obd_device *obd)
         RETURN(err);
 }
 
-static int ost_health_check(struct obd_device *obd)
+static int ost_health_check(const struct lu_env *env, struct obd_device *obd)
 {
         struct ost_obd *ost = &obd->u.ost;
         int rc = 0;

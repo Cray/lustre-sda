@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -855,7 +853,7 @@ int osd_ldiskfs_read(struct inode *inode, void *buf, int size, loff_t *offs)
 {
         struct buffer_head *bh;
         unsigned long block;
-        int osize = size;
+        int osize;
         int blocksize;
         int csize;
         int boffs;
@@ -878,15 +876,16 @@ int osd_ldiskfs_read(struct inode *inode, void *buf, int size, loff_t *offs)
         }
 
         blocksize = 1 << inode->i_blkbits;
+        osize = size;
         while (size > 0) {
                 block = *offs >> inode->i_blkbits;
                 boffs = *offs & (blocksize - 1);
                 csize = min(blocksize - boffs, size);
                 bh = ldiskfs_bread(NULL, inode, block, 0, &err);
                 if (!bh) {
-                        CERROR("%s: error reading offset %llu (block %lu): "
-                               "rc = %d\n",
-                               inode->i_sb->s_id, *offs, block, err);
+                        CERROR("%s: can't read %u@%llu on ino %lu: rc = %d\n",
+                               LDISKFS_SB(inode->i_sb)->s_es->s_volume_name,
+                               csize, *offs, inode->i_ino, err);
                         return err;
                 }
 
@@ -970,8 +969,8 @@ static int osd_ldiskfs_writelink(struct inode *inode, char *buffer, int buflen)
         return 0;
 }
 
-static int osd_ldiskfs_write_record(struct inode *inode, void *buf, int bufsize,
-                                    loff_t *offs, handle_t *handle)
+int osd_ldiskfs_write_record(struct inode *inode, void *buf, int bufsize,
+			     loff_t *offs, handle_t *handle)
 {
         struct buffer_head *bh        = NULL;
         loff_t              offset    = *offs;

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -439,26 +437,6 @@ ptlrpc_server_post_idle_rqbds (struct ptlrpc_service *svc)
         return (-1);
 }
 
-/**
- * Start a service with parameters from struct ptlrpc_service_conf \a c
- * as opposed to directly calling ptlrpc_init_svc with tons of arguments.
- */
-struct ptlrpc_service *ptlrpc_init_svc_conf(struct ptlrpc_service_conf *c,
-                                            svc_handler_t h, char *name,
-                                            struct proc_dir_entry *proc_entry,
-                                            svc_req_printfn_t prntfn,
-                                            char *threadname)
-{
-        return ptlrpc_init_svc(c->psc_nbufs, c->psc_bufsize,
-                               c->psc_max_req_size, c->psc_max_reply_size,
-                               c->psc_req_portal, c->psc_rep_portal,
-                               c->psc_watchdog_factor,
-                               h, name, proc_entry,
-                               prntfn, c->psc_min_threads, c->psc_max_threads,
-                               threadname, c->psc_ctx_tags, NULL);
-}
-EXPORT_SYMBOL(ptlrpc_init_svc_conf);
-
 static void ptlrpc_at_timer(unsigned long castmeharder)
 {
         struct ptlrpc_service *svc = (struct ptlrpc_service *)castmeharder;
@@ -467,76 +445,108 @@ static void ptlrpc_at_timer(unsigned long castmeharder)
         cfs_waitq_signal(&svc->srv_waitq);
 }
 
+static void
+ptlrpc_server_nthreads_check(struct ptlrpc_service_conf *conf,
+			     int *min_p, int *max_p)
+{
+#ifdef __KERNEL__
+	struct ptlrpc_service_thr_conf	*tc = &conf->psc_thr;
+	int				nthrs_min;
+	int				nthrs;
+
+	nthrs_min = PTLRPC_NTHRS_MIN + (conf->psc_ops.so_hpreq_handler != NULL);
+	nthrs_min = max_t(int, nthrs_min, tc->tc_nthrs_min);
+
+	nthrs = tc->tc_nthrs_user;
+	if (nthrs != 0) { /* validate it */
+		nthrs = min_t(int, nthrs, tc->tc_nthrs_max);
+		nthrs = max_t(int, nthrs, nthrs_min);
+		*min_p = *max_p = nthrs;
+		return;
+	}
+
+	/*
+	 * NB: we will add some common at here for estimating, for example:
+	 * add a new member ptlrpc_service_thr_conf::tc_factor, and estimate
+	 * threads number based on:
+	 *     (online_cpus * conf::tc_factor) + conf::tc_nthrs_base.
+	 *
+	 * So we can remove code block like estimation in ost_setup, also,
+	 * we might estimate MDS threads number as well instead of using
+	 * absolute number, and have more threads on fat servers to improve
+	 * availability of service.
+	 *
+	 * Also, we will need to validate threads number at here for
+	 * CPT affinity service (CPU ParTiion) in the future.
+	 * A service can have percpt thread-pool instead of a global thread
+	 * pool for each service, which means user might not always get the
+	 * threads number they want even they set it in conf::tc_nthrs_user,
+	 * because we need to adjust threads number for each CPT, instead of
+	 * just use (conf::tc_nthrs_user / NCPTS), to make sure each pool
+	 * will be healthy.
+	 */
+	*max_p = tc->tc_nthrs_max;
+	*min_p = nthrs_min;
+#else /* __KERNEL__ */
+	*max_p = *min_p = 1; /* whatever */
+#endif
+}
+
 /**
  * Initialize service on a given portal.
  * This includes starting serving threads , allocating and posting rqbds and
  * so on.
- * \a nbufs is how many buffers to post
- * \a bufsize is buffer size to post
- * \a max_req_size - maximum request size to be accepted for this service
- * \a max_reply_size maximum reply size this service can ever send
- * \a req_portal - portal to listed for requests on
- * \a rep_portal - portal of where to send replies to
- * \a watchdog_factor soft watchdog timeout multiplifier to print stuck service traces.
- * \a handler - function to process every new request
- * \a name - service name
- * \a proc_entry - entry in the /proc tree for sttistics reporting
- * \a min_threads \a max_threads - min/max number of service threads to start.
- * \a threadname should be 11 characters or less - 3 will be added on
- * \a hp_handler - function to determine priority of the request, also called
- *                 on every new request.
  */
 struct ptlrpc_service *
-ptlrpc_init_svc(int nbufs, int bufsize, int max_req_size, int max_reply_size,
-                int req_portal, int rep_portal, int watchdog_factor,
-                svc_handler_t handler, char *name,
-                cfs_proc_dir_entry_t *proc_entry,
-                svc_req_printfn_t svcreq_printfn,
-                int min_threads, int max_threads,
-                char *threadname, __u32 ctx_tags,
-                svc_hpreq_handler_t hp_handler)
+ptlrpc_register_service(struct ptlrpc_service_conf *conf,
+			cfs_proc_dir_entry_t *proc_entry)
 {
-        int                     rc;
-        struct ptlrpc_at_array *array;
-        struct ptlrpc_service  *service;
-        unsigned int            size, index;
-        ENTRY;
+	struct ptlrpc_service	*service;
+	struct ptlrpc_at_array	*array;
+	unsigned int		index;
+	unsigned int		size;
+	int			rc;
+	ENTRY;
 
-        LASSERT (nbufs > 0);
-        LASSERT (bufsize >= max_req_size + SPTLRPC_MAX_PAYLOAD);
-        LASSERT (ctx_tags != 0);
+	LASSERT(conf->psc_buf.bc_nbufs > 0);
+	LASSERT(conf->psc_buf.bc_buf_size >=
+		conf->psc_buf.bc_req_max_size + SPTLRPC_MAX_PAYLOAD);
+	LASSERT(conf->psc_thr.tc_ctx_tags != 0);
 
-        OBD_ALLOC_PTR(service);
-        if (service == NULL)
-                RETURN(NULL);
+	OBD_ALLOC_PTR(service);
+	if (service == NULL)
+		RETURN(ERR_PTR(-ENOMEM));
 
         /* First initialise enough for early teardown */
 
-        service->srv_name = name;
         cfs_spin_lock_init(&service->srv_lock);
         cfs_spin_lock_init(&service->srv_rq_lock);
         cfs_spin_lock_init(&service->srv_rs_lock);
         CFS_INIT_LIST_HEAD(&service->srv_threads);
         cfs_waitq_init(&service->srv_waitq);
 
-        service->srv_nbuf_per_group = test_req_buffer_pressure ? 1 : nbufs;
-        service->srv_max_req_size = max_req_size + SPTLRPC_MAX_PAYLOAD;
-        service->srv_buf_size = bufsize;
-        service->srv_rep_portal = rep_portal;
-        service->srv_req_portal = req_portal;
-        service->srv_watchdog_factor = watchdog_factor;
-        service->srv_handler = handler;
-        service->srv_req_printfn = svcreq_printfn;
-        service->srv_request_seq = 1;           /* valid seq #s start at 1 */
-        service->srv_request_max_cull_seq = 0;
-        service->srv_threads_min = min_threads;
-        service->srv_threads_max = max_threads;
-        service->srv_thread_name = threadname;
-        service->srv_ctx_tags = ctx_tags;
-        service->srv_hpreq_handler = hp_handler;
-        service->srv_hpreq_ratio = PTLRPC_SVC_HP_RATIO;
-        service->srv_hpreq_count = 0;
-        service->srv_n_active_hpreq = 0;
+	service->srv_name		= conf->psc_name;
+	service->srv_watchdog_factor	= conf->psc_watchdog_factor;
+	service->srv_nbuf_per_group	= test_req_buffer_pressure ?
+					  1 : conf->psc_buf.bc_nbufs;
+	service->srv_max_req_size	= conf->psc_buf.bc_req_max_size +
+					  SPTLRPC_MAX_PAYLOAD;
+	service->srv_buf_size		= conf->psc_buf.bc_buf_size;
+	service->srv_rep_portal		= conf->psc_buf.bc_rep_portal;
+	service->srv_req_portal		= conf->psc_buf.bc_req_portal;
+	service->srv_request_seq	= 1; /* valid seq #s start at 1 */
+	service->srv_request_max_cull_seq = 0;
+
+	ptlrpc_server_nthreads_check(conf, &service->srv_threads_min,
+				     &service->srv_threads_max);
+
+	service->srv_thread_name	= conf->psc_thr.tc_thr_name;
+	service->srv_ctx_tags		= conf->psc_thr.tc_ctx_tags;
+	service->srv_cpu_affinity	= !!conf->psc_thr.tc_cpu_affinity;
+	service->srv_hpreq_ratio	= PTLRPC_SVC_HP_RATIO;
+	service->srv_hpreq_count	= 0;
+	service->srv_n_active_hpreq	= 0;
+	service->srv_ops		= conf->psc_ops;
 
         rc = LNetSetLazyPortal(service->srv_req_portal);
         LASSERT (rc == 0);
@@ -567,14 +577,14 @@ ptlrpc_init_svc(int nbufs, int bufsize, int max_req_size, int max_reply_size,
         /* allocate memory for srv_at_array (ptlrpc_at_array) */
         OBD_ALLOC(array->paa_reqs_array, sizeof(cfs_list_t) * size);
         if (array->paa_reqs_array == NULL)
-                GOTO(failed, NULL);
+		GOTO(failed, rc = -ENOMEM);
 
-        for (index = 0; index < size; index++)
-                CFS_INIT_LIST_HEAD(&array->paa_reqs_array[index]);
+	for (index = 0; index < size; index++)
+		CFS_INIT_LIST_HEAD(&array->paa_reqs_array[index]);
 
-        OBD_ALLOC(array->paa_reqs_count, sizeof(__u32) * size);
-        if (array->paa_reqs_count == NULL)
-                GOTO(failed, NULL);
+	OBD_ALLOC(array->paa_reqs_count, sizeof(__u32) * size);
+	if (array->paa_reqs_count == NULL)
+		GOTO(failed, rc = -ENOMEM);
 
         cfs_timer_init(&service->srv_at_timer, ptlrpc_at_timer, service);
         /* At SOW, service time should be quick; 10s seems generous. If client
@@ -590,13 +600,13 @@ ptlrpc_init_svc(int nbufs, int bufsize, int max_req_size, int max_reply_size,
         /* We shouldn't be under memory pressure at startup, so
          * fail if we can't post all our buffers at this time. */
         if (rc != 0)
-                GOTO(failed, NULL);
+		GOTO(failed, rc = -ENOMEM);
 
         /* Now allocate pool of reply buffers */
         /* Increase max reply size to next power of two */
         service->srv_max_reply_size = 1;
         while (service->srv_max_reply_size <
-               max_reply_size + SPTLRPC_MAX_PAYLOAD)
+	       conf->psc_buf.bc_rep_max_size + SPTLRPC_MAX_PAYLOAD)
                 service->srv_max_reply_size <<= 1;
 
         if (proc_entry != NULL)
@@ -605,10 +615,19 @@ ptlrpc_init_svc(int nbufs, int bufsize, int max_req_size, int max_reply_size,
         CDEBUG(D_NET, "%s: Started, listening on portal %d\n",
                service->srv_name, service->srv_req_portal);
 
-        RETURN(service);
+#ifdef __KERNEL__
+	rc = ptlrpc_start_threads(service);
+	if (rc != 0) {
+		CERROR("Failed to start threads for service %s: %d\n",
+		       service->srv_name, rc);
+		GOTO(failed, rc);
+	}
+#endif
+
+	RETURN(service);
 failed:
-        ptlrpc_unregister_service(service);
-        return NULL;
+	ptlrpc_unregister_service(service);
+	RETURN(ERR_PTR(rc));
 }
 
 /**
@@ -1225,8 +1244,8 @@ static int ptlrpc_hpreq_init(struct ptlrpc_service *svc,
         int rc = 0;
         ENTRY;
 
-        if (svc->srv_hpreq_handler) {
-                rc = svc->srv_hpreq_handler(req);
+	if (svc->srv_ops.so_hpreq_handler) {
+		rc = svc->srv_ops.so_hpreq_handler(req);
                 if (rc)
                         RETURN(rc);
         }
@@ -1393,7 +1412,8 @@ static int ptlrpc_server_allow_normal(struct ptlrpc_service *svc, int force)
         if (svc->srv_n_active_reqs >= svc->srv_threads_running - 1)
                 return 0;
 
-        return svc->srv_n_active_hpreq > 0 || svc->srv_hpreq_handler == NULL;
+	return svc->srv_n_active_hpreq > 0 ||
+	       svc->srv_ops.so_hpreq_handler == NULL;
 }
 
 static int ptlrpc_server_normal_pending(struct ptlrpc_service *svc, int force)
@@ -1718,7 +1738,7 @@ ptlrpc_server_handle_request(struct ptlrpc_service *svc,
         if (lustre_msg_get_opc(request->rq_reqmsg) != OBD_PING)
                 CFS_FAIL_TIMEOUT_MS(OBD_FAIL_PTLRPC_PAUSE_REQ, cfs_fail_val);
 
-        rc = svc->srv_handler(request);
+	rc = svc->srv_ops.so_req_handler(request);
 
         ptlrpc_rqphase_move(request, RQ_PHASE_COMPLETE);
 
@@ -1997,8 +2017,9 @@ ptlrpc_retry_rqbds(void *arg)
 static inline int
 ptlrpc_threads_enough(struct ptlrpc_service *svc)
 {
-        return svc->srv_n_active_reqs <
-               svc->srv_threads_running - 1 - (svc->srv_hpreq_handler != NULL);
+	return svc->srv_n_active_reqs <
+	       svc->srv_threads_running - 1 -
+	       (svc->srv_ops.so_hpreq_handler != NULL);
 }
 
 /**
@@ -2132,8 +2153,8 @@ static int ptlrpc_main(void *arg)
         cfs_put_group_info(ginfo);
 #endif
 
-        if (svc->srv_init != NULL) {
-                rc = svc->srv_init(thread);
+	if (svc->srv_ops.so_thr_init != NULL) {
+		rc = svc->srv_ops.so_thr_init(thread);
                 if (rc)
                         goto out;
         }
@@ -2238,8 +2259,8 @@ out_srv_fini:
         /*
          * deconstruct service specific state created by ptlrpc_start_thread()
          */
-        if (svc->srv_done != NULL)
-                svc->srv_done(thread);
+	if (svc->srv_ops.so_thr_done != NULL)
+		svc->srv_ops.so_thr_done(thread);
 
         if (env != NULL) {
                 lu_context_fini(&env->le_ctx);

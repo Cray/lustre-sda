@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -128,6 +126,13 @@ static inline void lu_local_obj_fid(struct lu_fid *fid, __u32 oid)
         fid->f_seq = FID_SEQ_LOCAL_FILE;
         fid->f_oid = oid;
         fid->f_ver = 0;
+}
+
+static inline int fid_is_acct(const struct lu_fid *fid)
+{
+        return fid_seq(fid) == FID_SEQ_LOCAL_FILE &&
+               (fid_oid(fid) == ACCT_USER_OID ||
+                fid_oid(fid) == ACCT_GROUP_OID);
 }
 
 enum lu_mgr_type {

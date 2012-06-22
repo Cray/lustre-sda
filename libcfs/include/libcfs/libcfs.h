@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -202,14 +200,17 @@ enum cfs_alloc_flags {
         /* standard allocator flag combination */
         CFS_ALLOC_STD    = CFS_ALLOC_FS | CFS_ALLOC_IO,
         CFS_ALLOC_USER   = CFS_ALLOC_WAIT | CFS_ALLOC_FS | CFS_ALLOC_IO,
+	CFS_ALLOC_NOFS   = CFS_ALLOC_WAIT | CFS_ALLOC_IO,
+	CFS_ALLOC_KERNEL = CFS_ALLOC_WAIT | CFS_ALLOC_IO | CFS_ALLOC_FS,
 };
 
 /* flags for cfs_page_alloc() in addition to enum cfs_alloc_flags */
 enum cfs_alloc_page_flags {
-        /* allow to return page beyond KVM. It has to be mapped into KVM by
-         * cfs_page_map(); */
-        CFS_ALLOC_HIGH   = 0x40,
-        CFS_ALLOC_HIGHUSER = CFS_ALLOC_WAIT | CFS_ALLOC_FS | CFS_ALLOC_IO | CFS_ALLOC_HIGH,
+	/* allow to return page beyond KVM. It has to be mapped into KVM by
+	 * cfs_kmap() and unmapped with cfs_kunmap(). */
+	CFS_ALLOC_HIGHMEM  = 0x40,
+	CFS_ALLOC_HIGHUSER = CFS_ALLOC_WAIT | CFS_ALLOC_FS | CFS_ALLOC_IO |
+			     CFS_ALLOC_HIGHMEM,
 };
 
 /*
@@ -225,7 +226,7 @@ void cfs_daemonize(char *str);
 int cfs_daemonize_ctxt(char *str);
 cfs_sigset_t cfs_get_blocked_sigs(void);
 cfs_sigset_t cfs_block_allsigs(void);
-cfs_sigset_t cfs_block_sigs(cfs_sigset_t bits);
+cfs_sigset_t cfs_block_sigs(unsigned long sigs);
 cfs_sigset_t cfs_block_sigsinv(unsigned long sigs);
 void cfs_restore_sigs(cfs_sigset_t);
 int cfs_signal_pending(void);
@@ -304,6 +305,7 @@ void cfs_srand(unsigned int, unsigned int);
 void cfs_get_random_bytes(void *buf, int size);
 
 #include <libcfs/libcfs_debug.h>
+#include <libcfs/libcfs_cpu.h>
 #include <libcfs/libcfs_private.h>
 #include <libcfs/libcfs_ioctl.h>
 #include <libcfs/libcfs_prim.h>

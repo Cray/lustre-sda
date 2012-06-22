@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -40,10 +38,6 @@
  * Author: Peter Braam <braam@clusterfs.com>
  * Author: Andreas Dilger <adilger@clusterfs.com>
  */
-
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 
 #define DEBUG_SUBSYSTEM S_ECHO
 
@@ -121,8 +115,9 @@ static int echo_destroy_export(struct obd_export *exp)
         return id;
 }
 
-static int echo_create(struct obd_export *exp, struct obdo *oa,
-                       struct lov_stripe_md **ea, struct obd_trans_info *oti)
+static int echo_create(const struct lu_env *env, struct obd_export *exp,
+		       struct obdo *oa, struct lov_stripe_md **ea,
+		       struct obd_trans_info *oti)
 {
         struct obd_device *obd = class_exp2obd(exp);
 
@@ -148,9 +143,10 @@ static int echo_create(struct obd_export *exp, struct obdo *oa,
         return 0;
 }
 
-static int echo_destroy(struct obd_export *exp, struct obdo *oa,
-                        struct lov_stripe_md *ea, struct obd_trans_info *oti,
-                        struct obd_export *md_exp, void *capa)
+static int echo_destroy(const struct lu_env *env, struct obd_export *exp,
+			struct obdo *oa, struct lov_stripe_md *ea,
+			struct obd_trans_info *oti, struct obd_export *md_exp,
+			void *capa)
 {
         struct obd_device *obd = class_exp2obd(exp);
 
@@ -174,7 +170,8 @@ static int echo_destroy(struct obd_export *exp, struct obdo *oa,
         RETURN(0);
 }
 
-static int echo_getattr(struct obd_export *exp, struct obd_info *oinfo)
+static int echo_getattr(const struct lu_env *env, struct obd_export *exp,
+                        struct obd_info *oinfo)
 {
         struct obd_device *obd = class_exp2obd(exp);
         obd_id id = oinfo->oi_oa->o_id;
@@ -198,8 +195,8 @@ static int echo_getattr(struct obd_export *exp, struct obd_info *oinfo)
         RETURN(0);
 }
 
-static int echo_setattr(struct obd_export *exp, struct obd_info *oinfo,
-                        struct obd_trans_info *oti)
+static int echo_setattr(const struct lu_env *env, struct obd_export *exp,
+                        struct obd_info *oinfo, struct obd_trans_info *oti)
 {
         struct obd_device *obd = class_exp2obd(exp);
 
@@ -392,11 +389,12 @@ static int echo_finalize_lb(struct obdo *oa, struct obd_ioobj *obj,
         return rc;
 }
 
-static int echo_preprw(int cmd, struct obd_export *export, struct obdo *oa,
-                       int objcount, struct obd_ioobj *obj,
-                       struct niobuf_remote *nb, int *pages,
-                       struct niobuf_local *res, struct obd_trans_info *oti,
-                       struct lustre_capa *unused)
+static int echo_preprw(const struct lu_env *env, int cmd,
+		       struct obd_export *export, struct obdo *oa,
+		       int objcount, struct obd_ioobj *obj,
+		       struct niobuf_remote *nb, int *pages,
+		       struct niobuf_local *res, struct obd_trans_info *oti,
+		       struct lustre_capa *unused)
 {
         struct obd_device *obd;
         int tot_bytes = 0;
@@ -469,11 +467,12 @@ preprw_cleanup:
         return rc;
 }
 
-static int echo_commitrw(int cmd, struct obd_export *export, struct obdo *oa,
-                         int objcount, struct obd_ioobj *obj,
-                         struct niobuf_remote *rb, int niocount,
-                         struct niobuf_local *res, struct obd_trans_info *oti,
-                         int rc)
+static int echo_commitrw(const struct lu_env *env, int cmd,
+			 struct obd_export *export, struct obdo *oa,
+			 int objcount, struct obd_ioobj *obj,
+			 struct niobuf_remote *rb, int niocount,
+			 struct niobuf_local *res, struct obd_trans_info *oti,
+			 int rc)
 {
         struct obd_device *obd;
         int pgs = 0;

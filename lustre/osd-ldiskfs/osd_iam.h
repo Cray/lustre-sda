@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -375,6 +373,8 @@ struct iam_leaf_operations {
 
         int (*key_cmp)(const struct iam_leaf *l, const struct iam_key *k);
         int (*key_eq)(const struct iam_leaf *l, const struct iam_key *k);
+
+	int (*rec_eq)(const struct iam_leaf *l, const struct iam_rec *r);
 
         int (*key_size)(const struct iam_leaf *l);
         /*

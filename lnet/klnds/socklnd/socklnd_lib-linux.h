@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -35,9 +33,6 @@
  */
 
 #define DEBUG_PORTAL_ALLOC
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 
 #ifndef __LINUX_SOCKNAL_LIB_H__
 #define __LINUX_SOCKNAL_LIB_H__
@@ -98,8 +93,7 @@ int ksocknal_nsched(void)
         return 1;
 }
 #else
-#include <linux/lustre_version.h>
-# if !(defined(CONFIG_X86) && (LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,21))) || defined(CONFIG_X86_64) || ((LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)) && !defined(CONFIG_X86_HT))
+# if !defined(CONFIG_X86) || defined(CONFIG_X86_64) || !defined(CONFIG_X86_HT)
 static inline int
 ksocknal_nsched(void)
 {

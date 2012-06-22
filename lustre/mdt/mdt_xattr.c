@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -45,9 +43,6 @@
  * Author: Huang Hua <huanghua@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_MDS
 
 #include <lustre_acl.h>
@@ -215,7 +210,7 @@ int mdt_getxattr(struct mdt_thread_info *info)
         EXIT;
 out:
         if (rc >= 0) {
-                mdt_counter_incr(req->rq_export, LPROC_MDT_GETXATTR);
+		mdt_counter_incr(req, LPROC_MDT_GETXATTR);
                 repbody->eadatasize = rc;
                 rc = 0;
         }
@@ -419,7 +414,7 @@ int mdt_reint_setxattr(struct mdt_thread_info *info,
                 rc = -EINVAL;
         }
         if (rc == 0)
-                mdt_counter_incr(req->rq_export, LPROC_MDT_SETXATTR);
+		mdt_counter_incr(req, LPROC_MDT_SETXATTR);
 
         EXIT;
 out_unlock:

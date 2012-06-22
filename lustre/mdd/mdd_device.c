@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -42,9 +40,6 @@
  * Author: Wang Di <wangdi@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_MDS
 
 #include <linux/module.h>
@@ -1211,8 +1206,8 @@ static int mdd_update_capa_key(const struct lu_env *env,
         int rc;
         ENTRY;
 
-        rc = obd_set_info_async(lov_exp, sizeof(KEY_CAPA_KEY), KEY_CAPA_KEY,
-                                sizeof(info), &info, NULL);
+        rc = obd_set_info_async(env, lov_exp, sizeof(KEY_CAPA_KEY),
+                                KEY_CAPA_KEY, sizeof(info), &info, NULL);
         RETURN(rc);
 }
 

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -42,10 +40,6 @@
  * Author: Niu YaWei <niu@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
-
 #define DEBUG_SUBSYSTEM S_LQUOTA
 
 #include <linux/version.h>
@@ -63,8 +57,6 @@
 #include <lustre_mds.h>
 
 #include "quota_internal.h"
-
-#ifdef HAVE_QUOTA_SUPPORT
 
 /* lock ordering: mds->mds_qonoff_sem > dquot->dq_mutex > lqs->lqs_lock */
 static cfs_list_t lustre_dquot_hash[NR_DQHASH];
@@ -1772,5 +1764,3 @@ int mds_quota_recovery(struct obd_device *obd)
         cfs_wait_for_completion(&data.comp);
         RETURN(rc);
 }
-
-#endif /* HAVE_QUOTA_SUPPORT */

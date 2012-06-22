@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -202,7 +200,12 @@ enum dt_index_flags {
         /** index can be modified */
         DT_IND_UPDATE = 1 << 2,
         /** index supports records with non-unique (duplicate) keys */
-        DT_IND_NONUNQ = 1 << 3
+        DT_IND_NONUNQ = 1 << 3,
+        /**
+         * index support fixed-size keys sorted with natural numerical way
+         * and is able to return left-side value if no exact value found
+         */
+        DT_IND_RANGE = 1 << 4,
 };
 
 /**
@@ -210,6 +213,7 @@ enum dt_index_flags {
  * names to fids).
  */
 extern const struct dt_index_features dt_directory_features;
+extern const struct dt_index_features dt_otable_features;
 
 /**
  * This is a general purpose dt allocation hint.
@@ -597,6 +601,32 @@ struct dt_index_operations {
         } dio_it;
 };
 
+enum dt_otable_it_valid {
+	DOIV_ERROR_HANDLE	= 0x0001,
+};
+
+enum dt_otable_it_flags {
+	/* Exit when fail. */
+	DOIF_FAILOUT	= 0x0001,
+
+	/* Reset iteration position to the device beginning. */
+	DOIF_RESET	= 0x0002,
+
+	/* There is up layer component uses the iteration. */
+	DOIF_OUTUSED	= 0x0004,
+};
+
+/* otable based iteration needs to use the common DT interation APIs.
+ * To initialize the iteration, it needs call dio_it::init() firstly.
+ * Here is how the otable based iteration should prepare arguments to
+ * call dt_it_ops::init().
+ *
+ * For otable based iteration, the 32-bits 'attr' for dt_it_ops::init()
+ * is composed of two parts:
+ * low 16-bits is for valid bits, high 16-bits is for flags bits. */
+#define DT_OTABLE_IT_FLAGS_SHIFT	16
+#define DT_OTABLE_IT_FLAGS_MASK 	0xffff0000
+
 struct dt_device {
         struct lu_device                   dd_lu_dev;
         const struct dt_device_operations *dd_ops;
@@ -733,9 +763,24 @@ struct dt_object *dt_store_open(const struct lu_env *env,
                                 const char *filename,
                                 struct lu_fid *fid);
 
+struct dt_object *dt_find_or_create(const struct lu_env *env,
+                                    struct dt_device *dt,
+                                    const struct lu_fid *fid,
+                                    struct dt_object_format *dof,
+                                    struct lu_attr *attr);
+
 struct dt_object *dt_locate(const struct lu_env *env,
                             struct dt_device *dev,
                             const struct lu_fid *fid);
+
+static inline int dt_object_sync(const struct lu_env *env,
+                                 struct dt_object *o)
+{
+        LASSERT(o);
+        LASSERT(o->do_ops);
+        LASSERT(o->do_ops->do_object_sync);
+        return o->do_ops->do_object_sync(env, o);
+}
 
 int dt_declare_version_set(const struct lu_env *env, struct dt_object *o,
                            struct thandle *th);
@@ -744,11 +789,12 @@ void dt_version_set(const struct lu_env *env, struct dt_object *o,
 dt_obj_version_t dt_version_get(const struct lu_env *env, struct dt_object *o);
 
 
+int dt_read(const struct lu_env *env, struct dt_object *dt,
+            struct lu_buf *buf, loff_t *pos);
 int dt_record_read(const struct lu_env *env, struct dt_object *dt,
                    struct lu_buf *buf, loff_t *pos);
 int dt_record_write(const struct lu_env *env, struct dt_object *dt,
                     const struct lu_buf *buf, loff_t *pos, struct thandle *th);
-
 
 static inline struct thandle *dt_trans_create(const struct lu_env *env,
                                               struct dt_device *d)
@@ -798,6 +844,8 @@ static inline int dt_declare_record_write(const struct lu_env *env,
 
         LASSERTF(dt != NULL, "dt is NULL when we want to write record\n");
         LASSERT(th != NULL);
+        LASSERT(dt->do_body_ops);
+        LASSERT(dt->do_body_ops->dbo_declare_write);
         rc = dt->do_body_ops->dbo_declare_write(env, dt, size, pos, th);
         return rc;
 }
@@ -1248,4 +1296,7 @@ static inline int dt_lookup(const struct lu_env *env,
                 ret = -ENOENT;
         return ret;
 }
+
+#define LU221_BAD_TIME (0x80000000U + 24 * 3600)
+
 #endif /* __LUSTRE_DT_OBJECT_H */

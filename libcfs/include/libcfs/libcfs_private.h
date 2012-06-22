@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -136,50 +134,91 @@ extern cfs_atomic_t libcfs_kmemory;
  */
 #ifdef LIBCFS_DEBUG
 
-# define libcfs_kmem_inc(ptr, size)             \
-do {                                            \
-        cfs_atomic_add(size, &libcfs_kmemory);  \
+# define libcfs_kmem_inc(ptr, size)		\
+do {						\
+	cfs_atomic_add(size, &libcfs_kmemory);	\
 } while (0)
 
-# define libcfs_kmem_dec(ptr, size) do {        \
-        cfs_atomic_sub(size, &libcfs_kmemory);  \
+# define libcfs_kmem_dec(ptr, size)		\
+do {						\
+	cfs_atomic_sub(size, &libcfs_kmemory);	\
 } while (0)
+
+# define libcfs_kmem_read()			\
+	cfs_atomic_read(&libcfs_kmemory)
 
 #else
 # define libcfs_kmem_inc(ptr, size) do {} while (0)
 # define libcfs_kmem_dec(ptr, size) do {} while (0)
+# define libcfs_kmem_read()	(0)
 #endif /* LIBCFS_DEBUG */
 
 #ifndef LIBCFS_VMALLOC_SIZE
 #define LIBCFS_VMALLOC_SIZE        (2 << CFS_PAGE_SHIFT) /* 2 pages */
 #endif
 
-#define LIBCFS_ALLOC_GFP(ptr, size, mask)                                 \
-do {                                                                      \
-        LASSERT(!cfs_in_interrupt() ||                                    \
-               (size <= LIBCFS_VMALLOC_SIZE && mask == CFS_ALLOC_ATOMIC));\
-        if (unlikely((size) > LIBCFS_VMALLOC_SIZE))                       \
-                (ptr) = cfs_alloc_large(size);                            \
-        else                                                              \
-                (ptr) = cfs_alloc((size), (mask));                        \
-        if (unlikely((ptr) == NULL)) {                                    \
-                CERROR("LNET: out of memory at %s:%d (tried to alloc '"   \
-                       #ptr "' = %d)\n", __FILE__, __LINE__, (int)(size));\
-                CERROR("LNET: %d total bytes allocated by lnet\n",        \
-                       cfs_atomic_read(&libcfs_kmemory));                 \
-                break;                                                    \
-        }                                                                 \
-        libcfs_kmem_inc((ptr), (size));                                   \
-        memset((ptr), 0, (size));                                         \
-        CDEBUG(D_MALLOC, "kmalloced '" #ptr "': %d at %p (tot %d).\n",    \
-               (int)(size), (ptr), cfs_atomic_read (&libcfs_kmemory));    \
+#define LIBCFS_ALLOC_PRE(size, mask)					    \
+do {									    \
+	LASSERT(!cfs_in_interrupt() ||					    \
+		((size) <= LIBCFS_VMALLOC_SIZE &&			    \
+		 ((mask) & CFS_ALLOC_ATOMIC)) != 0);			    \
 } while (0)
 
+#define LIBCFS_ALLOC_POST(ptr, size)					    \
+do {									    \
+	if (unlikely((ptr) == NULL)) {					    \
+		CERROR("LNET: out of memory at %s:%d (tried to alloc '"	    \
+		       #ptr "' = %d)\n", __FILE__, __LINE__, (int)(size));  \
+		CERROR("LNET: %d total bytes allocated by lnet\n",	    \
+		       libcfs_kmem_read());				    \
+	} else {							    \
+		memset((ptr), 0, (size));				    \
+		libcfs_kmem_inc((ptr), (size));				    \
+		CDEBUG(D_MALLOC, "alloc '" #ptr "': %d at %p (tot %d).\n",  \
+		       (int)(size), (ptr), libcfs_kmem_read());		    \
+	}                                                                   \
+} while (0)
+
+/**
+ * allocate memory with GFP flags @mask
+ */
+#define LIBCFS_ALLOC_GFP(ptr, size, mask)				    \
+do {									    \
+	LIBCFS_ALLOC_PRE((size), (mask));				    \
+	(ptr) = (size) <= LIBCFS_VMALLOC_SIZE ?				    \
+		cfs_alloc((size), (mask)) : cfs_alloc_large(size);	    \
+	LIBCFS_ALLOC_POST((ptr), (size));				    \
+} while (0)
+
+/**
+ * default allocator
+ */
 #define LIBCFS_ALLOC(ptr, size) \
         LIBCFS_ALLOC_GFP(ptr, size, CFS_ALLOC_IO)
 
+/**
+ * non-sleeping allocator
+ */
 #define LIBCFS_ALLOC_ATOMIC(ptr, size) \
         LIBCFS_ALLOC_GFP(ptr, size, CFS_ALLOC_ATOMIC)
+
+/**
+ * allocate memory for specified CPU partition
+ *   \a cptab != NULL, \a cpt is CPU partition id of \a cptab
+ *   \a cptab == NULL, \a cpt is HW NUMA node id
+ */
+#define LIBCFS_CPT_ALLOC_GFP(ptr, cptab, cpt, size, mask)		    \
+do {									    \
+	LIBCFS_ALLOC_PRE((size), (mask));				    \
+	(ptr) = (size) <= LIBCFS_VMALLOC_SIZE ?				    \
+		cfs_cpt_malloc((cptab), (cpt), (size), (mask)) :	    \
+		cfs_cpt_vmalloc((cptab), (cpt), (size));		    \
+	LIBCFS_ALLOC_POST((ptr), (size));				    \
+} while (0)
+
+/** default numa allocator */
+#define LIBCFS_CPT_ALLOC(ptr, cptab, cpt, size)				    \
+	LIBCFS_CPT_ALLOC_GFP(ptr, cptab, cpt, size, CFS_ALLOC_IO)
 
 #define LIBCFS_FREE(ptr, size)                                          \
 do {                                                                    \
@@ -191,7 +230,7 @@ do {                                                                    \
         }                                                               \
         libcfs_kmem_dec((ptr), s);                                      \
         CDEBUG(D_MALLOC, "kfreed '" #ptr "': %d at %p (tot %d).\n",     \
-               s, (ptr), cfs_atomic_read(&libcfs_kmemory));             \
+	       s, (ptr), libcfs_kmem_read());				\
         if (unlikely(s > LIBCFS_VMALLOC_SIZE))                          \
                 cfs_free_large(ptr);                                    \
         else                                                            \
@@ -249,15 +288,24 @@ do {                                                                           \
 # define KLASSERT(e) ((void)0)
 # define printk printf
 # ifdef CRAY_XT3                                /* buggy calloc! */
-#  define LIBCFS_ALLOC(ptr, size)               \
-   do {                                         \
-        (ptr) = malloc(size);                   \
-        memset(ptr, 0, size);                   \
+#  define LIBCFS_ALLOC_GFP(ptr, size, mask)	\
+   do {						\
+	(ptr) = malloc(size);			\
+	memset(ptr, 0, size);			\
    } while (0)
 # else
-#  define LIBCFS_ALLOC(ptr, size) do { (ptr) = calloc(1,size); } while (0)
+#  define LIBCFS_ALLOC_GFP(ptr, size, mask)	\
+   do {						\
+	(ptr) = calloc(1, size);		\
+   } while (0)
 # endif
 # define LIBCFS_FREE(ptr, size) do { free(ptr); } while((size) - (size))
+# define LIBCFS_ALLOC(ptr, size)				\
+	 LIBCFS_ALLOC_GFP(ptr, size, 0)
+# define LIBCFS_CPT_ALLOC_GFP(ptr, cptab, cpt, size, mask)	\
+	 LIBCFS_ALLOC(ptr, size)
+# define LIBCFS_CPT_ALLOC(ptr, cptab, cpt, size)		\
+	 LIBCFS_ALLOC(ptr, size)
 
 void libcfs_debug_dumplog(void);
 int libcfs_debug_init(unsigned long bufsize);
@@ -279,6 +327,32 @@ int libcfs_debug_cleanup(void);
 #endif
 /* !__KERNEL__ */
 #endif
+
+/*
+ * allocate per-cpu-partition data, returned value is an array of pointers,
+ * variable can be indexed by CPU ID.
+ *	cptable != NULL: size of array is number of CPU partitions
+ *	cptable == NULL: size of array is number of HW cores
+ */
+void *cfs_percpt_alloc(struct cfs_cpt_table *cptab, unsigned int size);
+/*
+ * destory per-cpu-partition variable
+ */
+void  cfs_percpt_free(void *vars);
+int   cfs_percpt_number(void *vars);
+void *cfs_percpt_current(void *vars);
+void *cfs_percpt_index(void *vars, int idx);
+
+#define cfs_percpt_for_each(var, i, vars)		\
+	for (i = 0; i < cfs_percpt_number(vars) &&	\
+		    ((var) = (vars)[i]) != NULL; i++)
+
+/*
+ * allocate a variable array, returned value is an array of pointers.
+ * Caller can specify length of array by count.
+ */
+void *cfs_array_alloc(int count, unsigned int size);
+void  cfs_array_free(void *vars);
 
 #define LASSERT_ATOMIC_ENABLED          (1)
 
@@ -375,6 +449,83 @@ do {                                                            \
 #define CFS_ALLOC_PTR(ptr)      LIBCFS_ALLOC(ptr, sizeof (*(ptr)));
 #define CFS_FREE_PTR(ptr)       LIBCFS_FREE(ptr, sizeof (*(ptr)));
 
+/*
+ * percpu partition lock
+ *
+ * There are some use-cases like this in Lustre:
+ * . each CPU partition has it's own private data which is frequently changed,
+ *   and mostly by the local CPU partition.
+ * . all CPU partitions share some global data, these data are rarely changed.
+ *
+ * LNet is typical example.
+ * CPU partition lock is designed for this kind of use-cases:
+ * . each CPU partition has it's own private lock
+ * . change on private data just needs to take the private lock
+ * . read on shared data just needs to take _any_ of private locks
+ * . change on shared data needs to take _all_ private locks,
+ *   which is slow and should be really rare.
+ */
+
+enum {
+	CFS_PERCPT_LOCK_EX	= -1, /* negative */
+};
+
+#ifdef __KERNEL__
+
+struct cfs_percpt_lock {
+	/* cpu-partition-table for this lock */
+	struct cfs_cpt_table	*pcl_cptab;
+	/* exclusively locked */
+	unsigned int		pcl_locked;
+	/* private lock table */
+	cfs_spinlock_t		**pcl_locks;
+};
+
+/* return number of private locks */
+static inline int
+cfs_percpt_lock_num(struct cfs_percpt_lock *pcl)
+{
+	return cfs_cpt_number(pcl->pcl_cptab);
+}
+
+#else /* !__KERNEL__ */
+
+# ifdef HAVE_LIBPTHREAD
+
+struct cfs_percpt_lock {
+	pthread_mutex_t		pcl_mutex;
+};
+
+# else /* !HAVE_LIBPTHREAD */
+#define CFS_PERCPT_LOCK_MAGIC          0xbabecafe;
+
+struct cfs_percpt_lock {
+	int			pcl_lock;
+};
+# endif /* HAVE_LIBPTHREAD */
+# define cfs_percpt_lock_num(pcl)        1
+#endif /* __KERNEL__ */
+
+/*
+ * create a cpu-partition lock based on CPU partition table \a cptab,
+ * each private lock has extra \a psize bytes padding data
+ */
+struct cfs_percpt_lock *cfs_percpt_lock_alloc(struct cfs_cpt_table *cptab);
+/* destroy a cpu-partition lock */
+void cfs_percpt_lock_free(struct cfs_percpt_lock *pcl);
+
+/* lock private lock \a index of \a pcl */
+void cfs_percpt_lock(struct cfs_percpt_lock *pcl, int index);
+/* unlock private lock \a index of \a pcl */
+void cfs_percpt_unlock(struct cfs_percpt_lock *pcl, int index);
+/* create percpt (atomic) refcount based on @cptab */
+cfs_atomic_t **cfs_percpt_atomic_alloc(struct cfs_cpt_table *cptab, int val);
+/* destroy percpt refcount */
+void cfs_percpt_atomic_free(cfs_atomic_t **refs);
+/* return sum of all percpu refs */
+int cfs_percpt_atomic_summary(cfs_atomic_t **refs);
+
+
 /** Compile-time assertion.
 
  * Check an invariant described by a constant expression at compile time by
@@ -402,7 +553,6 @@ __u32       libcfs_str2net(const char *str);
 lnet_nid_t  libcfs_str2nid(const char *str);
 int         libcfs_str2anynid(lnet_nid_t *nid, const char *str);
 char       *libcfs_id2str(lnet_process_id_t id);
-int         cfs_iswhite(char c);
 void        cfs_free_nidlist(cfs_list_t *list);
 int         cfs_parse_nidlist(char *str, int len, cfs_list_t *list);
 int         cfs_match_nid(lnet_nid_t nid, cfs_list_t *list);
@@ -489,6 +639,19 @@ static inline int cfs_size_round0(int val)
 static inline size_t cfs_round_strlen(char *fset)
 {
         return (size_t)cfs_size_round((int)strlen(fset) + 1);
+}
+
+/* roundup \a val to power2 */
+static inline unsigned int cfs_power2_roundup(unsigned int val)
+{
+	if (val != LOWEST_BIT_SET(val)) { /* not a power of 2 already */
+		do {
+			val &= ~LOWEST_BIT_SET(val);
+		} while (val != LOWEST_BIT_SET(val));
+		/* ...and round up */
+		val <<= 1;
+	}
+	return val;
 }
 
 #define LOGL(var,len,ptr)                                       \

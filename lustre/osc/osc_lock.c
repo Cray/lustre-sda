@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -202,6 +200,7 @@ static int osc_lock_unuse(const struct lu_env *env,
                 LASSERT(!ols->ols_hold);
                 LASSERT(ols->ols_agl);
                 return 0;
+	case OLS_ENQUEUED:
         case OLS_UPCALL_RECEIVED:
                 LASSERT(!ols->ols_hold);
                 ols->ols_state = OLS_NEW;
@@ -859,8 +858,7 @@ static int osc_ldlm_glimpse_ast(struct ldlm_lock *dlmlock, void *data)
 
         env = cl_env_nested_get(&nest);
         if (!IS_ERR(env)) {
-                /*
-                 * osc_ast_data_get() has to go after environment is
+                /* osc_ast_data_get() has to go after environment is
                  * allocated, because osc_ast_data() acquires a
                  * reference to a lock, and it can only be released in
                  * environment.
@@ -868,7 +866,12 @@ static int osc_ldlm_glimpse_ast(struct ldlm_lock *dlmlock, void *data)
                 olck = osc_ast_data_get(dlmlock);
                 if (olck != NULL) {
                         lock = olck->ols_cl.cls_lock;
-                        cl_lock_mutex_get(env, lock);
+                        /* Do not grab the mutex of cl_lock for glimpse.
+                         * See LU-1274 for details.
+                         * BTW, it's okay for cl_lock to be cancelled during
+                         * this period because server can handle this race.
+                         * See ldlm_server_glimpse_ast() for details.
+                         * cl_lock_mutex_get(env, lock); */
                         cap = &req->rq_pill;
                         req_capsule_extend(cap, &RQF_LDLM_GL_CALLBACK);
                         req_capsule_set_size(cap, &RMF_DLM_LVB, RCL_SERVER,
@@ -879,7 +882,6 @@ static int osc_ldlm_glimpse_ast(struct ldlm_lock *dlmlock, void *data)
                                 obj = lock->cll_descr.cld_obj;
                                 result = cl_object_glimpse(env, obj, lvb);
                         }
-                        cl_lock_mutex_put(env, lock);
                         osc_ast_data_put(env, olck);
                 } else {
                         /*
@@ -1328,14 +1330,32 @@ static int osc_lock_use(const struct lu_env *env,
 
 static int osc_lock_flush(struct osc_lock *ols, int discard)
 {
-        struct cl_lock       *lock  = ols->ols_cl.cls_lock;
-        struct cl_env_nest    nest;
-        struct lu_env        *env;
-        int result = 0;
+	struct cl_lock       *lock  = ols->ols_cl.cls_lock;
+	struct cl_env_nest    nest;
+	struct lu_env        *env;
+	int result = 0;
+	ENTRY;
 
-        env = cl_env_nested_get(&nest);
-        if (!IS_ERR(env)) {
-                result = cl_lock_page_out(env, lock, discard);
+	env = cl_env_nested_get(&nest);
+	if (!IS_ERR(env)) {
+		struct osc_object    *obj   = cl2osc(ols->ols_cl.cls_obj);
+		struct cl_lock_descr *descr = &lock->cll_descr;
+		int rc = 0;
+
+		if (descr->cld_mode >= CLM_WRITE) {
+			result = osc_cache_writeback_range(env, obj,
+					descr->cld_start, descr->cld_end,
+					1, discard);
+			CDEBUG(D_DLMTRACE, "write out %d pages for lock %p.\n",
+			       result, lock);
+			if (result > 0)
+				result = 0;
+		}
+
+		rc = cl_lock_discard_pages(env, lock);
+		if (result == 0 && rc < 0)
+			result = rc;
+
                 cl_env_nested_put(&nest, env);
         } else
                 result = PTR_ERR(env);
@@ -1343,7 +1363,7 @@ static int osc_lock_flush(struct osc_lock *ols, int discard)
                 ols->ols_flush = 1;
                 LINVRNT(!osc_lock_has_pages(ols));
         }
-        return result;
+	RETURN(result);
 }
 
 /**
@@ -1544,6 +1564,9 @@ static int osc_lock_fits_into(const struct lu_env *env,
 
         if (need->cld_enq_flags & CEF_NEVER)
                 return 0;
+
+	if (ols->ols_state >= OLS_CANCELLED)
+		return 0;
 
         if (need->cld_mode == CLM_PHANTOM) {
                 if (ols->ols_agl)

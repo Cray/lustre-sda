@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -63,7 +61,7 @@ int cfs_tracefile_init_arch()
 	for (i = 0; i < CFS_TCD_TYPE_MAX; i++) {
 		cfs_trace_data[i] =
                         cfs_alloc(sizeof(union cfs_trace_data_union) * \
-                                  CFS_NR_CPUS, GFP_KERNEL);
+				  CFS_NR_CPUS, CFS_ALLOC_KERNEL);
 		if (cfs_trace_data[i] == NULL)
 			goto out;
 	}
@@ -79,7 +77,7 @@ int cfs_tracefile_init_arch()
 		for (j = 0; j < CFS_TCD_TYPE_MAX; j++) {
 			cfs_trace_console_buffers[i][j] =
 				cfs_alloc(CFS_TRACE_CONSOLE_BUFFER_SIZE,
-                                          GFP_KERNEL);
+					  CFS_ALLOC_KERNEL);
 
 			if (cfs_trace_console_buffers[i][j] == NULL)
 				goto out;
@@ -144,13 +142,13 @@ cfs_trace_buf_type_t cfs_trace_buf_idx_get()
                 return CFS_TCD_TYPE_PASSIVE;
 }
 
-int cfs_trace_lock_tcd(struct cfs_trace_cpu_data *tcd)
+int cfs_trace_lock_tcd(struct cfs_trace_cpu_data *tcd, int walking)
 {
 	__LASSERT(tcd->tcd_type < CFS_TCD_TYPE_MAX);
 	return 1;
 }
 
-void cfs_trace_unlock_tcd(struct cfs_trace_cpu_data *tcd)
+void cfs_trace_unlock_tcd(struct cfs_trace_cpu_data *tcd, int walking)
 {
 	__LASSERT(tcd->tcd_type < CFS_TCD_TYPE_MAX);
 }

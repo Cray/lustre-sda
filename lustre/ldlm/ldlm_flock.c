@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -469,6 +467,7 @@ reprocess:
         }
 
         if (*flags != LDLM_FL_WAIT_NOREPROC) {
+#ifdef HAVE_SERVER_SUPPORT
                 if (first_enq) {
                         /* If this is an unlock, reprocess the waitq and
                          * send completions ASTs for locks that can now be
@@ -497,6 +496,13 @@ restart:
                         LASSERT(req->l_completion_ast);
                         ldlm_add_ast_work_item(req, NULL, work_list);
                 }
+#else /* !HAVE_SERVER_SUPPORT */
+                /* The only one possible case for client-side calls flock
+                 * policy function is ldlm_flock_completion_ast inside which
+                 * carries LDLM_FL_WAIT_NOREPROC flag. */
+                CERROR("Illegal parameter for client-side-only module.\n");
+                LBUG();
+#endif /* HAVE_SERVER_SUPPORT */
         }
 
         /* In case we're reprocessing the requested lock we can't destroy
@@ -527,7 +533,9 @@ ldlm_flock_interrupted_wait(void *data)
         ldlm_flock_blocking_unlink(lock);
 
         /* client side - set flag to prevent lock from being put on lru list */
+        lock_res_and_lock(lock);
         lock->l_flags |= LDLM_FL_CBPENDING;
+        unlock_res_and_lock(lock);
 
         EXIT;
 }

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -215,7 +213,9 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
                                   OBD_CONNECT_CANCELSET | OBD_CONNECT_FID     |
                                   OBD_CONNECT_AT       | OBD_CONNECT_LOV_V3   |
                                   OBD_CONNECT_RMT_CLIENT | OBD_CONNECT_VBR    |
-                                  OBD_CONNECT_FULL20   | OBD_CONNECT_64BITHASH;
+                                  OBD_CONNECT_FULL20   | OBD_CONNECT_64BITHASH|
+				  OBD_CONNECT_EINPROGRESS |
+				  OBD_CONNECT_JOBSTATS;
 
         if (sbi->ll_flags & LL_SBI_SOM_PREVIEW)
                 data->ocd_connect_flags |= OBD_CONNECT_SOM;
@@ -276,7 +276,7 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
                 GOTO(out_md, err);
         }
 
-        err = obd_statfs(obd, osfs,
+        err = obd_statfs(NULL, sbi->ll_md_exp, osfs,
                          cfs_time_shift_64(-OBD_STATFS_CACHE_SECONDS), 0);
         if (err)
                 GOTO(out_md_fid, err);
@@ -306,7 +306,7 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
         }
 
         size = sizeof(*data);
-        err = obd_get_info(sbi->ll_md_exp, sizeof(KEY_CONN_DATA),
+        err = obd_get_info(NULL, sbi->ll_md_exp, sizeof(KEY_CONN_DATA),
                            KEY_CONN_DATA,  &size, data, NULL);
         if (err) {
                 CERROR("Get connect data failed: %d \n", err);
@@ -385,7 +385,9 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
                                   OBD_CONNECT_AT | OBD_CONNECT_RMT_CLIENT |
                                   OBD_CONNECT_OSS_CAPA | OBD_CONNECT_VBR|
                                   OBD_CONNECT_FULL20 | OBD_CONNECT_64BITHASH |
-                                  OBD_CONNECT_MAXBYTES;
+                                  OBD_CONNECT_MAXBYTES |
+				  OBD_CONNECT_EINPROGRESS |
+				  OBD_CONNECT_JOBSTATS;
 
         if (sbi->ll_flags & LL_SBI_SOM_PREVIEW)
                 data->ocd_connect_flags |= OBD_CONNECT_SOM;
@@ -527,13 +529,18 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 #endif
 
         checksum = sbi->ll_flags & LL_SBI_CHECKSUM;
-        err = obd_set_info_async(sbi->ll_dt_exp, sizeof(KEY_CHECKSUM),
+        err = obd_set_info_async(NULL, sbi->ll_dt_exp, sizeof(KEY_CHECKSUM),
                                  KEY_CHECKSUM, sizeof(checksum), &checksum,
                                  NULL);
         cl_sb_init(sb);
 
         sb->s_root = d_alloc_root(root);
-        sb->s_root->d_op = &ll_d_root_ops;
+#ifdef DCACHE_OP_HASH
+	d_set_d_op(sb->s_root, &ll_d_root_ops);
+	sb->s_d_op = &ll_d_ops;
+#else
+	sb->s_root->d_op = &ll_d_root_ops;
+#endif
 
         sbi->ll_sdev_orig = sb->s_dev;
 
@@ -581,7 +588,7 @@ int ll_get_max_mdsize(struct ll_sb_info *sbi, int *lmmsize)
 
         *lmmsize = obd_size_diskmd(sbi->ll_dt_exp, NULL);
         size = sizeof(int);
-        rc = obd_get_info(sbi->ll_md_exp, sizeof(KEY_MAX_EASIZE),
+        rc = obd_get_info(NULL, sbi->ll_md_exp, sizeof(KEY_MAX_EASIZE),
                           KEY_MAX_EASIZE, &size, lmmsize, NULL);
         if (rc)
                 CERROR("Get max mdsize error rc %d \n", rc);
@@ -618,7 +625,7 @@ void lustre_dump_dentry(struct dentry *dentry, int recur)
                " flags=0x%x, fsdata=%p, %d subdirs\n", dentry,
                dentry->d_name.len, dentry->d_name.name,
                dentry->d_parent->d_name.len, dentry->d_parent->d_name.name,
-               dentry->d_parent, dentry->d_inode, atomic_read(&dentry->d_count),
+	       dentry->d_parent, dentry->d_inode, d_refcount(dentry),
                dentry->d_flags, dentry->d_fsdata, subdirs);
         if (dentry->d_inode != NULL)
                 ll_dump_inode(dentry->d_inode);
@@ -1484,7 +1491,7 @@ int ll_statfs_internal(struct super_block *sb, struct obd_statfs *osfs,
         int rc;
         ENTRY;
 
-        rc = obd_statfs(class_exp2obd(sbi->ll_md_exp), osfs, max_age, flags);
+        rc = obd_statfs(NULL, sbi->ll_md_exp, osfs, max_age, flags);
         if (rc) {
                 CERROR("md_statfs fails: rc = %d\n", rc);
                 RETURN(rc);
@@ -1498,8 +1505,7 @@ int ll_statfs_internal(struct super_block *sb, struct obd_statfs *osfs,
         if (sbi->ll_flags & LL_SBI_LAZYSTATFS)
                 flags |= OBD_STATFS_NODELAY;
 
-        rc = obd_statfs_rqset(class_exp2obd(sbi->ll_dt_exp),
-                              &obd_osfs, max_age, flags);
+        rc = obd_statfs_rqset(sbi->ll_dt_exp, &obd_osfs, max_age, flags);
         if (rc) {
                 CERROR("obd_statfs fails: rc = %d\n", rc);
                 RETURN(rc);
@@ -1833,13 +1839,19 @@ void ll_read_inode2(struct inode *inode, void *opaque)
 
 void ll_delete_inode(struct inode *inode)
 {
-        struct ll_sb_info *sbi = ll_i2sbi(inode);
-        int rc;
-        ENTRY;
+	struct cl_inode_info *lli = cl_i2info(inode);
+	struct ll_sb_info    *sbi = ll_i2sbi(inode);
+	int rc;
+	ENTRY;
 
-        rc = obd_fid_delete(sbi->ll_md_exp, ll_inode2fid(inode));
-        if (rc)
-                CERROR("fid_delete() failed, rc %d\n", rc);
+	rc = obd_fid_delete(sbi->ll_md_exp, ll_inode2fid(inode));
+	if (rc)
+		CERROR("fid_delete() failed, rc %d\n", rc);
+
+	if (S_ISREG(inode->i_mode) && lli->lli_clob != NULL)
+		/* discard all dirty pages before truncating them, required by
+		 * osc_extent implementation at LU-1030. */
+		cl_sync_file_range(inode, 0, OBD_OBJECT_EOF, CL_FSYNC_DISCARD);
 
         truncate_inode_pages(&inode->i_data, 0);
 
@@ -1968,10 +1980,10 @@ int ll_flush_ctx(struct inode *inode)
 
         CDEBUG(D_SEC, "flush context for user %d\n", cfs_curproc_uid());
 
-        obd_set_info_async(sbi->ll_md_exp,
+        obd_set_info_async(NULL, sbi->ll_md_exp,
                            sizeof(KEY_FLUSH_CTX), KEY_FLUSH_CTX,
                            0, NULL, NULL);
-        obd_set_info_async(sbi->ll_dt_exp,
+        obd_set_info_async(NULL, sbi->ll_dt_exp,
                            sizeof(KEY_FLUSH_CTX), KEY_FLUSH_CTX,
                            0, NULL, NULL);
         return 0;
@@ -2063,7 +2075,7 @@ int ll_remount_fs(struct super_block *sb, int *flags, char *data)
 
         if ((*flags & MS_RDONLY) != (sb->s_flags & MS_RDONLY)) {
                 read_only = *flags & MS_RDONLY;
-                err = obd_set_info_async(sbi->ll_md_exp,
+                err = obd_set_info_async(NULL, sbi->ll_md_exp,
                                          sizeof(KEY_READ_ONLY),
                                          KEY_READ_ONLY, sizeof(read_only),
                                          &read_only, NULL);

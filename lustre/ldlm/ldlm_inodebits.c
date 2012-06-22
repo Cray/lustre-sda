@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -52,6 +50,7 @@
 
 #include "ldlm_internal.h"
 
+#ifdef HAVE_SERVER_SUPPORT
 /* Determine if the lock is compatible with all locks on the queue. */
 static int
 ldlm_inodebits_compat_queue(cfs_list_t *queue, struct ldlm_lock *req,
@@ -194,6 +193,7 @@ int ldlm_process_inodebits_lock(struct ldlm_lock *lock, int *flags,
         }
         RETURN(0);
 }
+#endif /* HAVE_SERVER_SUPPORT */
 
 void ldlm_ibits_policy_wire_to_local(const ldlm_wire_policy_data_t *wpolicy,
                                      ldlm_policy_data_t *lpolicy)

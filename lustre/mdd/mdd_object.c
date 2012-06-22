@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -42,9 +40,6 @@
  * Author: Wang Di <wangdi@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_MDS
 
 #include <linux/module.h>
@@ -626,14 +621,19 @@ static int is_rootdir(struct mdd_object *mdd_obj)
 int mdd_big_lmm_get(const struct lu_env *env, struct mdd_object *obj,
                     struct md_attr *ma)
 {
-        struct mdd_thread_info *info = mdd_env_info(env);
-        int size;
-        int rc;
-        ENTRY;
+	struct mdd_thread_info *info = mdd_env_info(env);
+	int			size;
+	int			rc   = -EINVAL;
+	ENTRY;
 
-        LASSERT(info != NULL);
-        LASSERT(ma->ma_lmm_size > 0);
-        LASSERT(ma->ma_big_lmm_used == 0);
+	LASSERT(info != NULL);
+	LASSERT(ma->ma_big_lmm_used == 0);
+
+	if (ma->ma_lmm_size == 0) {
+		CERROR("No buffer to hold %s xattr of object "DFID"\n",
+		       XATTR_NAME_LOV, PFID(mdd_object_fid(obj)));
+		RETURN(rc);
+	}
 
         rc = mdo_xattr_get(env, obj, &LU_BUF_NULL, XATTR_NAME_LOV,
                            mdd_object_capa(env, obj));
@@ -1645,9 +1645,9 @@ static int mdd_attr_set(const struct lu_env *env, struct md_object *obj,
         struct llog_cookie *logcookies = NULL;
         int  rc, lmm_size = 0, cookie_size = 0;
         struct lu_attr *la_copy = &mdd_env_info(env)->mti_la_for_fix;
+#ifdef HAVE_QUOTA_SUPPORT
         struct obd_device *obd = mdd->mdd_obd_dev;
         struct mds_obd *mds = &obd->u.mds;
-#ifdef HAVE_QUOTA_SUPPORT
         unsigned int qnids[MAXQUOTAS] = { 0, 0 };
         unsigned int qoids[MAXQUOTAS] = { 0, 0 };
         int quota_opc = 0, block_count = 0;
@@ -2823,15 +2823,13 @@ out_unlock:
 static int mdd_object_sync(const struct lu_env *env, struct md_object *obj)
 {
         struct mdd_object *mdd_obj = md2mdd_obj(obj);
-        struct dt_object *next;
 
         if (mdd_object_exists(mdd_obj) == 0) {
                 CERROR("%s: object "DFID" not found: rc = -2\n",
                        mdd_obj_dev_name(mdd_obj),PFID(mdd_object_fid(mdd_obj)));
                 return -ENOENT;
         }
-        next = mdd_object_child(mdd_obj);
-        return next->do_ops->do_object_sync(env, next);
+        return dt_object_sync(env, mdd_object_child(mdd_obj));
 }
 
 const struct md_object_operations mdd_obj_ops = {

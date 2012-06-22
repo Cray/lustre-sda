@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -36,9 +34,6 @@
  * Lustre is a trademark of Sun Microsystems, Inc.
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_LOV
 
 #ifdef __KERNEL__
@@ -272,6 +267,37 @@ int lov_fini_enqueue_set(struct lov_request_set *set, __u32 mode, int rc,
         lov_put_reqset(set);
 
         RETURN(rc ? rc : ret);
+}
+
+static void lov_llh_addref(void *llhp)
+{
+	struct lov_lock_handles *llh = llhp;
+
+	cfs_atomic_inc(&llh->llh_refcount);
+	CDEBUG(D_INFO, "GETting llh %p : new refcount %d\n", llh,
+	       cfs_atomic_read(&llh->llh_refcount));
+}
+
+static struct portals_handle_ops lov_handle_ops = {
+	.hop_addref = lov_llh_addref,
+	.hop_free   = NULL,
+};
+
+static struct lov_lock_handles *lov_llh_new(struct lov_stripe_md *lsm)
+{
+	struct lov_lock_handles *llh;
+
+	OBD_ALLOC(llh, sizeof *llh +
+		  sizeof(*llh->llh_handles) * lsm->lsm_stripe_count);
+	if (llh == NULL)
+		return NULL;
+
+	cfs_atomic_set(&llh->llh_refcount, 2);
+	llh->llh_stripe_count = lsm->lsm_stripe_count;
+	CFS_INIT_LIST_HEAD(&llh->llh_handle.h_link);
+	class_handle_hash(&llh->llh_handle, &lov_handle_ops);
+
+	return llh;
 }
 
 int lov_prep_enqueue_set(struct obd_export *exp, struct obd_info *oinfo,
@@ -666,8 +692,8 @@ cleanup:
                         continue;
 
                 sub_exp = lov->lov_tgts[req->rq_idx]->ltd_exp;
-                err = obd_destroy(sub_exp, req->rq_oi.oi_oa, NULL, oti, NULL,
-                                  NULL);
+                err = obd_destroy(NULL, sub_exp, req->rq_oi.oi_oa, NULL, oti,
+                                  NULL, NULL);
                 if (err)
                         CERROR("Failed to uncreate objid "LPX64" subobj "
                                LPX64" on OST idx %d: rc = %d\n",
@@ -1499,10 +1525,10 @@ int lov_fini_statfs(struct obd_device *obd, struct obd_statfs *osfs,int success)
         if (success) {
                 __u32 expected_stripes = lov_get_stripecnt(&obd->u.lov,
                                                            LOV_MAGIC, 0);
-                if (osfs->os_files != LOV_U64_MAX)
-                        do_div(osfs->os_files, expected_stripes);
-                if (osfs->os_ffree != LOV_U64_MAX)
-                        do_div(osfs->os_ffree, expected_stripes);
+		if (osfs->os_files != LOV_U64_MAX)
+			lov_do_div64(osfs->os_files, expected_stripes);
+		if (osfs->os_ffree != LOV_U64_MAX)
+			lov_do_div64(osfs->os_ffree, expected_stripes);
 
                 cfs_spin_lock(&obd->obd_osfs_lock);
                 memcpy(&obd->obd_osfs, osfs, sizeof(*osfs));

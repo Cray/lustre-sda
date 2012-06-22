@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -593,7 +591,7 @@ int class_notify_sptlrpc_conf(const char *fsname, int namelen)
 
                 class_incref(obd, __FUNCTION__, obd);
                 cfs_read_unlock(&obd_dev_lock);
-                rc2 = obd_set_info_async(obd->obd_self_export,
+                rc2 = obd_set_info_async(NULL, obd->obd_self_export,
                                          sizeof(KEY_SPTLRPC_CONF),
                                          KEY_SPTLRPC_CONF, 0, NULL, NULL);
                 rc = rc ? rc : rc2;
@@ -800,6 +798,11 @@ static void export_handle_addref(void *export)
         class_export_get(export);
 }
 
+static struct portals_handle_ops export_handle_ops = {
+	.hop_addref = export_handle_addref,
+	.hop_free   = NULL,
+};
+
 struct obd_export *class_export_get(struct obd_export *exp)
 {
         cfs_atomic_inc(&exp->exp_refcount);
@@ -865,8 +868,8 @@ struct obd_export *class_new_export(struct obd_device *obd,
         CFS_INIT_LIST_HEAD(&export->exp_req_replay_queue);
         CFS_INIT_LIST_HEAD(&export->exp_handle.h_link);
         CFS_INIT_LIST_HEAD(&export->exp_hp_rpcs);
-        class_handle_hash(&export->exp_handle, export_handle_addref);
-        export->exp_last_request_time = cfs_time_current_sec();
+	class_handle_hash(&export->exp_handle, &export_handle_ops);
+	export->exp_last_request_time = cfs_time_current_sec();
         cfs_spin_lock_init(&export->exp_lock);
         cfs_spin_lock_init(&export->exp_rpc_lock);
         CFS_INIT_HLIST_NODE(&export->exp_uuid_hash);
@@ -978,6 +981,11 @@ static void import_handle_addref(void *import)
         class_import_get(import);
 }
 
+static struct portals_handle_ops import_handle_ops = {
+	.hop_addref = import_handle_addref,
+	.hop_free   = NULL,
+};
+
 struct obd_import *class_import_get(struct obd_import *import)
 {
         cfs_atomic_inc(&import->imp_refcount);
@@ -1046,7 +1054,7 @@ struct obd_import *class_new_import(struct obd_device *obd)
         cfs_atomic_set(&imp->imp_inval_count, 0);
         CFS_INIT_LIST_HEAD(&imp->imp_conn_list);
         CFS_INIT_LIST_HEAD(&imp->imp_handle.h_link);
-        class_handle_hash(&imp->imp_handle, import_handle_addref);
+	class_handle_hash(&imp->imp_handle, &import_handle_ops);
         init_imp_at(&imp->imp_at);
 
         /* the default magic is V2, will be used in connect RPC, and
@@ -1304,7 +1312,7 @@ void class_disconnect_stale_exports(struct obd_device *obd,
 
                 cfs_list_move(&exp->exp_obd_chain, &work_list);
                 evicted++;
-                CDEBUG(D_ERROR, "%s: disconnect stale client %s@%s\n",
+                CDEBUG(D_HA, "%s: disconnect stale client %s@%s\n",
                        obd->obd_name, exp->exp_client_uuid.uuid,
                        exp->exp_connection == NULL ? "<unknown>" :
                        libcfs_nid2str(exp->exp_connection->c_peer.nid));
@@ -1313,8 +1321,8 @@ void class_disconnect_stale_exports(struct obd_device *obd,
         cfs_spin_unlock(&obd->obd_dev_lock);
 
         if (evicted) {
-                CDEBUG(D_HA, "%s: disconnecting %d stale clients\n",
-                       obd->obd_name, evicted);
+                LCONSOLE_WARN("%s: disconnecting %d stale clients\n",
+                              obd->obd_name, evicted);
                 obd->obd_stale_clients += evicted;
         }
         class_disconnect_export_list(&work_list, exp_flags_from_obd(obd) |

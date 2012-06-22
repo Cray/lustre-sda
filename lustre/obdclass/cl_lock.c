@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -41,9 +39,6 @@
  */
 
 #define DEBUG_SUBSYSTEM S_CLASS
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 
 #include <obd_class.h>
 #include <obd_support.h>
@@ -594,7 +589,6 @@ struct cl_lock *cl_lock_peek(const struct lu_env *env, const struct cl_io *io,
         struct cl_object_header *head;
         struct cl_object        *obj;
         struct cl_lock          *lock;
-        int ok;
 
         obj  = need->cld_obj;
         head = cl_object_header(obj);
@@ -609,20 +603,18 @@ struct cl_lock *cl_lock_peek(const struct lu_env *env, const struct cl_io *io,
         cl_lock_mutex_get(env, lock);
         if (lock->cll_state == CLS_INTRANSIT)
                 cl_lock_state_wait(env, lock); /* Don't care return value. */
-        if (lock->cll_state == CLS_CACHED) {
-                int result;
-                result = cl_use_try(env, lock, 1);
-                if (result < 0)
-                        cl_lock_error(env, lock, result);
-        }
-        ok = lock->cll_state == CLS_HELD;
-        if (ok) {
-                cl_lock_hold_add(env, lock, scope, source);
-                cl_lock_user_add(env, lock);
-                cl_lock_put(env, lock);
-        }
-        cl_lock_mutex_put(env, lock);
-        if (!ok) {
+	cl_lock_hold_add(env, lock, scope, source);
+	cl_lock_user_add(env, lock);
+	if (lock->cll_state == CLS_CACHED)
+		cl_use_try(env, lock, 1);
+	if (lock->cll_state == CLS_HELD) {
+		cl_lock_mutex_put(env, lock);
+		cl_lock_lockdep_acquire(env, lock, 0);
+		cl_lock_put(env, lock);
+	} else {
+		cl_unuse_try(env, lock);
+		cl_lock_unhold(env, lock, scope, source);
+                cl_lock_mutex_put(env, lock);
                 cl_lock_put(env, lock);
                 lock = NULL;
         }
@@ -904,8 +896,10 @@ static void cl_lock_hold_release(const struct lu_env *env, struct cl_lock *lock,
         lu_ref_del(&lock->cll_holders, scope, source);
         cl_lock_hold_mod(env, lock, -1);
         if (lock->cll_holds == 0) {
-                if (lock->cll_descr.cld_mode == CLM_PHANTOM ||
-                    lock->cll_descr.cld_mode == CLM_GROUP)
+		CL_LOCK_ASSERT(lock->cll_state != CLS_HELD, env, lock);
+		if (lock->cll_descr.cld_mode == CLM_PHANTOM ||
+		    lock->cll_descr.cld_mode == CLM_GROUP ||
+		    lock->cll_state != CLS_CACHED)
                         /*
                          * If lock is still phantom or grouplock when user is
                          * done with it---destroy the lock.
@@ -969,12 +963,17 @@ int cl_lock_state_wait(const struct lu_env *env, struct cl_lock *lock)
                 cl_lock_mutex_put(env, lock);
 
                 LASSERT(cl_lock_nr_mutexed(env) == 0);
-                cfs_waitq_wait(&waiter, CFS_TASK_INTERRUPTIBLE);
+
+		result = -EINTR;
+		if (likely(!OBD_FAIL_CHECK(OBD_FAIL_LOCK_STATE_WAIT_INTR))) {
+			cfs_waitq_wait(&waiter, CFS_TASK_INTERRUPTIBLE);
+			if (!cfs_signal_pending())
+				result = 0;
+		}
 
                 cl_lock_mutex_get(env, lock);
                 cfs_set_current_state(CFS_TASK_RUNNING);
                 cfs_waitq_del(&lock->cll_wq, &waiter);
-                result = cfs_signal_pending() ? -EINTR : 0;
 
                 /* Restore old blocked signals */
                 cfs_restore_sigs(blocked);
@@ -1184,12 +1183,12 @@ int cl_enqueue_try(const struct lu_env *env, struct cl_lock *lock,
         ENTRY;
         cl_lock_trace(D_DLMTRACE, env, "enqueue lock", lock);
         do {
-                result = 0;
-
                 LINVRNT(cl_lock_is_mutexed(lock));
 
-                if (lock->cll_error != 0)
+		result = lock->cll_error;
+		if (result != 0)
                         break;
+
                 switch (lock->cll_state) {
                 case CLS_NEW:
                         cl_lock_state_set(env, lock, CLS_QUEUING);
@@ -1222,9 +1221,7 @@ int cl_enqueue_try(const struct lu_env *env, struct cl_lock *lock,
                         LBUG();
                 }
         } while (result == CLO_REPEAT);
-        if (result < 0)
-                cl_lock_error(env, lock, result);
-        RETURN(result ?: lock->cll_error);
+	RETURN(result);
 }
 EXPORT_SYMBOL(cl_enqueue_try);
 
@@ -1253,6 +1250,7 @@ int cl_lock_enqueue_wait(const struct lu_env *env,
         LASSERT(cl_lock_nr_mutexed(env) == 0);
 
         cl_lock_mutex_get(env, conflict);
+	cl_lock_trace(D_DLMTRACE, env, "enqueue wait", conflict);
         cl_lock_cancel(env, conflict);
         cl_lock_delete(env, conflict);
 
@@ -1297,10 +1295,8 @@ static int cl_enqueue_locked(const struct lu_env *env, struct cl_lock *lock,
                 }
                 break;
         } while (1);
-        if (result != 0) {
-                cl_lock_user_del(env, lock);
-                cl_lock_error(env, lock, result);
-        }
+	if (result != 0)
+		cl_unuse_try(env, lock);
         LASSERT(ergo(result == 0 && !(enqflags & CEF_AGL),
                      lock->cll_state == CLS_ENQUEUED ||
                      lock->cll_state == CLS_HELD));
@@ -1338,13 +1334,11 @@ EXPORT_SYMBOL(cl_enqueue);
 /**
  * Tries to unlock a lock.
  *
- * This function is called repeatedly by cl_unuse() until either lock is
- * unlocked, or error occurs.
+ * This function is called to release underlying resource:
+ * 1. for top lock, the resource is sublocks it held;
+ * 2. for sublock, the resource is the reference to dlmlock.
+ *
  * cl_unuse_try is a one-shot operation, so it must NOT return CLO_WAIT.
- *
- * \pre  lock->cll_state == CLS_HELD
- *
- * \post ergo(result == 0, lock->cll_state == CLS_CACHED)
  *
  * \see cl_unuse() cl_lock_operations::clo_unuse()
  * \see cl_lock_state::CLS_CACHED
@@ -1357,11 +1351,17 @@ int cl_unuse_try(const struct lu_env *env, struct cl_lock *lock)
         ENTRY;
         cl_lock_trace(D_DLMTRACE, env, "unuse lock", lock);
 
-        LASSERT(lock->cll_state == CLS_HELD || lock->cll_state == CLS_ENQUEUED);
         if (lock->cll_users > 1) {
                 cl_lock_user_del(env, lock);
                 RETURN(0);
         }
+
+	/* Only if the lock is in CLS_HELD or CLS_ENQUEUED state, it can hold
+	 * underlying resources. */
+	if (!(lock->cll_state == CLS_HELD || lock->cll_state == CLS_ENQUEUED)) {
+		cl_lock_user_del(env, lock);
+		RETURN(0);
+	}
 
         /*
          * New lock users (->cll_users) are not protecting unlocking
@@ -1403,13 +1403,10 @@ int cl_unuse_try(const struct lu_env *env, struct cl_lock *lock)
                 result = 0;
         } else {
                 CERROR("result = %d, this is unlikely!\n", result);
+		state = CLS_NEW;
                 cl_lock_extransit(env, lock, state);
         }
-
-        result = result ?: lock->cll_error;
-        if (result < 0)
-                cl_lock_error(env, lock, result);
-        RETURN(result);
+	RETURN(result ?: lock->cll_error);
 }
 EXPORT_SYMBOL(cl_unuse_try);
 
@@ -1465,8 +1462,8 @@ int cl_wait_try(const struct lu_env *env, struct cl_lock *lock)
                 LASSERT(lock->cll_users > 0);
                 LASSERT(lock->cll_holds > 0);
 
-                result = 0;
-                if (lock->cll_error != 0)
+		result = lock->cll_error;
+		if (result != 0)
                         break;
 
                 if (cl_lock_is_intransit(lock)) {
@@ -1492,7 +1489,7 @@ int cl_wait_try(const struct lu_env *env, struct cl_lock *lock)
                         cl_lock_state_set(env, lock, CLS_HELD);
                 }
         } while (result == CLO_REPEAT);
-        RETURN(result ?: lock->cll_error);
+	RETURN(result);
 }
 EXPORT_SYMBOL(cl_wait_try);
 
@@ -1527,8 +1524,7 @@ int cl_wait(const struct lu_env *env, struct cl_lock *lock)
                 break;
         } while (1);
         if (result < 0) {
-                cl_lock_user_del(env, lock);
-                cl_lock_error(env, lock, result);
+		cl_unuse_try(env, lock);
                 cl_lock_lockdep_release(env, lock);
         }
         cl_lock_trace(D_DLMTRACE, env, "wait lock", lock);
@@ -1796,8 +1792,8 @@ void cl_lock_error(const struct lu_env *env, struct cl_lock *lock, int error)
         LINVRNT(cl_lock_invariant(env, lock));
 
         ENTRY;
-        cl_lock_trace(D_DLMTRACE, env, "set lock error", lock);
         if (lock->cll_error == 0 && error != 0) {
+		cl_lock_trace(D_DLMTRACE, env, "set lock error", lock);
                 lock->cll_error = error;
                 cl_lock_signal(env, lock);
                 cl_lock_cancel(env, lock);
@@ -1834,12 +1830,13 @@ void cl_lock_cancel(const struct lu_env *env, struct cl_lock *lock)
 EXPORT_SYMBOL(cl_lock_cancel);
 
 /**
- * Finds an existing lock covering given page and optionally different from a
+ * Finds an existing lock covering given index and optionally different from a
  * given \a except lock.
  */
-struct cl_lock *cl_lock_at_page(const struct lu_env *env, struct cl_object *obj,
-                                struct cl_page *page, struct cl_lock *except,
-                                int pending, int canceld)
+struct cl_lock *cl_lock_at_pgoff(const struct lu_env *env,
+				 struct cl_object *obj, pgoff_t index,
+				 struct cl_lock *except,
+				 int pending, int canceld)
 {
         struct cl_object_header *head;
         struct cl_lock          *scan;
@@ -1854,7 +1851,7 @@ struct cl_lock *cl_lock_at_page(const struct lu_env *env, struct cl_object *obj,
 
         need->cld_mode = CLM_READ; /* CLM_READ matches both READ & WRITE, but
                                     * not PHANTOM */
-        need->cld_start = need->cld_end = page->cp_index;
+	need->cld_start = need->cld_end = index;
         need->cld_enq_flags = 0;
 
         cfs_spin_lock(&head->coh_lock_guard);
@@ -1883,7 +1880,7 @@ struct cl_lock *cl_lock_at_page(const struct lu_env *env, struct cl_object *obj,
         cfs_spin_unlock(&head->coh_lock_guard);
         RETURN(lock);
 }
-EXPORT_SYMBOL(cl_lock_at_page);
+EXPORT_SYMBOL(cl_lock_at_pgoff);
 
 /**
  * Calculate the page offset at the layer of @lock.
@@ -1939,60 +1936,45 @@ static int check_and_discard_cb(const struct lu_env *env, struct cl_io *io,
         return CLP_GANG_OKAY;
 }
 
-static int pageout_cb(const struct lu_env *env, struct cl_io *io,
+static int discard_cb(const struct lu_env *env, struct cl_io *io,
                       struct cl_page *page, void *cbdata)
 {
-        struct cl_thread_info *info  = cl_env_info(env);
-        struct cl_page_list   *queue = &info->clt_queue.c2_qin;
-        struct cl_lock        *lock  = cbdata;
-        typeof(cl_page_own)   *page_own;
-        int rc = CLP_GANG_OKAY;
+	struct cl_thread_info *info = cl_env_info(env);
+	struct cl_lock *lock   = cbdata;
 
-        page_own = queue->pl_nr ? cl_page_own_try : cl_page_own;
-        if (page_own(env, io, page) == 0) {
-                cl_page_list_add(queue, page);
-                info->clt_next_index = pgoff_at_lock(page, lock) + 1;
-        } else if (page->cp_state != CPS_FREEING) {
-                /* cl_page_own() won't fail unless
-                 * the page is being freed. */
-                LASSERT(queue->pl_nr != 0);
-                rc = CLP_GANG_AGAIN;
-        }
+	LASSERT(lock->cll_descr.cld_mode >= CLM_WRITE);
+	KLASSERT(ergo(page->cp_type == CPT_CACHEABLE,
+		      !PageWriteback(cl_page_vmpage(env, page))));
+	KLASSERT(ergo(page->cp_type == CPT_CACHEABLE,
+		      !PageDirty(cl_page_vmpage(env, page))));
 
-        return rc;
+	info->clt_next_index = pgoff_at_lock(page, lock) + 1;
+	if (cl_page_own(env, io, page) == 0) {
+		/* discard the page */
+		cl_page_unmap(env, io, page);
+		cl_page_discard(env, io, page);
+		cl_page_disown(env, io, page);
+	} else {
+		LASSERT(page->cp_state == CPS_FREEING);
+	}
+
+	return CLP_GANG_OKAY;
 }
 
 /**
- * Invalidate pages protected by the given lock, sending them out to the
- * server first, if necessary.
- *
- * This function does the following:
- *
- *     - collects a list of pages to be invalidated,
- *
- *     - unmaps them from the user virtual memory,
- *
- *     - sends dirty pages to the server,
- *
- *     - waits for transfer completion,
- *
- *     - discards pages, and throws them out of memory.
- *
- * If \a discard is set, pages are discarded without sending them to the
- * server.
+ * Discard pages protected by the given lock. This function traverses radix
+ * tree to find all covering pages and discard them. If a page is being covered
+ * by other locks, it should remain in cache.
  *
  * If error happens on any step, the process continues anyway (the reasoning
  * behind this being that lock cancellation cannot be delayed indefinitely).
  */
-int cl_lock_page_out(const struct lu_env *env, struct cl_lock *lock,
-                     int discard)
+int cl_lock_discard_pages(const struct lu_env *env, struct cl_lock *lock)
 {
         struct cl_thread_info *info  = cl_env_info(env);
         struct cl_io          *io    = &info->clt_io;
-        struct cl_2queue      *queue = &info->clt_queue;
         struct cl_lock_descr  *descr = &lock->cll_descr;
         cl_page_gang_cb_t      cb;
-        long page_count;
         int res;
         int result;
 
@@ -2004,38 +1986,12 @@ int cl_lock_page_out(const struct lu_env *env, struct cl_lock *lock,
         if (result != 0)
                 GOTO(out, result);
 
-        cb = descr->cld_mode == CLM_READ ? check_and_discard_cb : pageout_cb;
+	cb = descr->cld_mode == CLM_READ ? check_and_discard_cb : discard_cb;
         info->clt_fn_index = info->clt_next_index = descr->cld_start;
         do {
-                cl_2queue_init(queue);
                 res = cl_page_gang_lookup(env, descr->cld_obj, io,
                                           info->clt_next_index, descr->cld_end,
                                           cb, (void *)lock);
-                page_count = queue->c2_qin.pl_nr;
-                if (page_count > 0) {
-                        /* must be writeback case */
-                        LASSERTF(descr->cld_mode >= CLM_WRITE, "lock mode %s\n",
-                                 cl_lock_mode_name(descr->cld_mode));
-
-                        result = cl_page_list_unmap(env, io, &queue->c2_qin);
-                        if (!discard) {
-                                long timeout = 600; /* 10 minutes. */
-                                /* for debug purpose, if this request can't be
-                                 * finished in 10 minutes, we hope it can
-                                 * notify us.
-                                 */
-                                result = cl_io_submit_sync(env, io, CRT_WRITE,
-                                                           queue, CRP_CANCEL,
-                                                           timeout);
-                                if (result)
-                                        CWARN("Writing %lu pages error: %d\n",
-                                              page_count, result);
-                        }
-                        cl_2queue_discard(env, io, queue);
-                        cl_2queue_disown(env, io, queue);
-                        cl_2queue_fini(env, queue);
-                }
-
                 if (info->clt_next_index > descr->cld_end)
                         break;
 
@@ -2046,7 +2002,7 @@ out:
         cl_io_fini(env, io);
         RETURN(result);
 }
-EXPORT_SYMBOL(cl_lock_page_out);
+EXPORT_SYMBOL(cl_lock_discard_pages);
 
 /**
  * Eliminate all locks for a given object.

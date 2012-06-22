@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -56,7 +54,8 @@
 
 #include "ldlm_internal.h"
 
-#define LDLM_MAX_GROWN_EXTENT (32 * 1024 * 1024 - 1)
+#ifdef HAVE_SERVER_SUPPORT
+# define LDLM_MAX_GROWN_EXTENT (32 * 1024 * 1024 - 1)
 
 /* fixup the ldlm_extent after expanding */
 static void ldlm_extent_internal_policy_fixup(struct ldlm_lock *req,
@@ -761,6 +760,7 @@ out:
         }
         RETURN(rc);
 }
+#endif /* HAVE_SERVER_SUPPORT */
 
 /* When a lock is cancelled by a client, the KMS may undergo change if this
  * is the "highest lock".  This function returns the new KMS value.

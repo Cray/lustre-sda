@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -40,6 +38,7 @@
 #define LOV_INTERNAL_H
 
 #include <obd_class.h>
+#include <obd_lov.h>
 #include <lustre/lustre_user.h>
 
 struct lov_lock_handles {
@@ -88,29 +87,6 @@ struct lov_request_set {
 };
 
 extern cfs_mem_cache_t *lov_oinfo_slab;
-
-static inline void lov_llh_addref(void *llhp)
-{
-        struct lov_lock_handles *llh = llhp;
-        cfs_atomic_inc(&llh->llh_refcount);
-        CDEBUG(D_INFO, "GETting llh %p : new refcount %d\n", llh,
-               cfs_atomic_read(&llh->llh_refcount));
-}
-
-static inline struct lov_lock_handles *lov_llh_new(struct lov_stripe_md *lsm)
-{
-        struct lov_lock_handles *llh;
-
-        OBD_ALLOC(llh, sizeof *llh +
-                  sizeof(*llh->llh_handles) * lsm->lsm_stripe_count);
-        if (llh == NULL)
-                return NULL;
-        cfs_atomic_set(&llh->llh_refcount, 2);
-        llh->llh_stripe_count = lsm->lsm_stripe_count;
-        CFS_INIT_LIST_HEAD(&llh->llh_handle.h_link);
-        class_handle_hash(&llh->llh_handle, lov_llh_addref);
-        return llh;
-}
 
 void lov_finish_set(struct lov_request_set *set);
 
@@ -333,35 +309,5 @@ void lov_dump_pool(int level, struct pool_desc *pool);
 struct pool_desc *lov_find_pool(struct lov_obd *lov, char *poolname);
 int lov_check_index_in_pool(__u32 idx, struct pool_desc *pool);
 void lov_pool_putref(struct pool_desc *pool);
-
-#if BITS_PER_LONG == 64
-# define ll_do_div64(n,base) ({                                 \
-        uint64_t __base = (base);                               \
-        uint64_t __rem;                                         \
-        __rem = ((uint64_t)(n)) % __base;                       \
-        (n) = ((uint64_t)(n)) / __base;                         \
-        __rem;                                                  \
-  })
-#elif BITS_PER_LONG == 32
-# define ll_do_div64(n,base) ({                                 \
-        uint64_t __rem;                                         \
-        if ((sizeof(base) > 4) && (((base)&0xffffffff00000000ULL) != 0)) { \
-                int __remainder;                                \
-                LASSERTF(!((base) & (LOV_MIN_STRIPE_SIZE - 1)), "64 bit lov "\
-                          "division %llu / %llu\n", (n), (base)); \
-                __remainder = (n) & (LOV_MIN_STRIPE_SIZE - 1);  \
-                (n) >>= LOV_MIN_STRIPE_BITS;                    \
-                (base) >>= LOV_MIN_STRIPE_BITS;                 \
-                __rem = do_div(n, base);                        \
-                __rem <<= LOV_MIN_STRIPE_BITS;                  \
-                __rem += __remainder;                           \
-        } else {                                                \
-                __rem = do_div(n, base);                        \
-        }                                                       \
-        __rem;                                                  \
-  })
-#else
-#error Unsupported architecture.
-#endif
 
 #endif

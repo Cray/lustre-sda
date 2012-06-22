@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -753,17 +751,9 @@ static void lov_lock_cancel(const struct lu_env *env,
 
                         switch(sublock->cll_state) {
                         case CLS_HELD:
-                                rc = cl_unuse_try(subenv->lse_env,
-                                                  sublock);
+				rc = cl_unuse_try(subenv->lse_env, sublock);
                                 lov_sublock_release(env, lck, i, 0, 0);
                                 break;
-                        case CLS_ENQUEUED:
-                                /* TODO: it's not a good idea to cancel this
-                                 * lock because it's innocent. But it's
-                                 * acceptable. The better way would be to
-                                 * define a new lock method to unhold the
-                                 * dlm lock. */
-                                cl_lock_cancel(env, sublock);
                         default:
                                 lov_sublock_release(env, lck, i, 1, 0);
                                 break;

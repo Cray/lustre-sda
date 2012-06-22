@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -79,33 +77,33 @@ LNetEQAlloc(unsigned int count, lnet_eq_handler_t callback,
          * overflow, they don't skip entries, so the queue has the same
          * apparent capacity at all times */
 
-        if (count != LOWEST_BIT_SET(count)) {   /* not a power of 2 already */
-                do {                    /* knock off all but the top bit... */
-                        count &= ~LOWEST_BIT_SET (count);
-                } while (count != LOWEST_BIT_SET(count));
+	count = cfs_power2_roundup(count);
 
-                count <<= 1;                             /* ...and round up */
-        }
+	if (callback != LNET_EQ_HANDLER_NONE && count != 0) {
+		CWARN("EQ callback is guaranteed to get every event, "
+		      "do you still want to set eqcount %d for polling "
+		      "event which will have locking overhead? "
+		      "Please contact with developer to confirm\n", count);
+	}
 
-        if (count == 0)        /* catch bad parameter / overflow on roundup */
-                return (-EINVAL);
+	/* count can be 0 if only need callback, we can eliminate
+	 * overhead of enqueue event */
+	if (count == 0 && callback == LNET_EQ_HANDLER_NONE)
+		return -EINVAL;
 
-        eq = lnet_eq_alloc();
-        if (eq == NULL)
-                return (-ENOMEM);
+	eq = lnet_eq_alloc();
+	if (eq == NULL)
+		return -ENOMEM;
 
-        LIBCFS_ALLOC(eq->eq_events, count * sizeof(lnet_event_t));
-        if (eq->eq_events == NULL) {
-                LNET_LOCK();
-                lnet_eq_free (eq);
-                LNET_UNLOCK();
-
-                return -ENOMEM;
-        }
-
-        /* NB this resets all event sequence numbers to 0, to be earlier
-         * than eq_deq_seq */
-        memset(eq->eq_events, 0, count * sizeof(lnet_event_t));
+	if (count != 0) {
+		LIBCFS_ALLOC(eq->eq_events, count * sizeof(lnet_event_t));
+		if (eq->eq_events == NULL) {
+			lnet_eq_free(eq);
+			return -ENOMEM;
+		}
+		/* NB allocator has set all event sequence numbers to 0,
+		 * so all them should be earlier than eq_deq_seq */
+	}
 
         eq->eq_deq_seq = 1;
         eq->eq_enq_seq = 1;
@@ -115,8 +113,8 @@ LNetEQAlloc(unsigned int count, lnet_eq_handler_t callback,
 
         LNET_LOCK();
 
-        lnet_initialise_handle (&eq->eq_lh, LNET_COOKIE_TYPE_EQ);
-        cfs_list_add (&eq->eq_list, &the_lnet.ln_active_eqs);
+	lnet_res_lh_initialize(&the_lnet.ln_eq_container, &eq->eq_lh);
+	cfs_list_add(&eq->eq_list, &the_lnet.ln_eq_container.rec_active);
 
         LNET_UNLOCK();
 
@@ -163,27 +161,61 @@ LNetEQFree(lnet_handle_eq_t eqh)
         events  = eq->eq_events;
         size    = eq->eq_size;
 
-        lnet_invalidate_handle (&eq->eq_lh);
+	lnet_res_lh_invalidate(&eq->eq_lh);
         cfs_list_del (&eq->eq_list);
-        lnet_eq_free (eq);
+	lnet_eq_free_locked(eq);
 
         LNET_UNLOCK();
 
-        LIBCFS_FREE(events, size * sizeof (lnet_event_t));
+	if (events != NULL)
+		LIBCFS_FREE(events, size * sizeof(lnet_event_t));
 
-        return 0;
+	return 0;
+}
+
+void
+lnet_eq_enqueue_event(lnet_eq_t *eq, lnet_event_t *ev)
+{
+	/* MUST called with resource lock hold */
+	int index;
+
+	if (eq->eq_size == 0) {
+		LASSERT(eq->eq_callback != LNET_EQ_HANDLER_NONE);
+		eq->eq_callback(ev);
+		return;
+	}
+
+	ev->sequence = eq->eq_enq_seq++;
+
+	LASSERT(eq->eq_size == LOWEST_BIT_SET(eq->eq_size));
+	index = ev->sequence & (eq->eq_size - 1);
+
+	eq->eq_events[index] = *ev;
+
+	if (eq->eq_callback != LNET_EQ_HANDLER_NONE)
+		eq->eq_callback(ev);
+
+#ifdef __KERNEL__
+	/* Wake anyone waiting in LNetEQPoll() */
+	if (cfs_waitq_active(&the_lnet.ln_eq_waitq))
+		cfs_waitq_broadcast(&the_lnet.ln_eq_waitq);
+#else
+# ifndef HAVE_LIBPTHREAD
+	/* LNetEQPoll() calls into _the_ LND to wait for action */
+# else
+	/* Wake anyone waiting in LNetEQPoll() */
+	pthread_cond_broadcast(&the_lnet.ln_eq_cond);
+# endif
+#endif
 }
 
 int
-lib_get_event (lnet_eq_t *eq, lnet_event_t *ev)
+lnet_eq_dequeue_event(lnet_eq_t *eq, lnet_event_t *ev)
 {
         int           new_index = eq->eq_deq_seq & (eq->eq_size - 1);
         lnet_event_t *new_event = &eq->eq_events[new_index];
         int           rc;
         ENTRY;
-
-        CDEBUG(D_INFO, "event: %p, sequence: %lu, eq->size: %u\n",
-               new_event, eq->eq_deq_seq, eq->eq_size);
 
         if (LNET_SEQ_GT (eq->eq_deq_seq, new_event->sequence)) {
                 RETURN(0);
@@ -191,6 +223,9 @@ lib_get_event (lnet_eq_t *eq, lnet_event_t *ev)
 
         /* We've got a new event... */
         *ev = *new_event;
+
+	CDEBUG(D_INFO, "event: %p, sequence: %lu, eq->size: %u\n",
+	       new_event, eq->eq_deq_seq, eq->eq_size);
 
         /* ...but did it overwrite an event we've not seen yet? */
         if (eq->eq_deq_seq == new_event->sequence) {
@@ -257,6 +292,144 @@ LNetEQWait (lnet_handle_eq_t eventq, lnet_event_t *event)
                          event, &which);
 }
 
+#ifdef __KERNEL__
+
+static int
+lnet_eq_wait_locked(int *timeout_ms)
+{
+	int              tms = *timeout_ms;
+	int              wait;
+	cfs_waitlink_t   wl;
+	cfs_time_t       now;
+
+	if (tms == 0)
+		return -1; /* don't want to wait and no new event */
+
+	cfs_waitlink_init(&wl);
+	cfs_set_current_state(CFS_TASK_INTERRUPTIBLE);
+	cfs_waitq_add(&the_lnet.ln_eq_waitq, &wl);
+
+	LNET_UNLOCK();
+
+	if (tms < 0) {
+		cfs_waitq_wait(&wl, CFS_TASK_INTERRUPTIBLE);
+
+	} else {
+		struct timeval tv;
+
+		now = cfs_time_current();
+		cfs_waitq_timedwait(&wl, CFS_TASK_INTERRUPTIBLE,
+				    cfs_time_seconds(tms) / 1000);
+		cfs_duration_usec(cfs_time_sub(cfs_time_current(), now), &tv);
+		tms -= (int)(tv.tv_sec * 1000 + tv.tv_usec / 1000);
+		if (tms < 0) /* no more wait but may have new event */
+			tms = 0;
+	}
+
+	wait = tms != 0; /* might need to call here again */
+	*timeout_ms = tms;
+
+	LNET_LOCK();
+	cfs_waitq_del(&the_lnet.ln_eq_waitq, &wl);
+
+	return wait;
+}
+
+#else /* !__KERNEL__ */
+
+# ifdef HAVE_LIBPTHREAD
+static void
+lnet_eq_cond_wait(struct timespec *ts)
+{
+	if (ts == NULL) {
+		pthread_cond_wait(&the_lnet.ln_eq_cond, &the_lnet.ln_lock);
+	} else {
+		pthread_cond_timedwait(&the_lnet.ln_eq_cond,
+				       &the_lnet.ln_lock, ts);
+	}
+}
+# endif
+
+static int
+lnet_eq_wait_locked(int *timeout_ms)
+{
+	lnet_ni_t         *eq_waitni = NULL;
+	int                tms = *timeout_ms;
+	int                wait;
+	struct timeval     then;
+	struct timeval     now;
+
+	if (the_lnet.ln_eq_waitni != NULL) {
+		/* I have a single NI that I have to call into, to get
+		 * events queued, or to block. */
+		eq_waitni = the_lnet.ln_eq_waitni;
+		lnet_ni_addref_locked(eq_waitni);
+
+		LNET_UNLOCK();
+
+		if (tms <= 0) { /* even for tms == 0 */
+			(eq_waitni->ni_lnd->lnd_wait)(eq_waitni, tms);
+
+		} else {
+			gettimeofday(&then, NULL);
+
+			(eq_waitni->ni_lnd->lnd_wait)(eq_waitni, tms);
+
+			gettimeofday(&now, NULL);
+			tms -= (now.tv_sec - then.tv_sec) * 1000 +
+			       (now.tv_usec - then.tv_usec) / 1000;
+			if (tms < 0)
+				tms = 0;
+		}
+
+		LNET_LOCK();
+		lnet_ni_decref_locked(eq_waitni);
+	} else { /* w/o eq_waitni */
+# ifndef HAVE_LIBPTHREAD
+		/* If I'm single-threaded, LNET fails at startup if it can't
+		 * set the_lnet.ln_eqwaitni correctly.  */
+		LBUG();
+# else /* HAVE_LIBPTHREAD */
+		struct timespec  ts;
+
+		if (tms == 0) /* don't want to wait and new event */
+			return -1;
+
+		if (tms < 0) {
+			lnet_eq_cond_wait(NULL);
+
+		} else {
+
+			gettimeofday(&then, NULL);
+
+			ts.tv_sec = then.tv_sec + tms / 1000;
+			ts.tv_nsec = then.tv_usec * 1000 +
+				     (tms % 1000) * 1000000;
+			if (ts.tv_nsec >= 1000000000) {
+				ts.tv_sec++;
+				ts.tv_nsec -= 1000000000;
+			}
+
+			lnet_eq_cond_wait(&ts);
+
+			gettimeofday(&now, NULL);
+			tms -= (now.tv_sec - then.tv_sec) * 1000 +
+			       (now.tv_usec - then.tv_usec) / 1000;
+			if (tms < 0)
+				tms = 0;
+		}
+# endif /* HAVE_LIBPTHREAD */
+	}
+
+	wait = tms != 0;
+	*timeout_ms = tms;
+
+	return wait;
+}
+
+#endif /* __KERNEL__ */
+
+
 /**
  * Block the calling process until there's an event from a set of EQs or
  * timeout happens.
@@ -287,19 +460,9 @@ int
 LNetEQPoll (lnet_handle_eq_t *eventqs, int neq, int timeout_ms,
             lnet_event_t *event, int *which)
 {
-        int              i;
-        int              rc;
-#ifdef __KERNEL__
-        cfs_waitlink_t   wl;
-        cfs_time_t       now;
-#else
-        struct timeval   then;
-        struct timeval   now;
-# ifdef HAVE_LIBPTHREAD
-        struct timespec  ts;
-# endif
-        lnet_ni_t       *eqwaitni = the_lnet.ln_eqwaitni;
-#endif
+	int	wait = 1;
+	int	rc;
+	int	i;
         ENTRY;
 
         LASSERT (the_lnet.ln_init);
@@ -329,7 +492,7 @@ LNetEQPoll (lnet_handle_eq_t *eventqs, int neq, int timeout_ms,
                                 RETURN(-ENOENT);
                         }
 
-                        rc = lib_get_event (eq, event);
+			rc = lnet_eq_dequeue_event(eq, event);
                         if (rc != 0) {
                                 LNET_UNLOCK();
                                 *which = i;
@@ -337,102 +500,21 @@ LNetEQPoll (lnet_handle_eq_t *eventqs, int neq, int timeout_ms,
                         }
                 }
 
-#ifdef __KERNEL__
-                if (timeout_ms == 0) {
-                        LNET_UNLOCK();
-                        RETURN (0);
-                }
+		if (wait == 0)
+			break;
 
-                cfs_waitlink_init(&wl);
-                cfs_set_current_state(CFS_TASK_INTERRUPTIBLE);
-                cfs_waitq_add(&the_lnet.ln_waitq, &wl);
+		/*
+		 * return value of lnet_eq_wait_locked:
+		 * -1 : did nothing and it's sure no new event
+		 *  1 : sleep inside and wait until new event
+		 *  0 : don't want to wait anymore, but might have new event
+		 *      so need to call dequeue again
+		 */
+		wait = lnet_eq_wait_locked(&timeout_ms);
+		if (wait < 0) /* no new event */
+			break;
+	}
 
-                LNET_UNLOCK();
-
-                if (timeout_ms < 0) {
-                        cfs_waitq_wait (&wl, CFS_TASK_INTERRUPTIBLE);
-                } else {
-                        struct timeval tv;
-
-                        now = cfs_time_current();
-                        cfs_waitq_timedwait(&wl, CFS_TASK_INTERRUPTIBLE,
-                                            cfs_time_seconds(timeout_ms)/1000);
-                        cfs_duration_usec(cfs_time_sub(cfs_time_current(), now),
-                                            &tv);
-                        timeout_ms -= (int)(tv.tv_sec * 1000 + tv.tv_usec / 1000);
-                        if (timeout_ms < 0)
-                                timeout_ms = 0;
-                }
-
-                LNET_LOCK();
-                cfs_waitq_del(&the_lnet.ln_waitq, &wl);
-#else
-                if (eqwaitni != NULL) {
-                        /* I have a single NI that I have to call into, to get
-                         * events queued, or to block. */
-                        lnet_ni_addref_locked(eqwaitni);
-                        LNET_UNLOCK();
-
-                        if (timeout_ms <= 0) {
-                                (eqwaitni->ni_lnd->lnd_wait)(eqwaitni, timeout_ms);
-                        } else {
-                                gettimeofday(&then, NULL);
-
-                                (eqwaitni->ni_lnd->lnd_wait)(eqwaitni, timeout_ms);
-
-                                gettimeofday(&now, NULL);
-                                timeout_ms -= (now.tv_sec - then.tv_sec) * 1000 +
-                                              (now.tv_usec - then.tv_usec) / 1000;
-                                if (timeout_ms < 0)
-                                        timeout_ms = 0;
-                        }
-
-                        LNET_LOCK();
-                        lnet_ni_decref_locked(eqwaitni);
-
-                        /* don't call into eqwaitni again if timeout has
-                         * expired */
-                        if (timeout_ms == 0)
-                                eqwaitni = NULL;
-
-                        continue;               /* go back and check for events */
-                }
-
-                if (timeout_ms == 0) {
-                        LNET_UNLOCK();
-                        RETURN (0);
-                }
-
-# ifndef HAVE_LIBPTHREAD
-                /* If I'm single-threaded, LNET fails at startup if it can't
-                 * set the_lnet.ln_eqwaitni correctly.  */
-                LBUG();
-# else
-                if (timeout_ms < 0) {
-                        pthread_cond_wait(&the_lnet.ln_cond,
-                                          &the_lnet.ln_lock);
-                } else {
-                        gettimeofday(&then, NULL);
-
-                        ts.tv_sec = then.tv_sec + timeout_ms/1000;
-                        ts.tv_nsec = then.tv_usec * 1000 +
-                                     (timeout_ms%1000) * 1000000;
-                        if (ts.tv_nsec >= 1000000000) {
-                                ts.tv_sec++;
-                                ts.tv_nsec -= 1000000000;
-                        }
-
-                        pthread_cond_timedwait(&the_lnet.ln_cond,
-                                               &the_lnet.ln_lock, &ts);
-
-                        gettimeofday(&now, NULL);
-                        timeout_ms -= (now.tv_sec - then.tv_sec) * 1000 +
-                                      (now.tv_usec - then.tv_usec) / 1000;
-
-                        if (timeout_ms < 0)
-                                timeout_ms = 0;
-                }
-# endif
-#endif
-        }
+	LNET_UNLOCK();
+	RETURN(0);
 }

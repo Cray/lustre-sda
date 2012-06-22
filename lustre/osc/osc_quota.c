@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -99,7 +97,7 @@ static struct osc_quota_info *alloc_qinfo(struct client_obd *cli,
         struct osc_quota_info *oqi;
         ENTRY;
 
-        OBD_SLAB_ALLOC(oqi, qinfo_cachep, CFS_ALLOC_IO, sizeof(*oqi));
+	OBD_SLAB_ALLOC_PTR(oqi, qinfo_cachep);
         if(!oqi)
                 RETURN(NULL);
 

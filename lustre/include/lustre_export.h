@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -116,6 +114,7 @@ struct filter_export_data {
         int                        fed_mod_count;/* items in fed_writing list */
         long                       fed_pending;  /* bytes just being written */
         __u32                      fed_group;
+	__u8                       fed_pagesize; /* log2 of client page size */
 };
 
 struct mgs_export_data {
@@ -181,13 +180,13 @@ struct obd_export {
          */
         cfs_atomic_t              exp_rpc_count; /* RPC references */
         cfs_atomic_t              exp_cb_count; /* Commit callback references */
+	/** Number of queued replay requests to be processes */
+	cfs_atomic_t		  exp_replay_count;
         cfs_atomic_t              exp_locks_count; /** Lock references */
 #if LUSTRE_TRACKS_LOCK_EXP_REFS
         cfs_list_t                exp_locks_list;
         cfs_spinlock_t            exp_locks_list_guard;
 #endif
-        /** Number of queued replay requests to be processes */
-        cfs_atomic_t              exp_replay_count;
         /** UUID of client connected to this export */
         struct obd_uuid           exp_client_uuid;
         /** To link all exports on an obd device */

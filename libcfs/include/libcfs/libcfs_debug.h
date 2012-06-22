@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012 Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -106,7 +106,7 @@ struct ptldebug_header {
 #define S_LDLM        0x00010000
 #define S_LOV         0x00020000
 #define S_LQUOTA      0x00040000
-/* unused */
+#define S_OSD		0x00080000
 /* unused */
 /* unused */
 /* unused */
@@ -151,6 +151,7 @@ struct ptldebug_header {
 #define D_CONSOLE     0x02000000
 #define D_QUOTA       0x04000000
 #define D_SEC         0x08000000
+#define D_LFSCK	      0x10000000 /* For both OI scrub and LFSCK */
 /* keep these in sync with lnet/{utils,libcfs}/debug.c */
 
 #define D_HSM         D_TRACE
@@ -179,6 +180,16 @@ struct libcfs_debug_msg_data {
         cfs_debug_limit_state_t  *msg_cdls;
 };
 
+#define LIBCFS_DEBUG_MSG_DATA_INIT(data, mask, cdls)        \
+do {                                                        \
+        (data)->msg_subsys = DEBUG_SUBSYSTEM;               \
+        (data)->msg_file   = __FILE__;                      \
+        (data)->msg_fn     = __FUNCTION__;                  \
+        (data)->msg_line   = __LINE__;                      \
+        (data)->msg_cdls   = (cdls);                        \
+        (data)->msg_mask   = (mask);                        \
+} while (0)
+
 #define LIBCFS_DEBUG_MSG_DATA_DECL(dataname, mask, cdls)    \
         static struct libcfs_debug_msg_data dataname = {    \
                .msg_subsys = DEBUG_SUBSYSTEM,               \
@@ -203,12 +214,14 @@ static inline int cfs_cdebug_show(unsigned int mask, unsigned int subsystem)
 
 #define __CDEBUG(cdls, mask, format, ...)                               \
 do {                                                                    \
-        LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, mask, cdls);                \
+        static struct libcfs_debug_msg_data msgdata;                    \
                                                                         \
         CFS_CHECK_STACK(&msgdata, mask, cdls);                          \
                                                                         \
-        if (cfs_cdebug_show(mask, DEBUG_SUBSYSTEM))                     \
+        if (cfs_cdebug_show(mask, DEBUG_SUBSYSTEM)) {                   \
+                LIBCFS_DEBUG_MSG_DATA_INIT(&msgdata, mask, cdls);       \
                 libcfs_debug_msg(&msgdata, format, ## __VA_ARGS__);     \
+        }                                                               \
 } while (0)
 
 #define CDEBUG(mask, format, ...) __CDEBUG(NULL, mask, format, ## __VA_ARGS__)
@@ -343,10 +356,11 @@ extern int libcfs_debug_vmsg2(struct libcfs_debug_msg_data *msgdata,
                               va_list args, const char *format2, ...)
         __attribute__ ((format (printf, 4, 5)));
 
-/* one more external symbol that tracefile provides: */
+/* other external symbols that tracefile provides: */
+extern int cfs_trace_copyin_string(char *knl_buffer, int knl_buffer_nob,
+				   const char *usr_buffer, int usr_buffer_nob);
 extern int cfs_trace_copyout_string(char *usr_buffer, int usr_buffer_nob,
-                                    const char *knl_buffer, char *append);
-
+				    const char *knl_buffer, char *append);
 
 #if defined(HAVE_BGL_SUPPORT)
 #define LIBCFS_DEBUG_FILE_PATH_DEFAULT "/bgl/ion/tmp/lustre-log"

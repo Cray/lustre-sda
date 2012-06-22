@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -40,10 +38,6 @@
  * Author: Phil Schwan <phil@clusterfs.com>
  *
  */
-
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 
 # define DEBUG_SUBSYSTEM S_LNET
 
@@ -170,6 +164,8 @@ libcfs_debug_subsys2str(int subsys)
                 return "lov";
         case S_LQUOTA:
                 return "lquota";
+	case S_OSD:
+		return "osd";
         case S_LMV:
                 return "lmv";
         case S_SEC:
@@ -251,7 +247,9 @@ libcfs_debug_dbg2str(int debug)
                 return "quota";
         case D_SEC:
                 return "sec";
-        }
+	case D_LFSCK:
+		return "lfsck";
+	}
 }
 
 int

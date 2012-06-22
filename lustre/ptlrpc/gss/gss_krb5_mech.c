@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * Modifications for Lustre
  *
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
@@ -50,9 +48,6 @@
  *
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_SEC
 #ifdef __KERNEL__
 #include <linux/init.h>
@@ -156,12 +151,12 @@ static const char * enctype2str(__u32 enctype)
 static
 int keyblock_init(struct krb5_keyblock *kb, char *alg_name, int alg_mode)
 {
-        kb->kb_tfm = ll_crypto_alloc_blkcipher(alg_name, alg_mode, 0);
-        if (kb->kb_tfm == NULL) {
-                CERROR("failed to alloc tfm: %s, mode %d\n",
-                       alg_name, alg_mode);
-                return -1;
-        }
+	kb->kb_tfm = ll_crypto_alloc_blkcipher(alg_name, alg_mode, 0);
+	if (IS_ERR(kb->kb_tfm)) {
+		CERROR("failed to alloc tfm: %s, mode %d\n",
+		       alg_name, alg_mode);
+		return -1;
+	}
 
         if (ll_crypto_blkcipher_setkey(kb->kb_tfm, kb->kb_key.data, kb->kb_key.len)) {
                 CERROR("failed to set %s key, len %d\n",
@@ -1313,11 +1308,11 @@ __u32 gss_wrap_kerberos(struct gss_ctx *gctx,
                         GOTO(arc4_out, rc = -EACCES);
                 }
 
-                arc4_tfm = ll_crypto_alloc_blkcipher("ecb(arc4)", 0, 0);
-                if (arc4_tfm == NULL) {
-                        CERROR("failed to alloc tfm arc4 in ECB mode\n");
-                        GOTO(arc4_out_key, rc = -EACCES);
-                }
+		arc4_tfm = ll_crypto_alloc_blkcipher("ecb(arc4)", 0, 0);
+		if (IS_ERR(arc4_tfm)) {
+			CERROR("failed to alloc tfm arc4 in ECB mode\n");
+			GOTO(arc4_out_key, rc = -EACCES);
+		}
 
                 if (ll_crypto_blkcipher_setkey(arc4_tfm, arc4_keye.data,
                                                arc4_keye.len)) {
@@ -1589,11 +1584,11 @@ __u32 gss_unwrap_kerberos(struct gss_ctx  *gctx,
                         GOTO(arc4_out, rc = -EACCES);
                 }
 
-                arc4_tfm = ll_crypto_alloc_blkcipher("ecb(arc4)", 0, 0);
-                if (arc4_tfm == NULL) {
-                        CERROR("failed to alloc tfm arc4 in ECB mode\n");
-                        GOTO(arc4_out_key, rc = -EACCES);
-                }
+		arc4_tfm = ll_crypto_alloc_blkcipher("ecb(arc4)", 0, 0);
+		if (IS_ERR(arc4_tfm)) {
+			CERROR("failed to alloc tfm arc4 in ECB mode\n");
+			GOTO(arc4_out_key, rc = -EACCES);
+		}
 
                 if (ll_crypto_blkcipher_setkey(arc4_tfm,
                                          arc4_keye.data, arc4_keye.len)) {

@@ -1,5 +1,3 @@
-#* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
-#* vim:expandtab:shiftwidth=8:tabstop=8:
 #
 # LC_CONFIG_SRCDIR
 #
@@ -81,23 +79,6 @@ AC_TRY_COMPILE([
 	AC_DEFINE(HAVE_POSIX_1003_READLINK, 1, [readlink returns ssize_t])
 ],[
 	AC_MSG_RESULT([no])
-])
-])
-
-#
-# only for Lustre-patched kernels
-#
-AC_DEFUN([LC_LUSTRE_VERSION_H],
-[LB_CHECK_FILE([$LINUX/include/linux/lustre_version.h],[
-	rm -f "$LUSTRE/include/linux/lustre_version.h"
-],[
-	touch "$LUSTRE/include/linux/lustre_version.h"
-	if test x$enable_server = xyes ; then
-        	AC_MSG_WARN([Unpatched kernel detected.])
-        	AC_MSG_WARN([Lustre servers cannot be built with an unpatched kernel;])
-        	AC_MSG_WARN([disabling server build])
-		enable_server='no'
-	fi
 ])
 ])
 
@@ -226,17 +207,13 @@ if test x$enable_lru_resize != xno; then
 fi
 ])
 
-# whether to enable quota support(kernel modules)
-AC_DEFUN([LC_QUOTA_MODULE],
-[if test x$enable_quota != xno; then
-    LB_LINUX_CONFIG([QUOTA],[
-	enable_quota_module='yes'
-	AC_DEFINE(HAVE_QUOTA_SUPPORT, 1, [Enable quota support])
-    ],[
-	enable_quota_module='no'
-	AC_MSG_WARN([quota is not enabled because the kernel - lacks quota support])
-    ])
-fi
+#
+# Quota support. The kernel must support CONFIG_QUOTA.
+#
+AC_DEFUN([LC_QUOTA_CONFIG],
+[LB_LINUX_CONFIG_IM([QUOTA],[AC_DEFINE(HAVE_QUOTA_SUPPORT, 1, [support quota])],[
+	AC_MSG_ERROR([Lustre quota requires that CONFIG_QUOTA is enabled in your kernel.])
+])
 ])
 
 # truncate_complete_page() was exported from RHEL5/SLES10, but not in SLES11 SP0 (2.6.27)
@@ -494,17 +471,16 @@ LB_LINUX_TRY_COMPILE([
 #
 # kernel 2.6.13+ ->follow_link returns a cookie
 #
-
 AC_DEFUN([LC_COOKIE_FOLLOW_LINK],
 [AC_MSG_CHECKING([if inode_operations->follow_link returns a cookie])
 LB_LINUX_TRY_COMPILE([
         #include <linux/fs.h>
         #include <linux/namei.h>
 ],[
-        struct dentry dentry;
+        struct dentry *dentry = NULL;
         struct nameidata nd;
 
-        dentry.d_inode->i_op->put_link(&dentry, &nd, NULL);
+        dentry->d_inode->i_op->put_link(dentry, &nd, NULL);
 ],[
         AC_DEFINE(HAVE_COOKIE_FOLLOW_LINK, 1, [inode_operations->follow_link returns a cookie])
         AC_MSG_RESULT([yes])
@@ -586,9 +562,9 @@ AC_DEFUN([LC_S_TIME_GRAN],
 LB_LINUX_TRY_COMPILE([
         #include <linux/fs.h>
 ],[
-	struct super_block sb;
+        struct super_block *sb = NULL;
 
-        return sb.s_time_gran;
+        return sb->s_time_gran;
 ],[
 	AC_MSG_RESULT([yes])
 	AC_DEFINE(HAVE_S_TIME_GRAN, 1, [super block has s_time_gran member])
@@ -664,12 +640,9 @@ AC_DEFUN([LC_SECURITY_PLUG],
 [AC_MSG_CHECKING([If kernel has security plug support])
 LB_LINUX_TRY_COMPILE([
         #include <linux/fs.h>
+        #include <linux/stddef.h>
 ],[
-        struct dentry   *dentry;
-        struct vfsmount *mnt;
-        struct iattr    *iattr;
-
-        notify_change(dentry, mnt, iattr);
+        notify_change(NULL, NULL, NULL);
 ],[
         AC_MSG_RESULT(yes)
         AC_DEFINE(HAVE_SECURITY_PLUG, 1,
@@ -802,7 +775,7 @@ LB_LINUX_TRY_COMPILE([
         #include <linux/fs.h>
 ],[
         struct file_operations *fops = NULL;
-        fl_owner_t id;
+        fl_owner_t id = NULL;
         int i;
 
         i = fops->flush(NULL, id);
@@ -1056,7 +1029,7 @@ LB_LINUX_TRY_COMPILE([
         #include <linux/err.h>
         #include <linux/crypto.h>
 ],[
-        struct hash_desc foo;
+        struct hash_desc foo __attribute__ ((unused));
 ],[
         AC_MSG_RESULT([yes])
         AC_DEFINE(HAVE_STRUCT_HASH_DESC, 1, [kernel has struct hash_desc])
@@ -1074,7 +1047,7 @@ LB_LINUX_TRY_COMPILE([
         #include <linux/err.h>
         #include <linux/crypto.h>
 ],[
-        struct blkcipher_desc foo;
+        struct blkcipher_desc foo __attribute__ ((unused));
 ],[
         AC_MSG_RESULT([yes])
         AC_DEFINE(HAVE_STRUCT_BLKCIPHER_DESC, 1, [kernel has struct blkcipher_desc])
@@ -1091,7 +1064,8 @@ AC_DEFUN([LC_FS_RENAME_DOES_D_MOVE],
 LB_LINUX_TRY_COMPILE([
         #include <linux/fs.h>
 ],[
-        int v = FS_RENAME_DOES_D_MOVE;
+        int v __attribute__ ((unused));
+        v = FS_RENAME_DOES_D_MOVE;
 ],[
         AC_MSG_RESULT([yes])
         AC_DEFINE(HAVE_FS_RENAME_DOES_D_MOVE, 1, [kernel has FS_RENAME_DOES_D_MOVE flag])
@@ -1108,7 +1082,8 @@ AC_DEFUN([LC_UNREGISTER_BLKDEV_RETURN_INT],
 LB_LINUX_TRY_COMPILE([
         #include <linux/fs.h>
 ],[
-        int i = unregister_blkdev(0,NULL);
+        int i __attribute__ ((unused));
+        i = unregister_blkdev(0,NULL);
 ],[
         AC_MSG_RESULT([yes])
         AC_DEFINE(HAVE_UNREGISTER_BLKDEV_RETURN_INT, 1,
@@ -1335,7 +1310,9 @@ AC_DEFUN([LC_INODE_PERMISION_2ARGS],
 LB_LINUX_TRY_COMPILE([
         #include <linux/fs.h>
 ],[
-        struct inode *inode;
+        struct inode *inode __attribute__ ((unused));
+
+        inode = NULL;
         inode->i_op->permission(NULL, 0);
 ],[
         AC_DEFINE(HAVE_INODE_PERMISION_2ARGS, 1,
@@ -1409,9 +1386,10 @@ AC_DEFINE(HAVE_EXPORT_INODE_PERMISSION, 1,
 AC_DEFUN([LC_QUOTA_ON_5ARGS],
 [AC_MSG_CHECKING([quota_on needs 5 parameters])
 LB_LINUX_TRY_COMPILE([
+        #include <linux/fs.h>
         #include <linux/quota.h>
 ],[
-        struct quotactl_ops *qop;
+        struct quotactl_ops *qop = NULL;
         qop->quota_on(NULL, 0, 0, NULL, 0);
 ],[
         AC_DEFINE(HAVE_QUOTA_ON_5ARGS, 1,
@@ -1426,9 +1404,10 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LC_QUOTA_OFF_3ARGS],
 [AC_MSG_CHECKING([quota_off needs 3 parameters])
 LB_LINUX_TRY_COMPILE([
+        #include <linux/fs.h>
         #include <linux/quota.h>
 ],[
-        struct quotactl_ops *qop;
+        struct quotactl_ops *qop = NULL;
         qop->quota_off(NULL, 0, 0);
 ],[
         AC_DEFINE(HAVE_QUOTA_OFF_3ARGS, 1,
@@ -1813,6 +1792,16 @@ AC_DEFUN([LC_EXPORT_GENERIC_ERROR_REMOVE_PAGE],
          ]
 )
 
+# 2.6.32 if kernel export access_process_vm().
+AC_DEFUN([LC_EXPORT_ACCESS_PROCESS_VM],
+        [LB_CHECK_SYMBOL_EXPORT([access_process_vm],
+                        [mm/memory.c],
+                        [AC_DEFINE(HAVE_ACCESS_PROCESS_VM, 1,
+                                [access_process_vm function is present])],
+                        [])
+        ]
+)
+
 #
 # 2.6.36 fs_struct.lock use spinlock instead of rwlock.
 #
@@ -1878,6 +1867,83 @@ LB_LINUX_TRY_COMPILE([
         ],[
                 AC_MSG_RESULT([no])
         ])
+])
+])
+
+#
+# 2.6.37 remove kernel_locked
+#
+AC_DEFUN([LC_KERNEL_LOCKED],
+[AC_MSG_CHECKING([if kernel_locked is defined])
+LB_LINUX_TRY_COMPILE([
+        #include <linux/smp_lock.h>
+],[
+        kernel_locked();
+],[
+        AC_MSG_RESULT([yes])
+        AC_DEFINE(HAVE_KERNEL_LOCKED, 1,
+                [kernel_locked is defined])
+],[
+        AC_MSG_RESULT([no])
+])
+])
+
+#
+# 2.6.38 dentry_operations.d_compare() taken 7 arguments.
+#
+AC_DEFUN([LC_D_COMPARE_7ARGS],
+[AC_MSG_CHECKING([if d_compare taken 7 arguments])
+LB_LINUX_TRY_COMPILE([
+	#include <linux/dcache.h>
+],[
+	((struct dentry_operations*)0)->d_compare(NULL,NULL,NULL,NULL,0,NULL,NULL);
+],[
+	AC_DEFINE(HAVE_D_COMPARE_7ARGS, 1,
+		[d_compare need 7 arguments])
+	AC_MSG_RESULT([yes])
+],[
+	AC_MSG_RESULT([no])
+])
+])
+
+#
+# 2.6.38 dentry_operations.d_delete() defined 'const' for 1st parameter.
+#
+AC_DEFUN([LC_D_DELETE_CONST],
+[AC_MSG_CHECKING([if d_delete has const declare on first parameter])
+tmp_flags="$EXTRA_KCFLAGS"
+EXTRA_KCFLAGS="-Werror"
+LB_LINUX_TRY_COMPILE([
+	#include <linux/dcache.h>
+],[
+	const struct dentry *d = NULL;
+	((struct dentry_operations*)0)->d_delete(d);
+],[
+	AC_DEFINE(HAVE_D_DELETE_CONST, const,
+		[d_delete first parameter declared const])
+	AC_MSG_RESULT([yes])
+],[
+	AC_DEFINE(HAVE_D_DELETE_CONST, , [])
+	AC_MSG_RESULT([no])
+])
+EXTRA_KCFLAGS="$tmp_flags"
+])
+
+#
+# 2.6.38 dcache_lock removed. rcu-walk commited.
+#
+AC_DEFUN([LC_DCACHE_LOCK],
+[AC_MSG_CHECKING([if dcache_lock is exist])
+LB_LINUX_TRY_COMPILE([
+	#include <linux/dcache.h>
+],[
+	spin_lock(&dcache_lock);
+],[
+	AC_DEFINE(HAVE_DCACHE_LOCK, 1,
+		[dcache_lock is exist])
+	AC_MSG_RESULT([yes])
+],[
+	AC_MSG_RESULT([no])
 ])
 ])
 
@@ -1990,13 +2056,12 @@ AC_DEFINE(HAVE_SIMPLE_SETATTR, 1,
 # Lustre linux kernel checks
 #
 AC_DEFUN([LC_PROG_LINUX],
-         [LC_LUSTRE_VERSION_H
+         [
          LC_CONFIG_PINGER
          LC_CONFIG_CHECKSUM
          LC_CONFIG_LIBLUSTRE_RECOVERY
          LC_CONFIG_HEALTH_CHECK_WRITE
          LC_CONFIG_LRU_RESIZE
-         LC_QUOTA_MODULE
          LC_LLITE_LLOOP_MODULE
 
          # RHEL4 patches
@@ -2126,6 +2191,7 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_CACHE_UPCALL
          LC_EXPORT_GENERIC_ERROR_REMOVE_PAGE
          LC_SELINUX_IS_ENABLED
+         LC_EXPORT_ACCESS_PROCESS_VM
 
          # 2.6.35, 3.0.0
          LC_FILE_FSYNC
@@ -2135,11 +2201,17 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_FS_STRUCT_RWLOCK
          LC_SBOPS_EVICT_INODE
 
+         # 2.6.37
+         LC_KERNEL_LOCKED
+
          # 2.6.38
          LC_ATOMIC_MNT_COUNT
          LC_BLKDEV_GET_BY_DEV
          LC_GENERIC_PERMISSION
          LC_QUOTA_ON_USE_PATH
+         LC_DCACHE_LOCK
+         LC_D_COMPARE_7ARGS
+         LC_D_DELETE_CONST
 
          # 2.6.39
          LC_REQUEST_QUEUE_UNPLUG_FN
@@ -2150,6 +2222,7 @@ AC_DEFUN([LC_PROG_LINUX],
              LC_FUNC_DEV_SET_RDONLY
              LC_STACK_SIZE
              LC_QUOTA64
+             LC_QUOTA_CONFIG
          fi
 ])
 
@@ -2554,7 +2627,6 @@ AM_CONDITIONAL(LIBLUSTRE_TESTS, test x$enable_liblustre_tests = xyes)
 AM_CONDITIONAL(MPITESTS, test x$enable_mpitests = xyes, Build MPI Tests)
 AM_CONDITIONAL(CLIENT, test x$enable_client = xyes)
 AM_CONDITIONAL(SERVER, test x$enable_server = xyes)
-AM_CONDITIONAL(QUOTA, test x$enable_quota_module = xyes)
 AM_CONDITIONAL(SPLIT, test x$enable_split = xyes)
 AM_CONDITIONAL(BLKID, test x$ac_cv_header_blkid_blkid_h = xyes)
 AM_CONDITIONAL(EXT2FS_DEVEL, test x$ac_cv_header_ext2fs_ext2fs_h = xyes)
@@ -2625,6 +2697,8 @@ lustre/obdecho/Makefile
 lustre/obdecho/autoMakefile
 lustre/obdfilter/Makefile
 lustre/obdfilter/autoMakefile
+lustre/ofd/Makefile
+lustre/ofd/autoMakefile
 lustre/osc/Makefile
 lustre/osc/autoMakefile
 lustre/ost/Makefile

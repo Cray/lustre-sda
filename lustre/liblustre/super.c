@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -1097,7 +1095,7 @@ static int llu_statfs_internal(struct llu_sb_info *sbi,
         int rc;
         ENTRY;
 
-        rc = obd_statfs(class_exp2obd(sbi->ll_md_exp), osfs, max_age, 0);
+        rc = obd_statfs(NULL, sbi->ll_md_exp, osfs, max_age, 0);
         if (rc) {
                 CERROR("md_statfs fails: rc = %d\n", rc);
                 RETURN(rc);
@@ -1924,8 +1922,8 @@ llu_fsswop_mount(const char *source,
                 CERROR("MDC %s: not setup or attached\n", mdc);
                 GOTO(out_free, err = -EINVAL);
         }
-        obd_set_info_async(obd->obd_self_export, sizeof(KEY_ASYNC), KEY_ASYNC,
-                           sizeof(async), &async, NULL);
+        obd_set_info_async(NULL, obd->obd_self_export, sizeof(KEY_ASYNC),
+                           KEY_ASYNC, sizeof(async), &async, NULL);
 
         ocd.ocd_connect_flags = OBD_CONNECT_IBITS | OBD_CONNECT_VERSION |
                                 OBD_CONNECT_FID | OBD_CONNECT_AT |
@@ -1944,7 +1942,7 @@ llu_fsswop_mount(const char *source,
                 GOTO(out_free, err);
         }
 
-        err = obd_statfs(obd, &osfs, 100000000, 0);
+        err = obd_statfs(NULL, sbi->ll_md_exp, &osfs, 100000000, 0);
         if (err)
                 GOTO(out_md, err);
 
@@ -1958,8 +1956,8 @@ llu_fsswop_mount(const char *source,
                 CERROR("OSC %s: not setup or attached\n", osc);
                 GOTO(out_md, err = -EINVAL);
         }
-        obd_set_info_async(obd->obd_self_export, sizeof(KEY_ASYNC), KEY_ASYNC,
-                           sizeof(async), &async, NULL);
+        obd_set_info_async(NULL, obd->obd_self_export, sizeof(KEY_ASYNC),
+                           KEY_ASYNC, sizeof(async), &async, NULL);
 
         obd->obd_upcall.onu_owner = &sbi->ll_lco;
         obd->obd_upcall.onu_upcall = cl_ocd_update;
@@ -1967,7 +1965,7 @@ llu_fsswop_mount(const char *source,
         ocd.ocd_connect_flags = OBD_CONNECT_SRVLOCK | OBD_CONNECT_REQPORTAL |
                                 OBD_CONNECT_VERSION | OBD_CONNECT_TRUNCLOCK |
                                 OBD_CONNECT_FID | OBD_CONNECT_AT |
-                                OBD_CONNECT_FULL20;
+                                OBD_CONNECT_FULL20 | OBD_CONNECT_EINPROGRESS;
 
         ocd.ocd_version = LUSTRE_VERSION_CODE;
         err = obd_connect(NULL, &sbi->ll_dt_exp, obd, &sbi->ll_sb_uuid, &ocd, NULL);

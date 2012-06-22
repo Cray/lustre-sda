@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -661,7 +659,7 @@ int ll_send_mgc_param(struct obd_export *mgc, char *string)
                 return -ENOMEM;
 
         strncpy(msp->mgs_param, string, MGS_PARAM_MAXLEN);
-        rc = obd_set_info_async(mgc, sizeof(KEY_SET_INFO), KEY_SET_INFO,
+        rc = obd_set_info_async(NULL, mgc, sizeof(KEY_SET_INFO), KEY_SET_INFO,
                                 sizeof(struct mgs_send_param), msp, NULL);
         if (rc)
                 CERROR("Failed to set parameter: %d\n", rc);
@@ -1033,12 +1031,7 @@ out:
         RETURN(rc);
 }
 
-#ifdef HAVE_UNLOCKED_IOCTL
 static long ll_dir_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
-#else
-static int  ll_dir_ioctl(struct inode *unuse, struct file *file,
-                        unsigned int cmd, unsigned long arg)
-#endif
 {
         struct inode *inode = file->f_dentry->d_inode;
         struct ll_sb_info *sbi = ll_i2sbi(inode);
@@ -1512,8 +1505,8 @@ out_free:
                 /* get ost count when count is zero, get mdt count otherwise */
                 exp = count ? sbi->ll_md_exp : sbi->ll_dt_exp;
                 vallen = sizeof(count);
-                rc = obd_get_info(exp, sizeof(KEY_TGT_COUNT), KEY_TGT_COUNT,
-                                  &vallen, &count, NULL);
+                rc = obd_get_info(NULL, exp, sizeof(KEY_TGT_COUNT),
+                                  KEY_TGT_COUNT, &vallen, &count, NULL);
                 if (rc) {
                         CERROR("get target count failed: %d\n", rc);
                         RETURN(rc);
@@ -1618,10 +1611,6 @@ struct file_operations ll_dir_operations = {
         .release  = ll_dir_release,
         .read     = generic_read_dir,
         .readdir  = ll_readdir,
-#ifdef HAVE_UNLOCKED_IOCTL
         .unlocked_ioctl   = ll_dir_ioctl,
-#else
-        .ioctl          = ll_dir_ioctl,
-#endif
         .fsync    = ll_fsync,
 };

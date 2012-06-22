@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -111,8 +109,17 @@ static void lov_io_sub_inherit(struct cl_io *io, struct lov_io *lio,
                 io->u.ci_fault.ft_index = cl_index(obj, off);
                 break;
         }
-        case CIT_READ:
-        case CIT_WRITE: {
+	case CIT_FSYNC: {
+		io->u.ci_fsync.fi_start = start;
+		io->u.ci_fsync.fi_end = end;
+		io->u.ci_fsync.fi_capa = parent->u.ci_fsync.fi_capa;
+		io->u.ci_fsync.fi_fid = parent->u.ci_fsync.fi_fid;
+		io->u.ci_fsync.fi_mode = parent->u.ci_fsync.fi_mode;
+		break;
+	}
+	case CIT_READ:
+	case CIT_WRITE: {
+		io->u.ci_wr.wr_sync = cl_io_is_sync_write(parent);
                 if (cl_io_is_append(parent)) {
                         io->u.ci_wr.wr_append = 1;
                 } else {
@@ -333,6 +340,12 @@ static void lov_io_slice_init(struct lov_io *lio,
                 break;
         }
 
+	case CIT_FSYNC: {
+		lio->lis_pos = io->u.ci_fsync.fi_start;
+		lio->lis_endpos = io->u.ci_fsync.fi_end;
+		break;
+	}
+
         case CIT_MISC:
                 lio->lis_pos = 0;
                 lio->lis_endpos = OBD_OBJECT_EOF;
@@ -423,19 +436,19 @@ static int lov_io_rw_iter_init(const struct lu_env *env,
         /* fast path for common case. */
         if (lio->lis_nr_subios != 1 && !cl_io_is_append(io)) {
 
-                do_div(start, ssize);
-                next = (start + 1) * ssize;
-                if (next <= start * ssize)
-                        next = ~0ull;
+		lov_do_div64(start, ssize);
+		next = (start + 1) * ssize;
+		if (next <= start * ssize)
+			next = ~0ull;
 
                 io->ci_continue = next < lio->lis_io_endpos;
                 io->u.ci_rw.crw_count = min_t(loff_t, lio->lis_io_endpos,
                                               next) - io->u.ci_rw.crw_pos;
                 lio->lis_pos    = io->u.ci_rw.crw_pos;
                 lio->lis_endpos = io->u.ci_rw.crw_pos + io->u.ci_rw.crw_count;
-                CDEBUG(D_VFSTRACE, "stripe: "LPU64" chunk: ["LPU64", "LPU64") "LPU64"\n",
-                       (__u64)start, lio->lis_pos, lio->lis_endpos,
-                       (__u64)lio->lis_io_endpos);
+		CDEBUG(D_VFSTRACE, "stripe: "LPU64" chunk: ["LPU64", "LPU64") "
+		       LPU64"\n", (__u64)start, lio->lis_pos, lio->lis_endpos,
+		       (__u64)lio->lis_io_endpos);
         }
         /*
          * XXX The following call should be optimized: we know, that
@@ -447,6 +460,7 @@ static int lov_io_rw_iter_init(const struct lu_env *env,
 static int lov_io_call(const struct lu_env *env, struct lov_io *lio,
                        int (*iofunc)(const struct lu_env *, struct cl_io *))
 {
+	struct cl_io *parent = lio->lis_cl.cis_io;
         struct lov_io_sub *sub;
         int rc = 0;
 
@@ -457,6 +471,9 @@ static int lov_io_call(const struct lu_env *env, struct lov_io *lio,
                 lov_sub_exit(sub);
                 if (rc)
                         break;
+
+		if (parent->ci_result == 0)
+			parent->ci_result = sub->sub_io->ci_result;
         }
         RETURN(rc);
 }
@@ -558,8 +575,7 @@ static struct cl_page_list *lov_io_submit_qin(struct lov_device *ld,
  */
 static int lov_io_submit(const struct lu_env *env,
                          const struct cl_io_slice *ios,
-                         enum cl_req_type crt, struct cl_2queue *queue,
-                         enum cl_req_priority priority)
+			 enum cl_req_type crt, struct cl_2queue *queue)
 {
         struct lov_io          *lio = cl2lov_io(env, ios);
         struct lov_object      *obj = lio->lis_object;
@@ -590,7 +606,7 @@ static int lov_io_submit(const struct lu_env *env,
                 LASSERT(!IS_ERR(sub));
                 LASSERT(sub->sub_io == &lio->lis_single_subio);
                 rc = cl_io_submit_rw(sub->sub_env, sub->sub_io,
-                                     crt, queue, priority);
+				     crt, queue);
                 lov_sub_put(sub);
                 RETURN(rc);
         }
@@ -631,7 +647,7 @@ static int lov_io_submit(const struct lu_env *env,
                 sub = lov_sub_get(env, lio, stripe);
                 if (!IS_ERR(sub)) {
                         rc = cl_io_submit_rw(sub->sub_env, sub->sub_io,
-                                             crt, cl2q, priority);
+					     crt, cl2q);
                         lov_sub_put(sub);
                 } else
                         rc = PTR_ERR(sub);
@@ -728,6 +744,28 @@ static int lov_io_fault_start(const struct lu_env *env,
         RETURN(lov_io_start(env, ios));
 }
 
+static void lov_io_fsync_end(const struct lu_env *env,
+			     const struct cl_io_slice *ios)
+{
+	struct lov_io *lio = cl2lov_io(env, ios);
+	struct lov_io_sub *sub;
+	unsigned int *written = &ios->cis_io->u.ci_fsync.fi_nr_written;
+	ENTRY;
+
+	*written = 0;
+	cfs_list_for_each_entry(sub, &lio->lis_active, sub_linkage) {
+		struct cl_io *subio = sub->sub_io;
+
+		lov_sub_enter(sub);
+		lov_io_end_wrapper(sub->sub_env, subio);
+		lov_sub_exit(sub);
+
+		if (subio->ci_result == 0)
+			*written += subio->u.ci_fsync.fi_nr_written;
+	}
+	RETURN_EXIT;
+}
+
 static const struct cl_io_operations lov_io_ops = {
         .op = {
                 [CIT_READ] = {
@@ -766,6 +804,15 @@ static const struct cl_io_operations lov_io_ops = {
                         .cio_start     = lov_io_fault_start,
                         .cio_end       = lov_io_end
                 },
+		[CIT_FSYNC] = {
+			.cio_fini      = lov_io_fini,
+			.cio_iter_init = lov_io_iter_init,
+			.cio_iter_fini = lov_io_iter_fini,
+			.cio_lock      = lov_io_lock,
+			.cio_unlock    = lov_io_unlock,
+			.cio_start     = lov_io_start,
+			.cio_end       = lov_io_fsync_end
+		},
                 [CIT_MISC] = {
                         .cio_fini   = lov_io_fini
                 }
@@ -838,6 +885,9 @@ static const struct cl_io_operations lov_empty_io_ops = {
                         .cio_start     = LOV_EMPTY_IMPOSSIBLE,
                         .cio_end       = LOV_EMPTY_IMPOSSIBLE
                 },
+		[CIT_FSYNC] = {
+			.cio_fini   = lov_empty_io_fini
+		},
                 [CIT_MISC] = {
                         .cio_fini   = lov_empty_io_fini
                 }
@@ -881,6 +931,7 @@ int lov_io_init_empty(const struct lu_env *env, struct cl_object *obj,
         switch (io->ci_type) {
         default:
                 LBUG();
+	case CIT_FSYNC:
         case CIT_MISC:
         case CIT_READ:
                 result = 0;

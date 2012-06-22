@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -85,19 +83,47 @@ static int osc_object_init(const struct lu_env *env, struct lu_object *obj,
         cfs_spin_lock_init(&osc->oo_seatbelt);
         for (i = 0; i < CRT_NR; ++i)
                 CFS_INIT_LIST_HEAD(&osc->oo_inflight[i]);
-        return 0;
+
+	CFS_INIT_LIST_HEAD(&osc->oo_ready_item);
+	CFS_INIT_LIST_HEAD(&osc->oo_hp_ready_item);
+	CFS_INIT_LIST_HEAD(&osc->oo_write_item);
+	CFS_INIT_LIST_HEAD(&osc->oo_read_item);
+
+	osc->oo_root.rb_node = NULL;
+	CFS_INIT_LIST_HEAD(&osc->oo_hp_exts);
+	CFS_INIT_LIST_HEAD(&osc->oo_urgent_exts);
+	CFS_INIT_LIST_HEAD(&osc->oo_rpc_exts);
+	CFS_INIT_LIST_HEAD(&osc->oo_reading_exts);
+	cfs_atomic_set(&osc->oo_nr_reads, 0);
+	cfs_atomic_set(&osc->oo_nr_writes, 0);
+	cfs_spin_lock_init(&osc->oo_lock);
+
+	return 0;
 }
 
 static void osc_object_free(const struct lu_env *env, struct lu_object *obj)
 {
-        struct osc_object *osc = lu2osc(obj);
-        int i;
+	struct osc_object *osc = lu2osc(obj);
+	int i;
 
-        for (i = 0; i < CRT_NR; ++i)
-                LASSERT(cfs_list_empty(&osc->oo_inflight[i]));
+	for (i = 0; i < CRT_NR; ++i)
+		LASSERT(cfs_list_empty(&osc->oo_inflight[i]));
 
-        lu_object_fini(obj);
-        OBD_SLAB_FREE_PTR(osc, osc_object_kmem);
+	LASSERT(cfs_list_empty(&osc->oo_ready_item));
+	LASSERT(cfs_list_empty(&osc->oo_hp_ready_item));
+	LASSERT(cfs_list_empty(&osc->oo_write_item));
+	LASSERT(cfs_list_empty(&osc->oo_read_item));
+
+	LASSERT(osc->oo_root.rb_node == NULL);
+	LASSERT(cfs_list_empty(&osc->oo_hp_exts));
+	LASSERT(cfs_list_empty(&osc->oo_urgent_exts));
+	LASSERT(cfs_list_empty(&osc->oo_rpc_exts));
+	LASSERT(cfs_list_empty(&osc->oo_reading_exts));
+	LASSERT(cfs_atomic_read(&osc->oo_nr_reads) == 0);
+	LASSERT(cfs_atomic_read(&osc->oo_nr_writes) == 0);
+
+	lu_object_fini(obj);
+	OBD_SLAB_FREE_PTR(osc, osc_object_kmem);
 }
 
 int osc_lvb_print(const struct lu_env *env, void *cookie,

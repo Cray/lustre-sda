@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -473,7 +471,7 @@ ptlrpc_lprocfs_svc_req_history_next(struct seq_file *s,
         return srhi;
 }
 
-/* common ost/mdt srv_req_printfn */
+/* common ost/mdt so_req_printer */
 void target_print_req(void *seq_file, struct ptlrpc_request *req)
 {
         /* Called holding srv_lock with irqs disabled.
@@ -530,10 +528,10 @@ static int ptlrpc_lprocfs_svc_req_history_show(struct seq_file *s, void *iter)
                            req->rq_arrival_time.tv_sec,
                            req->rq_sent - req->rq_arrival_time.tv_sec,
                            req->rq_sent - req->rq_deadline);
-                if (svc->srv_req_printfn == NULL)
-                        seq_printf(s, "\n");
-                else
-                        svc->srv_req_printfn(s, srhi->srhi_req);
+		if (svc->srv_ops.so_req_printer == NULL)
+			seq_printf(s, "\n");
+		else
+			svc->srv_ops.so_req_printer(s, srhi->srhi_req);
         }
 
         cfs_spin_unlock(&svc->srv_lock);

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  *
  * Copyright (c) 2011, Whamcloud, Inc.
@@ -333,8 +331,20 @@ int LL_PROC_PROTO(proc_lnet_routers)
                         int pingsent  = !peer->lp_ping_notsent;
                         int last_ping = cfs_duration_sec(cfs_time_sub(now,
                                                      peer->lp_ping_timestamp));
-                        int down_ni   = lnet_router_down_ni(peer,
-                                                    LNET_NIDNET(LNET_NID_ANY));
+			int down_ni   = 0;
+			lnet_route_t *rtr;
+
+			if (peer->lp_ping_version == LNET_PROTO_PING_VERSION) {
+				cfs_list_for_each_entry(rtr, &peer->lp_routes,
+							lr_gwlist) {
+					/* downis on any route should be the
+					 * number of downis on the gateway */
+					if (rtr->lr_downis != 0) {
+						down_ni = rtr->lr_downis;
+						break;
+					}
+				}
+			}
 
                         if (deadline == 0)
                                 s += snprintf(s, tmpstr + tmpsiz - s,
@@ -380,6 +390,7 @@ int LL_PROC_PROTO(proc_lnet_routers)
 
 int LL_PROC_PROTO(proc_lnet_peers)
 {
+	struct lnet_peer_table	*ptable = the_lnet.ln_peer_table;
         int        rc = 0;
         char      *tmpstr;
         char      *s;
@@ -416,7 +427,7 @@ int LL_PROC_PROTO(proc_lnet_peers)
                 LASSERT (tmpstr + tmpsiz - s > 0);
 
                 LNET_LOCK();
-                ver = (unsigned int)the_lnet.ln_peertable_version;
+		ver = (unsigned int)ptable->pt_version;
                 LNET_UNLOCK();
                 *ppos = LNET_PHASH_POS_MAKE(ver, idx, num);
 
@@ -428,7 +439,7 @@ int LL_PROC_PROTO(proc_lnet_peers)
 
                 LNET_LOCK();
 
-                if (ver != LNET_VERSION_VALID_MASK(the_lnet.ln_peertable_version)) {
+		if (ver != LNET_VERSION_VALID_MASK(ptable->pt_version)) {
                         LNET_UNLOCK();
                         LIBCFS_FREE(tmpstr, tmpsiz);
                         return -ESTALE;
@@ -436,9 +447,9 @@ int LL_PROC_PROTO(proc_lnet_peers)
 
                 while (idx < LNET_PEER_HASHSIZE) {
                         if (p == NULL)
-                                p = the_lnet.ln_peer_hash[idx].next;
+				p = ptable->pt_hash[idx].next;
 
-                        while (p != &the_lnet.ln_peer_hash[idx]) {
+			while (p != &ptable->pt_hash[idx]) {
                                 lnet_peer_t *lp = cfs_list_entry(p, lnet_peer_t,
                                                                  lp_hashlist);
                                 if (skip == 0) {
@@ -447,8 +458,8 @@ int LL_PROC_PROTO(proc_lnet_peers)
                                         /* minor optimization: start from idx+1
                                          * on next iteration if we've just
                                          * drained lp_hashlist */
-                                        if (lp->lp_hashlist.next ==
-                                            &the_lnet.ln_peer_hash[idx]) {
+					if (lp->lp_hashlist.next ==
+					    &ptable->pt_hash[idx]) {
                                                 num = 1;
                                                 idx++;
                                         } else {

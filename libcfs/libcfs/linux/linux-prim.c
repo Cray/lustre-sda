@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -269,13 +267,11 @@ void cfs_enter_debugger(void)
 void cfs_daemonize(char *str) {
         unsigned long flags;
 
-        lock_kernel();
         daemonize(str);
         SIGNAL_MASK_LOCK(current, flags);
         sigfillset(&current->blocked);
         RECALC_SIGPENDING;
         SIGNAL_MASK_UNLOCK(current, flags);
-        unlock_kernel();
 }
 
 int cfs_daemonize_ctxt(char *str) {
@@ -312,34 +308,32 @@ cfs_block_allsigs(void)
         return old;
 }
 
-sigset_t
-cfs_block_sigs(sigset_t bits)
+sigset_t cfs_block_sigs(unsigned long sigs)
 {
-        unsigned long  flags;
-        sigset_t        old;
+	unsigned long  flags;
+	sigset_t	old;
 
-        SIGNAL_MASK_LOCK(current, flags);
-        old = current->blocked;
-        current->blocked = bits;
-        RECALC_SIGPENDING;
-        SIGNAL_MASK_UNLOCK(current, flags);
-        return old;
+	SIGNAL_MASK_LOCK(current, flags);
+	old = current->blocked;
+	sigaddsetmask(&current->blocked, sigs);
+	RECALC_SIGPENDING;
+	SIGNAL_MASK_UNLOCK(current, flags);
+	return old;
 }
 
 /* Block all signals except for the @sigs */
-cfs_sigset_t
-cfs_block_sigsinv(unsigned long sigs)
+sigset_t cfs_block_sigsinv(unsigned long sigs)
 {
-        unsigned long flags;
-        cfs_sigset_t old;
+	unsigned long flags;
+	sigset_t old;
 
-        SIGNAL_MASK_LOCK(current, flags);
-        old = current->blocked;
-        siginitsetinv(&current->blocked, sigs);
-        RECALC_SIGPENDING;
-        SIGNAL_MASK_UNLOCK(current, flags);
+	SIGNAL_MASK_LOCK(current, flags);
+	old = current->blocked;
+	sigaddsetmask(&current->blocked, ~sigs);
+	RECALC_SIGPENDING;
+	SIGNAL_MASK_UNLOCK(current, flags);
 
-        return old;
+	return old;
 }
 
 void

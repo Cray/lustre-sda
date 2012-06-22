@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -108,6 +106,8 @@
 # endif
 #endif /* __KERNEL__ */
 
+#define PTLRPC_NTHRS_MIN	2
+
 /**
  * The following constants determine how memory is used to buffer incoming
  * service requests.
@@ -132,8 +132,8 @@
 #define LDLM_MAXREPSIZE (1024)
 
 /** Absolute limits */
-#define MDT_MIN_THREADS 2UL
 #ifndef MDT_MAX_THREADS
+#define MDT_MIN_THREADS PTLRPC_NTHRS_MIN
 #define MDT_MAX_THREADS 512UL
 #endif
 #define MDS_NBUFS       (64 * cfs_num_online_cpus())
@@ -244,11 +244,12 @@ union ptlrpc_async_args {
          * least big enough for that.
          */
         void      *pointer_arg[11];
-        __u64      space[6];
+	__u64      space[7];
 };
 
 struct ptlrpc_request_set;
 typedef int (*set_interpreter_func)(struct ptlrpc_request_set *, void *, int);
+typedef int (*set_producer_func)(struct ptlrpc_request_set *, void *);
 
 /**
  * Definition of request set structure.
@@ -262,34 +263,44 @@ typedef int (*set_interpreter_func)(struct ptlrpc_request_set *, void *, int);
  * returned.
  */
 struct ptlrpc_request_set {
-        cfs_atomic_t          set_refcount;
-        /** number of in queue requests */
-        cfs_atomic_t          set_new_count;
-        /** number of uncompleted requests */
-        cfs_atomic_t          set_remaining;
-        /** wait queue to wait on for request events */
-        cfs_waitq_t           set_waitq;
-        cfs_waitq_t          *set_wakeup_ptr;
-        /** List of requests in the set */
-        cfs_list_t            set_requests;
-        /**
-         * List of completion callbacks to be called when the set is completed
-         * This is only used if \a set_interpret is NULL.
-         * Links struct ptlrpc_set_cbdata.
-         */
-        cfs_list_t            set_cblist;
-        /** Completion callback, if only one. */
-        set_interpreter_func  set_interpret;
-        /** opaq argument passed to completion \a set_interpret callback. */
-        void                 *set_arg;
-        /**
-         * Lock for \a set_new_requests manipulations
-         * locked so that any old caller can communicate requests to
-         * the set holder who can then fold them into the lock-free set
-         */
-        cfs_spinlock_t        set_new_req_lock;
-        /** List of new yet unsent requests. Only used with ptlrpcd now. */
-        cfs_list_t            set_new_requests;
+	cfs_atomic_t          set_refcount;
+	/** number of in queue requests */
+	cfs_atomic_t          set_new_count;
+	/** number of uncompleted requests */
+	cfs_atomic_t          set_remaining;
+	/** wait queue to wait on for request events */
+	cfs_waitq_t           set_waitq;
+	cfs_waitq_t          *set_wakeup_ptr;
+	/** List of requests in the set */
+	cfs_list_t            set_requests;
+	/**
+	 * List of completion callbacks to be called when the set is completed
+	 * This is only used if \a set_interpret is NULL.
+	 * Links struct ptlrpc_set_cbdata.
+	 */
+	cfs_list_t            set_cblist;
+	/** Completion callback, if only one. */
+	set_interpreter_func  set_interpret;
+	/** opaq argument passed to completion \a set_interpret callback. */
+	void                 *set_arg;
+	/** rq_status of requests that have been freed already */
+	int                   set_rc;
+	/**
+	 * Lock for \a set_new_requests manipulations
+	 * locked so that any old caller can communicate requests to
+	 * the set holder who can then fold them into the lock-free set
+	 */
+	cfs_spinlock_t        set_new_req_lock;
+	/** List of new yet unsent requests. Only used with ptlrpcd now. */
+	cfs_list_t            set_new_requests;
+
+	/** Additional fields used by the flow control extension */
+	/** Maximum number of RPCs in flight */
+	int                   set_max_inflight;
+	/** Callback function used to generate RPCs */
+	set_producer_func     set_producer;
+	/** opaq argument passed to the producer callback */
+	void                 *set_producer_arg;
 };
 
 /**
@@ -516,7 +527,8 @@ struct ptlrpc_request {
                 rq_reply_truncate:1,
                 rq_committed:1,
                 /* whether the "rq_set" is a valid one */
-                rq_invalid_rqset:1;
+                rq_invalid_rqset:1,
+                rq_generation_set:1;
 
         enum rq_phase rq_phase; /* one of RQ_PHASE_* */
         enum rq_phase rq_next_phase; /* one of RQ_PHASE_* to be used next */
@@ -987,6 +999,11 @@ struct ptlrpc_thread {
         struct lu_env *t_env;
 };
 
+static inline int thread_is_init(struct ptlrpc_thread *thread)
+{
+	return thread->t_flags == 0;
+}
+
 static inline int thread_is_stopped(struct ptlrpc_thread *thread)
 {
         return !!(thread->t_flags & SVC_STOPPED);
@@ -1069,11 +1086,33 @@ struct ptlrpc_request_buffer_desc {
         struct ptlrpc_request  rqbd_req;
 };
 
-typedef int  (*svc_thr_init_t)(struct ptlrpc_thread *thread);
-typedef void (*svc_thr_done_t)(struct ptlrpc_thread *thread);
 typedef int  (*svc_handler_t)(struct ptlrpc_request *req);
-typedef int  (*svc_hpreq_handler_t)(struct ptlrpc_request *);
-typedef void (*svc_req_printfn_t)(void *, struct ptlrpc_request *);
+
+struct ptlrpc_service_ops {
+	/**
+	 * if non-NULL called during thread creation (ptlrpc_start_thread())
+	 * to initialize service specific per-thread state.
+	 */
+	int		(*so_thr_init)(struct ptlrpc_thread *thr);
+	/**
+	 * if non-NULL called during thread shutdown (ptlrpc_main()) to
+	 * destruct state created by ->srv_init().
+	 */
+	void		(*so_thr_done)(struct ptlrpc_thread *thr);
+	/**
+	 * Handler function for incoming requests for this service
+	 */
+	int		(*so_req_handler)(struct ptlrpc_request *req);
+	/**
+	 * function to determine priority of the request, it's called
+	 * on every new request
+	 */
+	int		(*so_hpreq_handler)(struct ptlrpc_request *);
+	/**
+	 * service-specific print fn
+	 */
+	void		(*so_req_printer)(void *, struct ptlrpc_request *);
+};
 
 #ifndef __cfs_cacheline_aligned
 /* NB: put it here for reducing patche dependence */
@@ -1109,6 +1148,8 @@ struct ptlrpc_service {
         /** most often accessed fields */
         /** chain thru all services */
         cfs_list_t                      srv_list;
+	/** service operations table */
+	struct ptlrpc_service_ops	srv_ops;
         /** only statically allocated strings here; we don't clean them */
         char                           *srv_name;
         /** only statically allocated strings here; we don't clean them */
@@ -1125,26 +1166,6 @@ struct ptlrpc_service {
         int                             srv_threads_starting;
         /** # running threads */
         int                             srv_threads_running;
-
-        /** service operations, move to ptlrpc_svc_ops_t in the future */
-        /** @{ */
-        /**
-         * if non-NULL called during thread creation (ptlrpc_start_thread())
-         * to initialize service specific per-thread state.
-         */
-        svc_thr_init_t                  srv_init;
-        /**
-         * if non-NULL called during thread shutdown (ptlrpc_main()) to
-         * destruct state created by ->srv_init().
-         */
-        svc_thr_done_t                  srv_done;
-        /** Handler function for incoming requests for this service */
-        svc_handler_t                   srv_handler;
-        /** hp request handler */
-        svc_hpreq_handler_t             srv_hpreq_handler;
-        /** service-specific print fn */
-        svc_req_printfn_t               srv_req_printfn;
-        /** @} */
 
         /** Root of /proc dir tree for this service */
         cfs_proc_dir_entry_t           *srv_procroot;
@@ -1472,6 +1493,8 @@ void ptlrpc_cleanup_imp(struct obd_import *imp);
 void ptlrpc_abort_set(struct ptlrpc_request_set *set);
 
 struct ptlrpc_request_set *ptlrpc_prep_set(void);
+struct ptlrpc_request_set *ptlrpc_prep_fcset(int max, set_producer_func func,
+					     void *arg);
 int ptlrpc_set_add_cb(struct ptlrpc_request_set *set,
                       set_interpreter_func fn, void *data);
 int ptlrpc_set_next_timeout(struct ptlrpc_request_set *);
@@ -1540,18 +1563,48 @@ void ptlrpcd_destroy_work(void *handler);
 int ptlrpcd_queue_work(void *handler);
 
 /** @} */
+struct ptlrpc_service_buf_conf {
+	/* nbufs is how many buffers to post */
+	unsigned int			bc_nbufs;
+	/* buffer size to post */
+	unsigned int			bc_buf_size;
+	/* portal to listed for requests on */
+	unsigned int			bc_req_portal;
+	/* portal of where to send replies to */
+	unsigned int			bc_rep_portal;
+	/* maximum request size to be accepted for this service */
+	unsigned int			bc_req_max_size;
+	/* maximum reply size this service can ever send */
+	unsigned int			bc_rep_max_size;
+};
+
+struct ptlrpc_service_thr_conf {
+	/* threadname should be 8 characters or less - 6 will be added on */
+	char				*tc_thr_name;
+	/* min number of service threads to start */
+	unsigned int			tc_nthrs_min;
+	/* max number of service threads to start */
+	unsigned int			tc_nthrs_max;
+	/* user specified threads number, it will be validated due to
+	 * other members of this structure. */
+	unsigned int			tc_nthrs_user;
+	/* set NUMA node affinity for service threads */
+	unsigned int			tc_cpu_affinity;
+	/* Tags for lu_context associated with service thread */
+	__u32				tc_ctx_tags;
+};
 
 struct ptlrpc_service_conf {
-        int psc_nbufs;
-        int psc_bufsize;
-        int psc_max_req_size;
-        int psc_max_reply_size;
-        int psc_req_portal;
-        int psc_rep_portal;
-        int psc_watchdog_factor;
-        int psc_min_threads;
-        int psc_max_threads;
-        __u32 psc_ctx_tags;
+	/* service name */
+	char				*psc_name;
+	/* soft watchdog timeout multiplifier to print stuck service traces */
+	unsigned int			psc_watchdog_factor;
+	/* buffer information */
+	struct ptlrpc_service_buf_conf	psc_buf;
+	/* thread information */
+	struct ptlrpc_service_thr_conf	psc_thr;
+	/* function table */
+	struct ptlrpc_service_ops	psc_ops;
 };
 
 /* ptlrpc/service.c */
@@ -1566,22 +1619,9 @@ void ptlrpc_save_lock(struct ptlrpc_request *req,
 void ptlrpc_commit_replies(struct obd_export *exp);
 void ptlrpc_dispatch_difficult_reply(struct ptlrpc_reply_state *rs);
 void ptlrpc_schedule_difficult_reply(struct ptlrpc_reply_state *rs);
-struct ptlrpc_service *ptlrpc_init_svc_conf(struct ptlrpc_service_conf *c,
-                                            svc_handler_t h, char *name,
-                                            struct proc_dir_entry *proc_entry,
-                                            svc_req_printfn_t prntfn,
-                                            char *threadname);
-
-struct ptlrpc_service *ptlrpc_init_svc(int nbufs, int bufsize, int max_req_size,
-                                       int max_reply_size,
-                                       int req_portal, int rep_portal,
-                                       int watchdog_factor,
-                                       svc_handler_t, char *name,
-                                       cfs_proc_dir_entry_t *proc_entry,
-                                       svc_req_printfn_t,
-                                       int min_threads, int max_threads,
-                                       char *threadname, __u32 ctx_tags,
-                                       svc_hpreq_handler_t);
+struct ptlrpc_service *ptlrpc_register_service(
+				struct ptlrpc_service_conf *conf,
+				struct proc_dir_entry *proc_entry);
 void ptlrpc_stop_all_threads(struct ptlrpc_service *svc);
 
 int ptlrpc_start_threads(struct ptlrpc_service *svc);
@@ -1691,6 +1731,7 @@ int lustre_msg_is_v1(struct lustre_msg *msg);
 __u32 lustre_msg_get_magic(struct lustre_msg *msg);
 __u32 lustre_msg_get_timeout(struct lustre_msg *msg);
 __u32 lustre_msg_get_service_time(struct lustre_msg *msg);
+char *lustre_msg_get_jobid(struct lustre_msg *msg);
 __u32 lustre_msg_get_cksum(struct lustre_msg *msg);
 #if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2, 9, 0, 0)
 __u32 lustre_msg_calc_cksum(struct lustre_msg *msg, int compat18);
@@ -1711,6 +1752,7 @@ void ptlrpc_req_set_repsize(struct ptlrpc_request *req, int count, __u32 *sizes)
 void ptlrpc_request_set_replen(struct ptlrpc_request *req);
 void lustre_msg_set_timeout(struct lustre_msg *msg, __u32 timeout);
 void lustre_msg_set_service_time(struct lustre_msg *msg, __u32 service_time);
+void lustre_msg_set_jobid(struct lustre_msg *msg, char *jobid);
 void lustre_msg_set_cksum(struct lustre_msg *msg, __u32 cksum);
 
 static inline void

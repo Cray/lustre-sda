@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  *   Copyright (c) 2007 Cluster File Systems, Inc.
  *   Author: Nikita Danilov <nikita@clusterfs.com>
  *
@@ -560,7 +558,7 @@ static int llu_queue_pio(const struct lu_env *env, struct cl_io *io,
         if (rc == 0) {
                 enum cl_req_type iot;
                 iot = io->ci_type == CIT_READ ? CRT_READ : CRT_WRITE;
-                rc = cl_io_submit_sync(env, io, iot, queue, CRP_NORMAL, 0);
+		rc = cl_io_submit_sync(env, io, iot, queue, 0);
         }
 
         group->lig_rc = rc;

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -174,8 +172,9 @@ struct lu_device_operations {
  * For lu_object_conf flags
  */
 typedef enum {
-        /* Currently, only used for client-side object initialization. */
-        LOC_F_NEW = 0x1,
+	/* This is a new object to be allocated, or the file
+	 * corresponding to the object does not exists. */
+	LOC_F_NEW	= 0x00000001,
 } loc_flags_t;
 
 /**
@@ -999,7 +998,18 @@ enum lu_context_tag {
          * a client.
          */
         LCT_SESSION   = 1 << 4,
-
+        /**
+         * A per-request data on OSP device
+         */
+        LCT_OSP_THREAD = 1 << 5,
+        /**
+         * MGS device thread
+         */
+        LCT_MG_THREAD = 1 << 6,
+        /**
+         * Context for local operations
+         */
+        LCT_LOCAL = 1 << 7,
         /**
          * Set when at least one of keys, having values in this context has
          * non-NULL lu_context_key::lct_exit() method. This is used to

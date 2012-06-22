@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -36,9 +34,6 @@
  * Lustre is a trademark of Sun Microsystems, Inc.
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_RPC
 
 #ifndef __KERNEL__
@@ -115,10 +110,20 @@ __init int ptlrpc_init(void)
         if (rc)
                 GOTO(cleanup, rc);
 
+#ifdef __KERNEL__
+	cleanup_phase = 7;
+	rc = lut_mod_init();
+	if (rc)
+		GOTO(cleanup, rc);
+#endif
         RETURN(0);
 
 cleanup:
         switch(cleanup_phase) {
+#ifdef __KERNEL__
+	case 7:
+		llog_recov_fini();
+#endif
         case 6:
                 sptlrpc_fini();
         case 5:
@@ -141,6 +146,7 @@ cleanup:
 #ifdef __KERNEL__
 static void __exit ptlrpc_exit(void)
 {
+	lut_mod_exit();
         llog_recov_fini();
         sptlrpc_fini();
         ldlm_exit();
@@ -222,7 +228,7 @@ EXPORT_SYMBOL(ptlrpc_mark_interrupted);
 EXPORT_SYMBOL(ptlrpc_save_lock);
 EXPORT_SYMBOL(ptlrpc_schedule_difficult_reply);
 EXPORT_SYMBOL(ptlrpc_commit_replies);
-EXPORT_SYMBOL(ptlrpc_init_svc);
+EXPORT_SYMBOL(ptlrpc_register_service);
 EXPORT_SYMBOL(ptlrpc_stop_all_threads);
 EXPORT_SYMBOL(ptlrpc_start_threads);
 EXPORT_SYMBOL(ptlrpc_start_thread);
@@ -252,7 +258,7 @@ EXPORT_SYMBOL(lustre_swab_obd_ioobj);
 EXPORT_SYMBOL(lustre_swab_niobuf_remote);
 EXPORT_SYMBOL(lustre_swab_ost_body);
 EXPORT_SYMBOL(lustre_swab_ost_last_id);
-EXPORT_SYMBOL(lustre_swab_ost_lvb);
+EXPORT_SYMBOL(lustre_swab_lvb);
 EXPORT_SYMBOL(lustre_swab_mdt_body);
 EXPORT_SYMBOL(lustre_swab_mdt_ioepoch);
 EXPORT_SYMBOL(lustre_swab_obd_quotactl);

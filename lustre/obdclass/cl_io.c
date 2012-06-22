@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -41,9 +39,6 @@
  */
 
 #define DEBUG_SUBSYSTEM S_CLASS
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 
 #include <obd_class.h>
 #include <obd_support.h>
@@ -795,7 +790,7 @@ int cl_io_read_page(const struct lu_env *env, struct cl_io *io,
                 }
         }
         if (result == 0)
-                result = cl_io_submit_rw(env, io, CRT_READ, queue, CRP_NORMAL);
+		result = cl_io_submit_rw(env, io, CRT_READ, queue);
         /*
          * Unlock unsent pages in case of error.
          */
@@ -891,8 +886,7 @@ EXPORT_SYMBOL(cl_io_commit_write);
  * \see cl_io_operations::cio_submit()
  */
 int cl_io_submit_rw(const struct lu_env *env, struct cl_io *io,
-                    enum cl_req_type crt, struct cl_2queue *queue,
-                    enum cl_req_priority priority)
+		    enum cl_req_type crt, struct cl_2queue *queue)
 {
         const struct cl_io_slice *scan;
         int result = 0;
@@ -904,7 +898,7 @@ int cl_io_submit_rw(const struct lu_env *env, struct cl_io *io,
                 if (scan->cis_iop->req_op[crt].cio_submit == NULL)
                         continue;
                 result = scan->cis_iop->req_op[crt].cio_submit(env, scan, crt,
-                                                               queue, priority);
+							       queue);
                 if (result != 0)
                         break;
         }
@@ -922,13 +916,11 @@ EXPORT_SYMBOL(cl_io_submit_rw);
  */
 int cl_io_submit_sync(const struct lu_env *env, struct cl_io *io,
                       enum cl_req_type iot, struct cl_2queue *queue,
-                      enum cl_req_priority prio, long timeout)
+		      long timeout)
 {
         struct cl_sync_io *anchor = &cl_env_info(env)->clt_anchor;
         struct cl_page *pg;
         int rc;
-
-        LASSERT(prio == CRP_NORMAL || prio == CRP_CANCEL);
 
         cl_page_list_for_each(pg, &queue->c2_qin) {
                 LASSERT(pg->cp_sync_io == NULL);
@@ -936,7 +928,7 @@ int cl_io_submit_sync(const struct lu_env *env, struct cl_io *io,
         }
 
         cl_sync_io_init(anchor, queue->c2_qin.pl_nr);
-        rc = cl_io_submit_rw(env, io, iot, queue, prio);
+	rc = cl_io_submit_rw(env, io, iot, queue);
         if (rc == 0) {
                 /*
                  * If some pages weren't sent for any reason (e.g.,
@@ -1038,7 +1030,9 @@ int cl_io_loop(const struct lu_env *env, struct cl_io *io)
                 }
                 cl_io_iter_fini(env, io);
         } while (result == 0 && io->ci_continue);
-        RETURN(result < 0 ? result : 0);
+	if (result == 0)
+		result = io->ci_result;
+	RETURN(result < 0 ? result : 0);
 }
 EXPORT_SYMBOL(cl_io_loop);
 

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -811,8 +809,10 @@ void ll_io_init(struct cl_io *io, const struct file *file, int write)
         struct inode *inode = file->f_dentry->d_inode;
 
         io->u.ci_rw.crw_nonblock = file->f_flags & O_NONBLOCK;
-        if (write)
-                io->u.ci_wr.wr_append = !!(file->f_flags & O_APPEND);
+	if (write) {
+		io->u.ci_wr.wr_append = !!(file->f_flags & O_APPEND);
+		io->u.ci_wr.wr_sync = file->f_flags & O_SYNC || IS_SYNC(inode);
+	}
         io->ci_obj     = ll_i2info(inode)->lli_clob;
         io->ci_lockreq = CILR_MAYBE;
         if (ll_file_nolock(file)) {
@@ -1253,7 +1253,7 @@ static int ll_lov_recreate(struct inode *inode, obd_id id, obd_seq seq,
                                    OBD_MD_FLMTIME | OBD_MD_FLCTIME);
         obdo_set_parent_fid(oa, &ll_i2info(inode)->lli_fid);
         memcpy(lsm2, lsm, lsm_size);
-        rc = obd_create(exp, oa, &lsm2, &oti);
+        rc = obd_create(NULL, exp, oa, &lsm2, &oti);
 
         OBD_FREE_LARGE(lsm2, lsm_size);
         GOTO(out, rc);
@@ -1652,7 +1652,8 @@ int ll_do_fiemap(struct inode *inode, struct ll_user_fiemap *fiemap,
 
         memcpy(&fm_key.fiemap, fiemap, sizeof(*fiemap));
 
-        rc = obd_get_info(exp, sizeof(fm_key), &fm_key, &vallen, fiemap, lsm);
+        rc = obd_get_info(NULL, exp, sizeof(fm_key), &fm_key, &vallen,
+                          fiemap, lsm);
         if (rc)
                 CERROR("obd_get_info failed: rc = %d\n", rc);
 
@@ -1789,15 +1790,9 @@ static int ll_data_version(struct inode *inode, __u64 *data_version,
         RETURN(rc);
 }
 
-#ifdef HAVE_UNLOCKED_IOCTL
 long ll_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
         struct inode *inode = file->f_dentry->d_inode;
-#else
-int ll_file_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
-                  unsigned long arg)
-{
-#endif
         struct ll_file_data *fd = LUSTRE_FPRIVATE(file);
         int flags;
 
@@ -1989,6 +1984,59 @@ int ll_flush(struct file *file)
         return rc ? -EIO : 0;
 }
 
+/**
+ * Called to make sure a portion of file has been written out.
+ * if @local_only is not true, it will send OST_SYNC RPCs to ost.
+ *
+ * Return how many pages have been written.
+ */
+int cl_sync_file_range(struct inode *inode, loff_t start, loff_t end,
+		       enum cl_fsync_mode mode)
+{
+	struct cl_env_nest nest;
+	struct lu_env *env;
+	struct cl_io *io;
+	struct obd_capa *capa = NULL;
+	struct cl_fsync_io *fio;
+	int result;
+	ENTRY;
+
+	if (mode != CL_FSYNC_NONE && mode != CL_FSYNC_LOCAL &&
+	    mode != CL_FSYNC_DISCARD && mode != CL_FSYNC_ALL)
+		RETURN(-EINVAL);
+
+	env = cl_env_nested_get(&nest);
+	if (IS_ERR(env))
+		RETURN(PTR_ERR(env));
+
+	capa = ll_osscapa_get(inode, CAPA_OPC_OSS_WRITE);
+
+	io = ccc_env_thread_io(env);
+	io->ci_obj = cl_i2info(inode)->lli_clob;
+
+	/* initialize parameters for sync */
+	fio = &io->u.ci_fsync;
+	fio->fi_capa = capa;
+	fio->fi_start = start;
+	fio->fi_end = end;
+	fio->fi_fid = ll_inode2fid(inode);
+	fio->fi_mode = mode;
+	fio->fi_nr_written = 0;
+
+	if (cl_io_init(env, io, CIT_FSYNC, io->ci_obj) == 0)
+		result = cl_io_loop(env, io);
+	else
+		result = io->ci_result;
+	if (result == 0)
+		result = fio->fi_nr_written;
+	cl_io_fini(env, io);
+	cl_env_nested_put(&nest, env);
+
+	capa_put(capa);
+
+	RETURN(result);
+}
+
 #ifdef HAVE_FILE_FSYNC_4ARGS
 int ll_fsync(struct file *file, loff_t start, loff_t end, int data)
 #elif defined(HAVE_FILE_FSYNC_2ARGS)
@@ -2036,33 +2084,10 @@ int ll_fsync(struct file *file, struct dentry *dentry, int data)
                 ptlrpc_req_finished(req);
 
         if (data && lsm) {
-                struct obd_info *oinfo;
-
-                OBD_ALLOC_PTR(oinfo);
-                if (!oinfo)
-                        RETURN(rc ? rc : -ENOMEM);
-                OBDO_ALLOC(oinfo->oi_oa);
-                if (!oinfo->oi_oa) {
-                        OBD_FREE_PTR(oinfo);
-                        RETURN(rc ? rc : -ENOMEM);
-                }
-                oinfo->oi_oa->o_id = lsm->lsm_object_id;
-                oinfo->oi_oa->o_seq = lsm->lsm_object_seq;
-                oinfo->oi_oa->o_valid = OBD_MD_FLID | OBD_MD_FLGROUP;
-                obdo_from_inode(oinfo->oi_oa, inode,
-                                OBD_MD_FLTYPE | OBD_MD_FLATIME |
-                                OBD_MD_FLMTIME | OBD_MD_FLCTIME |
-                                OBD_MD_FLGROUP);
-                obdo_set_parent_fid(oinfo->oi_oa, &ll_i2info(inode)->lli_fid);
-                oinfo->oi_md = lsm;
-                oinfo->oi_capa = ll_osscapa_get(inode, CAPA_OPC_OSS_WRITE);
-                err = obd_sync_rqset(ll_i2sbi(inode)->ll_dt_exp, oinfo, 0,
-                                     OBD_OBJECT_EOF);
-                capa_put(oinfo->oi_capa);
-                if (!rc)
+		err = cl_sync_file_range(inode, 0, OBD_OBJECT_EOF,
+					 CL_FSYNC_ALL);
+		if (rc == 0 && err < 0)
                         rc = err;
-                OBDO_FREE(oinfo->oi_oa);
-                OBD_FREE_PTR(oinfo);
                 lli->lli_write_rc = rc < 0 ? rc : 0;
         }
 
@@ -2345,13 +2370,8 @@ int __ll_inode_revalidate_it(struct dentry *dentry, struct lookup_intent *it,
                    do_lookup() -> ll_revalidate_it(). We cannot use d_drop
                    here to preserve get_cwd functionality on 2.6.
                    Bug 10503 */
-                if (!dentry->d_inode->i_nlink) {
-                        cfs_spin_lock(&ll_lookup_lock);
-                        spin_lock(&dcache_lock);
-                        ll_drop_dentry(dentry);
-                        spin_unlock(&dcache_lock);
-                        cfs_spin_unlock(&ll_lookup_lock);
-                }
+		if (!dentry->d_inode->i_nlink)
+			d_lustre_invalidate(dentry);
 
                 ll_lookup_finish_locks(&oit, dentry);
         } else if (!ll_have_md_lock(dentry->d_inode, &ibits, LCK_MINMODE)) {
@@ -2512,7 +2532,7 @@ lustre_check_acl(struct inode *inode, int mask)
         int rc;
         ENTRY;
 
-#ifdef HAVE_GENERIC_PERMISSION_4ARGS
+#ifdef IPERM_FLAG_RCU
         if (flags & IPERM_FLAG_RCU)
                 return -ECHILD;
 #endif
@@ -2544,6 +2564,11 @@ int ll_inode_permission(struct inode *inode, int mask, struct nameidata *nd)
 {
         int rc = 0;
         ENTRY;
+
+#ifdef IPERM_FLAG_RCU
+	if (flags & IPERM_FLAG_RCU)
+		return -ECHILD;
+#endif
 
        /* as root inode are NOT getting validated in lookup operation,
         * need to do it before permission check. */
@@ -2587,11 +2612,7 @@ struct file_operations ll_file_operations = {
         .READ_METHOD    = READ_FUNCTION,
         .write          = ll_file_write,
         .WRITE_METHOD   = WRITE_FUNCTION,
-#ifdef HAVE_UNLOCKED_IOCTL
         .unlocked_ioctl = ll_file_ioctl,
-#else
-        .ioctl          = ll_file_ioctl,
-#endif
         .open           = ll_file_open,
         .release        = ll_file_release,
         .mmap           = ll_file_mmap,
@@ -2611,11 +2632,7 @@ struct file_operations ll_file_operations_flock = {
         .READ_METHOD    = READ_FUNCTION,
         .write          = ll_file_write,
         .WRITE_METHOD   = WRITE_FUNCTION,
-#ifdef HAVE_UNLOCKED_IOCTL
         .unlocked_ioctl = ll_file_ioctl,
-#else
-        .ioctl          = ll_file_ioctl,
-#endif
         .open           = ll_file_open,
         .release        = ll_file_release,
         .mmap           = ll_file_mmap,
@@ -2638,11 +2655,7 @@ struct file_operations ll_file_operations_noflock = {
         .READ_METHOD    = READ_FUNCTION,
         .write          = ll_file_write,
         .WRITE_METHOD   = WRITE_FUNCTION,
-#ifdef HAVE_UNLOCKED_IOCTL
         .unlocked_ioctl = ll_file_ioctl,
-#else
-        .ioctl          = ll_file_ioctl,
-#endif
         .open           = ll_file_open,
         .release        = ll_file_release,
         .mmap           = ll_file_mmap,

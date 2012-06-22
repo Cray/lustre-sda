@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -159,9 +157,6 @@ do {cfs_mutex_lock_nested(&(inode)->i_mutex, I_MUTEX_PARENT); } while(0)
 #define set_page_private(page, v) ((page)->private = (v))
 #endif
 
-#define lock_dentry(___dentry)          cfs_spin_lock(&(___dentry)->d_lock)
-#define unlock_dentry(___dentry)        cfs_spin_unlock(&(___dentry)->d_lock)
-
 #define ll_kernel_locked()      kernel_locked()
 
 /*
@@ -260,11 +255,6 @@ static inline int cfs_cleanup_group_info(void)
 
 #include <linux/proc_fs.h>
 
-#if !defined(HAVE_D_REHASH_COND) && defined(HAVE___D_REHASH)
-#define d_rehash_cond(dentry, lock) __d_rehash(dentry, lock)
-extern void __d_rehash(struct dentry *dentry, int lock);
-#endif
-
 #define CheckWriteback(page, cmd) \
         ((!PageWriteback(page) && (cmd & OBD_BRW_READ)) || \
          (PageWriteback(page) && (cmd & OBD_BRW_WRITE)))
@@ -309,11 +299,6 @@ static inline int mapping_has_pages(struct address_space *mapping)
                        vfs_symlink(dir, dentry, path)
 #endif
 
-#define ll_set_dflags(dentry, flags) do { \
-                cfs_spin_lock(&dentry->d_lock); \
-                dentry->d_flags |= flags; \
-                cfs_spin_unlock(&dentry->d_lock); \
-        } while(0)
 #endif
 
 #ifndef container_of
@@ -431,8 +416,6 @@ static inline struct dentry *d_obtain_alias(struct inode *inode)
 #define ll_crypto_hash_init(desc)               crypto_hash_init(desc)
 #define ll_crypto_hash_update(desc, sl, bytes)  crypto_hash_update(desc, sl, bytes)
 #define ll_crypto_hash_final(desc, out)         crypto_hash_final(desc, out)
-#define ll_crypto_alloc_blkcipher(name, type, mask) \
-                crypto_alloc_blkcipher(name ,type, mask)
 #define ll_crypto_blkcipher_setkey(tfm, key, keylen) \
                 crypto_blkcipher_setkey(tfm, key, keylen)
 #define ll_crypto_blkcipher_set_iv(tfm, src, len) \
@@ -447,6 +430,15 @@ static inline struct dentry *d_obtain_alias(struct inode *inode)
                 crypto_blkcipher_encrypt_iv(desc, dst, src, bytes)
 #define ll_crypto_blkcipher_decrypt_iv(desc, dst, src, bytes) \
                 crypto_blkcipher_decrypt_iv(desc, dst, src, bytes)
+
+static inline
+struct ll_crypto_cipher *ll_crypto_alloc_blkcipher(const char *name,
+						   u32 type, u32 mask)
+{
+	struct ll_crypto_cipher *rtn = crypto_alloc_blkcipher(name, type, mask);
+
+	return (rtn == NULL ? ERR_PTR(-ENOMEM) : rtn);
+}
 
 static inline int ll_crypto_hmac(struct ll_crypto_hash *tfm,
                                  u8 *key, unsigned int *keylen,
@@ -517,25 +509,27 @@ static inline
 struct ll_crypto_cipher *ll_crypto_alloc_blkcipher(const char * algname,
                                                    u32 type, u32 mask)
 {
-        char        buf[CRYPTO_MAX_ALG_NAME + 1];
-        const char *pan = algname;
-        u32         flag = 0;
+	struct ll_crypto_cipher *rtn;
+	char        		 buf[CRYPTO_MAX_ALG_NAME + 1];
+	const char 		*pan = algname;
+	u32         		 flag = 0;
 
-        if (strncmp("cbc(", algname, 4) == 0)
-                flag |= CRYPTO_TFM_MODE_CBC;
-        else if (strncmp("ecb(", algname, 4) == 0)
-                flag |= CRYPTO_TFM_MODE_ECB;
-        if (flag) {
-                char *vp = strnchr(algname, CRYPTO_MAX_ALG_NAME, ')');
-                if (vp) {
-                        memcpy(buf, algname + 4, vp - algname - 4);
-                        buf[vp - algname - 4] = '\0';
-                        pan = buf;
-                } else {
-                        flag = 0;
-                }
-        }
-        return crypto_alloc_tfm(pan, flag);
+	if (strncmp("cbc(", algname, 4) == 0)
+		flag |= CRYPTO_TFM_MODE_CBC;
+	else if (strncmp("ecb(", algname, 4) == 0)
+		flag |= CRYPTO_TFM_MODE_ECB;
+	if (flag) {
+		char *vp = strnchr(algname, CRYPTO_MAX_ALG_NAME, ')');
+		if (vp) {
+			memcpy(buf, algname + 4, vp - algname - 4);
+			buf[vp - algname - 4] = '\0';
+			pan = buf;
+		} else {
+			flag = 0;
+		}
+	}
+	rtn = crypto_alloc_tfm(pan, flag);
+	return (rtn == NULL ?  ERR_PTR(-ENOMEM) : rtn);
 }
 
 static inline

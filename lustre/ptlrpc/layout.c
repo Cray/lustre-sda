@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -50,9 +48,6 @@
 
 #if !defined(__REQ_LAYOUT_USER__)
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_RPC
 
 #ifdef __KERNEL__
@@ -880,7 +875,7 @@ struct req_msg_field RMF_LDLM_INTENT =
 EXPORT_SYMBOL(RMF_LDLM_INTENT);
 
 struct req_msg_field RMF_DLM_LVB =
-        DEFINE_MSGF("dlm_lvb", 0, sizeof(struct ost_lvb), lustre_swab_ost_lvb,
+        DEFINE_MSGF("dlm_lvb", 0, sizeof(union ldlm_wire_lvb), lustre_swab_lvb,
         NULL);
 EXPORT_SYMBOL(RMF_DLM_LVB);
 

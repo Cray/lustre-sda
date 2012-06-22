@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -154,6 +152,22 @@ static inline int ll_rpc_recoverable_error(int rc)
 {
         return (rc == -ENOTCONN || rc == -ENODEV);
 }
+
+#ifdef HAVE_SERVER_SUPPORT
+/* target.c */
+int lut_mod_init(void);
+void lut_mod_exit(void);
+#else
+static inline int lut_mod_init(void)
+{
+	return 0;
+}
+
+static inline void lut_mod_exit(void)
+{
+	return;
+}
+#endif
 
 static inline void ptlrpc_reqset_put(struct ptlrpc_request_set *set)
 {

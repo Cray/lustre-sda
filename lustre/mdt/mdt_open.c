@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -42,9 +40,6 @@
  * Author: Huang Hua <huanghua@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_MDS
 
 #include <lustre_acl.h>
@@ -55,6 +50,11 @@
 static void mdt_mfd_get(void *mfdp)
 {
 }
+
+static struct portals_handle_ops mfd_handle_ops = {
+	.hop_addref = mdt_mfd_get,
+	.hop_free   = NULL,
+};
 
 /* Create a new mdt_file_data struct, initialize it,
  * and insert it to global hash table */
@@ -67,7 +67,7 @@ struct mdt_file_data *mdt_mfd_new(void)
         if (mfd != NULL) {
                 CFS_INIT_LIST_HEAD(&mfd->mfd_handle.h_link);
                 CFS_INIT_LIST_HEAD(&mfd->mfd_list);
-                class_handle_hash(&mfd->mfd_handle, mdt_mfd_get);
+		class_handle_hash(&mfd->mfd_handle, &mfd_handle_ops);
         }
         RETURN(mfd);
 }
@@ -1242,7 +1242,7 @@ int mdt_reint_open(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
         OBD_FAIL_TIMEOUT_ORSET(OBD_FAIL_MDS_PAUSE_OPEN, OBD_FAIL_ONCE,
                                (obd_timeout + 1) / 4);
 
-        mdt_counter_incr(req->rq_export, LPROC_MDT_OPEN);
+	mdt_counter_incr(req, LPROC_MDT_OPEN);
         repbody = req_capsule_server_get(info->mti_pill, &RMF_MDT_BODY);
 
         ma->ma_lmm = req_capsule_server_get(info->mti_pill, &RMF_MDT_MD);
@@ -1356,15 +1356,15 @@ int mdt_reint_open(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
                 *child_fid = *info->mti_rr.rr_fid2;
                 LASSERTF(fid_is_sane(child_fid), "fid="DFID"\n",
                          PFID(child_fid));
-        } else {
-                /*
-                 * Check for O_EXCL is moved to the mdt_finish_open(), we need to
-                 * return FID back in that case.
-                 */
-                mdt_set_disposition(info, ldlm_rep, DISP_LOOKUP_POS);
-        }
-
-        child = mdt_object_find(info->mti_env, mdt, child_fid);
+		child = mdt_object_new(info->mti_env, mdt, child_fid);
+	} else {
+		/*
+		 * Check for O_EXCL is moved to the mdt_finish_open(), we need to
+		 * return FID back in that case.
+		 */
+		mdt_set_disposition(info, ldlm_rep, DISP_LOOKUP_POS);
+		child = mdt_object_find(info->mti_env, mdt, child_fid);
+	}
         if (IS_ERR(child))
                 GOTO(out_parent, result = PTR_ERR(child));
 
@@ -1607,7 +1607,7 @@ int mdt_close(struct mdt_thread_info *info)
         int rc, ret = 0;
         ENTRY;
 
-        mdt_counter_incr(req->rq_export, LPROC_MDT_CLOSE);
+	mdt_counter_incr(req, LPROC_MDT_CLOSE);
         /* Close may come with the Size-on-MDS update. Unpack it. */
         rc = mdt_close_unpack(info);
         if (rc)

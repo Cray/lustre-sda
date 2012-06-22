@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -40,9 +38,6 @@
  * Author: Nathan Rutman <nathan@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_MGC
 #define D_MGC D_CONFIG /*|D_WARNING*/
 
@@ -264,7 +259,7 @@ static struct config_llog_data *config_recover_log_add(struct obd_device *obd,
         struct config_llog_data *cld;
         char logname[32];
 
-        if ((lsi->lsi_flags & LSI_SERVER) && !IS_MDT(lsi->lsi_ldd))
+        if ((lsi->lsi_flags & LSI_SERVER) && IS_OST(lsi->lsi_ldd))
                 return NULL;
 
         /* we have to use different llog for clients and mdts for cmd
@@ -1005,9 +1000,9 @@ static int mgc_target_register(struct obd_export *exp,
         RETURN(rc);
 }
 
-int mgc_set_info_async(struct obd_export *exp, obd_count keylen,
-                       void *key, obd_count vallen, void *val,
-                       struct ptlrpc_request_set *set)
+int mgc_set_info_async(const struct lu_env *env, struct obd_export *exp,
+                       obd_count keylen, void *key, obd_count vallen,
+                       void *val, struct ptlrpc_request_set *set)
 {
         int rc = -EINVAL;
         ENTRY;
@@ -1116,8 +1111,9 @@ int mgc_set_info_async(struct obd_export *exp, obd_count keylen,
         RETURN(rc);
 }
 
-static int mgc_get_info(struct obd_export *exp, __u32 keylen, void *key,
-                        __u32 *vallen, void *val, struct lov_stripe_md *unused)
+static int mgc_get_info(const struct lu_env *env, struct obd_export *exp,
+                        __u32 keylen, void *key, __u32 *vallen, void *val,
+                        struct lov_stripe_md *unused)
 {
         int rc = -EINVAL;
 
@@ -1235,7 +1231,7 @@ enum {
 static int mgc_apply_recover_logs(struct obd_device *mgc,
                                   struct config_llog_data *cld,
                                   __u64 max_version,
-                                  void *data, int datalen)
+                                  void *data, int datalen, int need_swab)
 {
         struct config_llog_instance *cfg = &cld->cld_cfg;
         struct lustre_sb_info       *lsi = s2lsi(cfg->cfg_sb);
@@ -1296,7 +1292,8 @@ static int mgc_apply_recover_logs(struct obd_device *mgc,
                 if (datalen < entry_len) /* must have entry_len at least */
                         break;
 
-                lustre_swab_mgs_nidtbl_entry(entry);
+                if (need_swab)
+                        lustre_swab_mgs_nidtbl_entry(entry);
                 LASSERT(entry->mne_length <= CFS_PAGE_SIZE);
                 if (entry->mne_length < entry_len)
                         break;
@@ -1513,7 +1510,8 @@ again:
 
                 ptr = cfs_kmap(pages[i]);
                 rc2 = mgc_apply_recover_logs(obd, cld, res->mcr_offset, ptr,
-                                             min_t(int, ealen, CFS_PAGE_SIZE));
+                                             min_t(int, ealen, CFS_PAGE_SIZE),
+                                             ptlrpc_rep_need_swab(req));
                 cfs_kunmap(pages[i]);
                 if (rc2 < 0) {
                         CWARN("Process recover log %s error %d\n",
