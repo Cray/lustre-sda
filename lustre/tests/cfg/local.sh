@@ -110,5 +110,8 @@ FAIL_ON_ERROR=${FAIL_ON_ERROR:-true}
 
 MPIRUN=$(which mpirun 2>/dev/null) || true
 MPI_USER=${MPI_USER:-mpiuser}
-SHARED_DIR_LOGS=${SHARED_DIR_LOGS:-""}
 
+# This is used by a small number of tests to share state between the client
+# running the tests, or in some cases between the servers (e.g. lfsck.sh).
+# It needs to be a non-lustre filesystem that is available on all the nodes.
+SHARED_DIRECTORY=${SHARED_DIRECTORY:-""}    # bug 17839 comment 65

@@ -2203,9 +2203,10 @@ kiblnd_dev_setup(kib_dev_t *ibdev)
         }
 
 out:
-        CDEBUG(D_CONSOLE, "Register global MR array, MR size: "
-                          LPX64", array size: %d\n",
-                          ibdev->ibd_mr_size, ibdev->ibd_nmrs);
+        if (ibdev->ibd_mr_size != ~0ULL || ibdev->ibd_nmrs != 1)
+                LCONSOLE_INFO("Register global MR array, MR size: "
+                              LPX64", array size: %d\n",
+                              ibdev->ibd_mr_size, ibdev->ibd_nmrs);
 
         list_add_tail(&ibdev->ibd_list,
                       &kiblnd_data.kib_devs);
@@ -2513,7 +2514,8 @@ kiblnd_startup (lnet_ni_t *ni)
                 ibdev->ibd_ifip = ip;
                 strcpy(&ibdev->ibd_ifname[0], ifname);
 
-                id = rdma_create_id(kiblnd_cm_callback, ibdev, RDMA_PS_TCP);
+                id = kiblnd_rdma_create_id(kiblnd_cm_callback, ibdev,
+                                           RDMA_PS_TCP, IB_QPT_RC);
                 if (IS_ERR(id)) {
                         CERROR("Can't create listen ID: %ld\n", PTR_ERR(id));
                         goto failed;

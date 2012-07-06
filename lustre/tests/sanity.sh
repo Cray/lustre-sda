@@ -9,16 +9,16 @@
 set -e
 
 ONLY=${ONLY:-"$*"}
-# bug number for skipped test:  13297 2108 9789 3637 9789 3561 12622 15528/2330 5188 10764 16410
-ALWAYS_EXCEPT=${ALWAYS_EXCEPT:-"27u  42a  42b  42c  42d  45   51d   62         68   75 $SANITY_EXCEPT"}
+# bug number for skipped test:  13297 2108 9789 3637 9789 3561 12622 15528/2330 5188 10764 lu-983
+ALWAYS_EXCEPT=${ALWAYS_EXCEPT:-"27u   42a  42b  42c  42d  45   51d   62         68   75    101a $SANITY_EXCEPT"}
 # UPDATE THE COMMENT ABOVE WITH BUG NUMBERS WHEN CHANGING ALWAYS_EXCEPT!
 
 # Tests that fail on uml, maybe elsewhere, FIXME
 CPU=`awk '/model/ {print $4}' /proc/cpuinfo`
 #                                    buffer i/o errs             sock spc runas
-[ "$CPU" = "UML" ] && EXCEPT="$EXCEPT 27m 27n 27o 27p 27q 27r 31d 54a  64b 99a 99b 99c 99d 99e 99f 101"
+[ "$CPU" = "UML" ] && EXCEPT="$EXCEPT 27m 27n 27o 27p 27q 27r 31d 54a  64b 99a 99b 99c 99d 99e 99f"
 
-case `uname -r` in
+case `uname -r` in							      #bug number 16410
 2.4*) FSTYPE=${FSTYPE:-ext3};    ALWAYS_EXCEPT="$ALWAYS_EXCEPT 76"
 	[ "$CPU" = "UML" ] && ALWAYS_EXCEPT="$ALWAYS_EXCEPT 105a";;
 2.6*) FSTYPE=${FSTYPE:-ldiskfs}; ALWAYS_EXCEPT="$ALWAYS_EXCEPT " ;;
@@ -66,7 +66,7 @@ LUSTRE=${LUSTRE:-$(cd $(dirname $0)/..; echo $PWD)}
 init_test_env $@
 . ${CONFIG:=$LUSTRE/tests/cfg/$NAME.sh}
 init_logging
-[ "$SLOW" = "no" ] && EXCEPT_SLOW="24o 27m 36f 36g 36h 51b 51c 60c 63 64b 68 71 73 77f 78 101 103 115 120g 124b"
+[ "$SLOW" = "no" ] && EXCEPT_SLOW="24o 27m 36f 36g 36h 51b 51c 60c 63 64b 68 71 73 77f 78 103 115 120g 124b"
 
 FAIL_ON_ERROR=${FAIL_ON_ERROR:-false}
 
@@ -986,8 +986,7 @@ exhaust_precreations() {
 	local FAILLOC=$2
 	local FAILIDX=${3:-$OSTIDX}
 
-	local OST=$(lfs osts | grep ${OSTIDX}": " | \
-		awk '{print $2}' | sed -e 's/_UUID$//')
+	local OST=$(ostname_from_index $OSTIDX)
 
 	# on the mdt's osc
 	local mdtosc=$(get_mdtosc_proc_path $OST)
@@ -1073,6 +1072,7 @@ test_27q() {
 	reset_enospc
 	rm -f $DIR/$tdir/$tfile
 
+	mkdir -p $DIR/$tdir
 	$MCREATE $DIR/$tdir/$tfile || error "mcreate $DIR/$tdir/$tfile failed"
 	$TRUNCATE $DIR/$tdir/$tfile 80000000 ||error "truncate $DIR/$tdir/$tfile failed"
 	$CHECKSTAT -s 80000000 $DIR/$tdir/$tfile || error "checkstat failed"
@@ -1142,9 +1142,9 @@ test_27u() { # bug 4900
 run_test 27u "skip object creation on OSC w/o objects =========="
 
 test_27v() { # bug 4900
-	[ "$OSTCOUNT" -lt "2" ] && skip_env "too few OSTs" && return
-	remote_mds_nodsh && skip "remote MDS with nodsh" && return
-	remote_ost_nodsh && skip "remote OST with nodsh" && return
+        [ "$OSTCOUNT" -lt "2" ] && skip_env "too few OSTs" && return
+        remote_mds_nodsh && skip "remote MDS with nodsh" && return
+        remote_ost_nodsh && skip "remote OST with nodsh" && return
 
         exhaust_all_precreations 0x215
         reset_enospc
@@ -1155,7 +1155,7 @@ test_27v() { # bug 4900
         touch $DIR/$tdir/$tfile
         #define OBD_FAIL_TGT_DELAY_PRECREATE     0x705
         # all except ost1
-        for (( i=0; i < OSTCOUNT; i++ )) ; do
+        for (( i=1; i < OSTCOUNT; i++ )); do
                 do_facet ost$i lctl set_param fail_loc=0x705
         done
         local START=`date +%s`
@@ -1163,9 +1163,10 @@ test_27v() { # bug 4900
 
         local FINISH=`date +%s`
         local TIMEOUT=`lctl get_param -n timeout`
-        [ $((FINISH - START)) -ge $((TIMEOUT / 2)) ] && \
+        local PROCESS=$((FINISH - START))
+        [ $PROCESS -ge $((TIMEOUT / 2)) ] && \
                error "$FINISH - $START >= $TIMEOUT / 2"
-
+        sleep $((TIMEOUT / 2 - PROCESS))
         reset_enospc
 }
 run_test 27v "skip object creation on slow OST ================="
@@ -1195,7 +1196,7 @@ test_27x() {
 	[ "$OSTCOUNT" -lt "2" ] && skip_env "$OSTCOUNT < 2 OSTs" && return
 	OFFSET=$(($OSTCOUNT - 1))
 	OSTIDX=0
-	local OST=$(lfs osts | awk '/'${OSTIDX}': / { print $2 }' | sed -e 's/_UUID$//')
+	local OST=$(ostname_from_index $OSTIDX)
 
 	mkdir -p $DIR/$tdir
 	$SETSTRIPE $DIR/$tdir -c 1	# 1 stripe per file
@@ -1226,14 +1227,14 @@ test_27y() {
                 } fi
         done
 
-        OSTIDX=$(lfs osts | grep ${OST} | awk '{print $1}' | sed -e 's/://')
+        OSTIDX=$(index_from_ostuuid $OST)
         mkdir -p $DIR/$tdir
         $SETSTRIPE $DIR/$tdir -c 1      # 1 stripe / file
 
-        do_facet ost$OSTIDX lctl set_param -n obdfilter.$OST.degraded 1
+        do_facet ost$((OSTIDX+1)) lctl set_param -n obdfilter.$OST.degraded 1
         sleep_maxage
         createmany -o $DIR/$tdir/$tfile $OSTCOUNT
-        do_facet ost$OSTIDX lctl set_param -n obdfilter.$OST.degraded 0
+        do_facet ost$((OSTIDX+1)) lctl set_param -n obdfilter.$OST.degraded 0
 
         for i in `seq 0 $OFFSET`; do
                 [ `$GETSTRIPE $DIR/$tdir/$tfile$i | grep -A 10 obdidx | awk '{print $1}'| grep -w "$OSTIDX"` ] || \
@@ -2659,7 +2660,7 @@ test_56a() {	# was test_56
         [  "$OSTCOUNT" -lt 2 ] && \
                 skip_env "skipping other lfs getstripe --obd test" && return
         OSTIDX=1
-        OBDUUID=$(lfs osts | grep ${OSTIDX}": " | awk '{print $2}')
+        OBDUUID=$(ostuuid_from_index $OSTIDX)
         FILENUM=`$GETSTRIPE -ir $DIR/d56 | grep -x $OSTIDX | wc -l`
         FOUND=`$GETSTRIPE -r --obd $OBDUUID $DIR/d56 | grep obdidx | wc -l`
         [ $FOUND -eq $FILENUM ] || \
@@ -3905,6 +3906,37 @@ test_80() { # bug 10718
 }
 run_test 80 "Page eviction is equally fast at high offsets too  ===="
 
+test_81a() { # LU-456
+        # define OBD_FAIL_OST_MAPBLK_ENOSPC    0x228
+        # MUST OR with the OBD_FAIL_ONCE (0x80000000)
+        do_facet ost0 lctl set_param fail_loc=0x80000228
+
+        # write should trigger a retry and success
+        $SETSTRIPE -i 0 -c 1 $DIR/$tfile
+        multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
+        RC=$?
+        if [ $RC -ne 0 ] ; then
+                error "write should success, but failed for $RC"
+        fi
+}
+run_test 81a "OST should retry write when get -ENOSPC ==============="
+
+test_81b() { # LU-456
+        # define OBD_FAIL_OST_MAPBLK_ENOSPC    0x228
+        # Don't OR with the OBD_FAIL_ONCE (0x80000000)
+        do_facet ost0 lctl set_param fail_loc=0x228
+
+        # write should retry several times and return -ENOSPC finally
+        $SETSTRIPE -i 0 -c 1 $DIR/$tfile
+        multiop $DIR/$tfile oO_CREAT:O_RDWR:O_SYNC:w4096c
+        RC=$?
+        ENOSPC=28
+        if [ $RC -ne $ENOSPC ] ; then
+                error "write should fail for -ENOSPC, but succeed."
+        fi
+}
+run_test 81b "OST should return -ENOSPC when retry still fails ======="
+
 test_99a() {
 	[ -z "$(which cvs 2>/dev/null)" ] && skip_env "could not find cvs" && return
 	mkdir -p $DIR/d99cvsroot || error "mkdir $DIR/d99cvsroot failed"
@@ -4004,31 +4036,31 @@ function get_named_value()
         line=$REPLY
         case $line in
         $tag*)
-            echo $line | sed "s/^$tag//"
+            echo $line | sed "s/^$tag[ ]*//"
             break
             ;;
         esac
     done
 }
 
-export CACHE_MAX=`lctl get_param -n llite/*/max_cached_mb | head -n 1`
-cleanup_101() {
-	lctl set_param -n llite.*.max_cached_mb $CACHE_MAX
+export CACHE_MAX=`$LCTL get_param -n llite/*/max_cached_mb | head -n 1`
+cleanup_101a() {
+	$LCTL set_param -n llite.*.max_cached_mb $CACHE_MAX
 	trap 0
 }
 
-test_101() {
+test_101a() {
 	local s
 	local discard
 	local nreads=10000
 	[ "$CPU" = "UML" ] && nreads=1000
 	local cache_limit=32
 
-	lctl set_param -n osc.*.rpc_stats 0
-	trap cleanup_101 EXIT
+	$LCTL set_param -n osc.*.rpc_stats 0
+	trap cleanup_101a EXIT
 
-	lctl set_param -n llite.*.read_ahead_stats 0
-	lctl set_param -n llite.*.max_cached_mb $cache_limit
+	$LCTL set_param -n llite.*.read_ahead_stats 0
+	$LCTL set_param -n llite.*.max_cached_mb $cache_limit
 
 	#
 	# randomly read 10000 of 64K chunks from file 3x 32MB in size
@@ -4036,21 +4068,22 @@ test_101() {
 	echo "nreads: $nreads file size: $((cache_limit * 3))MB"
 	$READS -f $DIR/$tfile -s$((cache_limit * 3192 * 1024)) -b65536 -C -n$nreads -t 180
 
-	discard=0
-        for s in `lctl get_param -n llite.*.read_ahead_stats | \
+	local discard=0
+	for s in `$LCTL get_param -n llite.*.read_ahead_stats | \
 		get_named_value 'read but discarded' | cut -d" " -f1`; do
-			discard=$(($discard + $s))
+		discard=$(($discard + $s))
 	done
-	cleanup_101
+
+	cleanup_101a
 
 	if [ $(($discard * 10)) -gt $nreads ] ;then
-		lctl get_param osc.*.rpc_stats
-		lctl get_param llite.*.read_ahead_stats
+		$LCTL get_param osc.*.rpc_stats
+		$LCTL get_param llite.*.read_ahead_stats
 		error "too many ($discard) discarded pages"
 	fi
 	rm -f $DIR/$tfile || true
 }
-run_test 101 "check read-ahead for random reads ================"
+run_test 101a "check read-ahead for random reads ================"
 
 setup_test101bc() {
 	mkdir -p $DIR/$tdir
@@ -4058,6 +4091,8 @@ setup_test101bc() {
 	STRIPE_COUNT=$OSTCOUNT
 	STRIPE_OFFSET=0
 
+	$LCTL set_param -n obdfilter.*.read_cache_enable=0
+	$LCTL set_param -n obdfilter.*.writethrough_cache_enable=0
 	trap cleanup_test101bc EXIT
 	# prepare the read-ahead file
 	$SETSTRIPE $DIR/$tfile -s $STRIPE_SIZE -i $STRIPE_OFFSET -c $OSTCOUNT
@@ -4069,6 +4104,8 @@ cleanup_test101bc() {
 	trap 0
 	rm -rf $DIR/$tdir
 	rm -f $DIR/$tfile
+	$LCTL set_param -n obdfilter.*.read_cache_enable=1
+	$LCTL set_param -n obdfilter.*.writethrough_cache_enable=1
 }
 
 calc_total() {
@@ -4083,12 +4120,13 @@ ra_check_101b() {
 	local FILE_LENGTH=$((64*100))
 	local discard_limit=$((((STRIDE_LENGTH - 1)*3/(STRIDE_LENGTH*OSTCOUNT))* \
 			     (STRIDE_LENGTH*OSTCOUNT - STRIDE_LENGTH)))
+
 	DISCARD=`$LCTL get_param -n llite.*.read_ahead_stats | \
 			get_named_value 'read but discarded' | \
 			cut -d" " -f1 | calc_total`
 
 	if [ $DISCARD -gt $discard_limit ]; then
-		lctl get_param llite.*.read_ahead_stats
+		$LCTL get_param llite.*.read_ahead_stats
 		error "Too many ($DISCARD) discarded pages with size $READ_SIZE"
 	else
 		echo "Read-ahead success for size ${READ_SIZE}"
@@ -4121,57 +4159,44 @@ test_101b() {
 run_test 101b "check stride-io mode read-ahead ================="
 
 test_101c() {
-        local STRIPE_SIZE=1048576
-        local FILE_LENGTH=$((STRIPE_SIZE*100))
-        local nreads=10000
+    local STRIPE_SIZE=1048576
+    local FILE_LENGTH=$((STRIPE_SIZE*100))
+    local nreads=10000
 
-        setup_test101bc
+    setup_test101bc
+    cancel_lru_locks osc
+    $LCTL set_param osc.*.rpc_stats 0
+    $READS -f $DIR/$tfile -s$FILE_LENGTH -b65536 -n$nreads -t 180
+    for OSC in `$LCTL  get_param -N osc.*`; do
+        if [ "$OSC" == "osc.num_refs" ]; then
+            continue
+        fi
 
-        cancel_lru_locks osc
-        $LCTL set_param osc.*.rpc_stats 0
-        $READS -f $DIR/$tfile -s$FILE_LENGTH -b65536 -n$nreads -t 180
-        for OSC in `$LCTL  get_param -N osc.*`
-        do
-                if [ "$OSC" == "osc.num_refs" ]; then
-                        continue
-                fi
-                lines=`$LCTL get_param -n ${OSC}.rpc_stats | wc | awk '{print $1}'`
-                if [ $lines -le 20 ]; then
-                        continue
-                fi
+        lines=`$LCTL get_param -n ${OSC}.rpc_stats | wc | awk '{print $1}'`
+        if [ $lines -le 20 ]; then
+		    continue
+        fi
 
-                rpc4k=$($LCTL get_param -n ${OSC}.rpc_stats | awk '$1 == "1:" { print $2; exit; }')
-                rpc8k=$($LCTL get_param -n ${OSC}.rpc_stats | awk '$1 == "2:" { print $2; exit; }')
-                rpc16k=$($LCTL get_param -n ${OSC}.rpc_stats | awk '$1 == "4:" { print $2; exit; }')
-                rpc32k=$($LCTL get_param -n ${OSC}.rpc_stats | awk '$1 == "8:" { print $2; exit; }')
+        rpc4k=$($LCTL get_param -n ${OSC}.rpc_stats | awk '$1 == "1:" { print $2; exit; }')
+        rpc8k=$($LCTL get_param -n ${OSC}.rpc_stats | awk '$1 == "2:" { print $2; exit; }')
+        rpc16k=$($LCTL get_param -n ${OSC}.rpc_stats | awk '$1 == "4:" { print $2; exit; }')
+        rpc32k=$($LCTL get_param -n ${OSC}.rpc_stats | awk '$1 == "8:" { print $2; exit; }')
 
-                [ $rpc4k != 0 ]  && error "Small 4k read IO ${rpc4k}!"
-                [ $rpc8k != 0 ]  && error "Small 8k read IO ${rpc8k}!"
-                [ $rpc16k != 0 ] && error "Small 16k read IO ${rpc16k}!"
-                [ $rpc32k != 0 ] && error "Small 32k read IO ${rpc32k}!"
+        [ $rpc4k != 0 ]  && error "Small 4k read IO ${rpc4k}!"
+        [ $rpc8k != 0 ]  && error "Small 8k read IO ${rpc8k}!"
+        [ $rpc16k != 0 ] && error "Small 16k read IO ${rpc16k}!"
+        [ $rpc32k != 0 ] && error "Small 32k read IO ${rpc32k}!"
 
-                echo "Small rpc check passed!"
-                rpc64k=$($LCTL get_param -n ${OSC}.rpc_stats | awk '$1 == "16:" { print $2; exit; }')
-                rpc128k=$($LCTL get_param -n ${OSC}.rpc_stats | awk '$1 == "32:" { print $2; exit; }')
-                rpc256k=$($LCTL get_param -n ${OSC}.rpc_stats | awk '$1 == "64:" { print $2; exit; }')
-                rpc512k=$($LCTL get_param -n ${OSC}.rpc_stats | awk '$1 == "128:" { print $2; exit; }')
-                rpc1024k=$($LCTL get_param -n ${OSC}.rpc_stats | awk '$1 == "256:" { print $2; exit; }')
-
-                [ $rpc64k == 0 ]   && error "No 64k readahead IO ${rpc64k}"
-                [ $rpc128k == 0 ]  && error "No 128k readahead IO ${rpc128k}"
-                [ $rpc256k == 0 ]  && error "No 256k readahead IO ${rpc256k}"
-                [ $rpc512k == 0 ]  && error "No 512k readahead IO ${rpc256k}"
-                [ $rpc1024k == 0 ] && error "No 1024k readahead IO ${rpc1024k}"
-                echo "Big rpc check passed!"
-        done
-        cleanup_test101bc
-        true
+        echo "${OSC} RPC check passed!"
+    done
+    cleanup_test101bc
+    true
 }
 run_test 101c "check stripe_size aligned read-ahead ================="
 
 set_read_ahead() {
-   lctl get_param -n llite.*.max_read_ahead_mb | head -n 1
-   lctl set_param -n llite.*.max_read_ahead_mb $1 > /dev/null 2>&1
+   $LCTL get_param -n llite.*.max_read_ahead_mb | head -n 1
+   $LCTL set_param -n llite.*.max_read_ahead_mb $1 > /dev/null 2>&1
 }
 
 test_101d() {
@@ -4213,6 +4238,44 @@ test_101d() {
                read-ahead disabled time read (${time_ra_OFF}s) filesize ${size}M"
 }
 run_test 101d "file read with and without read-ahead enabled  ================="
+
+test_101e() {
+    local file=$DIR/$tfile
+    local size=500  #KB
+    local count=100
+    local blksize=1024
+
+    local space=$(df -P $DIR | tail -n 1 | awk '{ print $4 }')
+    local need_space=$((count * size))
+    [ $space -gt $need_space ] ||
+        { skip "Need free space $need_space, have $space" && return; }
+
+    echo Creating $count ${size}K test files
+    for ((i=0;i<$count;i++)); do
+        dd if=/dev/zero of=${file}_${i} bs=$blksize count=$size 2>/dev/null
+    done
+
+    echo Cancel LRU locks on lustre client to flush the client cache
+    cancel_lru_locks osc
+
+    echo Reset readahead stats
+    $LCTL set_param -n llite.*.read_ahead_stats 0
+
+    for ((i=0;i<$count;i++)); do
+        dd if=${file}_${i} of=/dev/null bs=$blksize count=$size 2>/dev/null
+    done
+
+    MISS=`$LCTL get_param -n llite.*.read_ahead_stats | \
+          get_named_value 'misses' | cut -d" " -f1 | calc_total`
+
+    for ((i=0;i<$count;i++)); do
+        rm -rf ${file}_${i} 2>/dev/null
+    done
+
+    #10000 means 20% reads are missing in readahead
+    [ $MISS -lt 10000 ] ||  error "misses too much for small reads"
+}
+run_test 101e "check read-ahead for small read(1k) for small files(500k) ============"
 
 setup_test102() {
 	mkdir -p $DIR/$tdir
@@ -5143,6 +5206,15 @@ test_118k()
 }
 run_test 118k "bio alloc -ENOMEM and IO TERM handling ========="
 
+test_118l()
+{
+	# LU-646
+	mkdir -p $DIR/$tdir
+	multiop $DIR/$tdir Dy || error "fsync dir failed"
+	rm -rf $DIR/$tdir
+}
+run_test 118l "fsync dir ========="
+
 [ "$SLOW" = "no" ] && [ -n "$OLD_RESENDCOUNT" ] && set_resend_count $OLD_RESENDCOUNT
 
 test_119a() # bug 11737
@@ -6051,17 +6123,18 @@ test_130e() {
 }
 run_test 130e "FIEMAP (test continuation FIEMAP calls)"
 
-check_stats() {
+check_stats_facet() {
 	local res
 	local count
-	case $1 in
-	mds) local dev=$(get_mds_mdt_device_proc_path)
-	     res=`do_facet mds $LCTL get_param $dev.$FSNAME-MDT0000.stats | grep "$2"`
-		 ;;
-	ost) res=`do_facet ost0 $LCTL get_param obdfilter.$FSNAME-OST0000.stats | grep "$2"`
-		 ;;
-	*) error "Wrong argument $1" ;;
-	esac
+	local facet=$1
+	local svc=${facet}_svc
+
+	local dev=obdfilter
+
+	[[ $facet = mds ]] && dev=$(get_mds_mdt_device_proc_path)
+	param=$dev.${!svc}.stats
+
+	res=$(do_facet $facet $LCTL get_param $param | grep "$2")
 	echo $res
 	count=`echo $res | awk '{print $2}'`
 	[ -z "$res" ] && error "The counter for $2 on $1 was not incremented"
@@ -6085,25 +6158,25 @@ test_133a() {
 	# clear stats.
 	local dev=$(get_mds_mdt_device_proc_path)
 	do_facet mds $LCTL set_param $dev.*.stats=clear
-	do_facet ost $LCTL set_param obdfilter.*.stats=clear
+	do_facet ost1 $LCTL set_param obdfilter.*.stats=clear
 
 	# verify mdt stats first.
 	mkdir ${testdir} || error "mkdir failed"
-	check_stats mds "mkdir" 1
+	check_stats_facet mds "mkdir" 1
 	touch ${testdir}/${tfile} || "touch failed"
 	# LPROC_MDS_OPEN is incremented by 2 - in mds_open() and mds_intent_policy()
-	check_stats mds "open" 2
-	check_stats mds "close" 1
+	check_stats_facet mds "open" 1
+	check_stats_facet mds "close" 1
 	mknod ${testdir}/${tfile}-pipe p || "mknod failed"
-	check_stats mds "mknod" 1
+	check_stats_facet mds "mknod" 1
 	rm -f ${testdir}/${tfile}-pipe || "pipe remove failed"
-	check_stats mds "unlink" 1
+	check_stats_facet mds "unlink" 1
 	rm -f ${testdir}/${tfile} || error "file remove failed"
-	check_stats mds "unlink" 2
+	check_stats_facet mds "unlink" 2
 
 	# remove working dir and check mdt stats again.
 	rmdir ${testdir} || error "rmdir failed"
-	check_stats mds "rmdir" 1
+	check_stats_facet mds "rmdir" 1
 
 	rm -rf $DIR/${tdir}
 }
@@ -6125,15 +6198,15 @@ test_133b() {
 	# clear stats.
 	local dev=$(get_mds_mdt_device_proc_path)
 	do_facet mds $LCTL set_param $dev.*.stats=clear
-	do_facet ost $LCTL set_param obdfilter.*.stats=clear
+	do_facet ost1 $LCTL set_param obdfilter.*.stats=clear
 
 	# extra mdt stats verification.
 	stat ${testdir}/${tfile} || error "stat failed"
-	check_stats mds "getattr" 0
+	check_stats_facet mds "getattr" 0
 	chmod 444 ${testdir}/${tfile} || error "chmod failed"
-	check_stats mds "setattr" 1
+	check_stats_facet mds "setattr" 1
 	$LFS df || error "lfs failed"
-	check_stats mds "statfs" 1
+	check_stats_facet mds "statfs" 1
 
 	rm -rf $DIR/${tdir}
 }
@@ -6158,21 +6231,21 @@ test_133c() {
 	# clear stats.
 	local dev=$(get_mds_mdt_device_proc_path)
 	do_facet mds $LCTL set_param $dev.*.stats=clear
-	do_facet ost $LCTL set_param obdfilter.*.stats=clear
+	do_facet ost1 $LCTL set_param obdfilter.*.stats=clear
 
 	dd if=/dev/zero of=${testdir}/${tfile} bs=1024k count=1 || error "dd failed"
 	sync
 	cancel_lru_locks osc
-	check_stats ost "write" 1
+	check_stats_facet ost1 "write" 1
 
 	dd if=${testdir}/${tfile} of=/dev/null bs=1k count=1 || error "dd failed"
-	check_stats ost "read" 1
+	check_stats_facet ost1 "read" 1
 
 	> ${testdir}/${tfile} || error "truncate failed"
-	check_stats ost "punch" 1
+	check_stats_facet ost1 "punch" 1
 
 	rm -f ${testdir}/${tfile} || error "file remove failed"
-	check_stats ost "destroy" 1
+	check_stats_facet ost1 "destroy" 1
 
 	rm -rf $DIR/${tdir}
 }
@@ -6659,11 +6732,14 @@ test_180() {
         [ $rmmod_local -eq 1 ] && rmmod obdecho
         [ $rc -ne 0 ] && return $rc
 
-        do_facet ost "lsmod | grep -q obdecho || { insmod ${LUSTRE}/obdecho/obdecho.ko || modprobe obdecho; }" && rmmod_remote=1
+        do_facet ost1 "lsmod | grep -q obdecho || \
+		{ insmod $LUSTRE/obdecho/obdecho.ko || modprobe obdecho; }" && \
+		rmmod_remote=1
 
-        OBD=$(do_facet ost "$LCTL  dl | awk '/obdfilter/ { print; exit; }'" | awk '{print $4;}')
-        [ "x$OBD" != "x" ] && { obdecho_create_test $OBD ost || rc=3; }
-        [ $rmmod_remote -eq 1 ] && do_facet ost "rmmod obdecho"
+        OBD=$(do_facet ost1 "$LCTL dl | awk '/obdfilter/ { print; exit; }'" | \
+		awk '{print $4;}')
+        [ "x$OBD" != "x" ] && { obdecho_create_test $OBD ost1 || rc=3; }
+        [ $rmmod_remote -eq 1 ] && do_facet ost1 "rmmod obdecho"
         [ $rc -ne 0 ] && return $rc
 
         true
@@ -6925,6 +7001,107 @@ test_203() {
 }
 run_test 203 " atime should be updated on the MDS when closing file ===="
 
+# usage: default_attr <count | size | offset>
+default_attr() {
+	$LCTL get_param -n lov.$FSNAME-clilov-\*.stripe${1}
+}
+
+# if there are two arguments, the second must be "--raw"
+check_default_stripe_attr() {
+        ACTUAL=$($GETSTRIPE $* $DIR/$tdir)
+        case $1 in
+        --count)
+                [ -n "$2" ] && EXPECTED=0 || EXPECTED=$(default_attr count);;
+        --size)
+                [ -n "$2" ] && EXPECTED=0 || EXPECTED=$(default_attr size);;
+        --index)
+                EXPECTED=-1;;
+        *)
+                error "unknown getstripe attr '$1'"
+        esac
+
+        [ $ACTUAL != $EXPECTED ] &&
+                error "$DIR/$tdir has $1 '$ACTUAL', not '$EXPECTED'"
+
+}
+
+test_204a() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --count 0 --size 0 --index -1 $DIR/$tdir
+
+	check_default_stripe_attr --count
+	check_default_stripe_attr --size
+	check_default_stripe_attr --index
+
+	return 0
+}
+run_test 204a "Print default stripe attributes ================="
+
+test_204b() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --count 1 $DIR/$tdir
+
+	check_default_stripe_attr --size
+	check_default_stripe_attr --index
+
+	return 0
+}
+run_test 204b "Print default stripe size and index  ==========="
+
+test_204c() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --size 65536 $DIR/$tdir
+
+	check_default_stripe_attr --count
+	check_default_stripe_attr --index
+
+	return 0
+}
+run_test 204c "Print default stripe count and index ==========="
+
+test_204d() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --index 0 $DIR/$tdir
+
+	check_default_stripe_attr --count
+	check_default_stripe_attr --size
+
+	return 0
+}
+run_test 204d "Print default stripe count and size ============="
+
+test_204f() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --count 1 $DIR/$tdir
+
+	check_default_stripe_attr --size --raw
+	check_default_stripe_attr --index --raw
+
+	return 0
+}
+run_test 204f "Print raw stripe size and index  ==========="
+
+test_204g() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --size 65536 $DIR/$tdir
+
+	check_default_stripe_attr --count --raw
+	check_default_stripe_attr --index --raw
+
+	return 0
+}
+run_test 204g "Print raw stripe count and index ==========="
+
+test_204h() {
+	mkdir -p $DIR/$tdir
+	$SETSTRIPE --index 0 $DIR/$tdir
+
+	check_default_stripe_attr --count --raw
+	check_default_stripe_attr --size  --raw
+
+	return 0
+}
+run_test 204h "Print raw stripe count and size ============="
 
 #
 # tests that do cleanup/setup should be run at the end

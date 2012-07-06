@@ -108,7 +108,8 @@ EXTRA_DIST = @PACKAGE_TARNAME@.spec					\
 	build/autoconf/lustre-build.m4 build/rdac_spec                  \
 	build/mptlinux.spec.patch build/patches                         \
 	build/funcs.sh build/find_linux_rpms build/exit_traps.sh        \
-	build/extract_patches
+	build/extract_patches build/checkpatch.pl build/commit-msg	\
+	build/prepare-commit-msg build/commit.* build/test-commit-msg.sh
 
 rpms-real: @PACKAGE_TARNAME@.spec dist Makefile
 	CONFIGURE_ARGS=$$(echo $$(eval echo $(ac_configure_args)) | sed -re 's/--(en|dis)able-tests//'); \
@@ -124,6 +125,9 @@ rpms-real: @PACKAGE_TARNAME@.spec dist Makefile
 	RPMARGS="$$RPMARGS --define \"configure_args $$CONFIGURE_ARGS\""; \
 	if ! $(BUILD_TESTS); then \
 		RPMARGS="$$RPMARGS --define \"build_lustre_tests 0\""; \
+	fi; \
+	if ! $(BUILD_SERVER); then \
+		RPMARGS="$$RPMARGS --define \"lustre_name lustre-client\""; \
 	fi; \
 	echo "Building Lustre RPM with $$RPMARGS"; \
 	eval rpmbuild $$RPMARGS -ta $(distdir).tar.gz

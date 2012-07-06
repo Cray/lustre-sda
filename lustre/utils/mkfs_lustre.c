@@ -65,8 +65,8 @@
 #include <ctype.h>
 
 #ifdef __linux__
-/* kp30.h is not really needed here, but on SLES10/PPC, fs.h includes idr.h which
- * requires BITS_PER_LONG to be defined */
+/* kp30.h is not really needed here, but on SLES10/PPC, fs.h includes idr.h
+ * which requires BITS_PER_LONG to be defined */
 #include <libcfs/kp30.h>
 #ifndef BLKGETSIZE64
 #include <linux/fs.h> /* for BLKGETSIZE64 */
@@ -128,19 +128,15 @@ void usage(FILE *out)
                 "\t\t--param <key>=<value> : set a permanent parameter\n"
                 "\t\t\te.g. --param sys.timeout=40\n"
                 "\t\t\t     --param lov.stripesize=2M\n"
-                "\t\t--index=#N : target index (i.e. ost index within the lov)\n"
-                /* FIXME implement 1.6.x
-                "\t\t--configdev=<altdevice|file>: store configuration info\n"
-                "\t\t\tfor this device on an alternate device\n"
-                */
-                "\t\t--comment=<user comment>: arbitrary user string (%d bytes)\n"
+                "\t\t--index=#N : target index (i.e. ost index within lov)\n"
+                "\t\t--comment=<user comment>: arbitrary string (%d bytes)\n"
                 "\t\t--mountfsoptions=<opts> : permanent mount options\n"
 #ifndef TUNEFS
                 "\t\t--backfstype=<fstype> : backing fs type (ext3, ldiskfs)\n"
                 "\t\t--device-size=#N(KB) : device size for loop devices\n"
                 "\t\t--mkfsoptions=<opts> : format options\n"
                 "\t\t--reformat: overwrite an existing disk\n"
-                "\t\t--stripe-count-hint=#N : used for optimizing MDT inode size\n"
+                "\t\t--stripe-count-hint=#N : for optimizing MDT inode size\n"
 #else
                 "\t\t--erase-params : erase all old parameter settings\n"
                 "\t\t--nomgs: turn off MGS service on this MDT\n"
@@ -173,47 +169,6 @@ char *strscat(char *dst, char *src, int buflen) {
 char *strscpy(char *dst, char *src, int buflen) {
         dst[0] = 0;
         return strscat(dst, src, buflen);
-}
-
-inline unsigned int
-dev_major (unsigned long long int __dev)
-{
-        return ((__dev >> 8) & 0xfff) | ((unsigned int) (__dev >> 32) & ~0xfff);
-}
-
-inline unsigned int
-dev_minor (unsigned long long int __dev)
-{
-        return (__dev & 0xff) | ((unsigned int) (__dev >> 12) & ~0xff);
-}
-
-int get_os_version()
-{
-        static int version = 0;
-
-        if (!version) {
-                int fd;
-                char release[4] = "";
-
-                fd = open("/proc/sys/kernel/osrelease", O_RDONLY);
-                if (fd < 0)
-                        fprintf(stderr, "%s: Warning: Can't resolve kernel "
-                                "version, assuming 2.6\n", progname);
-                else {
-                        if (read(fd, release, 4) < 0) {
-                                fprintf(stderr, "reading from /proc/sys/kernel"
-                                                "/osrelease: %s\n", strerror(errno));
-                                close(fd);
-                                exit(-1);
-                        }
-                        close(fd);
-                }
-                if (strncmp(release, "2.4.", 4) == 0)
-                        version = 24;
-                else
-                        version = 26;
-        }
-        return version;
 }
 
 static int check_mtab_entry(char *spec)
@@ -249,11 +204,11 @@ int loop_setup(struct mkfs_opts *mop)
         int i,ret = 0;
 
         /* Figure out the loop device names */
-        if (!access("/dev/loop0", F_OK | R_OK))
+        if (!access("/dev/loop0", F_OK | R_OK)) {
                 strcpy(loop_base, "/dev/loop\0");
-        else if (!access("/dev/loop/0", F_OK | R_OK))
+        } else if (!access("/dev/loop/0", F_OK | R_OK)) {
                 strcpy(loop_base, "/dev/loop/\0");
-        else {
+        } else {
                 fprintf(stderr, "%s: can't access loop devices\n", progname);
                 return EACCES;
         }
@@ -369,10 +324,18 @@ int loop_format(struct mkfs_opts *mop)
         }
 
         ret = creat(mop->mo_device, S_IRUSR|S_IWUSR);
+        if (ret < 0) {
+                ret = errno;
+                fprintf(stderr, "%s: Unable to create backing store: %d\n",
+                        progname, ret);
+        } else {
+                close(ret);
+        }
+
         ret = truncate(mop->mo_device, mop->mo_device_sz * 1024);
         if (ret != 0) {
                 ret = errno;
-                fprintf(stderr, "%s: Unable to create backing store: %d\n",
+                fprintf(stderr, "%s: Unable to truncate backing store: %d\n",
                         progname, ret);
         }
 
@@ -448,6 +411,7 @@ static int file_in_dev(char *file_name, char *dev_name)
 static int is_lustre_target(struct mkfs_opts *mop)
 {
         int rc;
+
         vprint("checking for existing Lustre data: ");
 
         if ((rc = file_in_dev(MOUNT_DATA_FILE, mop->mo_device))) {
@@ -473,103 +437,190 @@ static int is_lustre_target(struct mkfs_opts *mop)
  * mke2fs to check for its support. */
 static int is_e2fsprogs_feature_supp(const char *feature)
 {
+        static char supp_features[4096] = "";
         FILE *fp;
         char cmd[PATH_MAX];
         char imgname[] = "/tmp/test-img-XXXXXX";
         int fd = -1;
-        int ret = 0;
+        int ret = 1;
 
-        snprintf(cmd, sizeof(cmd), "%s -c -R \"supported_features %s\" 2>&1",
-                 DEBUGFS, feature);
+        if (supp_features[0] == '\0') {
+                snprintf(cmd, sizeof(cmd), "%s -c -R supported_features 2>&1",
+                         DEBUGFS);
 
-        /* Using popen() instead of run_command() since debugfs does not return
-         * proper error code if command is not supported */
-        fp = popen(cmd, "r");
-        if (!fp) {
-                fprintf(stderr, "%s: %s\n", progname, strerror(errno));
-                return 0;
-        }
-        ret = fread(cmd, 1, sizeof(cmd), fp);
-        if (ret > 0) {
-                if (strstr(cmd, feature) && !(strstr(cmd, "Unknown")))
+                /* Using popen() instead of run_command() since debugfs does
+                 * not return proper error code if command is not supported */
+                fp = popen(cmd, "r");
+                if (!fp) {
+                        fprintf(stderr, "%s: %s\n", progname, strerror(errno));
                         return 0;
+                }
+                ret = fread(supp_features, 1, sizeof(supp_features), fp);
+                fclose(fp);
         }
+        if (ret > 0 && strstr(supp_features,
+                              strncmp(feature, "-O ", 3) ? feature : feature+3))
+                return 0;
 
         if ((fd = mkstemp(imgname)) < 0)
                 return -1;
+        else
+                close(fd);
 
-        snprintf(cmd, sizeof(cmd), "%s -F -O %s %s 100 >/dev/null 2>&1",
+        snprintf(cmd, sizeof(cmd), "%s -F %s %s 100 >/dev/null 2>&1",
                  MKE2FS, feature, imgname);
         /* run_command() displays the output of mke2fs when it fails for
          * some feature, so use system() directly */
         ret = system(cmd);
-        if (fd >= 0)
-                remove(imgname);
+        unlink(imgname);
 
         return ret;
 }
 
-static void disp_old_kernel_msg(char *feature)
+/**
+ * append_unique: append @key or @key=@val pair to @buf only if @key does not
+ *                exists
+ *      @buf: buffer to hold @key or @key=@val
+ *      @prefix: prefix string before @key
+ *      @key: key string
+ *      @val: value string if it's a @key=@val pair
+ */
+static void append_unique(char *buf, char *prefix, char *key, char *val,
+                          size_t maxbuflen)
 {
-       fprintf(stderr, "WARNING: ldiskfs filesystem does not support \"%s\" "
-               "feature.\n\n", feature);
-}
+        char *anchor, *end;
+        int  len;
 
-static void enable_default_backfs_features(struct mkfs_opts *mop)
-{
-        struct utsname uts;
-        int maj_high, maj_low, min;
-        int ret;
-
-	if (IS_OST(&mop->mo_ldd)) {
-        	strscat(mop->mo_mkfsopts, " -O dir_index,extents",
-			sizeof(mop->mo_mkfsopts));
-	} else {
-        	strscat(mop->mo_mkfsopts, " -O dir_index",
-			sizeof(mop->mo_mkfsopts));
-	}
-
-        /* Upstream e2fsprogs called our uninit_groups feature uninit_bg,
-         * check for both of them when testing e2fsprogs features. */
-        if (is_e2fsprogs_feature_supp("uninit_groups") == 0)
-                strscat(mop->mo_mkfsopts, ",uninit_groups",
-                        sizeof(mop->mo_mkfsopts));
-        else if (is_e2fsprogs_feature_supp("uninit_bg") == 0)
-                strscat(mop->mo_mkfsopts, ",uninit_bg",
-                        sizeof(mop->mo_mkfsopts));
-        else
-                disp_old_e2fsprogs_msg("uninit_bg", 1);
-
-        ret = uname(&uts);
-        if (ret)
+        if (key == NULL)
                 return;
 
-        sscanf(uts.release, "%d.%d.%d", &maj_high, &maj_low, &min);
-        printf("%d %d %d\n", maj_high, maj_low, min);
+        anchor = end = strstr(buf, key);
+        /* try to find exact match string in @buf */
+        while (end && *end != '\0' && *end != ',' && *end != ' ' && *end != '=')
+                ++end;
+        len = end - anchor;
+        if (anchor == NULL || strlen(key) != len ||
+            strncmp(anchor, key, len) != 0) {
+                if (prefix != NULL)
+                        strscat(buf, prefix, maxbuflen);
 
-        /* Multiple mount protection is enabled only if failover node is
-         * specified and if kernel version is higher than 2.6.9 */
-        if (failover) {
-                if (KERNEL_VERSION(maj_high, maj_low, min) >=
-                    KERNEL_VERSION(2,6,9)) {
-                        if (is_e2fsprogs_feature_supp("mmp") == 0)
-                                strscat(mop->mo_mkfsopts, ",mmp",
-                                        sizeof(mop->mo_mkfsopts));
-                        else
-                                disp_old_e2fsprogs_msg("mmp", 1);
-                } else {
-                        disp_old_kernel_msg("mmp");
+                strscat(buf, key, maxbuflen);
+                if (val != NULL) {
+                        strscat(buf, "=", maxbuflen);
+                        strscat(buf, val, maxbuflen);
                 }
         }
 }
+
+static void enable_default_ext4_features(struct mkfs_opts *mop, char *anchor,
+                                         size_t maxbuflen, int user_spec)
+{
+        if (IS_OST(&mop->mo_ldd)) {
+                append_unique(anchor, user_spec ? "," : " -O ",
+                              "extents", NULL, maxbuflen);
+                append_unique(anchor, ",", "uninit_bg", NULL, maxbuflen);
+        } else if (IS_MDT(&mop->mo_ldd)) {
+                append_unique(anchor, user_spec ? "," : " -O ",
+                              "uninit_bg", NULL, maxbuflen);
+        } else {
+                append_unique(anchor, user_spec ? "," : " -O ",
+                              "uninit_bg", NULL, maxbuflen);
+        }
+
+        /* Multiple mount protection enabled only if failover node specified */
+        if (failover) {
+                if (is_e2fsprogs_feature_supp("-O mmp") == 0)
+                        append_unique(anchor, ",", "mmp", NULL, maxbuflen);
+                else
+                        disp_old_e2fsprogs_msg("mmp", 1);
+        }
+
+        /* Allow more than 65000 subdirectories */
+        if (is_e2fsprogs_feature_supp("-O dir_nlink") == 0)
+                append_unique(anchor, ",", "dir_nlink", NULL, maxbuflen);
+
+#ifdef HAVE_EXT4_LDISKFS
+        /* The following options are only valid for ext4-based ldiskfs.
+         * If --backfstype=ext3 is specified, do not enable them. */
+        if (mop->mo_ldd.ldd_mount_type == LDD_MT_EXT3)
+                return;
+
+        /* Allow files larger than 2TB.  Also needs LU-16, but not harmful. */
+        if (is_e2fsprogs_feature_supp("-O huge_file") == 0)
+                append_unique(anchor, ",", "huge_file", NULL, maxbuflen);
+
+        /* Enable large block addresses if the LUN is over 2^32 blocks */
+        if (mop->mo_device_sz / (L_BLOCK_SIZE >> 10) >= 0x100002000ULL &&
+            is_e2fsprogs_feature_supp("-O 64bit") == 0)
+                append_unique(anchor, ",", "64bit", NULL, maxbuflen);
+
+        /* Cluster inode/block bitmaps and inode table for more efficient IO.
+         * Align the flex groups on a 1MB boundary for better performance.
+         * This -O feature needs to go last, since it adds an extra option. */
+        if (is_e2fsprogs_feature_supp("-O flex_bg") == 0) {
+                char tmp_buf[64];
+
+                append_unique(anchor, ",", "flex_bg", NULL, maxbuflen);
+
+                if (IS_OST(&mop->mo_ldd)) {
+                        snprintf(tmp_buf, sizeof(tmp_buf), " -G %u",
+                                 (1 << 20) / L_BLOCK_SIZE);
+                        strscat(anchor, tmp_buf, maxbuflen);
+                }
+        }
+
+#endif
+}
+
+/**
+ * moveopts_to_end: find the option string, move remaining strings to
+ *                  where option string starts, and append the option
+ *                  string at the end
+ *      @start: where the option string starts before the move
+ *      RETURN: where the option string starts after the move
+ */
+static char *moveopts_to_end(char *start)
+{
+        char save[512];
+        char *end, *idx;
+
+        /* skip whitespace before options */
+        end = start + 2;
+        while (*end == ' ')
+                ++end;
+
+        /* find end of option characters */
+        while (*end != ' ' && *end != '\0')
+                ++end;
+
+        /* save options */
+        strncpy(save, start, end - start);
+        save[end - start] = '\0';
+
+        /* move remaining options up front */
+        if (*end)
+                memmove(start, end, strlen(end));
+        *(start + strlen(end)) = '\0';
+
+        /* append the specified options */
+        if (*(start + strlen(start) - 1) != ' ')
+                strcat(start, " ");
+        idx = start + strlen(start);
+        strcat(start, save);
+
+        return idx;
+}
+
 /* Build fs according to type */
 int make_lustre_backfs(struct mkfs_opts *mop)
 {
         __u64 device_sz = mop->mo_device_sz, block_count = 0;
         char mkfs_cmd[PATH_MAX];
         char buf[64];
+        char *start;
         char *dev;
-        int ret = 0;
+        int ret = 0, ext_opts = 0;
+        size_t maxbuflen;
 
         if (!(mop->mo_flags & MO_IS_LOOP)) {
                 mop->mo_device_sz = get_device_size(mop->mo_device);
@@ -602,6 +653,8 @@ int make_lustre_backfs(struct mkfs_opts *mop)
         if ((mop->mo_ldd.ldd_mount_type == LDD_MT_EXT3) ||
             (mop->mo_ldd.ldd_mount_type == LDD_MT_LDISKFS) ||
             (mop->mo_ldd.ldd_mount_type == LDD_MT_LDISKFS2)) {
+                long inode_size = 0;
+
                 /* Journal size in MB */
                 if (strstr(mop->mo_mkfsopts, "-J") == NULL) {
                         /* Choose our own default journal size */
@@ -619,35 +672,14 @@ int make_lustre_backfs(struct mkfs_opts *mop)
                         }
                 }
 
-                /* bytes_per_inode: disk size / num inodes */
-                if (strstr(mop->mo_mkfsopts, "-i") == NULL) {
-                        long bytes_per_inode = 0;
-
-                        if (IS_MDT(&mop->mo_ldd))
-                                bytes_per_inode = 4096;
-
-                        /* Allocate fewer inodes on large OST devices.  Most
-                           filesystems can be much more aggressive than even
-                           this. */
-                        if ((IS_OST(&mop->mo_ldd) && (device_sz > 1000000)))
-                                bytes_per_inode = 16384;
-
-                        if (bytes_per_inode > 0) {
-                                sprintf(buf, " -i %ld", bytes_per_inode);
-                                strscat(mop->mo_mkfsopts, buf,
-                                        sizeof(mop->mo_mkfsopts));
-                        }
-                }
-
                 /* Inode size (for extended attributes).  The LOV EA size is
                  * 32 (EA hdr) + 32 (lov_mds_md) + stripes * 24 (lov_ost_data),
                  * and we want some margin above that for ACLs, other EAs... */
                 if (strstr(mop->mo_mkfsopts, "-I") == NULL) {
-                        long inode_size = 0;
                         if (IS_MDT(&mop->mo_ldd)) {
                                 if (mop->mo_stripe_count > 72)
                                         inode_size = 512; /* bz 7241 */
-                                /* cray stripes across all osts (>60) */
+                                        /* see also "-i" below for EA blocks */
                                 else if (mop->mo_stripe_count > 32)
                                         inode_size = 2048;
                                 else if (mop->mo_stripe_count > 10)
@@ -655,8 +687,8 @@ int make_lustre_backfs(struct mkfs_opts *mop)
                                 else
                                         inode_size = 512;
                         } else if (IS_OST(&mop->mo_ldd)) {
-                                /* now as we store fids in EA on OST we need
-                                   to make inode bigger */
+                                /* We store MDS FID and OST objid in EA on OST
+                                 * we need to make inode bigger as well. */
                                 inode_size = 256;
                         }
 
@@ -667,13 +699,120 @@ int make_lustre_backfs(struct mkfs_opts *mop)
                         }
                 }
 
+                /* Bytes_per_inode: disk size / num inodes */
+                if (strstr(mop->mo_mkfsopts, "-i") == NULL &&
+                    strstr(mop->mo_mkfsopts, "-N") == NULL) {
+                        long bytes_per_inode = 0;
+
+                        /* Allocate more inodes on MDT devices.  There is
+                         * no data stored on the MDT, and very little extra
+                         * metadata beyond the inode.  It could go down as
+                         * low as 1024 bytes, but this is conservative.
+                         * Account for external EA blocks for wide striping. */
+                        if (IS_MDT(&mop->mo_ldd)) {
+                                bytes_per_inode = inode_size + 1536;
+
+                                if (mop->mo_stripe_count > 72) {
+                                        int extra = mop->mo_stripe_count * 24;
+                                        extra = ((extra - 1) | 4095) + 1;
+                                        bytes_per_inode += extra;
+                                }
+                        }
+
+                        /* Allocate fewer inodes on large OST devices.  Most
+                         * filesystems can be much more aggressive than even
+                         * this, but it is impossible to know in advance. */
+                        if (IS_OST(&mop->mo_ldd)) {
+                                /* OST > 16TB assume average file size 1MB */
+                                if (device_sz >= (16ULL << 30))
+                                        bytes_per_inode = 1024 * 1024;
+                                /* OST > 4TB assume average file size 512kB */
+                                else if (device_sz >= (4ULL << 30))
+                                        bytes_per_inode = 512 * 1024;
+                                /* OST > 1TB assume average file size 256kB */
+                                else if (device_sz >= (1ULL << 30))
+                                        bytes_per_inode = 256 * 1024;
+                                /* OST > 100GB assume average file size 64kB,
+                                 * plus a bit so that inodes will fit into a
+                                 * 256x flex_bg without overflowing */
+                                else if (device_sz >= (10ULL << 20))
+                                        bytes_per_inode = 69905;
+                        }
+
+
+                        if (bytes_per_inode > 0) {
+                                sprintf(buf, " -i %ld", bytes_per_inode);
+                                strscat(mop->mo_mkfsopts, buf,
+                                        sizeof(mop->mo_mkfsopts));
+                        }
+                }
+
                 if (verbose < 2) {
                         strscat(mop->mo_mkfsopts, " -q",
                                 sizeof(mop->mo_mkfsopts));
                 }
 
-                if (strstr(mop->mo_mkfsopts, "-O") == NULL)
-                        enable_default_backfs_features(mop);
+                /* start handle -O mkfs options */
+                if ((start = strstr(mop->mo_mkfsopts, "-O")) != NULL) {
+                        if (strstr(start + 2, "-O") != NULL) {
+                                fprintf(stderr,
+                                        "%s: don't specify multiple -O options\n",
+                                        progname);
+                                return EINVAL;
+                        }
+                        start = moveopts_to_end(start);
+                        maxbuflen = sizeof(mop->mo_mkfsopts) -
+                                    (start - mop->mo_mkfsopts) - strlen(start);
+                        enable_default_ext4_features(mop, start, maxbuflen, 1);
+                } else {
+                        start = mop->mo_mkfsopts + strlen(mop->mo_mkfsopts),
+                        maxbuflen = sizeof(mop->mo_mkfsopts) -
+                                    strlen(mop->mo_mkfsopts);
+                        enable_default_ext4_features(mop, start, maxbuflen, 0);
+                }
+                /* end handle -O mkfs options */
+
+                /* start handle -E mkfs options */
+                if ((start = strstr(mop->mo_mkfsopts, "-E")) != NULL) {
+                        if (strstr(start + 2, "-E") != NULL) {
+                                fprintf(stderr,
+                                        "%s: don't specify multiple -E options\n",
+                                        progname);
+                                return EINVAL;
+                        }
+                        start = moveopts_to_end(start);
+                        maxbuflen = sizeof(mop->mo_mkfsopts) -
+                                    (start - mop->mo_mkfsopts) - strlen(start);
+                        ext_opts = 1;
+                } else {
+                        start = mop->mo_mkfsopts + strlen(mop->mo_mkfsopts);
+                        maxbuflen = sizeof(mop->mo_mkfsopts) -
+                                    strlen(mop->mo_mkfsopts);
+                }
+
+                /* In order to align the filesystem metadata on 1MB boundaries,
+                 * give a resize value that will reserve a power-of-two group
+                 * descriptor blocks, but leave one block for the superblock.
+                 * Only useful for filesystems with < 2^32 blocks due to resize
+                 * limitations. */
+                if (IS_OST(&mop->mo_ldd) && device_sz > 100 * 1024 &&
+                    block_count <= 0xffffffffULL) {
+                        unsigned group_blocks = L_BLOCK_SIZE * 8;
+                        unsigned desc_per_block = L_BLOCK_SIZE / 32;
+                        unsigned resize_blks;
+
+                        resize_blks = (1ULL<<32) - desc_per_block*group_blocks;
+                        snprintf(buf, sizeof(buf), "%u", resize_blks);
+                        append_unique(start, ext_opts ? "," : " -E ",
+                                      "resize", buf, maxbuflen);
+                        ext_opts = 1;
+                }
+
+                /* Avoid zeroing out the full journal - speeds up mkfs */
+                if (is_e2fsprogs_feature_supp("-E lazy_journal_init") == 0)
+                        append_unique(start, ext_opts ? "," : " -E ",
+                                      "lazy_journal_init", NULL, maxbuflen);
+                /* end handle -E mkfs options */
 
                 /* Allow reformat of full devices (as opposed to
                    partitions.)  We already checked for mounted dev. */
@@ -682,16 +821,6 @@ int make_lustre_backfs(struct mkfs_opts *mop)
                 snprintf(mkfs_cmd, sizeof(mkfs_cmd),
                          "%s -j -b %d -L %s ", MKE2FS, L_BLOCK_SIZE,
                          mop->mo_ldd.ldd_svname);
-
-        } else if (mop->mo_ldd.ldd_mount_type == LDD_MT_REISERFS) {
-                long journal_sz = 0; /* FIXME default journal size */
-                if (journal_sz > 0) {
-                        sprintf(buf, " --journal_size %ld", journal_sz);
-                        strscat(mop->mo_mkfsopts, buf,
-                                sizeof(mop->mo_mkfsopts));
-                }
-                snprintf(mkfs_cmd, sizeof(mkfs_cmd), "mkreiserfs -ff ");
-
         } else {
                 fprintf(stderr,"%s: unsupported fs type: %d (%s)\n",
                         progname, mop->mo_ldd.ldd_mount_type,
@@ -817,7 +946,7 @@ int write_local_files(struct mkfs_opts *mop)
         }
         num = fwrite(&mop->mo_ldd, sizeof(mop->mo_ldd), 1, filep);
         if (num < 1 && ferror(filep)) {
-                fprintf(stderr, "%s: Unable to write to file (%s): %s\n",
+                fprintf(stderr, "%s: Unable to write to file %s: %s\n",
                         progname, filepnm, strerror(errno));
                 goto out_umnt;
         }
@@ -931,7 +1060,7 @@ int read_local_files(struct mkfs_opts *mop)
                 vprint("Reading %s\n", MOUNT_DATA_FILE);
                 num_read = fread(&mop->mo_ldd, sizeof(mop->mo_ldd), 1, filep);
                 if (num_read < 1 && ferror(filep)) {
-                        fprintf(stderr, "%s: Unable to read from file (%s): %s\n",
+                        fprintf(stderr, "%s: Unable to read from file %s: %s\n",
                                 progname, filepnm, strerror(errno));
                         goto out_close;
                 }
@@ -1050,10 +1179,7 @@ void set_defaults(struct mkfs_opts *mop)
         mop->mo_ldd.ldd_flags = LDD_F_NEED_INDEX | LDD_F_UPDATE | LDD_F_VIRGIN;
         mop->mo_mgs_failnodes = 0;
         strcpy(mop->mo_ldd.ldd_fsname, "lustre");
-        if (get_os_version() == 24)
-                mop->mo_ldd.ldd_mount_type = LDD_MT_EXT3;
-        else
-                mop->mo_ldd.ldd_mount_type = LDD_MT_LDISKFS;
+        mop->mo_ldd.ldd_mount_type = LDD_MT_LDISKFS;
 
         mop->mo_ldd.ldd_svindex = INDEX_UNASSIGNED;
         mop->mo_stripe_count = 1;
@@ -1141,7 +1267,8 @@ static char *convert_hostnames(char *s1)
                 nid = libcfs_str2nid(s1);
 
                 if (nid == LNET_NID_ANY) {
-                        fprintf(stderr, "%s: Can't parse NID '%s'\n", progname, s1);
+                        fprintf(stderr, "%s: Can't parse NID '%s'\n",
+                                progname, s1);
                         free(converted);
                         return NULL;
                 }
@@ -1598,18 +1725,14 @@ int main(int argc, char *const argv[])
         switch (ldd->ldd_mount_type) {
         case LDD_MT_EXT3:
         case LDD_MT_LDISKFS:
-        case LDD_MT_LDISKFS2: {
+        case LDD_MT_LDISKFS2:
                 strscat(default_mountopts, ",errors=remount-ro",
                         sizeof(default_mountopts));
                 if (IS_MDT(ldd) || IS_MGS(ldd))
                         strscat(always_mountopts, ",iopen_nopriv,user_xattr",
                                 sizeof(always_mountopts));
-                if ((get_os_version() == 24) && IS_OST(ldd))
-                        strscat(always_mountopts, ",asyncdel",
-                                sizeof(always_mountopts));
-                /* NB: Files created while extents are enabled cannot be read
-                   if mounted with a kernel that doesn't include the Lustre ldiskfs
-                   patches! */
+                /* NB: Files created while extents are enabled can only be read
+                 * if mounted using the ext4 or ldiskfs filesystem type. */
                 if (IS_OST(ldd) &&
                     (ldd->ldd_mount_type == LDD_MT_LDISKFS ||
                      ldd->ldd_mount_type == LDD_MT_LDISKFS2)) {
@@ -1617,14 +1740,7 @@ int main(int argc, char *const argv[])
                                 sizeof(default_mountopts));
                 }
                 break;
-        }
-        case LDD_MT_SMFS: {
-                mop.mo_flags |= MO_IS_LOOP;
-                sprintf(always_mountopts, ",type=ext3,dev=%s",
-                        mop.mo_device);
-                break;
-        }
-        default: {
+        default:
                 fatal();
                 fprintf(stderr, "unknown fs type %d '%s'\n",
                         ldd->ldd_mount_type,
@@ -1632,10 +1748,9 @@ int main(int argc, char *const argv[])
                 ret = EINVAL;
                 goto out;
         }
-        }
-
 
         if (mountopts) {
+                trim_mountfsoptions(mountopts);
                 trim_mountfsoptions(mountopts);
                 (void)check_mountfsoptions(mountopts, default_mountopts, 1);
                 if (check_mountfsoptions(mountopts, always_mountopts, 0)) {

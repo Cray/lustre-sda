@@ -28,6 +28,14 @@ if [ -f "$EXCEPT_LIST_FILE" ]; then
     . $EXCEPT_LIST_FILE
 fi
 
+# check config files for options in decreasing order of preference
+[ -z "$MODPROBECONF" -a -f /etc/modprobe.d/lustre.conf ] &&
+    MODPROBECONF=/etc/modprobe.d/lustre.conf
+[ -z "$MODPROBECONF" -a -f /etc/modprobe.d/Lustre ] &&
+    MODPROBECONF=/etc/modprobe.d/Lustre
+[ -z "$MODPROBECONF" -a -f /etc/modprobe.conf ] &&
+    MODPROBECONF=/etc/modprobe.conf
+
 assert_DIR () {
     local failed=""
     [[ $DIR/ = $MOUNT/* ]] || \
@@ -118,31 +126,18 @@ init_test_env() {
     export DUMPE2FS=${DUMPE2FS:-dumpe2fs}
     export E2FSCK=${E2FSCK:-e2fsck}
     export LFSCK_BIN=${LFSCK_BIN:-lfsck}
-    export LFSCK_ALWAYS=${LFSCK_ALWAYS:-"no"} # check filesystem after each test suit
-    export SKIP_LFSCK=${SKIP_LFSCK:-"yes"} # bug 13698, change to "no" when fixed
-    export SHARED_DIRECTORY=${SHARED_DIRECTORY:-"/tmp"}
-    export FSCK_MAX_ERR=4   # File system errors left uncorrected
-    if [ "$SKIP_LFSCK" == "no" ]; then
-	if [ ! -x `which $LFSCK_BIN` ]; then
-	    log "$($E2FSCK -V)"
-	    error_exit "$E2FSCK does not support lfsck"
-	fi
 
-	export MDSDB=${MDSDB:-$SHARED_DIRECTORY/mdsdb}
-	export OSTDB=${OSTDB:-$SHARED_DIRECTORY/ostdb}
-	export MDSDB_OPT="--mdsdb $MDSDB"
-	export OSTDB_OPT="--ostdb $OSTDB-\$ostidx"
-    fi
+    export LFSCK_ALWAYS=${LFSCK_ALWAYS:-"no"} # check fs after each test suite
+    export FSCK_MAX_ERR=4   # File system errors left uncorrected
     declare -a OSTDEVS
 
     #[ -d /r ] && export ROOT=${ROOT:-/r}
     export TMP=${TMP:-$ROOT/tmp}
     export TESTSUITELOG=${TMP}/${TESTSUITE}.log
-    if [[ -z $LOGDIRSET ]]; then
-        export LOGDIR=${LOGDIR:-${TMP}/test_logs/}/$(date +%s)
-        export LOGDIRSET=true
-    fi
-    export HOSTNAME=${HOSTNAME:-`hostname`}
+    export LOGDIR=${LOGDIR:-${TMP}/test_logs/$(date +%s)}
+    export TESTLOG_PREFIX=$LOGDIR/$TESTSUITE
+
+    export HOSTNAME=${HOSTNAME:-`hostname -s`}
     if ! echo $PATH | grep -q $LUSTRE/utils; then
         export PATH=$PATH:$LUSTRE/utils
     fi
@@ -317,9 +312,6 @@ load_modules_local() {
     load_module ../lnet/libcfs/libcfs
     [ "$PTLDEBUG" ] && lctl set_param debug="$PTLDEBUG"
     [ "$SUBSYSTEM" ] && lctl set_param subsystem_debug="${SUBSYSTEM# }"
-    local MODPROBECONF=
-    [ -f /etc/modprobe.conf ] && MODPROBECONF=/etc/modprobe.conf
-    [ ! "$MODPROBECONF" -a -d /etc/modprobe.d ] && MODPROBECONF=/etc/modprobe.d/Lustre
     [ -z "$LNETOPTS" -a "$MODPROBECONF" ] && \
         LNETOPTS=$(awk '/^options lnet/ { print $0}' $MODPROBECONF | sed 's/^options lnet //g')
     echo $LNETOPTS | grep -q "accept=all"  || LNETOPTS="$LNETOPTS accept=all";
@@ -440,8 +432,8 @@ set_default_debug_nodes () {
     local nodes=$1
 
     if [[ ,$nodes, = *,$HOSTNAME,* ]]; then
-	nodes=$(exclude_items_from_list "$nodes" "$HOSTNAME")
-	set_default_debug
+        nodes=$(exclude_items_from_list "$nodes" "$HOSTNAME")
+            set_default_debug
     fi
 
     [[ -n $nodes ]] && do_rpc_nodes $nodes set_default_debug \
@@ -694,7 +686,7 @@ sanity_mount_check_nodes () {
     local rc=0
     for mnt in $mnts ; do
         do_nodes $nodes "running=\\\$(grep -c $mnt' ' /proc/mounts);
-mpts=\\\$(mount | grep -w -c $mnt);
+mpts=\\\$(mount | grep -c $mnt' ');
 if [ \\\$running -ne \\\$mpts ]; then
     echo \\\$(hostname) env are INSANE!;
     exit 1;
@@ -764,7 +756,7 @@ fi;
 exit $rc"
 
     echo "Started clients $clients: "
-    do_nodes $clients "mount | grep -w $mnt"
+    do_nodes $clients "mount | grep $mnt' '"
 
     set_default_debug_nodes $clients
 
@@ -950,14 +942,20 @@ start_client_load() {
     eval export ${var}=$load
 
     do_node $client "PATH=$PATH MOUNT=$MOUNT ERRORS_OK=$ERRORS_OK \
-                              BREAK_ON_ERROR=$BREAK_ON_ERROR \
-                              END_RUN_FILE=$END_RUN_FILE \
-                              LOAD_PID_FILE=$LOAD_PID_FILE \
-                              TESTSUITELOG=$TESTSUITELOG \
-                              run_${load}.sh" &
-    CLIENT_LOAD_PIDS="$CLIENT_LOAD_PIDS $!"
+BREAK_ON_ERROR=$BREAK_ON_ERROR \
+END_RUN_FILE=$END_RUN_FILE \
+LOAD_PID_FILE=$LOAD_PID_FILE \
+TESTLOG_PREFIX=$TESTLOG_PREFIX \
+TESTNAME=$TESTNAME \
+DBENCH_LIB=$DBENCH_LIB \
+DBENCH_SRC=$DBENCH_SRC \
+run_${load}.sh" &
+    local ppid=$!
     log "Started client load: ${load} on $client"
 
+    # get the children process IDs
+    local pids=$(ps --ppid $ppid -o pid= | xargs)
+    CLIENT_LOAD_PIDS="$CLIENT_LOAD_PIDS $ppid $pids"
     return 0
 }
 
@@ -1068,7 +1066,70 @@ restart_client_loads () {
         fi
     done
 }
-# End recovery-scale functions
+
+# Start vmstat and save its process ID in a file.
+start_vmstat() {
+    local nodes=$1
+    local pid_file=$2
+
+    [ -z "$nodes" -o -z "$pid_file" ] && return 0
+
+    do_nodes $nodes \
+        "vmstat 1 > $TESTLOG_PREFIX.$TESTNAME.vmstat.\\\$(hostname -s).log \
+        2>/dev/null </dev/null & echo \\\$! > $pid_file"
+}
+
+# Display the nodes on which client loads failed.
+print_end_run_file() {
+    local file=$1
+    local node
+
+    [ -s $file ] || return 0
+
+    echo "Found the END_RUN_FILE file: $file"
+    cat $file
+
+    # A client load will stop if it finds the END_RUN_FILE file.
+    # That does not mean the client load actually failed though.
+    # The first node in END_RUN_FILE is the one we are interested in.
+    read node < $file
+
+    if [ -n "$node" ]; then
+        local var=$(node_var_name $node)_load
+
+        local prefix=$TESTLOG_PREFIX
+        [ -n "$TESTNAME" ] && prefix=$prefix.$TESTNAME
+        local stdout_log=$prefix.run_${!var}_stdout.$node.log
+        local debug_log=$(echo $stdout_log | sed 's/\(.*\)stdout/\1debug/')
+
+        echo "Client load ${!var} failed on node $node:"
+        echo "$stdout_log"
+        echo "$debug_log"
+    fi
+}
+
+# Stop the process which had its PID saved in a file.
+stop_process() {
+    local nodes=$1
+    local pid_file=$2
+
+    [ -z "$nodes" -o -z "$pid_file" ] && return 0
+
+    do_nodes $nodes "test -f $pid_file &&
+        { kill -s TERM \\\$(cat $pid_file); rm -f $pid_file; }" || true
+}
+
+# Stop all client loads.
+stop_client_loads() {
+    local nodes=${1:-$CLIENTS}
+    local pid_file=$2
+
+    # stop the client loads
+    stop_process $nodes $pid_file
+
+    # clean up the processes that started them
+    [ -n "$CLIENT_LOAD_PIDS" ] && kill -9 $CLIENT_LOAD_PIDS 2>/dev/null || true
+}
 
 # verify that lustre actually cleaned up properly
 cleanup_check() {
@@ -1444,6 +1505,7 @@ fail_abort() {
     local facet=$1
     stop $facet
     change_active $facet
+    wait_for_facet $facet
     mount_facet $facet -o abort_recovery
     clients_up || echo "first df failed: $?"
     clients_up || error "post-failover df: $?"
@@ -1657,6 +1719,7 @@ do_nodes() {
     [ -z "$myPDSH" -o "$myPDSH" = "no_dsh" -o "$myPDSH" = "rsh" ] && \
         echo "cannot run remote command on $rnodes with $myPDSH" && return 128
 
+    export FANOUT=$(get_node_count "${rnodes//,/ }")
     if $VERBOSE; then
         echo "CMD: $rnodes $@" >&2
         $myPDSH $rnodes "$LCTL mark \"$@\"" > /dev/null 2>&1 || :
@@ -1912,6 +1975,7 @@ setupall() {
     [ "$DAEMONFILE" ] && $LCTL debug_daemon start $DAEMONFILE $DAEMONSIZE
     mount_client $MOUNT
     [ -n "$CLIENTS" ] && zconf_mount_clients $CLIENTS $MOUNT
+    clients_up
 
     if [ "$MOUNT_2" ]; then
         mount_client $MOUNT2
@@ -2226,11 +2290,10 @@ get_svr_devs() {
 run_e2fsck() {
     local node=$1
     local target_dev=$2
-    local ostidx=$3
-    local ostdb_opt=$4
+    local extra_opts=$3
 
-    df > /dev/null	# update statfs data on disk
-    local cmd="$E2FSCK -d -v -f -n $MDSDB_OPT $ostdb_opt $target_dev"
+    df > /dev/null    # update statfs data on disk
+    local cmd="$E2FSCK -d -v -t -t -f -n $extra_opts $target_dev"
     echo $cmd
     local rc=0
     do_node $node $cmd || rc=$?
@@ -2239,33 +2302,36 @@ run_e2fsck() {
     return 0
 }
 
+# verify a directory is shared among nodes.
+check_shared_dir() {
+    local dir=$1
+
+    [ -z "$dir" ] && return 1
+    do_rpc_nodes $(comma_list $(nodes_list)) check_logdir $dir
+    check_write_access $dir || return 1
+    return 0
+}
+
 # Run e2fsck on MDT and OST(s) to generate databases used for lfsck.
 generate_db() {
     local i
     local ostidx
     local dev
-    local tmp_file
 
-    tmp_file=$(mktemp -p $SHARED_DIRECTORY ||
-        error_exit "fail to create file in $SHARED_DIRECTORY")
+    check_shared_dir $SHARED_DIRECTORY ||
+        error "$SHARED_DIRECTORY isn't a shared directory"
 
-    # make sure everything gets to the backing store
-    local list=$(comma_list $CLIENTS $(facet_host mds) $(osts_nodes))
-    do_nodes $list "sync; sleep 2; sync"
+    export MDSDB=$SHARED_DIRECTORY/mdsdb
+    export OSTDB=$SHARED_DIRECTORY/ostdb
 
-    do_nodes $list ls $tmp_file || \
-        error_exit "$SHARED_DIRECTORY is not a shared directory"
-    rm $tmp_file
-
-    run_e2fsck $(facet_host mds) $MDSDEV
+    run_e2fsck $(facet_host mds) $MDSDEV "--mdsdb $MDSDB"
 
     i=0
     ostidx=0
     OSTDB_LIST=""
     for node in $(osts_nodes); do
         for dev in ${OSTDEVS[i]}; do
-	    local ostdb_opt=`eval echo $OSTDB_OPT`
-            run_e2fsck $node $dev $ostidx "$ostdb_opt"
+            run_e2fsck $node $dev "--mdsdb $MDSDB --ostdb $OSTDB-$ostidx"
             OSTDB_LIST="$OSTDB_LIST $OSTDB-$ostidx"
             ostidx=$((ostidx + 1))
         done
@@ -2287,18 +2353,15 @@ run_lfsck() {
 }
 
 check_and_cleanup_lustre() {
-    if [ "$LFSCK_ALWAYS" = "yes" ]; then
+    if [ "$LFSCK_ALWAYS" = "yes" -a "$TESTSUITE" != "lfsck" ]; then
         get_svr_devs
         generate_db
-        if [ "$SKIP_LFSCK" == "no" ]; then
-	    run_lfsck
-	else
-	    echo "skip lfsck"
-        fi
+        run_lfsck
     fi
 
     if is_mounted $MOUNT; then
-        [ -n "$DIR" ] && rm -rf $DIR/[Rdfs][0-9]*
+        [ -n "$DIR" ] && rm -rf $DIR/[Rdfs][0-9]* ||
+            error "remove sub-test dirs failed"
         [ "$ENABLE_QUOTA" ] && restore_quota_type || true
     fi
 
@@ -2628,8 +2691,6 @@ debugrestore() {
 
 error_noexit() {
     local TYPE=${TYPE:-"FAIL"}
-    local tmp=$TMP
-    [ -d "$SHARED_DIR_LOGS" ] && tmp=$SHARED_DIR_LOGS
 
     local dump=true
     # do not dump logs if $1=false
@@ -2640,6 +2701,7 @@ error_noexit() {
 
     log " ${TESTSUITE} ${TESTNAME}: @@@@@@ ${TYPE}: $@ "
 
+    mkdir -p $LOGDIR
     # We need to dump the logs on all nodes
     if $dump; then
         gather_logs $(comma_list $(nodes_list))
@@ -2862,9 +2924,11 @@ run_one() {
 run_one_logged() {
     local BEFORE=`date +%s`
     local TEST_ERROR
-    local name=${TESTSUITE}.test_${1}.test_log.$(hostname).log
+    local name=${TESTSUITE}.test_${1}.test_log.$(hostname -s).log
     local test_log=$LOGDIR/$name
     rm -rf $LOGDIR/err
+    local SAVE_UMASK=`umask`
+    umask 0022
 
     log_sub_test_begin test_${1}
     (run_one $1 "$2") 2>&1 | tee $test_log
@@ -2881,6 +2945,8 @@ run_one_logged() {
     if [ -f $LOGDIR/err ]; then
         $FAIL_ON_ERROR && exit $RC
     fi
+
+    umask $SAVE_UMASK
 
     return 0
 }
@@ -2941,7 +3007,17 @@ osc_to_ost()
 
 ostuuid_from_index()
 {
-    $LFS osts $2 | awk '/^'$1'/ { print $2 }'
+    $LFS osts $2 | sed -ne "/^$1: /s/.* \(.*\) .*$/\1/p"
+}
+
+ostname_from_index() {
+    local uuid=$(ostuuid_from_index $1)
+    echo ${uuid/_UUID/}
+}
+
+index_from_ostuuid()
+{
+    $LFS osts $2 | sed -ne "/${1}/s/\(.*\): .* .*$/\1/p"
 }
 
 remote_node () {
@@ -3282,7 +3358,8 @@ inodes_available () {
 }
 
 mdsrate_inodes_available () {
-    echo $(($(inodes_available) - 1))
+    local min_inodes=$(inodes_available)
+    echo $((min_inodes * 99 / 100))
 }
 
 # reset llite stat counters
@@ -3509,7 +3586,7 @@ get_osc_import_name() {
 _wait_import_state () {
     local expected=$1
     local CONN_PROC=$2
-    local maxtime=${3:-max_recovery_time}
+    local maxtime=${3:-$(max_recovery_time)}
     local CONN_STATE
     local i=0
 
@@ -3537,7 +3614,7 @@ _wait_import_state () {
 wait_import_state() {
     local state=$1
     local params=$2
-    local maxtime=${3:-max_recovery_time}
+    local maxtime=${3:-$(max_recovery_time)}
     local param
 
     for param in ${params//,/ }; do
@@ -3593,13 +3670,15 @@ wait_osc_import_state() {
     local ost_facet=$2
     local expected=$3
     local ost=$(get_osc_import_name $facet $ost_facet)
+
     local param="osc.${ost}.ost_server_uuid"
 
     # 1. wait the deadline of client 1st request (it could be skipped)
     # 2. wait the deadline of client 2nd request
     local maxtime=$(( 2 * $(request_timeout $facet)))
 
-    if ! do_rpc_nodes $(facet_host $facet) _wait_import_state $expected $param $maxtime; then
+    if ! do_rpc_nodes $(facet_host $facet) \
+_wait_import_state $expected $param $maxtime; then
         error "import is not in ${expected} state"
         return 1
     fi
@@ -3708,12 +3787,17 @@ gather_logs () {
     local list=$1
 
     local ts=$(date +%s)
+    local docp=true
+
+    if [[ ! -f "$YAML_LOG" ]]; then
+        # init_logging is not performed before gather_logs,
+        # so the $LOGDIR needs to be checked here
+        check_shared_dir $LOGDIR && touch $LOGDIR/shared
+    fi
 
     # bug 20237, comment 11
     # It would also be useful to provide the option
     # of writing the file to an NFS directory so it doesn't need to be copied.
-    local tmp=$TMP
-    local docp=true
     [ -f $LOGDIR/shared ] && docp=false
 
     # dump lustre logs, dmesg
@@ -3724,28 +3808,17 @@ gather_logs () {
 
     if [ "$CLIENTONLY" -o "$PDSH" == "no_dsh" ]; then
         echo "Dumping logs only on local client."
-        $LCTL dk > ${prefix}.debug_log.$(hostname).${suffix}
-        dmesg > ${prefix}.dmesg.$(hostname).${suffix}
+        $LCTL dk > ${prefix}.debug_log.$(hostname -s).${suffix}
+        dmesg > ${prefix}.dmesg.$(hostname -s).${suffix}
         return
     fi
 
     do_nodes --verbose $list \
-        "$LCTL dk > ${prefix}.debug_log.\\\$(hostname).${suffix};
-         dmesg > ${prefix}.dmesg.\\\$(hostname).${suffix}"
-    if [ ! -f $LOGDIR/shared ]; then
+        "$LCTL dk > ${prefix}.debug_log.\\\$(hostname -s).${suffix};
+         dmesg > ${prefix}.dmesg.\\\$(hostname -s).${suffix}"
+    if $docp; then
         do_nodes $list rsync -az "${prefix}.*.${suffix}" $HOSTNAME:$LOGDIR
-      fi
-
-    local archive=$LOGDIR/${TESTSUITE}-$ts.tar.bz2
-    tar -jcf $archive $LOGDIR/*$ts* $LOGDIR/*${TESTSUITE}*
-
-    echo $archive
-}
-
-cleanup_logs () {
-    local list=${1:-$(comma_list $(nodes_list))}
-
-    [ -n ${TESTSUITE} ] && do_nodes $list "rm -f $TMP/*${TESTSUITE}*" || true
+    fi
 }
 
 do_ls () {
@@ -3887,18 +3960,23 @@ check_logdir() {
         # Not found. Create local logdir
         mkdir -p $dir
     else
-        touch $dir/node.$(hostname).yml
+        touch $dir/check_file.$(hostname -s)
     fi
     return 0
 }
 
 check_write_access() {
     local dir=$1
+    local node
+    local file
+
     for node in $(nodes_list); do
-        if [ ! -f "$dir/node.${node}.yml" ]; then
+        file=$dir/check_file.$(short_hostname $node)
+        if [[ ! -f $file ]]; then
             # Logdir not accessible/writable from this node.
             return 1
         fi
+        rm -f $file || return 1
     done
     return 0
 }
@@ -3907,12 +3985,17 @@ init_logging() {
     if [[ -n $YAML_LOG ]]; then
         return
     fi
+    local SAVE_UMASK=`umask`
+    umask 0000
+
     export YAML_LOG=${LOGDIR}/results.yml
     mkdir -p $LOGDIR
     init_clients_lists
 
-    do_rpc_nodes $(comma_list $(nodes_list)) check_logdir $LOGDIR
-    if check_write_access $LOGDIR; then
+    # If the yaml log already exists then we will just append to it.
+    [[ -f $YAML_LOG ]] && return 0
+
+    if check_shared_dir $LOGDIR; then
         touch $LOGDIR/shared
         echo "Logging to shared log directory: $LOGDIR"
     else
@@ -3921,6 +4004,8 @@ init_logging() {
 
     yml_nodes_file $LOGDIR >> $YAML_LOG
     yml_results_file >> $YAML_LOG
+
+    umask $SAVE_UMASK
 }
 
 log_test() {

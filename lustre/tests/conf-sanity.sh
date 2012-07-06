@@ -41,6 +41,16 @@ MDSSIZE=40000
 OSTSIZE=40000
 . ${CONFIG:=$LUSTRE/tests/cfg/$NAME.sh}
 
+# pass "-E lazy_itable_init" to mke2fs to speed up the formatting time
+for facet in MGS MDS OST; do
+    opts=${facet}_MKFS_OPTS
+    if [[ ${!opts} != *lazy_itable_init* ]]; then
+        eval SAVED_${facet}_MKFS_OPTS=\"${!opts}\"
+        eval ${facet}_MKFS_OPTS=\"${!opts} \
+--mkfsoptions='\\\"-E lazy_itable_init\\\"'\"
+    fi
+done
+
 require_dsh_mds || exit 0
 require_dsh_ost || exit 0
 
@@ -820,13 +830,14 @@ test_23a() {	# was test_23
 	local sleep=1
 	while [ "$WAIT" -lt "$MAX_WAIT" ]; do
 		sleep $sleep
+		ps -ef | grep mount
 		PID1=$(ps -ef | awk '{print $2}' | grep -w $MOUNT_PID)
 		PID2=$(ps -ef | awk '{print $2}' | grep -w $MOUNT_LUSTRE_PID)
 		echo PID1=$PID1
 		echo PID2=$PID2
 		[ -z "$PID1" -a -z "$PID2" ] && break
-		echo "waiting for mount to finish ... "
 		WAIT=$(( WAIT + sleep))
+		echo "waited $WAIT seconds for mount to finish ... "
 	done
 	if [ "$WAIT" -eq "$MAX_WAIT" ]; then
 		error "MOUNT_PID $MOUNT_PID and \
@@ -2256,7 +2267,7 @@ test_55() {
 		cp /etc/passwd $DIR/1
 		stopall
 
-		setup
+		setup_noconfig
 		cp /etc/passwd $DIR/2
 		sync
 
@@ -2279,15 +2290,19 @@ not $file_size"
 run_test 55 "check lov_objid size"
 
 test_56() {
-	add mds $MDS_MKFS_OPTS --mkfsoptions='\"-J size=16\"' --reformat $MDSDEV
-	add ost1 $OST_MKFS_OPTS --index=1000 --reformat `ostdevname 1`
-	add ost2 $OST_MKFS_OPTS --index=10000 --reformat `ostdevname 2`
+	add mds $MDS_MKFS_OPTS --mkfsoptions='\"-J size=8\"' \
+		--reformat $MDSDEV || error "failed to reformat mds"
+	add ost1 $OST_MKFS_OPTS --index=1000 --reformat $(ostdevname 1) || \
+		error "failed to reformat ost1"
+	add ost2 $OST_MKFS_OPTS --index=10000 --reformat $(ostdevname 2) || \
+		error "failed to reformat ost2"
 
-	start_mds
+	start_mgsmds
 	start_ost
 	start_ost2 || error "Unable to start second ost"
 	mount_client $MOUNT || error "Unable to mount client"
-	[ -n "$ENABLE_QUOTA" ] && { $LFS quotacheck -ug $MOUNT || error "quotacheck has failed" ; }
+	[ -n "$ENABLE_QUOTA" ] && \
+		{ $LFS quotacheck -ug $MOUNT || error "quotacheck has failed"; }
 
 	stopall
 	reformat
@@ -2316,7 +2331,7 @@ run_test 57b "initial registration from servicenode should not fail"
 
 test_58() { # bug 22658
         [ "$FSTYPE" != "ldiskfs" ] && skip "not supported for $FSTYPE" && return
-	setup
+	setup_noconfig
 	mkdir -p $DIR/$tdir
 	createmany -o $DIR/$tdir/$tfile-%d 100
 	# make sure that OSTs do not cancel llog cookies before we unmount the MDS
@@ -2477,9 +2492,42 @@ test_62 () { #LNET routes,ip2nets params
 }
 run_test 62 "check lnet module params (routes,ip2nets) using config file."
 
+test_60() { # LU-471
+	add mds $MDS_MKFS_OPTS --mkfsoptions='\" -E stride=64 \"' --reformat $MDSDEV
+
+	dump=$(do_facet mds dumpe2fs -h $MDSDEV)
+	rc=${PIPESTATUS[0]}
+	[ $rc -eq 0 ] || error "dumpe2fs $MDSDEV failed"
+
+	# MDT default has uninit_bg feature
+	echo $dump | grep uninit_bg > /dev/null || error "uninit_bg is not set"
+	# we set stride extended options
+	echo $dump | grep stride > /dev/null || error "stride is not set"
+
+	add mds $MDS_MKFS_OPTS --mkfsoptions='\" -E stride=64 -O ^uninit_bg\"' --reformat $MDSDEV
+	dump=$(do_facet mds dumpe2fs -h $MDSDEV)
+	rc=${PIPESTATUS[0]}
+	[ $rc -eq 0 ] || error "dumpe2fs $MDSDEV failed"
+
+	# we disabled dir_index feature
+	echo $dump | grep uninit_bg > /dev/null && error "uninit_bg is set"
+	# we set stride extended options
+	echo $dump | grep stride > /dev/null || error "stride is not set"
+	reformat
+}
+run_test 60 "check mkfs.lustre --mkfsoptions -E -O options setting"
+
 if ! combined_mgs_mds ; then
 	stop mgs
 fi
+
+# restore the ${facet}_MKFS_OPTS variables
+for facet in MGS MDS OST; do
+    opts=SAVED_${facet}_MKFS_OPTS
+    if [[ -n ${!opts} ]]; then
+        eval ${facet}_MKFS_OPTS=\"${!opts}\"
+    fi
+done
 
 complete $(basename $0) $SECONDS
 exit_status

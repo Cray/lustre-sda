@@ -690,7 +690,7 @@ static struct page *ll_dir_page_locate(struct inode *dir, __u64 *hash,
                         if (*hash > *end || (*end != *start && *hash == *end)) {
                                 kunmap(page);
                                 lock_page(page);
-                                ll_truncate_complete_page(page);
+                                truncate_complete_page(page->mapping, page);
                                 unlock_page(page);
                                 page_cache_release(page);
                                 page = NULL;
@@ -786,7 +786,7 @@ static struct page *ll_get_dir_page_20(struct file *filp, struct inode *dir,
                         CDEBUG(D_INFO, "Stale readpage page %p: %#lx != %#lx\n",
                               page, (unsigned long)lhash, (unsigned long)start);
                         lock_page(page);
-                        ll_truncate_complete_page(page);
+                        truncate_complete_page(page->mapping, page);
                         unlock_page(page);
                         page_cache_release(page);
                 } else {
@@ -1632,6 +1632,47 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
                         obd_quotactl(sbi->ll_mdc_exp, oqctl);
                 }
 
+                /* If QIF_SPACE is not set, client should collect the
+                 * space usage from OSSs by itself */
+                if (cmd == Q_GETQUOTA &&
+                    !(oqctl->qc_dqblk.dqb_valid & QIF_SPACE) &&
+                    !oqctl->qc_dqblk.dqb_curspace) {
+                        struct obd_quotactl *oqctl_tmp;
+
+                        OBD_ALLOC_PTR(oqctl_tmp);
+                        if (oqctl_tmp == NULL)
+                                GOTO(out_quotactl, rc = -ENOMEM);
+
+                        oqctl_tmp->qc_cmd = Q_GETOQUOTA;
+                        oqctl_tmp->qc_id = oqctl->qc_id;
+                        oqctl_tmp->qc_type = oqctl->qc_type;
+
+                        /* collect space usage from OSTs */
+                        oqctl_tmp->qc_dqblk.dqb_curspace = 0;
+                        rc = obd_quotactl(sbi->ll_osc_exp, oqctl_tmp);
+                        if (!rc || rc == -EREMOTEIO) {
+                                oqctl->qc_dqblk.dqb_curspace =
+                                        oqctl_tmp->qc_dqblk.dqb_curspace;
+                                oqctl->qc_dqblk.dqb_valid |= QIF_SPACE;
+                        }
+
+                        /* collect space & inode usage from MDTs */
+                        oqctl_tmp->qc_dqblk.dqb_curspace = 0;
+                        oqctl_tmp->qc_dqblk.dqb_curinodes = 0;
+                        rc = obd_quotactl(sbi->ll_mdc_exp, oqctl_tmp);
+                        if (!rc || rc == -EREMOTEIO) {
+                                oqctl->qc_dqblk.dqb_curspace +=
+                                        oqctl_tmp->qc_dqblk.dqb_curspace;
+                                oqctl->qc_dqblk.dqb_curinodes =
+                                        oqctl_tmp->qc_dqblk.dqb_curinodes;
+                                oqctl->qc_dqblk.dqb_valid |= QIF_INODES;
+                        } else {
+                                oqctl->qc_dqblk.dqb_valid &= ~QIF_SPACE;
+                        }
+
+                        OBD_FREE_PTR(oqctl_tmp);
+                }
+
                 QCTL_COPY(qctl, oqctl);
 
                 if (copy_to_user((void *)arg, qctl, sizeof(*qctl)))
@@ -1730,5 +1771,6 @@ struct file_operations ll_dir_operations = {
         .release  = ll_file_release,
         .read     = generic_read_dir,
         .readdir  = ll_readdir,
-        .ioctl    = ll_dir_ioctl
+        .ioctl    = ll_dir_ioctl,
+        .fsync    = ll_fsync
 };

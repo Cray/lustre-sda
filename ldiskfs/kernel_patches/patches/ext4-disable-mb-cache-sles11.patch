@@ -134,7 +134,7 @@ Index: linux-stage/fs/ext4/super.c
  
  static match_table_t tokens = {
 @@ -1396,6 +1397,7 @@ static match_table_t tokens = {
-	{Opt_bigendian_extents, "bigendian_extents"},
+	{Opt_extents, "extents"},
 	{Opt_mballoc, "mballoc"},
 	{Opt_force_over_8tb, "force_over_8tb"},
 +	{Opt_no_mbcache, "no_mbcache"},

@@ -459,7 +459,7 @@ int ll_file_open(struct inode *inode, struct file *file)
                  * dentry_open after call to open_namei that checks permissions.
                  * Only nfsd_open call dentry_open directly without checking
                  * permissions and because of that this code below is safe. */
-                if (oit.it_flags & FMODE_WRITE)
+                if (oit.it_flags & (FMODE_WRITE | FMODE_READ))
                         oit.it_flags |= MDS_OPEN_OWNEROVERRIDE;
 
                 /* We do not want O_EXCL here, presumably we opened the file
@@ -740,7 +740,7 @@ int ll_page_removal_cb(void *data, int discard)
                 LL_CDEBUG_PAGE(D_PAGE, page, "truncating\n");
                 if (llap)
                         ll_ra_accounting(llap, page->mapping);
-                ll_truncate_complete_page(page);
+                truncate_complete_page(page->mapping, page);
         }
         EXIT;
 out:

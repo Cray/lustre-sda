@@ -52,6 +52,11 @@
 # include <liblustre.h>
 #endif
 
+/* Linux 2.6.34+ no longer define QUOTA_OK */
+#ifndef QUOTA_OK
+#define QUOTA_OK 0
+#endif
+
 #include <obd_class.h>
 #include <lustre_mds.h>
 #include <lustre_dlm.h>
@@ -190,9 +195,17 @@ static int filter_quota_getflag(struct obd_device *obd, struct obdo *oa)
 
                 lqs = quota_search_lqs(LQS_KEY(cnt, GET_OA_ID(cnt, oa)),
                                        qctxt, 0);
-                if (lqs == NULL || IS_ERR(lqs)) {
+                if (IS_ERR(lqs)) {
                         rc = PTR_ERR(lqs);
+                        CDEBUG(D_QUOTA, "search lqs for %s %d failed,"
+                               "(rc = %d)\n",
+                               cnt == USRQUOTA ? "user" : "group",
+                               GET_OA_ID(cnt, oa), rc);
                         break;
+                } else if (lqs == NULL) {
+                        /* continue to check group quota if quota limit
+                         * of the file's user owner isn't set. LU-530 */
+                        continue;
                 } else {
                         spin_lock(&lqs->lqs_lock);
                         if (lqs->lqs_bunit_sz <= qctxt->lqc_sync_blk) {
@@ -300,6 +313,8 @@ static int quota_check_common(struct obd_device *obd, unsigned int uid,
                                                "blocks\n", obd->obd_name);
                                 else
                                         pending[i] += mb;
+                                LASSERTF(pending[i] >= 0, "pending is not valid,"
+                                         " count=%d, mb=%d\n", count, mb);
                                 lqs->lqs_bwrite_pending += pending[i];
                         } else {
                                 pending[i] = count;
@@ -551,6 +566,7 @@ static int quota_pending_commit(struct obd_device *obd, unsigned int uid,
                 spin_lock(&lqs->lqs_lock);
                 if (isblk) {
                         if (lqs->lqs_bwrite_pending >= pending[i]) {
+                                LASSERT(pending[i] >= 0);
                                 lqs->lqs_bwrite_pending -= pending[i];
                                 flag = 1;
                         } else {

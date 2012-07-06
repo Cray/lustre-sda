@@ -194,8 +194,6 @@ void groups_free(struct group_info *ginfo);
                                 (inode)->i_mapping->a_ops->writepage(page, NULL)
 #define ll_invalidate_inode_pages(inode) \
                                 invalidate_inode_pages((inode)->i_mapping)
-#define ll_truncate_complete_page(page) \
-                                truncate_complete_page(page->mapping, page)
 
 #define ll_vfs_create(a,b,c,d)          vfs_create(a,b,c,d)
 #define ll_dev_t                        dev_t
@@ -693,6 +691,11 @@ static inline int ll_quota_off(struct super_block *sb, int off, int remount)
 #else
 #define queue_max_phys_segments(rq)       queue_max_segments(rq)
 #define queue_max_hw_segments(rq)         queue_max_segments(rq)
+#endif
+
+/* Linux 2.6.34+ no longer define NO_QUOTA */
+#ifndef NO_QUOTA
+#define NO_QUOTA 1
 #endif
 
 #endif /* __KERNEL__ */

@@ -90,6 +90,20 @@ kernel patches from Lustre version 1.4.3 or above.])
 ])
 
 #
+# Allow the user to set the MDS thread upper limit
+#
+AC_DEFUN([LC_MDS_THREADS_MAX],
+[
+        AC_ARG_WITH([mds_max_threads],
+        AC_HELP_STRING([--with-mds-max-threads=size],
+                        [define the maximum number of threads available on the MDS: (default=512)]),
+        [
+                MDS_THREAD_COUNT=$with_mds_max_threads
+                AC_DEFINE_UNQUOTED(MDS_THREADS_MAX, $MDS_THREAD_COUNT, [maximum number of mdt threads])
+        ])
+])
+
+#
 # LC_CONFIG_BACKINGFS
 #
 # setup, check the backing filesystem
@@ -583,22 +597,25 @@ LB_LINUX_TRY_COMPILE([
 
 #
 # LC_STATFS_DENTRY_PARAM
-# starting from 2.6.18 linux kernel uses dentry instead of
-# super_block for first vfs_statfs argument
+# starting from 2.6.18 linux kernel uses dentry instead of super_block
+# for the first parameter of the super_operations->statfs() callback.
 #
 AC_DEFUN([LC_STATFS_DENTRY_PARAM],
-[AC_MSG_CHECKING([first vfs_statfs parameter is dentry])
+[AC_MSG_CHECKING([if super_ops.statfs() first parameter is dentry])
+tmp_flags="$EXTRA_KCFLAGS"
+EXTRA_KCFLAGS="-Werror"
 LB_LINUX_TRY_COMPILE([
         #include <linux/fs.h>
 ],[
-	int vfs_statfs(struct dentry *, struct kstatfs *);
+	((struct super_operations *)0)->statfs((struct dentry *)0, (struct kstatfs*)0);
 ],[
         AC_DEFINE(HAVE_STATFS_DENTRY_PARAM, 1,
-                [first parameter of vfs_statfs is dentry])
+                [super_ops.statfs() first parameter is dentry])
         AC_MSG_RESULT([yes])
 ],[
         AC_MSG_RESULT([no])
 ])
+EXTRA_KCFLAGS="$tmp_flags"
 ])
 
 #
@@ -899,14 +916,23 @@ LB_LINUX_TRY_COMPILE([
 ])
 ])
 
+# truncate_complete_page() was exported from RHEL5/SLES10/SLES11
+# remove_from_page_cache() was exported between 2.6.35 and 2.6.38
+# delete_from_page_cache() is exported from 2.6.39
 AC_DEFUN([LC_EXPORT_TRUNCATE_COMPLETE_PAGE],
-[LB_CHECK_SYMBOL_EXPORT([truncate_complete_page],
-[mm/truncate.c],[
-AC_DEFINE(HAVE_TRUNCATE_COMPLETE_PAGE, 1,
-            [kernel export truncate_complete_page])
-],[
-])
-])
+         [LB_CHECK_SYMBOL_EXPORT([truncate_complete_page],
+                                 [mm/truncate.c],
+                                 [AC_DEFINE(HAVE_TRUNCATE_COMPLETE_PAGE, 1,
+                                            [kernel export truncate_complete_page])])
+          LB_CHECK_SYMBOL_EXPORT([remove_from_page_cache],
+                                 [mm/filemap.c],
+                                 [AC_DEFINE(HAVE_REMOVE_FROM_PAGE_CACHE, 1,
+                                            [kernel export remove_from_page_cache])])
+          LB_CHECK_SYMBOL_EXPORT([delete_from_page_cache],
+                                 [mm/filemap.c],
+                                 [AC_DEFINE(HAVE_DELETE_FROM_PAGE_CACHE, 1,
+                                            [kernel export delete_from_page_cache])])
+         ])
 
 AC_DEFUN([LC_EXPORT_TRUNCATE_RANGE],
 [LB_CHECK_SYMBOL_EXPORT([truncate_inode_pages_range],
@@ -2397,6 +2423,9 @@ AC_DEFUN([LC_CONFIGURE],
 if test $target_cpu == "i686" -o $target_cpu == "x86_64"; then
         CFLAGS="$CFLAGS -Werror"
 fi
+
+# maximum MDS thread count
+LC_MDS_THREADS_MAX
 
 # include/liblustre.h
 AC_CHECK_HEADERS([asm/page.h sys/user.h sys/vfs.h stdint.h blkid/blkid.h])

@@ -1,6 +1,6 @@
 # Process this file with autoconf to produce a configure script.
 
-AC_INIT([Lustre ldiskfs], 3.1.50, [http://bugs.whamcloud.com/])
+AC_INIT([Lustre ldiskfs], 3.1.52, [http://bugs.whamcloud.com/])
 AC_CONFIG_SRCDIR([lustre-ldiskfs.spec.in])
 ldiskfs_is_ext4=yes
 
@@ -135,7 +135,6 @@ case $LINUXRELEASE in
 	fi
 	;;
 2.6.22*) LDISKFS_SERIES="2.6.22-vanilla.series";;
-2.6.27*) LDISKFS_SERIES="2.6-sles11.series";;
 2.6.32.*) LDISKFS_SERIES="2.6-sles11.series";;
 *) AC_MSG_WARN([Unknown kernel version $LINUXRELEASE, fix ldiskfs/configure.ac])
 esac

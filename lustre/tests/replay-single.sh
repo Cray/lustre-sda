@@ -1437,12 +1437,12 @@ test_61a() {
     replay_barrier ost1
 #   OBD_FAIL_OST_LLOG_RECOVERY_TIMEOUT 0x221
     unlinkmany $DIR/$tdir/$tfile-%d 800
-    do_facet ost "lctl set_param fail_loc=0x80000221"
+    set_nodes_failloc "$(osts_nodes)" 0x80000221
     facet_failover ost1
     sleep 10
     fail ost1
     sleep 30
-    do_facet ost "lctl set_param fail_loc=0x0"
+    set_nodes_failloc "$(osts_nodes)" 0x0
     $CHECKSTAT -t file $DIR/$tdir/$tfile-* && return 1
     rmdir $DIR/$tdir
 }
@@ -1465,10 +1465,11 @@ test_61c() {
 
 #   OBD_FAIL_OST_CANCEL_COOKIE_TIMEOUT 0x222
     touch $DIR/$tfile
-    do_facet ost "lctl set_param fail_loc=0x80000222"
+    set_nodes_failloc "$(osts_nodes)" 0x80000222
     rm $DIR/$tfile
     sleep 10
     fail ost1
+    set_nodes_failloc "$(osts_nodes)" 0x0
 }
 run_test 61c "test race mds llog sync vs llog cleanup"
 
@@ -1697,7 +1698,7 @@ test_67b() #bug 3055
     CONN1=$(lctl get_param -n osc.*.stats | awk '/_connect/ {total+=$2} END {print total}')
 
     # exhaust precreations on ost1
-    local OST=$(lfs osts | grep ^0": " | awk '{print $2}' | sed -e 's/_UUID$//')
+    local OST=$(ostname_from_index 0)
     local mdtosc=$(get_mdtosc_proc_path $OST)
     local last_id=$(do_facet mds lctl get_param -n osc.$mdtosc.prealloc_last_id)
     local next_id=$(do_facet mds lctl get_param -n osc.$mdtosc.prealloc_next_id)
@@ -1816,7 +1817,7 @@ test_70b () {
 	local clients=${CLIENTS:-$HOSTNAME}
 
 	zconf_mount_clients $clients $MOUNT
-	
+
 	local duration=300
 	[ "$SLOW" = "no" ] && duration=60
 	# set duration to 900 because it takes some time to boot node
@@ -1825,20 +1826,20 @@ test_70b () {
 	local cmd="rundbench 1 -t $duration"
 	local pid=""
 	do_nodesv $clients "set -x; MISSING_DBENCH_OK=$MISSING_DBENCH_OK \
-		PATH=:$PATH:$LUSTRE/utils:$LUSTRE/tests/:$DBENCH_LIB \
+		PATH=\$PATH:$LUSTRE/utils:$LUSTRE/tests/:$DBENCH_LIB \
 		DBENCH_LIB=$DBENCH_LIB TESTSUITE=$TESTSUITE TESTNAME=$TESTNAME \
-		LCTL=$LCTL $cmd" &
+		MOUNT=$MOUNT DIR=$DIR/$tdir/\\\$(hostname) LCTL=$LCTL $cmd" &
 	pid=$!
 	log "Started rundbench load pid=$pid ..."
 
 	# give rundbench a chance to start, bug 24118
-	sleep 2
+	sleep 12
 	local elapsed=0
 	local num_failovers=0
 	local start_ts=$(date +%s)
 	while [ $elapsed -lt $duration ]; do
-		if ! check_for_process $clients rundbench; then
-			error_noexit "rundbench not found on some of $clients!"
+		if ! check_for_process $clients dbench; then
+			error_noexit "dbench not found on some of $clients!"
 			killall_process $clients dbench
 			break
 		fi
@@ -2199,7 +2200,7 @@ test_87() { #bug 17485
     replay_barrier mds
 
     # exhaust precreations on ost1
-    local OST=$(lfs osts | grep ^0": " | awk '{print $2}' | sed -e 's/_UUID$//')
+    local OST=$(ostname_from_index 0)
     local mdtosc=$(get_mdtosc_proc_path $OST)
     local last_id=$(do_facet mds lctl get_param -n osc.$mdtosc.prealloc_last_id)
     local next_id=$(do_facet mds lctl get_param -n osc.$mdtosc.prealloc_next_id)

@@ -113,7 +113,8 @@ int ll_dcompare(struct dentry *parent, struct qstr *d_name, struct qstr *name)
 
 static inline int return_if_equal(struct ldlm_lock *lock, void *data)
 {
-        if (lock->l_flags & LDLM_FL_CANCELING)
+        if ((lock->l_flags & (LDLM_FL_CANCELING | LDLM_FL_DISCARD_DATA)) ==
+            (LDLM_FL_CANCELING | LDLM_FL_DISCARD_DATA))
                 return LDLM_ITER_CONTINUE;
         return LDLM_ITER_STOP;
 }
@@ -532,10 +533,8 @@ revalidate_finish:
          * dentry */
         spin_lock(&ll_lookup_lock);
         spin_lock(&dcache_lock);
-        lock_dentry(de);
-        __d_drop(de);
-        unlock_dentry(de);
-        d_rehash_cond(de, 0);
+        if (d_unhashed(de))
+                d_rehash_cond(de, 0);
         spin_unlock(&dcache_lock);
         spin_unlock(&ll_lookup_lock);
 

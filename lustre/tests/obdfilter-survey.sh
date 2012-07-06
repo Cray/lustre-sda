@@ -1,5 +1,6 @@
 #!/bin/bash
 #set -x
+set -e
 
 LUSTRE=${LUSTRE:-`dirname $0`/..}
 . $LUSTRE/tests/test-framework.sh
@@ -55,9 +56,8 @@ obdflter_survey_targets () {
 
 	case $case in
 		disk)    targets=$(get_targets);;
-		netdisk) targets="";;
-		# use ost1 host as a default target for case=network
-		network) targets=$(facet_host ost1);;
+		netdisk) targets=$(get_targets);;
+		network) targets="$(osts_nodes)";;
 		*) error "unknown obdflter-survey case!" ;;
 	esac
 	echo $targets
@@ -65,20 +65,16 @@ obdflter_survey_targets () {
 
 obdflter_survey_run () {
 	local case=$1
-	local targets=${2:-$(obdflter_survey_targets $case)}
-	local rc=0
 
 	rm -f ${TMP}/obdfilter_survey*
 
-	local cmd="NETTYPE=$NETTYPE thrlo=$thrlo thrhi=$thrhi nobjhi=$nobjhi size=$size case=$case rslt_loc=${TMP} targets=\"$targets\" $OBDSURVEY"
+	local targets=$(obdflter_survey_targets $case)
+	local cmd="NETTYPE=$NETTYPE thrlo=$thrlo nobjhi=$nobjhi thrhi=$thrhi size=$size case=$case rslt_loc=${TMP} targets=\"$targets\" $OBDSURVEY"
 	echo + $cmd
 	eval $cmd
 
-	rc=${PIPESTATUS[0]}
 	cat ${TMP}/obdfilter_survey*
-	return $rc
 }
-
 test_1a () {
 	obdflter_survey_run disk
 }
@@ -99,11 +95,14 @@ print_jbd () {
 check_jbd_values () {
 	local facet=$1
 	local thrhi=$2
+	local rtime=$3
 
 	# last two lines from history
 	# $4: run >= 5000
 	# $8: hndls >= thrhi * 2
-	local hist=("$(print_jbd history $facet | tail -3 | head -2)")
+	# display history of rtime/4 before, in case obd cleanup consumes time
+	local tlines=$((rtime / 5 / 4 + 1))
+	local hist=("$(print_jbd history $facet | tail -$tlines | head -1)")
 	echo "$hist"
 	local run=($(echo "${hist[*]}" | awk '{print $4}'))
 	local hndls=($(echo "${hist[*]}" | awk '{print $8}'))
@@ -121,10 +120,11 @@ check_jbd_values () {
 check_jbd_values_facets () {
 	local facets=$1
 	local thrhi=$2
+	local rtime=$3
 	local facet
 	local rc=0
 	for facet in  ${facets//,/ }; do
-		check_jbd_values $facet $thrhi || rc=$((rc+$?))
+		check_jbd_values $facet $thrhi $rtime || rc=$((rc+$?))
 	done
 	return $rc
 }
@@ -141,12 +141,14 @@ test_1b () {
 	save_lustre_params $(comma_list $(osts_nodes)) "obdfilter.${FSNAME}-*.sync_journal" >$param_file
 	do_nodesv $(comma_list $(osts_nodes)) lctl set_param obdfilter.${FSNAME}-*.sync_journal=0
 
-	local rc=0
+	local stime=$(date +%s)
 	thrlo=4 nobjhi=1 thrhi=4 obdflter_survey_run disk
-	rc=$?
-	[[ $rc -eq 0 ]] || return $rc
+	local etime=$(date +%s)
+	# run time of obd survey
+	local rtime=$((etime - stime))
 
-	check_jbd_values_facets $(get_facets OST) 4 || rc=$((rc+$?))
+	echo "obd survey finished in $rtime seconds"
+	check_jbd_values_facets $(get_facets OST) 4 $rtime || rc=$((rc+$?))
 
 	restore_lustre_params < $param_file
 
@@ -172,12 +174,13 @@ test_2b () {
 	save_lustre_params $(comma_list $(osts_nodes)) "obdfilter.${FSNAME}-*.sync_journal" >$param_file
 	do_nodesv $(comma_list $(osts_nodes)) lctl set_param obdfilter.${FSNAME}-*.sync_journal=0
 
-	local rc=0
+	local stime=$(date +%s)
 	thrlo=4 nobjhi=1 thrhi=4 obdflter_survey_run netdisk
-	rc=$?
-	[[ $rc -eq 0 ]] || return $rc
+	local etime=$(date +%s)
+	local rtime=$((etime - stime))
 
-	check_jbd_values_facets $(get_facets OST) 4 || rc=$((rc+$?))
+	echo "obd survey finished in $rtime seconds"
+	check_jbd_values_facets $(get_facets OST) 4 $rtime || rc=$((rc+$?))
 
 	restore_lustre_params < $param_file
 
@@ -191,18 +194,13 @@ run_test 2b "Stripe F/S over the Network, async journal"
 test_3a () {
 	remote_servers || { skip "Local servers" && return 0; }
 
-	# cleanup all, because obdfilter=survey case=network test requires
-	# the empty device list on the client node
+	# The Network survey test needs:
+	# Start lctl and check for the device list. The device list must be empty.
 	cleanupall
 
-	# run the test for each oss
-	local oss
-	rc=0
-	for oss in $(osts_nodes); do
-		obdflter_survey_run network $oss || rc=$((rc + $?))
-	done
+	obdflter_survey_run network
+
 	setupall
-	return $rc
 }
 run_test 3a "Network survey"
 
