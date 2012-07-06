@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -52,29 +52,18 @@
  */
 struct ldlm_resource * lock_res_and_lock(struct ldlm_lock *lock)
 {
-        struct ldlm_resource *res = NULL;
+        /* on server-side resource of lock doesn't change */
+        if (!lock->l_ns_srv)
+                cfs_spin_lock(&lock->l_lock);
 
-        spin_lock(&lock->l_lock);
-        res = lock->l_resource;
-
-        if (ns_is_server(res->lr_namespace))
-                /* on server-side resource of lock doesn't change */
-                spin_unlock(&lock->l_lock);
-
-        lock_res(res);
-        return res;
+        lock_res(lock->l_resource);
+        return lock->l_resource;
 }
 
 void unlock_res_and_lock(struct ldlm_lock *lock)
 {
-        struct ldlm_resource *res = lock->l_resource;
-
-        if (ns_is_server(res->lr_namespace)) {
-                /* on server-side resource of lock doesn't change */
-                unlock_res(res);
-                return;
-        }
-
-        unlock_res(res);
-        spin_unlock(&lock->l_lock);
+        /* on server-side resource of lock doesn't change */
+        unlock_res(lock->l_resource);
+        if (!lock->l_ns_srv)
+                cfs_spin_unlock(&lock->l_lock);
 }

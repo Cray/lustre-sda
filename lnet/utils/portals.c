@@ -1,7 +1,7 @@
 /* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
  * vim:expandtab:shiftwidth=8:tabstop=8:
  *
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  *
  *   This file is part of Portals, http://www.sf.net/projects/lustre/
  *
@@ -20,37 +20,10 @@
  *
  */
 
-#include <stdio.h>
-#include <sys/types.h>
-#ifdef HAVE_NETDB_H
-#include <netdb.h>
-#endif
-#include <sys/socket.h>
-#ifdef HAVE_NETINET_TCP_H
-#include <netinet/tcp.h>
-#endif
-#include <stdlib.h>
-#include <string.h>
-#include <fcntl.h>
-#ifdef HAVE_SYS_IOCTL_H
-#include <sys/ioctl.h>
-#endif
-#ifndef _IOWR
-#include "ioctl.h"
-#endif
-#include <errno.h>
-#include <unistd.h>
-#include <time.h>
-#include <stdarg.h>
-#ifdef HAVE_ENDIAN_H
-#include <endian.h>
-#endif
-
-#include <libcfs/portals_utils.h>
+#include <libcfs/libcfsutil.h>
 #include <lnet/api-support.h>
 #include <lnet/lnetctl.h>
 #include <lnet/socklnd.h>
-#include "parser.h"
 
 unsigned int libcfs_debug;
 unsigned int libcfs_printk = D_CANTMASK;
@@ -222,6 +195,19 @@ lnet_parse_time (time_t *t, char *str)
         return (0);
 }
 
+int
+lnet_parse_nid(char *nid_str, lnet_process_id_t *id_ptr)
+{
+        id_ptr->pid = LNET_PID_ANY;
+        id_ptr->nid = libcfs_str2nid(nid_str);
+        if (id_ptr->nid == LNET_NID_ANY) {
+                fprintf (stderr, "Can't parse nid \"%s\"\n", nid_str);
+                return -1;
+        }
+
+        return 0;
+}
+
 int g_net_is_set (char *cmd)
 {
         if (g_net_set)
@@ -317,6 +303,14 @@ int jt_ptl_network(int argc, char **argv)
         net = libcfs_str2net(argv[1]);
         if (net == LNET_NIDNET(LNET_NID_ANY)) {
                 fprintf(stderr, "Can't parse net %s\n", argv[1]);
+                return -1;
+        }
+
+        if (LNET_NETTYP(net) == CIBLND    ||
+            LNET_NETTYP(net) == OPENIBLND ||
+            LNET_NETTYP(net) == IIBLND    ||
+            LNET_NETTYP(net) == VIBLND) {
+                fprintf(stderr, "Net %s obsoleted\n", libcfs_lnd2str(net));
                 return -1;
         }
 
@@ -571,8 +565,7 @@ jt_ptl_print_peers (int argc, char **argv)
         int                      rc;
 
         if (!g_net_is_compatible (argv[0], SOCKLND, RALND, PTLLND, MXLND,
-                                  OPENIBLND, CIBLND, IIBLND, VIBLND, O2IBLND,
-                                  GNILND, 0))
+                                  O2IBLND,  GNILND, 0))
                 return -1;
 
         for (index = 0;;index++) {
@@ -613,7 +606,7 @@ jt_ptl_print_peers (int argc, char **argv)
                                 data.ioc_u32[5] & 0xffff, /* nactiveq */
                                 data.ioc_u32[6] >> 16, /* credits */
                                 data.ioc_u32[6] & 0xffff); /* outstanding_credits */
-                } else if (g_net_is_compatible(NULL, RALND, OPENIBLND, CIBLND, VIBLND, 0)) {
+                } else if (g_net_is_compatible(NULL, RALND, 0)) {
                         printf ("%-20s [%d]@%s:%d\n",
                                 libcfs_nid2str(data.ioc_nid), /* peer nid */
                                 data.ioc_count,   /* peer persistence */
@@ -629,15 +622,14 @@ jt_ptl_print_peers (int argc, char **argv)
                                 state = data.ioc_flags & 0xffff ? "C" : "U";
 
                         printf ("%-20s (%d) %s [%d] "LPU64" "
-                                "sq %d/%d tx %d/%d/%d\n",
+                                "sq %d/%d q %d/%d\n",
                                 libcfs_nid2str(data.ioc_nid), /* peer nid */
                                 data.ioc_net, /* gemini device id */
                                 state, /* peer is Connecting, Up, or Down */
                                 data.ioc_count,   /* peer refcount */
                                 data.ioc_u64[0], /* peerstamp */ 
                                 data.ioc_u32[2], data.ioc_u32[3], /* tx and rx seq */
-                                /* fmaq, nfma, nrdma */
-                                data.ioc_u32[0], data.ioc_u32[1], data.ioc_u32[4]
+                                data.ioc_u32[0], data.ioc_u32[1] /* fmaq and rdmaq len  */
                                 );
                 } else {
                         printf ("%-20s [%d]\n",
@@ -666,26 +658,12 @@ jt_ptl_add_peer (int argc, char **argv)
         int                      port = 0;
         int                      rc;
 
-        if (!g_net_is_compatible (argv[0], SOCKLND, RALND,
-                                  OPENIBLND, CIBLND, IIBLND, VIBLND, 
-                                  GNILND, 0))
+        if (!g_net_is_compatible (argv[0], SOCKLND, RALND, GNILND, 0))
                 return -1;
 
-        if (g_net_is_compatible(NULL, 
-                SOCKLND, OPENIBLND, CIBLND, RALND, GNILND, 0)) {
-                if (argc != 4) {
-                        fprintf (stderr, "usage(tcp,openib,cib,ra,gni): %s nid ipaddr port\n",
-                                 argv[0]);
-                        return 0;
-                }
-        } else if (g_net_is_compatible(NULL, VIBLND, 0)) {
-                if (argc != 3) {
-                        fprintf (stderr, "usage(vib): %s nid ipaddr\n",
-                                 argv[0]);
-                        return 0;
-                }
-        } else if (argc != 2) {
-                fprintf (stderr, "usage(iib): %s nid\n", argv[0]);
+        if (argc != 4) {
+                fprintf (stderr, "usage(tcp,ra): %s nid ipaddr port\n",
+                         argv[0]);
                 return 0;
         }
 
@@ -695,16 +673,12 @@ jt_ptl_add_peer (int argc, char **argv)
                 return -1;
         }
 
-        if (g_net_is_compatible (NULL, 
-                SOCKLND, OPENIBLND, CIBLND, VIBLND, RALND, GNILND, 0) &&
-            lnet_parse_ipaddr (&ip, argv[2]) != 0) {
+        if (lnet_parse_ipaddr (&ip, argv[2]) != 0) {
                 fprintf (stderr, "Can't parse ip addr: %s\n", argv[2]);
                 return -1;
         }
 
-        if (g_net_is_compatible (NULL, 
-                SOCKLND, OPENIBLND, CIBLND, RALND, GNILND, 0) &&
-            lnet_parse_port (&port, argv[3]) != 0) {
+        if (lnet_parse_port (&port, argv[3]) != 0) {
                 fprintf (stderr, "Can't parse port: %s\n", argv[3]);
                 return -1;
         }
@@ -736,8 +710,7 @@ jt_ptl_del_peer (int argc, char **argv)
         int                      rc;
 
         if (!g_net_is_compatible (argv[0], SOCKLND, RALND, MXLND, PTLLND,
-                                  OPENIBLND, CIBLND, IIBLND, VIBLND, O2IBLND,
-                                  GNILND, 0))
+                                  O2IBLND, GNILND, 0))
                 return -1;
 
         if (g_net_is_compatible(NULL, SOCKLND, 0)) {
@@ -806,8 +779,7 @@ jt_ptl_print_connections (int argc, char **argv)
         int                      index;
         int                      rc;
 
-        if (!g_net_is_compatible (argv[0], SOCKLND, RALND, MXLND,
-                                  OPENIBLND, CIBLND, IIBLND, VIBLND, O2IBLND, 
+        if (!g_net_is_compatible (argv[0], SOCKLND, RALND, MXLND, O2IBLND, 
                                   GNILND, 0))
                 return -1;
 
@@ -877,8 +849,7 @@ int jt_ptl_disconnect(int argc, char **argv)
                 return 0;
         }
 
-        if (!g_net_is_compatible (NULL, SOCKLND, RALND, MXLND,
-                                  OPENIBLND, CIBLND, IIBLND, VIBLND, O2IBLND,
+        if (!g_net_is_compatible (NULL, SOCKLND, RALND, MXLND, O2IBLND,
                                   GNILND, 0))
                 return 0;
 
@@ -1005,12 +976,9 @@ int jt_ptl_ping(int argc, char **argv)
 
         sep = strchr(argv[1], '-');
         if (sep == NULL) {
-                id.pid = LNET_PID_ANY;
-                id.nid = libcfs_str2nid(argv[1]);
-                if (id.nid == LNET_NID_ANY) {
-                        fprintf (stderr, "Can't parse nid \"%s\"\n", argv[1]);
+                rc = lnet_parse_nid(argv[1], &id);
+                if (rc != 0)
                         return -1;
-                }
         } else {
                 char   *end;
 
@@ -1020,12 +988,19 @@ int jt_ptl_ping(int argc, char **argv)
                 else
                         id.pid = strtoul(argv[1], &end, 0);
 
-                id.nid = libcfs_str2nid(sep + 1);
+                if (end != sep) { /* assuming '-' is part of hostname */
+                        rc = lnet_parse_nid(argv[1], &id);
+                        if (rc != 0)
+                                return -1;
+                } else {
+                        id.nid = libcfs_str2nid(sep + 1);
 
-                if (end != sep ||
-                    id.nid == LNET_NID_ANY) {
-                        fprintf(stderr, "Can't parse process id \"%s\"\n", argv[1]);
-                        return -1;
+                        if (id.nid == LNET_NID_ANY) {
+                                fprintf(stderr,
+                                        "Can't parse process id \"%s\"\n",
+                                        argv[1]);
+                                return -1;
+                        }
                 }
         }
 
@@ -1324,7 +1299,7 @@ lwt_control(int enable, int clear)
 }
 
 static int
-lwt_snapshot(cycles_t *now, int *ncpu, int *totalsize,
+lwt_snapshot(cfs_cycles_t *now, int *ncpu, int *totalsize,
              lwt_event_t *events, int size)
 {
         struct libcfs_ioctl_data data;
@@ -1421,7 +1396,8 @@ lwt_put_string(char *ustr)
 }
 
 static int
-lwt_print(FILE *f, cycles_t t0, cycles_t tlast, double mhz, int cpu, lwt_event_t *e)
+lwt_print(FILE *f, cfs_cycles_t t0, cfs_cycles_t tlast, double mhz, int cpu,
+          lwt_event_t *e)
 {
 #ifndef __WORDSIZE
 # error "__WORDSIZE not defined"
@@ -1469,25 +1445,26 @@ get_cycles_per_usec ()
         return (1000.0);
 }
 
+#define LWT_MAX_CPUS (32)
+
 int
 jt_ptl_lwt(int argc, char **argv)
 {
-        const int       lwt_max_cpus = 32;
         int             ncpus;
         int             totalspace;
         int             nevents_per_cpu;
         lwt_event_t    *events;
-        lwt_event_t    *cpu_event[lwt_max_cpus + 1];
-        lwt_event_t    *next_event[lwt_max_cpus];
-        lwt_event_t    *first_event[lwt_max_cpus];
+        lwt_event_t    *cpu_event[LWT_MAX_CPUS + 1];
+        lwt_event_t    *next_event[LWT_MAX_CPUS];
+        lwt_event_t    *first_event[LWT_MAX_CPUS];
         int             cpu;
         lwt_event_t    *e;
         int             rc;
         int             i;
         double          mhz;
-        cycles_t        t0;
-        cycles_t        tlast;
-        cycles_t        tnow;
+        cfs_cycles_t    t0;
+        cfs_cycles_t    tlast;
+        cfs_cycles_t    tnow;
         struct timeval  tvnow;
         int             printed_date = 0;
         int             nlines = 0;
@@ -1521,9 +1498,9 @@ jt_ptl_lwt(int argc, char **argv)
         if (lwt_snapshot(NULL, &ncpus, &totalspace, NULL, 0) != 0)
                 return (-1);
 
-        if (ncpus > lwt_max_cpus) {
+        if (ncpus > LWT_MAX_CPUS) {
                 fprintf(stderr, "Too many cpus: %d (%d)\n",
-                        ncpus, lwt_max_cpus);
+                        ncpus, LWT_MAX_CPUS);
                 return (-1);
         }
 
@@ -1627,7 +1604,7 @@ jt_ptl_lwt(int argc, char **argv)
                 if (t0 <= next_event[cpu]->lwte_when) {
                         /* on or after the first event */
                         if (!printed_date) {
-                                cycles_t du = (tnow - t0) / mhz;
+                                cfs_cycles_t du = (tnow - t0) / mhz;
                                 time_t   then = tvnow.tv_sec - du/1000000;
 
                                 if (du % 1000000 > tvnow.tv_usec)

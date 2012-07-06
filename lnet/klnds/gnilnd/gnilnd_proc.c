@@ -619,11 +619,12 @@ kgnilnd_smsg_seq_show (struct seq_file *s, void *iter)
         int                     avail_mboxs, held_mboxs, num_mboxs;
         unsigned int            blk_size;
         int                     live;
+        kgn_fmablk_state_t      state;
         gni_mem_handle_t        hndl;
 
         if (gseq->gsmsg_off == 0) {
-                seq_printf(s, "%5s %6s/%5s/%5s %9s %18s %37s\n",
-                        "blk#", "avail", "held", "total", "size",
+                seq_printf(s, "%5s %4s %6s/%5s/%5s %9s %18s %37s\n",
+                        "blk#", "type", "avail", "held", "total", "size",
                         "fmablk", "mem handle"); 
                 return 0;
         }
@@ -640,26 +641,27 @@ kgnilnd_smsg_seq_show (struct seq_file *s, void *iter)
                 return -ESTALE;
         }
         
-        live = fmablk->gnm_mapped > 0;
+        live = fmablk->gnm_hold_timeout == 0;
         /* none are available if it isn't live... */
         avail_mboxs = live ? fmablk->gnm_avail_mboxs : 0;
         held_mboxs = fmablk->gnm_held_mboxs;
         num_mboxs = fmablk->gnm_num_mboxs;
         blk_size = fmablk->gnm_blk_size;
+        state = fmablk->gnm_state;
         hndl.qword1 = fmablk->gnm_hndl.qword1;
         hndl.qword2 = fmablk->gnm_hndl.qword2;
 
         spin_unlock(&dev->gnd_fmablk_lock);
 
         if (live) {
-                seq_printf(s, "%5d %6d/%5d/%5d %9d %18p   "LPX64"."LPX64"\n",
-                           (int) gseq->gsmsg_off, avail_mboxs, held_mboxs,
-                           num_mboxs, blk_size,
+                seq_printf(s, "%5d %4s %6d/%5d/%5d %9d %18p   "LPX64"."LPX64"\n",
+                           (int) gseq->gsmsg_off, kgnilnd_fmablk_state2str(state), 
+                           avail_mboxs, held_mboxs, num_mboxs, blk_size,
                            fmablk, hndl.qword1, hndl.qword2);
         } else {
-                seq_printf(s, "%5d %6d/%5d/%5d %9d %18p %37s\n",
-                           (int) gseq->gsmsg_off, avail_mboxs, held_mboxs,
-                           num_mboxs, blk_size,
+                seq_printf(s, "%5d %4s %6d/%5d/%5d %9d %18p %37s\n",
+                           (int) gseq->gsmsg_off, kgnilnd_fmablk_state2str(state), 
+                           avail_mboxs, held_mboxs, num_mboxs, blk_size,
                            fmablk, "PURGATORY.HOLD");
         }
 
@@ -1056,7 +1058,7 @@ kgnilnd_peer_seq_show (struct seq_file *s, void *iter)
         kgn_peer_t             *peer;
         kgn_conn_t             *conn;
         char                   conn_str;
-
+        int                    purg_count = 0; 
         /* there is no header data for peers, so offset 0 is the first
          * real entry. */
 
@@ -1083,16 +1085,23 @@ kgnilnd_peer_seq_show (struct seq_file *s, void *iter)
                 conn_str = 'D';
         }
 
+        list_for_each_entry(conn, &peer->gnp_conns, gnc_list) {
+                if (conn->gnc_in_purgatory) {
+                        purg_count++;
+                }
+        }
+
         read_unlock(&kgnilnd_data.kgn_peer_conn_lock);
 
-        seq_printf(s, "%p->%s [%d] NIC 0x%x q %d conn %c "
+        seq_printf(s, "%p->%s [%d] NIC 0x%x q %d conn %c purg %d "
                 "last %d@%dms dgram %d@%dms "
-                "reconn %dms to %lus purg %d\n",
+                "reconn %dms to %lus \n",
                 peer, libcfs_nid2str(peer->gnp_nid),
                 atomic_read(&peer->gnp_refcount), 
                 peer->gnp_host_id,
                 kgnilnd_count_list(&peer->gnp_tx_queue),
-                conn_str, 
+                conn_str,
+                purg_count, 
                 peer->gnp_last_errno,
                 jiffies_to_msecs(jiffies - peer->gnp_last_alive),
                 peer->gnp_last_dgram_errno,
@@ -1100,8 +1109,7 @@ kgnilnd_peer_seq_show (struct seq_file *s, void *iter)
                 peer->gnp_reconnect_interval != 0
                         ? jiffies_to_msecs(jiffies - peer->gnp_reconnect_time)
                         : 0,
-                peer->gnp_reconnect_interval,
-                !!(peer->gnp_purgatory));
+                peer->gnp_reconnect_interval);
         
         kgnilnd_peer_decref(peer);
 

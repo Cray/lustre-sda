@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -94,7 +94,7 @@ static cfs_sysctl_table_t      parent_table[] = {
 	&sysctl__lustre,
 	&sysctl__lustre_timeout,
 	&sysctl__lustre_dump_on_timeout,
-	&sysctl__lustre_debug_peer_on_timeout,
+        &sysctl__lustre_debug_peer_on_timeout,
 	&sysctl__lustre_upcall,
 	&sysctl__lustre_memused,
 	&sysctl__lustre_filter_sync_on_commit,

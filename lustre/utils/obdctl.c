@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2001, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -43,7 +43,7 @@
 #include <stdio.h>
 
 #include "obdctl.h"
-#include "parser.h"
+#include <libcfs/libcfsutil.h>
 
 /* the functions that were in here are now in obd.c */
 

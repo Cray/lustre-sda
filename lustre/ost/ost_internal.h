@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -58,11 +58,13 @@ struct ost_thread_local_cache {
         /*
          * pool of nio buffers used by write-path
          */
-        struct niobuf_local   local [OST_THREAD_POOL_SIZE];
+        struct niobuf_local   local[OST_THREAD_POOL_SIZE];
         unsigned int          temporary:1;
 };
 
-#define OSS_DEF_CREATE_THREADS  2UL
+struct ost_thread_local_cache *ost_tls(struct ptlrpc_request *r);
+
+#define OSS_MIN_CREATE_THREADS  2UL
 #define OSS_MAX_CREATE_THREADS 16UL
 
 /* Quota stuff */
@@ -76,4 +78,21 @@ static void lprocfs_ost_init_vars(struct lprocfs_static_vars *lvars)
         memset(lvars, 0, sizeof(*lvars));
 }
 #endif
+
+/* Here "ostid" maybe part of "oa", the return value of "ostid_id()" depends on
+ * the original "ostid->oi_seq", which maybe changed by the assignment of
+ * "oa->o_seq = ostid_seq(ostid)", so keep the order of setting "oa->o_id" and
+ * "oa->o_seq". */
+static inline void obdo_from_ostid(struct obdo *oa, struct ost_id *ostid)
+{
+        oa->o_id  = ostid_id(ostid);
+        oa->o_seq = ostid_seq(ostid);
+}
+
+static inline void ioobj_from_obdo(struct obd_ioobj *ioobj, struct obdo *oa)
+{
+        ioobj->ioo_id  = oa->o_id;
+        ioobj->ioo_seq = oa->o_seq;
+}
+
 #endif /* OST_INTERNAL_H */

@@ -29,7 +29,14 @@ CFS_MODULE_PARM(credits, "i", int, 0444,
 
 static int peer_credits = 16;
 CFS_MODULE_PARM(peer_credits, "i", int, 0444,
-                "# concurrent sends to 1 peer");
+                "# LNet peer credits");
+
+/* NB - we'll not actually limit sends to this, we just size the mailbox buffer
+ * such that at most we'll have concurrent_sends * max_immediate messages
+ * in the mailbox */
+static int concurrent_sends = 0;
+CFS_MODULE_PARM(concurrent_sends, "i", int, 0444,
+                "# concurrent HW sends to 1 peer");
 
 /* default for 2k nodes @ 16 peer credits */
 static int fma_cq_size = 32768;
@@ -57,11 +64,7 @@ static int max_immediate = (2<<10);
 CFS_MODULE_PARM(max_immediate, "i", int, 0644,
                 "immediate/RDMA breakpoint");
 
-#ifdef CONFIG_CRAY_GEMINI
-static int checksum = 3;
-#else
-static int checksum = 0;
-#endif
+static int checksum = GNILND_CHECKSUM_DEFAULT;
 CFS_MODULE_PARM(checksum, "i", int, 0644,
                 "0: None, 1: headers, 2: short msg, 3: all traffic");
 
@@ -86,7 +89,7 @@ CFS_MODULE_PARM(ptag, "i", int, 0444,
                 "ptag for Gemini CDM");
 
 static int max_retransmits = 1024;
-CFS_MODULE_PARM(max_retransmits, "i", int, 0644,
+CFS_MODULE_PARM(max_retransmits, "i", int, 0444,
                 "max retransmits for FMA");
 
 static int nwildcard = 4;
@@ -117,9 +120,13 @@ static int vmap_cksum = 0;
 CFS_MODULE_PARM(vmap_cksum, "i", int, 0644,
                 "use vmap for all kiov checksumming, default off");
 
-static int mbox_per_block = GNILND_FMABLK_MAX;
+static int mbox_per_block = GNILND_FMABLK;
 CFS_MODULE_PARM(mbox_per_block, "i", int, 0644,
                 "mailboxes per block");
+
+static int nphys_mbox = 0;
+CFS_MODULE_PARM(nphys_mbox, "i", int, 0444,
+                "# mbox to preallocate from physical memory, default 0");
 
 static int mbox_credits = GNILND_MBOX_CREDITS;
 CFS_MODULE_PARM(mbox_credits, "i", int, 0644,
@@ -137,11 +144,16 @@ static int hardware_timeout = GNILND_HARDWARE_TIMEOUT;
 CFS_MODULE_PARM(hardware_timeout, "i", int, 0444,
                 "maximum time for traffic to get from one node to another");
 
+static int mdd_timeout = GNILND_MDD_TIMEOUT;
+CFS_MODULE_PARM(mdd_timeout, "i", int, 0644,
+                "maximum time (in minutes) for mdd to be held"); 
+
 kgn_tunables_t kgnilnd_tunables = {
         .kgn_min_reconnect_interval = &min_reconnect_interval,
         .kgn_max_reconnect_interval = &max_reconnect_interval,
         .kgn_credits                = &credits,
         .kgn_peer_credits           = &peer_credits,
+        .kgn_concurrent_sends       = &concurrent_sends,
         .kgn_fma_cq_size            = &fma_cq_size,
         .kgn_timeout                = &timeout,
         .kgn_max_immediate          = &max_immediate,
@@ -160,16 +172,18 @@ kgn_tunables_t kgnilnd_tunables = {
         .kgn_peer_health            = &peer_health,
         .kgn_vmap_cksum             = &vmap_cksum,
         .kgn_mbox_per_block         = &mbox_per_block,
+        .kgn_nphys_mbox             = &nphys_mbox,
         .kgn_mbox_credits           = &mbox_credits,
         .kgn_sched_threads          = &sched_threads,
         .kgn_net_hash_size          = &net_hash_size,
-        .kgn_hardware_timeout       = &hardware_timeout
+        .kgn_hardware_timeout       = &hardware_timeout,
+        .kgn_mdd_timeout            = &mdd_timeout
 };
 
 #if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM
 static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
         {
-                .ctl_name = 2,
+                INIT_CTL_NAME(2)
                 .procname = "min_reconnect_interval",
                 .data     = &min_reconnect_interval,
                 .maxlen   = sizeof(int),
@@ -177,7 +191,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 3,
+                INIT_CTL_NAME(3)
                 .procname = "max_reconnect_interval",
                 .data     = &max_reconnect_interval,
                 .maxlen   = sizeof(int),
@@ -185,7 +199,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 5,
+                INIT_CTL_NAME(5)
                 .procname = "credits",
                 .data     = &credits,
                 .maxlen   = sizeof(int),
@@ -193,7 +207,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 6,
+                INIT_CTL_NAME(6)
                 .procname = "peer_credits",
                 .data     = &peer_credits,
                 .maxlen   = sizeof(int),
@@ -201,7 +215,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 7,
+                INIT_CTL_NAME(7)
                 .procname = "fma_cq_size",
                 .data     = &fma_cq_size,
                 .maxlen   = sizeof(int),
@@ -209,7 +223,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 8,
+                INIT_CTL_NAME(8)
                 .procname = "timeout",
                 .data     = &timeout,
                 .maxlen   = sizeof(int),
@@ -217,7 +231,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 9,
+                INIT_CTL_NAME(9)
                 .procname = "max_immediate",
                 .data     = &max_immediate,
                 .maxlen   = sizeof(int),
@@ -225,7 +239,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 10,
+                INIT_CTL_NAME(10)
                 .procname = "checksum",
                 .data     = &checksum,
                 .maxlen   = sizeof(int),
@@ -233,7 +247,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 11,
+                INIT_CTL_NAME(11)
                 .procname = "bte_hash",
                 .data     = &bte_hash,
                 .maxlen   = sizeof(int),
@@ -241,7 +255,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 12,
+                INIT_CTL_NAME(12)
                 .procname = "bte_adapt",
                 .data     = &bte_adapt,
                 .maxlen   = sizeof(int),
@@ -249,7 +263,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 13,
+                INIT_CTL_NAME(13)
                 .procname = "ptag",
                 .data     = &ptag,
                 .maxlen   = sizeof(int),
@@ -257,7 +271,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 14,
+                INIT_CTL_NAME(14)
                 .procname = "nwildcard",
                 .data     = &nwildcard,
                 .maxlen   = sizeof(int),
@@ -265,7 +279,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 15,
+                INIT_CTL_NAME(15)
                 .procname = "bte_relaxed_ordering",
                 .data     = &bte_relaxed_ordering,
                 .maxlen   = sizeof(int),
@@ -273,7 +287,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 16,
+                INIT_CTL_NAME(16)
                 .procname = "checksum_dump",
                 .data     = &checksum_dump,
                 .maxlen   = sizeof(int),
@@ -281,7 +295,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 17,
+                INIT_CTL_NAME(17)
                 .procname = "nice",
                 .data     = &nice,
                 .maxlen   = sizeof(int),
@@ -289,7 +303,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 18,
+                INIT_CTL_NAME(18)
                 .procname = "rdmaq_intervals",
                 .data     = &rdmaq_intervals,
                 .maxlen   = sizeof(int),
@@ -297,7 +311,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 19,
+                INIT_CTL_NAME(19)
                 .procname = "loops",
                 .data     = &loops,
                 .maxlen   = sizeof(int),
@@ -305,7 +319,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 20,
+                INIT_CTL_NAME(20)
                 .procname = "hash_size",
                 .data     = &hash_size,
                 .maxlen   = sizeof(int),
@@ -313,7 +327,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 21,
+                INIT_CTL_NAME(21)
                 .procname = "peer_health",
                 .data     = &peer_health,
                 .maxlen   = sizeof(int),
@@ -321,7 +335,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 22,
+                INIT_CTL_NAME(22)
                 .procname = "vmap_cksum",
                 .data     = &vmap_cksum,
                 .maxlen   = sizeof(int),
@@ -329,7 +343,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 23,
+                INIT_CTL_NAME(23)
                 .procname = "mbox_per_block",
                 .data     = &mbox_per_block,
                 .maxlen   = sizeof(int),
@@ -337,7 +351,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 24,
+                INIT_CTL_NAME(24)
                 .procname = "mbox_credits"
                 .data     = &mbox_credits,
                 .maxlen   = sizeof(int),
@@ -345,7 +359,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 25,
+                INIT_CTL_NAME(25)
                 .procname = "sched_threads"
                 .data     = &sched_threads,
                 .maxlen   = sizeof(int),
@@ -353,7 +367,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 26,
+                INIT_CTL_NAME(26)
                 .procname = "net_hash_size",
                 .data     = &net_hash_size,
                 .maxlen   = sizeof(int),
@@ -361,9 +375,41 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = 27,
+                INIT_CTL_NAME(27)
                 .procname = "hardware_timeout",
                 .data     = &hardware_timeout,
+                .maxlen   = sizeof(int),
+                .mode     = 0444,
+                .proc_handler = &proc_dointvec
+        },
+        {
+                INIT_CTL_NAME(28)
+                .procname = "mdd_timeout",
+                .data     = &mdd_timeout,
+                .maxlen   = sizeof(int),
+                .mode     = 0644,
+                .proc_handler = &proc_dointvec
+        },
+        {
+                INIT_CTL_NAME(29)
+                .procname = "max_retransmits"
+                .data     = &max_retransmits,
+                .maxlen   = sizeof(int),
+                .mode     = 0444,
+                .proc_handler = &proc_dointvec
+        },
+        {
+                INIT_CTL_NAME(30)
+                .procname = "concurrent_sends",
+                .data     = &concurrent_sends,
+                .maxlen   = sizeof(int),
+                .mode     = 0444,
+                .proc_handler = &proc_dointvec
+        },
+        {
+                INIT_CTL_NAME(31)
+                .procname = "nphys_mbox",
+                .data     = &nphys_mbox,
                 .maxlen   = sizeof(int),
                 .mode     = 0444,
                 .proc_handler = &proc_dointvec
@@ -373,14 +419,14 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
 
 static cfs_sysctl_table_t kgnilnd_top_ctl_table[] = {
         {
-                .ctl_name = 202,
+                INIT_CTL_NAME(202)
                 .procname = "gnilnd",
                 .data     = NULL,
                 .maxlen   = 0,
                 .mode     = 0555,
                 .child    = kgnilnd_ctl_table
         },
-        {0}
+        {       INIT_CTL_NAME(0)   }
 };
 
 int

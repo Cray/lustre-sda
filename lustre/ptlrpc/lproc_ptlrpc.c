@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -93,23 +95,26 @@ struct ll_rpc_opcode {
         { MDS_SETXATTR,     "mds_setxattr" },
         { MDS_WRITEPAGE,    "mds_writepage" },
         { MDS_IS_SUBDIR,    "mds_is_subdir" },
+        { MDS_GET_INFO,     "mds_get_info" },
         { LDLM_ENQUEUE,     "ldlm_enqueue" },
         { LDLM_CONVERT,     "ldlm_convert" },
         { LDLM_CANCEL,      "ldlm_cancel" },
         { LDLM_BL_CALLBACK, "ldlm_bl_callback" },
         { LDLM_CP_CALLBACK, "ldlm_cp_callback" },
         { LDLM_GL_CALLBACK, "ldlm_gl_callback" },
+        { LDLM_SET_INFO,    "ldlm_set_info" },
         { MGS_CONNECT,      "mgs_connect" },
         { MGS_DISCONNECT,   "mgs_disconnect" },
         { MGS_EXCEPTION,    "mgs_exception" },
         { MGS_TARGET_REG,   "mgs_target_reg" },
         { MGS_TARGET_DEL,   "mgs_target_del" },
         { MGS_SET_INFO,     "mgs_set_info" },
+        { MGS_CONFIG_READ,  "mgs_config_read" },
         { OBD_PING,         "obd_ping" },
         { OBD_LOG_CANCEL,   "llog_origin_handle_cancel" },
         { OBD_QC_CALLBACK,  "obd_quota_callback" },
         { LLOG_ORIGIN_HANDLE_CREATE,     "llog_origin_handle_create" },
-        { LLOG_ORIGIN_HANDLE_NEXT_BLOCK, "llog_origin_handle_next_block"},
+        { LLOG_ORIGIN_HANDLE_NEXT_BLOCK, "llog_origin_handle_next_block" },
         { LLOG_ORIGIN_HANDLE_READ_HEADER,"llog_origin_handle_read_header" },
         { LLOG_ORIGIN_HANDLE_WRITE_REC,  "llog_origin_handle_write_rec" },
         { LLOG_ORIGIN_HANDLE_CLOSE,      "llog_origin_handle_close" },
@@ -120,6 +125,10 @@ struct ll_rpc_opcode {
         { QUOTA_DQACQ,      "quota_acquire" },
         { QUOTA_DQREL,      "quota_release" },
         { SEQ_QUERY,        "seq_query" },
+        { SEC_CTX_INIT,     "sec_ctx_init" },
+        { SEC_CTX_INIT_CONT,"sec_ctx_init_cont" },
+        { SEC_CTX_FINI,     "sec_ctx_fini" },
+        { FLD_QUERY,        "fld_query" }
 };
 
 struct ll_eopcode {
@@ -137,6 +146,7 @@ struct ll_eopcode {
         { MDS_REINT_UNLINK,     "mds_reint_unlink" },
         { MDS_REINT_RENAME,     "mds_reint_rename" },
         { MDS_REINT_OPEN,       "mds_reint_open" },
+        { MDS_REINT_SETXATTR,   "mds_reint_setxattr" },
         { BRW_READ_BYTES,       "read_bytes" },
         { BRW_WRITE_BYTES,      "write_bytes" },
 };
@@ -165,7 +175,6 @@ const char* ll_eopcode2str(__u32 opcode)
         LASSERT(ll_eopcode_table[opcode].opcode == opcode);
         return ll_eopcode_table[opcode].opname;
 }
-
 #ifdef LPROCFS
 void ptlrpc_lprocfs_register(struct proc_dir_entry *root, char *dir,
                              char *name, struct proc_dir_entry **procroot_ret,
@@ -278,12 +287,12 @@ ptlrpc_lprocfs_write_req_history_max(struct file *file, const char *buffer,
          * hose a kernel by allowing the request history to grow too
          * far. */
         bufpages = (svc->srv_buf_size + CFS_PAGE_SIZE - 1) >> CFS_PAGE_SHIFT;
-        if (val > num_physpages/(2*bufpages))
+        if (val > cfs_num_physpages/(2 * bufpages))
                 return -ERANGE;
 
-        spin_lock(&svc->srv_lock);
+        cfs_spin_lock(&svc->srv_lock);
         svc->srv_max_history_rqbds = val;
-        spin_unlock(&svc->srv_lock);
+        cfs_spin_unlock(&svc->srv_lock);
 
         return count;
 }
@@ -314,9 +323,9 @@ ptlrpc_lprocfs_wr_threads_min(struct file *file, const char *buffer,
         if (val > svc->srv_threads_max)
                 return -ERANGE;
 
-        spin_lock(&svc->srv_lock);
+        cfs_spin_lock(&svc->srv_lock);
         svc->srv_threads_min = val;
-        spin_unlock(&svc->srv_lock);
+        cfs_spin_unlock(&svc->srv_lock);
 
         return count;
 }
@@ -327,7 +336,7 @@ ptlrpc_lprocfs_rd_threads_started(char *page, char **start, off_t off,
 {
         struct ptlrpc_service *svc = data;
 
-        return snprintf(page, count, "%d\n", svc->srv_threads_started);
+        return snprintf(page, count, "%d\n", svc->srv_threads_running);
 }
 
 static int
@@ -356,9 +365,9 @@ ptlrpc_lprocfs_wr_threads_max(struct file *file, const char *buffer,
         if (val < svc->srv_threads_min)
                 return -ERANGE;
 
-        spin_lock(&svc->srv_lock);
+        cfs_spin_lock(&svc->srv_lock);
         svc->srv_threads_max = val;
-        spin_unlock(&svc->srv_lock);
+        cfs_spin_unlock(&svc->srv_lock);
 
         return count;
 }
@@ -373,7 +382,7 @@ ptlrpc_lprocfs_svc_req_history_seek(struct ptlrpc_service *svc,
                                     struct ptlrpc_srh_iterator *srhi,
                                     __u64 seq)
 {
-        struct list_head      *e;
+        cfs_list_t            *e;
         struct ptlrpc_request *req;
 
         if (srhi->srhi_req != NULL &&
@@ -386,7 +395,7 @@ ptlrpc_lprocfs_svc_req_history_seek(struct ptlrpc_service *svc,
                  * be near the head), we shouldn't have to do long
                  * re-scans */
                 LASSERT (srhi->srhi_seq == srhi->srhi_req->rq_history_seq);
-                LASSERT (!list_empty(&svc->srv_request_history));
+                LASSERT (!cfs_list_empty(&svc->srv_request_history));
                 e = &srhi->srhi_req->rq_history_list;
         } else {
                 /* search from start */
@@ -394,7 +403,7 @@ ptlrpc_lprocfs_svc_req_history_seek(struct ptlrpc_service *svc,
         }
 
         while (e != &svc->srv_request_history) {
-                req = list_entry(e, struct ptlrpc_request, rq_history_list);
+                req = cfs_list_entry(e, struct ptlrpc_request, rq_history_list);
 
                 if (req->rq_history_seq >= seq) {
                         srhi->srhi_seq = req->rq_history_seq;
@@ -421,9 +430,9 @@ ptlrpc_lprocfs_svc_req_history_start(struct seq_file *s, loff_t *pos)
         srhi->srhi_seq = 0;
         srhi->srhi_req = NULL;
 
-        spin_lock(&svc->srv_lock);
+        cfs_spin_lock(&svc->srv_lock);
         rc = ptlrpc_lprocfs_svc_req_history_seek(svc, srhi, *pos);
-        spin_unlock(&svc->srv_lock);
+        cfs_spin_unlock(&svc->srv_lock);
 
         if (rc == 0) {
                 *pos = srhi->srhi_seq;
@@ -451,9 +460,9 @@ ptlrpc_lprocfs_svc_req_history_next(struct seq_file *s,
         struct ptlrpc_srh_iterator  *srhi = iter;
         int                          rc;
 
-        spin_lock(&svc->srv_lock);
+        cfs_spin_lock(&svc->srv_lock);
         rc = ptlrpc_lprocfs_svc_req_history_seek(svc, srhi, *pos + 1);
-        spin_unlock(&svc->srv_lock);
+        cfs_spin_unlock(&svc->srv_lock);
 
         if (rc != 0) {
                 OBD_FREE(srhi, sizeof(*srhi));
@@ -464,7 +473,7 @@ ptlrpc_lprocfs_svc_req_history_next(struct seq_file *s,
         return srhi;
 }
 
-/* common ost/mdt srv_request_history_print_fn */
+/* common ost/mdt srv_req_printfn */
 void target_print_req(void *seq_file, struct ptlrpc_request *req)
 {
         /* Called holding srv_lock with irqs disabled.
@@ -501,7 +510,7 @@ static int ptlrpc_lprocfs_svc_req_history_show(struct seq_file *s, void *iter)
         struct ptlrpc_request      *req;
         int                         rc;
 
-        spin_lock(&svc->srv_lock);
+        cfs_spin_lock(&svc->srv_lock);
 
         rc = ptlrpc_lprocfs_svc_req_history_seek(svc, srhi, srhi->srhi_seq);
 
@@ -521,13 +530,13 @@ static int ptlrpc_lprocfs_svc_req_history_show(struct seq_file *s, void *iter)
                            req->rq_arrival_time.tv_sec,
                            req->rq_sent - req->rq_arrival_time.tv_sec,
                            req->rq_sent - req->rq_deadline);
-                if (svc->srv_request_history_print_fn == NULL)
+                if (svc->srv_req_printfn == NULL)
                         seq_printf(s, "\n");
                 else
-                        svc->srv_request_history_print_fn(s, srhi->srhi_req);
+                        svc->srv_req_printfn(s, srhi->srhi_req);
         }
 
-        spin_unlock(&svc->srv_lock);
+        cfs_spin_unlock(&svc->srv_lock);
 
         return rc;
 }
@@ -605,9 +614,9 @@ static int ptlrpc_lprocfs_wr_hp_ratio(struct file *file, const char *buffer,
         if (val < 0)
                 return -ERANGE;
 
-        spin_lock(&svc->srv_lock);
+        cfs_spin_lock(&svc->srv_lock);
         svc->srv_hpreq_ratio = val;
-        spin_unlock(&svc->srv_lock);
+        cfs_spin_unlock(&svc->srv_lock);
         return count;
 }
 
@@ -649,7 +658,8 @@ void ptlrpc_lprocfs_register_service(struct proc_dir_entry *entry,
                 .llseek      = seq_lseek,
                 .release     = lprocfs_seq_release,
         };
-        struct proc_dir_entry *req_history;
+
+        int rc;
 
         ptlrpc_lprocfs_register(entry, svc->srv_name,
                                 "stats", &svc->srv_procroot,
@@ -660,12 +670,10 @@ void ptlrpc_lprocfs_register_service(struct proc_dir_entry *entry,
 
         lprocfs_add_vars(svc->srv_procroot, lproc_vars, NULL);
 
-        req_history = create_proc_entry("req_history", 0400,
-                                        svc->srv_procroot);
-        if (req_history != NULL) {
-                req_history->data = svc;
-                req_history->proc_fops = &req_history_fops;
-        }
+        rc = lprocfs_seq_create(svc->srv_procroot, "req_history",
+                                0400, &req_history_fops, svc);
+        if (rc)
+                CWARN("Error adding the req_history file\n");
 }
 
 void ptlrpc_lprocfs_register_obd(struct obd_device *obddev)
@@ -722,6 +730,7 @@ void ptlrpc_lprocfs_unregister_service(struct ptlrpc_service *svc)
 {
         if (svc->srv_procroot != NULL)
                 lprocfs_remove(&svc->srv_procroot);
+
         if (svc->srv_stats)
                 lprocfs_free_stats(&svc->srv_stats);
 }
@@ -730,18 +739,37 @@ void ptlrpc_lprocfs_unregister_obd(struct obd_device *obd)
 {
         if (obd->obd_svc_procroot)
                 lprocfs_remove(&obd->obd_svc_procroot);
+
         if (obd->obd_svc_stats)
                 lprocfs_free_stats(&obd->obd_svc_stats);
 }
 EXPORT_SYMBOL(ptlrpc_lprocfs_unregister_obd);
 
 
+#define BUFLEN (UUID_MAX + 5)
+
 int lprocfs_wr_evict_client(struct file *file, const char *buffer,
                             unsigned long count, void *data)
 {
         struct obd_device *obd = data;
-        char tmpbuf[sizeof(struct obd_uuid)];
+        char              *kbuf;
+        char              *tmpbuf;
 
+        OBD_ALLOC(kbuf, BUFLEN);
+        if (kbuf == NULL)
+                return -ENOMEM;
+
+        /*
+         * OBD_ALLOC() will zero kbuf, but we only copy BUFLEN - 1
+         * bytes into kbuf, to ensure that the string is NUL-terminated.
+         * UUID_MAX should include a trailing NUL already.
+         */
+        if (cfs_copy_from_user(kbuf, buffer,
+                               min_t(unsigned long, BUFLEN - 1, count))) {
+                count = -EFAULT;
+                goto out;
+        }
+        tmpbuf = cfs_firststr(kbuf, min_t(unsigned long, BUFLEN - 1, count));
         /* Kludge code(deadlock situation): the lprocfs lock has been held
          * since the client is evicted by writting client's
          * uuid/nid to procfs "evict_client" entry. However,
@@ -749,10 +777,9 @@ int lprocfs_wr_evict_client(struct file *file, const char *buffer,
          * the proc entries under the being destroyed export{}, so I have
          * to drop the lock at first here.
          * - jay, jxiong@clusterfs.com */
-        class_incref(obd);
+        class_incref(obd, __FUNCTION__, cfs_current());
         LPROCFS_EXIT();
 
-        sscanf(buffer, "%40s", tmpbuf);
         if (strncmp(tmpbuf, "nid:", 4) == 0)
                 obd_export_evict_by_nid(obd, tmpbuf + 4);
         else if (strncmp(tmpbuf, "uuid:", 5) == 0)
@@ -761,18 +788,22 @@ int lprocfs_wr_evict_client(struct file *file, const char *buffer,
                 obd_export_evict_by_uuid(obd, tmpbuf);
 
         LPROCFS_ENTRY();
-        class_decref(obd);
+        class_decref(obd, __FUNCTION__, cfs_current());
 
+out:
+        OBD_FREE(kbuf, BUFLEN);
         return count;
 }
 EXPORT_SYMBOL(lprocfs_wr_evict_client);
 
+#undef BUFLEN
+
 int lprocfs_wr_ping(struct file *file, const char *buffer,
                     unsigned long count, void *data)
 {
-        struct obd_device *obd = data;
+        struct obd_device     *obd = data;
         struct ptlrpc_request *req;
-        int rc;
+        int                    rc;
         ENTRY;
 
         LPROCFS_CLIMP_CHECK(obd);
@@ -792,22 +823,111 @@ int lprocfs_wr_ping(struct file *file, const char *buffer,
 }
 EXPORT_SYMBOL(lprocfs_wr_ping);
 
-int lprocfs_wr_reconnect(struct file *file, const char *buffer,
-                            unsigned long count, void *data)
+/* Write the connection UUID to this file to attempt to connect to that node.
+ * The connection UUID is a node's primary NID. For example,
+ * "echo connection=192.168.0.1@tcp0::instance > .../import".
+ */
+int lprocfs_wr_import(struct file *file, const char *buffer,
+                      unsigned long count, void *data)
 {
         struct obd_device *obd = data;
-        char tmpbuf[sizeof(struct obd_uuid)];
+        struct obd_import *imp = obd->u.cli.cl_import;
+        char *kbuf = NULL;
+        char *uuid;
+        char *ptr;
+        int do_reconn = 1;
+        const char prefix[] = "connection=";
+        const int prefix_len = sizeof(prefix) - 1;
 
-        if (count >= sizeof (tmpbuf))
+        if (count > CFS_PAGE_SIZE - 1 || count <= prefix_len)
                 return -EINVAL;
 
-        memcpy(tmpbuf, buffer, count);
-        tmpbuf[count] = 0;
+        OBD_ALLOC(kbuf, count + 1);
+        if (kbuf == NULL)
+                return -ENOMEM;
 
-        ptlrpc_recover_import(obd->u.cli.cl_import, tmpbuf);
+        if (cfs_copy_from_user(kbuf, buffer, count))
+                GOTO(out, count = -EFAULT);
 
+        kbuf[count] = 0;
+
+        /* only support connection=uuid::instance now */
+        if (strncmp(prefix, kbuf, prefix_len) != 0)
+                GOTO(out, count = -EINVAL);
+
+        uuid = kbuf + prefix_len;
+        ptr = strstr(uuid, "::");
+        if (ptr) {
+                __u32 inst;
+                char *endptr;
+
+                *ptr = 0;
+                do_reconn = 0;
+                ptr += strlen("::");
+                inst = simple_strtol(ptr, &endptr, 10);
+                if (*endptr) {
+                        CERROR("config: wrong instance # %s\n", ptr);
+                } else if (inst != imp->imp_connect_data.ocd_instance) {
+                        CDEBUG(D_INFO, "IR: %s is connecting to an obsoleted "
+                               "target(%u/%u), reconnecting...\n",
+                               imp->imp_obd->obd_name,
+                               imp->imp_connect_data.ocd_instance, inst);
+                        do_reconn = 1;
+                } else {
+                        CDEBUG(D_INFO, "IR: %s has already been connecting to "
+                               "new target(%u)\n",
+                               imp->imp_obd->obd_name, inst);
+                }
+        }
+
+        if (do_reconn)
+                ptlrpc_recover_import(imp, uuid, 1);
+
+out:
+        OBD_FREE(kbuf, count + 1);
         return count;
 }
-EXPORT_SYMBOL(lprocfs_wr_reconnect);
+EXPORT_SYMBOL(lprocfs_wr_import);
+
+int lprocfs_rd_pinger_recov(char *page, char **start, off_t off,
+                            int count, int *eof, void *data)
+{
+        struct obd_device *obd = data;
+        struct obd_import *imp = obd->u.cli.cl_import;
+        int rc;
+
+        LPROCFS_CLIMP_CHECK(obd);
+        rc = snprintf(page, count, "%d\n", !imp->imp_no_pinger_recover);
+        LPROCFS_CLIMP_EXIT(obd);
+
+        return rc;
+}
+EXPORT_SYMBOL(lprocfs_rd_pinger_recov);
+
+int lprocfs_wr_pinger_recov(struct file *file, const char *buffer,
+                      unsigned long count, void *data)
+{
+        struct obd_device *obd = data;
+        struct client_obd *cli = &obd->u.cli;
+        struct obd_import *imp = cli->cl_import;
+        int rc, val;
+
+        rc = lprocfs_write_helper(buffer, count, &val);
+        if (rc < 0)
+                return rc;
+
+        if (val != 0 && val != 1)
+                return -ERANGE;
+
+        LPROCFS_CLIMP_CHECK(obd);
+        cfs_spin_lock(&imp->imp_lock);
+        imp->imp_no_pinger_recover = !val;
+        cfs_spin_unlock(&imp->imp_lock);
+        LPROCFS_CLIMP_EXIT(obd);
+
+        return count;
+
+}
+EXPORT_SYMBOL(lprocfs_wr_pinger_recov);
 
 #endif /* LPROCFS */

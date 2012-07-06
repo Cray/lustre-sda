@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -40,21 +40,22 @@
 #define DEBUG_SUBSYSTEM S_FILTER
 
 #include <linux/fs.h>
+#include <linux/jbd.h>
 #include <linux/module.h>
 #include <linux/kmod.h>
 #include <linux/slab.h>
-#include <libcfs/kp30.h>
+#include <libcfs/libcfs.h>
 #include <lustre_fsfilt.h>
 
-LIST_HEAD(fsfilt_types);
+CFS_LIST_HEAD(fsfilt_types);
 
 static struct fsfilt_operations *fsfilt_search_type(const char *type)
 {
         struct fsfilt_operations *found;
-        struct list_head *p;
+        cfs_list_t *p;
 
-        list_for_each(p, &fsfilt_types) {
-                found = list_entry(p, struct fsfilt_operations, fs_list);
+        cfs_list_for_each(p, &fsfilt_types) {
+                found = cfs_list_entry(p, struct fsfilt_operations, fs_list);
                 if (!strcmp(found->fs_type, type)) {
                         return found;
                 }
@@ -76,7 +77,7 @@ int fsfilt_register_ops(struct fsfilt_operations *fs_ops)
                 }
         } else {
                 PORTAL_MODULE_USE;
-                list_add(&fs_ops->fs_list, &fsfilt_types);
+                cfs_list_add(&fs_ops->fs_list, &fsfilt_types);
         }
 
         /* unlock fsfilt_types list */
@@ -85,15 +86,15 @@ int fsfilt_register_ops(struct fsfilt_operations *fs_ops)
 
 void fsfilt_unregister_ops(struct fsfilt_operations *fs_ops)
 {
-        struct list_head *p;
+        cfs_list_t *p;
 
         /* lock fsfilt_types list */
-        list_for_each(p, &fsfilt_types) {
+        cfs_list_for_each(p, &fsfilt_types) {
                 struct fsfilt_operations *found;
 
-                found = list_entry(p, typeof(*found), fs_list);
+                found = cfs_list_entry(p, typeof(*found), fs_list);
                 if (found == fs_ops) {
-                        list_del(p);
+                        cfs_list_del(p);
                         PORTAL_MODULE_UNUSE;
                         break;
                 }
@@ -113,7 +114,7 @@ struct fsfilt_operations *fsfilt_get_ops(const char *type)
                 snprintf(name, sizeof(name) - 1, "fsfilt_%s", type);
                 name[sizeof(name) - 1] = '\0';
 
-                if (!(rc = request_module("%s", name))) {
+                if (!(rc = cfs_request_module("%s", name))) {
                         fs_ops = fsfilt_search_type(type);
                         CDEBUG(D_INFO, "Loaded module '%s'\n", name);
                         if (!fs_ops)
@@ -126,7 +127,7 @@ struct fsfilt_operations *fsfilt_get_ops(const char *type)
                         /* unlock fsfilt_types list */
                 }
         }
-        try_module_get(fs_ops->fs_owner);
+        cfs_try_module_get(fs_ops->fs_owner);
         /* unlock fsfilt_types list */
 
         return fs_ops;
@@ -134,7 +135,7 @@ struct fsfilt_operations *fsfilt_get_ops(const char *type)
 
 void fsfilt_put_ops(struct fsfilt_operations *fs_ops)
 {
-        module_put(fs_ops->fs_owner);
+        cfs_module_put(fs_ops->fs_owner);
 }
 
 

@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -45,7 +45,7 @@
 # include <asm/page.h>
 # include <linux/string.h>
 # include <asm/io.h>
-# include <libcfs/kp30.h>
+# include <libcfs/libcfs.h>
 
 static inline __u64
 lnet_page2phys (struct page *p)

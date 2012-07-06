@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -48,9 +50,8 @@ void usage(char *prog)
 int main(int argc, char **argv)
 {
         int fd, rc;
-	int do_sync = 0;
-        int i = 0;
-	int file_arg = 1;
+        int do_sync = 0;
+        int file_arg = 1;
         char buf[4096];
 
         memset(buf, 0, 4096);
@@ -71,8 +72,8 @@ int main(int argc, char **argv)
                 exit(1);
         }
 
-        while (1) {
-                sprintf(buf, "write %d\n", i);
+        for (rc = 0; ;) {
+                sprintf(buf, "write %d\n", rc);
                 rc = write(fd, buf, sizeof(buf));
 		if (do_sync)
 			sync();

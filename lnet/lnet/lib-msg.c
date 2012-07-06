@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -45,6 +45,8 @@
 void
 lnet_build_unlink_event (lnet_libmd_t *md, lnet_event_t *ev)
 {
+        ENTRY;
+
         memset(ev, 0, sizeof(*ev));
 
         ev->status   = 0;
@@ -52,6 +54,7 @@ lnet_build_unlink_event (lnet_libmd_t *md, lnet_event_t *ev)
         ev->type     = LNET_EVENT_UNLINK;
         lnet_md_deconstruct(md, &ev->md);
         lnet_md2handle(&ev->md_handle, md);
+        EXIT;
 }
 
 void
@@ -69,7 +72,7 @@ lnet_enq_event_locked (lnet_eq_t *eq, lnet_event_t *ev)
 
         /* There is no race since both event consumers and event producers
          * take the LNET_LOCK, so we don't screw around with memory
-         * barriers, setting the sequence number last or wierd structure
+         * barriers, setting the sequence number last or weird structure
          * layout assertions. */
         *eq_slot = *ev;
 
@@ -144,7 +147,7 @@ lnet_complete_msg_locked(lnet_msg_t *msg)
 
         LASSERT (msg->msg_onactivelist);
         msg->msg_onactivelist = 0;
-        list_del (&msg->msg_activelist);
+        cfs_list_del (&msg->msg_activelist);
         the_lnet.ln_counters.msgs_alloc--;
         lnet_msg_free(msg);
 }
@@ -159,7 +162,7 @@ lnet_finalize (lnet_ni_t *ni, lnet_msg_t *msg, int status)
 #endif
         lnet_libmd_t      *md;
 
-        LASSERT (!in_interrupt ());
+        LASSERT (!cfs_in_interrupt ());
 
         if (msg == NULL)
                 return;
@@ -207,7 +210,7 @@ lnet_finalize (lnet_ni_t *ni, lnet_msg_t *msg, int status)
                 msg->msg_md = NULL;
         }
 
-        list_add_tail (&msg->msg_list, &the_lnet.ln_finalizeq);
+        cfs_list_add_tail (&msg->msg_list, &the_lnet.ln_finalizeq);
 
         /* Recursion breaker.  Don't complete the message here if I am (or
          * enough other threads are) already completing messages */
@@ -231,11 +234,11 @@ lnet_finalize (lnet_ni_t *ni, lnet_msg_t *msg, int status)
         the_lnet.ln_finalizing = 1;
 #endif
 
-        while (!list_empty(&the_lnet.ln_finalizeq)) {
-                msg = list_entry(the_lnet.ln_finalizeq.next,
-                                 lnet_msg_t, msg_list);
-                
-                list_del(&msg->msg_list);
+        while (!cfs_list_empty(&the_lnet.ln_finalizeq)) {
+                msg = cfs_list_entry(the_lnet.ln_finalizeq.next,
+                                     lnet_msg_t, msg_list);
+
+                cfs_list_del(&msg->msg_list);
 
                 /* NB drops and regains the lnet lock if it actually does
                  * anything, so my finalizing friends can chomp along too */

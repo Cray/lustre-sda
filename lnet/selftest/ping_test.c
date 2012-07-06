@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -45,7 +45,7 @@
 #define LST_PING_TEST_MAGIC     0xbabeface
 
 typedef struct {
-        spinlock_t      pnd_lock;       /* serialize */
+        cfs_spinlock_t  pnd_lock;       /* serialize */
         int             pnd_counter;    /* sequence counter */
 } lst_ping_data_t;
 
@@ -56,7 +56,7 @@ ping_client_init(sfw_test_instance_t *tsi)
 {
         LASSERT (tsi->tsi_is_client);
 
-        spin_lock_init(&lst_ping_data.pnd_lock);
+        cfs_spin_lock_init(&lst_ping_data.pnd_lock);
         lst_ping_data.pnd_counter = 0;
 
         return 0;
@@ -71,7 +71,7 @@ ping_client_fini (sfw_test_instance_t *tsi)
         LASSERT (sn != NULL);
         LASSERT (tsi->tsi_is_client);
 
-        errors = atomic_read(&sn->sn_ping_errors);
+        errors = cfs_atomic_read(&sn->sn_ping_errors);
         if (errors)
                 CWARN ("%d pings have failed.\n", errors);
         else
@@ -94,9 +94,9 @@ ping_client_prep_rpc(sfw_test_unit_t *tsu,
 
         req->pnr_magic = LST_PING_TEST_MAGIC;
 
-        spin_lock(&lst_ping_data.pnd_lock);
+        cfs_spin_lock(&lst_ping_data.pnd_lock);
         req->pnr_seq = lst_ping_data.pnd_counter ++;
-        spin_unlock(&lst_ping_data.pnd_lock);
+        cfs_spin_unlock(&lst_ping_data.pnd_lock);
 
         cfs_fs_timeval(&tv);
         req->pnr_time_sec  = tv.tv_sec;
@@ -118,7 +118,7 @@ ping_client_done_rpc (sfw_test_unit_t *tsu, srpc_client_rpc_t *rpc)
 
         if (rpc->crpc_status != 0) {
                 if (!tsi->tsi_stopping) /* rpc could have been aborted */
-                        atomic_inc(&sn->sn_ping_errors);
+                        cfs_atomic_inc(&sn->sn_ping_errors);
                 CERROR ("Unable to ping %s (%d): %d\n",
                         libcfs_id2str(rpc->crpc_dest),
                         reqst->pnr_seq, rpc->crpc_status);
@@ -133,7 +133,7 @@ ping_client_done_rpc (sfw_test_unit_t *tsu, srpc_client_rpc_t *rpc)
         
         if (reply->pnr_magic != LST_PING_TEST_MAGIC) {
                 rpc->crpc_status = -EBADMSG;
-                atomic_inc(&sn->sn_ping_errors);
+                cfs_atomic_inc(&sn->sn_ping_errors);
                 CERROR ("Bad magic %u from %s, %u expected.\n",
                         reply->pnr_magic, libcfs_id2str(rpc->crpc_dest),
                         LST_PING_TEST_MAGIC);
@@ -142,7 +142,7 @@ ping_client_done_rpc (sfw_test_unit_t *tsu, srpc_client_rpc_t *rpc)
         
         if (reply->pnr_seq != reqst->pnr_seq) {
                 rpc->crpc_status = -EBADMSG;
-                atomic_inc(&sn->sn_ping_errors);
+                cfs_atomic_inc(&sn->sn_ping_errors);
                 CERROR ("Bad seq %u from %s, %u expected.\n",
                         reply->pnr_seq, libcfs_id2str(rpc->crpc_dest),
                         reqst->pnr_seq);
@@ -191,17 +191,19 @@ ping_server_handle (srpc_server_rpc_t *rpc)
         return 0;
 }
 
-sfw_test_client_ops_t ping_test_client = 
+sfw_test_client_ops_t ping_test_client;
+void ping_init_test_client(void)
 {
-        .tso_init       = ping_client_init,
-        .tso_fini       = ping_client_fini,
-        .tso_prep_rpc   = ping_client_prep_rpc,
-        .tso_done_rpc   = ping_client_done_rpc,
-};
+        ping_test_client.tso_init     = ping_client_init;
+        ping_test_client.tso_fini     = ping_client_fini;
+        ping_test_client.tso_prep_rpc = ping_client_prep_rpc;
+        ping_test_client.tso_done_rpc = ping_client_done_rpc;
+}
 
-srpc_service_t ping_test_service = 
+srpc_service_t ping_test_service;
+void ping_init_test_service(void)
 {
-        .sv_name        = "ping test",
-        .sv_handler     = ping_server_handle,
-        .sv_id          = SRPC_SERVICE_PING,
-};
+        ping_test_service.sv_id       = SRPC_SERVICE_PING;
+        ping_test_service.sv_name     = "ping_test";
+        ping_test_service.sv_handler  = ping_server_handle;
+}

@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -50,5 +52,7 @@
 #else
 #error Unsupported operating system.
 #endif
+
+#define LU221_BAD_TIME (0x80000000U + 24 * 3600)
 
 #endif

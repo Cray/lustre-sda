@@ -28,7 +28,7 @@ struct lov_user_md_v1 {
         __u32 lmm_magic;
         __u32 lmm_pattern;
         __u64 lmm_object_id;
-        __u64 lmm_object_gr;
+        __u64 lmm_object_seq;
         __u32 lmm_stripe_size;
         __u16 lmm_stripe_count;
         __u16 lmm_stripe_offset;
@@ -39,26 +39,12 @@ struct lov_user_md_v3 {
         __u32 lmm_magic;
         __u32 lmm_pattern;
         __u64 lmm_object_id;
-        __u64 lmm_object_gr;
+        __u64 lmm_object_seq;
         __u32 lmm_stripe_size;
         __u16 lmm_stripe_count;
         __u16 lmm_stripe_offset;
         char  lmm_pool_name[LOV_MAXPOOLNAME];
         struct lov_user_ost_data_v1 lmm_objects[0];
-} __attribute__((packed));
-
-struct lov_user_md_join {
-        __u32 lmm_magic;
-        __u32 lmm_pattern;
-        __u64 lmm_object_id;
-        __u64 lmm_object_gr;
-        __u32 lmm_stripe_size;
-        __u32 lmm_stripe_count;
-        __u32 lmm_extent_count;
-        __u64 lmm_tree_id;
-        __u64 lmm_tree_gen;
-        struct llog_logid lmm_array_id;
-        struct lov_user_ost_data_join lmm_objects[0];
 } __attribute__((packed));
 .fi
 
@@ -69,8 +55,6 @@ specifies the format of the returned striping information.
 is used for lov_user_md_v1.
 .BR LOV_MAGIC_V3
 is used for lov_user_md_v3.
-.BR LOV_MAGIC_JOIN
-is used for lov_user_md_join.
 .TP 20
 .I lmm_pattern
 holds the striping pattern. Only
@@ -103,7 +87,7 @@ members containing per OST file information in the following format:
 .nf
 struct lov_user_ost_data_v1 {
         __u64 l_object_id;
-        __u64 l_object_gr;
+        __u64 l_object_seq;
         __u32 l_ost_gen;
         __u32 l_ost_idx;
 } __attribute__((packed));
@@ -112,7 +96,7 @@ struct lov_user_ost_data_v1 {
 .I l_object_id
 holds the OST object id.
 .TP 20
-.I l_object_gr
+.I l_object_seq
 holds the OST object group.
 .TP 20
 .I l_ost_gen
@@ -176,10 +160,8 @@ static void *alloc_lum()
              LOV_MAX_STRIPE_COUNT * sizeof(struct lov_user_ost_data_v1);
         v3 = sizeof(struct lov_user_md_v3) +
              LOV_MAX_STRIPE_COUNT * sizeof(struct lov_user_ost_data_v1);
-        join = sizeof(struct lov_user_md_join) +
-             LOV_MAX_STRIPE_COUNT * sizeof(struct lov_user_ost_data_join);
 
-        return malloc(maxint(maxint(v1, v3), join));
+        return malloc(maxint(v1, v3));
 }
 
 int main(int argc, char** argv)

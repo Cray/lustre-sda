@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -47,10 +47,8 @@
 #endif
 
 /* XXX Liang: should be moved to other header instead of here */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,4)
 #ifndef WITH_GROUP_INFO
 #define WITH_GROUP_INFO
-#endif
 #endif
 
 #endif

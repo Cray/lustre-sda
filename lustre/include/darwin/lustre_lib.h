@@ -18,16 +18,17 @@
  * You should have received a copy of the GNU General Public License
  * version 2 along with this program; If not, see
  * http://www.sun.com/software/products/lustre/docs/GPLv2.pdf
+ * copy of GPLv2].
  *
  * Please contact Sun Microsystems, Inc., 4150 Network Circle, Santa Clara,
  * CA 95054 USA or visit www.sun.com if you need additional information or
  * have any questions.
- *
- * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -47,7 +48,6 @@
 
 #include <string.h>
 #include <libcfs/libcfs.h>
-#include <libcfs/kp30.h> 
 
 #ifndef LP_POISON
 #define LI_POISON ((int)0x5a5a5a5a)
@@ -59,6 +59,7 @@
 #define LPU64 "%llu"
 #define LPD64 "%lld"
 #define LPX64 "%llx"
+#define LPO64 "%llo"
 #endif
 
 struct obd_ioctl_data;
@@ -67,24 +68,5 @@ struct obd_ioctl_data;
 #define LUSTRE_FATAL_SIGS (sigmask(SIGKILL) | sigmask(SIGINT) |                \
                            sigmask(SIGTERM) | sigmask(SIGQUIT) |               \
                            sigmask(SIGALRM) | sigmask(SIGHUP))
-
-#ifdef __KERNEL__
-static inline sigset_t l_w_e_set_sigs(sigset_t sigs)
-{
-        sigset_t old = 0;
-
-        /* XXX Liang: how to change sigmask in Darwin8.x? 
-         * there is syscall like pthread_sigmask() but we cannot 
-         * use in kernel  */
-#if !defined(__DARWIN8__)
-        struct proc     *p = current_proc();
-        extern int block_procsigmask(struct proc *p,  int bit);
-        old = cfs_current()->uu_sigmask;
-        block_procsigmask(p, ~sigs);
-#endif
-
-        return old;
-}
-#endif
 
 #endif

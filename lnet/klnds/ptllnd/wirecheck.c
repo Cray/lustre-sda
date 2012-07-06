@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -50,7 +50,7 @@
  * assertions generated here (but fails-safe if it ever does) */
 typedef struct {
         int     counter;
-} atomic_t;
+} cfs_atomic_t;
 
 #include <lnet/lib-types.h>
 #include <lnet/ptllnd_wire.h>

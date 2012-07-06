@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -50,6 +52,14 @@
 #if defined (__KERNEL__)
 #include <linux/uio.h>
 #include <linux/types.h>
+
+#ifdef HAVE_TCP_SENDPAGE_USE_SOCKET
+#define cfs_tcp_sendpage(sk, page, offset, size, flags) \
+        tcp_sendpage((sk)->sk_socket, page, offset, size, flags)
+#else
+#define cfs_tcp_sendpage(sk, page, offset, size, flags) \
+        tcp_sendpage(sk, page, offset, size, flags)
+#endif
 #else
 #include <sys/types.h>
 #include <sys/uio.h>

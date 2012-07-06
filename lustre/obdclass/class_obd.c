@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 1999, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -40,6 +42,8 @@
 #endif
 #ifndef __KERNEL__
 # include <liblustre.h>
+#else
+# include <asm/atomic.h>
 #endif
 
 #include <obd_support.h>
@@ -53,13 +57,19 @@
 
 #ifndef __KERNEL__
 /* liblustre workaround */
-atomic_t libcfs_kmemory = {0};
+cfs_atomic_t libcfs_kmemory = {0};
 #endif
 
 struct obd_device *obd_devs[MAX_OBD_DEVICES];
-struct list_head obd_types;
-spinlock_t obd_dev_lock = SPIN_LOCK_UNLOCKED;
-cfs_mem_cache_t *obd_lvfs_ctxt_cache;
+cfs_list_t obd_types;
+cfs_rwlock_t obd_dev_lock = CFS_RW_LOCK_UNLOCKED(obd_dev_lock);
+
+#ifndef __KERNEL__
+__u64 obd_max_pages = 0;
+__u64 obd_max_alloc = 0;
+__u64 obd_alloc;
+__u64 obd_pages;
+#endif
 
 /* The following are visible and mutable through /proc/sys/lustre/. */
 unsigned int obd_debug_peer_on_timeout;
@@ -79,16 +89,13 @@ unsigned int at_min = 70;
 #else
 unsigned int at_min = 0;
 #endif  /* CRAY_XT3 */
-#ifdef HAVE_AT_SUPPORT
 unsigned int at_max = 600;
-#else
-unsigned int at_max = 0;
-#endif
 unsigned int at_history = 600;
 int at_early_margin = 5;
 int at_extra = 30;
 
-atomic_t obd_dirty_pages;
+cfs_atomic_t obd_dirty_pages;
+cfs_atomic_t obd_dirty_transit_pages;
 
 static inline void obd_data2conn(struct lustre_handle *conn,
                                  struct obd_ioctl_data *data)
@@ -152,7 +159,7 @@ int class_handle_ioctl(unsigned int cmd, unsigned long arg)
         CDEBUG(D_IOCTL, "cmd = %x\n", cmd);
         if (obd_ioctl_getdata(&buf, &len, (void *)arg)) {
                 CERROR("OBD ioctl: data error\n");
-                GOTO(out, err = -EINVAL);
+                RETURN(-EINVAL);
         }
         data = (struct obd_ioctl_data *)buf;
 
@@ -167,11 +174,13 @@ int class_handle_ioctl(unsigned int cmd, unsigned long arg)
                 OBD_ALLOC(lcfg, data->ioc_plen1);
                 if (lcfg == NULL)
                         GOTO(out, err = -ENOMEM);
-                err = copy_from_user(lcfg, data->ioc_pbuf1, data->ioc_plen1);
+                err = cfs_copy_from_user(lcfg, data->ioc_pbuf1,
+                                         data->ioc_plen1);
                 if (!err)
                         err = lustre_cfg_sanity_check(lcfg, data->ioc_plen1);
                 if (!err)
                         err = class_process_config(lcfg);
+
                 OBD_FREE(lcfg, data->ioc_plen1);
                 GOTO(out, err);
         }
@@ -282,7 +291,7 @@ int class_handle_ioctl(unsigned int cmd, unsigned long arg)
                 snprintf(str, len - sizeof(*data), "%3d %s %s %s %s %d",
                          (int)index, status, obd->obd_type->typ_name,
                          obd->obd_name, obd->obd_uuid.uuid,
-                         atomic_read(&obd->obd_refcount));
+                         cfs_atomic_read(&obd->obd_refcount));
                 err = obd_ioctl_popdata((void *)arg, data, len);
 
                 GOTO(out, err = 0);
@@ -304,10 +313,7 @@ int class_handle_ioctl(unsigned int cmd, unsigned long arg)
         }
 
         if (obd == NULL) {
-                if (data->ioc_dev == OBD_DEV_BY_DEVNAME)
-                        CERROR("OBD ioctl: No Device %s\n", data->ioc_inlbuf4);
-                else
-                        CERROR("OBD ioctl: No Device %d\n", data->ioc_dev);
+                CERROR("OBD ioctl : No Device %d\n", data->ioc_dev);
                 GOTO(out, err = -EINVAL);
         }
         LASSERT(obd->obd_magic == OBD_DEVICE_MAGIC);
@@ -325,9 +331,7 @@ int class_handle_ioctl(unsigned int cmd, unsigned long arg)
                 }
                 CDEBUG(D_HA, "%s: disabling committed-transno notification\n",
                        obd->obd_name);
-                spin_lock_bh(&obd->obd_processing_task_lock);
                 obd->obd_no_transno = 1;
-                spin_unlock_bh(&obd->obd_processing_task_lock);
                 GOTO(out, err = 0);
         }
 
@@ -358,7 +362,6 @@ void *obd_psdev = NULL;
 #endif
 
 EXPORT_SYMBOL(obd_devs);
-EXPORT_SYMBOL(obd_lvfs_ctxt_cache);
 EXPORT_SYMBOL(obd_debug_peer_on_timeout);
 EXPORT_SYMBOL(obd_dump_on_timeout);
 EXPORT_SYMBOL(obd_dump_on_eviction);
@@ -366,6 +369,7 @@ EXPORT_SYMBOL(obd_timeout);
 EXPORT_SYMBOL(ldlm_timeout);
 EXPORT_SYMBOL(obd_max_dirty_pages);
 EXPORT_SYMBOL(obd_dirty_pages);
+EXPORT_SYMBOL(obd_dirty_transit_pages);
 EXPORT_SYMBOL(at_min);
 EXPORT_SYMBOL(at_max);
 EXPORT_SYMBOL(at_extra);
@@ -375,31 +379,13 @@ EXPORT_SYMBOL(ptlrpc_put_connection_superhack);
 
 EXPORT_SYMBOL(proc_lustre_root);
 
-EXPORT_SYMBOL(class_register_type);
-EXPORT_SYMBOL(class_unregister_type);
-EXPORT_SYMBOL(class_get_type);
-EXPORT_SYMBOL(class_put_type);
-EXPORT_SYMBOL(class_name2dev);
-EXPORT_SYMBOL(class_name2obd);
-EXPORT_SYMBOL(class_uuid2dev);
-EXPORT_SYMBOL(class_uuid2obd);
-EXPORT_SYMBOL(class_find_client_obd);
-EXPORT_SYMBOL(class_find_client_notype);
-EXPORT_SYMBOL(class_devices_in_group);
-EXPORT_SYMBOL(class_conn2export);
-EXPORT_SYMBOL(class_exp2obd);
-EXPORT_SYMBOL(class_conn2obd);
-EXPORT_SYMBOL(class_exp2cliimp);
-EXPORT_SYMBOL(class_conn2cliimp);
-EXPORT_SYMBOL(class_disconnect);
-EXPORT_SYMBOL(class_num2obd);
-
 /* uuid.c */
 EXPORT_SYMBOL(class_uuid_unparse);
 EXPORT_SYMBOL(lustre_uuid_to_peer);
 
 EXPORT_SYMBOL(class_handle_hash);
 EXPORT_SYMBOL(class_handle_unhash);
+EXPORT_SYMBOL(class_handle_hash_back);
 EXPORT_SYMBOL(class_handle2object);
 EXPORT_SYMBOL(class_handle_free_cb);
 
@@ -418,6 +404,10 @@ EXPORT_SYMBOL(class_setup);
 EXPORT_SYMBOL(class_cleanup);
 EXPORT_SYMBOL(class_detach);
 EXPORT_SYMBOL(class_manual_cleanup);
+
+/* mea.c */
+EXPORT_SYMBOL(mea_name2idx);
+EXPORT_SYMBOL(raw_name2idx);
 
 #define OBD_INIT_CHECK
 #ifdef OBD_INIT_CHECK
@@ -481,8 +471,8 @@ int obd_init_checks(void)
                 ret = -EINVAL;
         }
         if ((u64val & ~CFS_PAGE_MASK) >= CFS_PAGE_SIZE) {
-                CWARN("mask failed: u64val "LPU64" >= %lu\n", u64val,
-                      (unsigned long)CFS_PAGE_SIZE);
+                CWARN("mask failed: u64val "LPU64" >= "LPU64"\n", u64val,
+                      (__u64)CFS_PAGE_SIZE);
                 ret = -EINVAL;
         }
 
@@ -492,7 +482,7 @@ int obd_init_checks(void)
 #define obd_init_checks() do {} while(0)
 #endif
 
-extern spinlock_t obd_types_lock;
+extern cfs_spinlock_t obd_types_lock;
 extern int class_procfs_init(void);
 extern int class_procfs_clean(void);
 
@@ -505,11 +495,14 @@ int init_obdclass(void)
         int i, err;
 #ifdef __KERNEL__
         int lustre_register_fs(void);
+
+        for (i = CAPA_SITE_CLIENT; i < CAPA_SITE_MAX; i++)
+                CFS_INIT_LIST_HEAD(&capa_list[i]);
 #endif
 
-        printk(KERN_INFO "Lustre: Build Version: "BUILD_VERSION"\n");
+        LCONSOLE_INFO("Lustre: Build Version: "BUILD_VERSION"\n");
 
-        spin_lock_init(&obd_types_lock);
+        cfs_spin_lock_init(&obd_types_lock);
         obd_zombie_impexp_init();
 #ifdef LPROCFS
         obd_memory = lprocfs_alloc_stats(OBD_STATS_NUM,
@@ -526,11 +519,6 @@ int init_obdclass(void)
                              LPROCFS_CNTR_AVGMINMAX,
                              "pagesused", "pages");
 #endif
-        obd_lvfs_ctxt_cache = cfs_mem_cache_create("obd_lvfs_ctxt_cache",
-                sizeof(struct lvfs_run_ctxt), 0, 0);
-        if (obd_lvfs_ctxt_cache == NULL)
-                RETURN(-ENOMEM);
-
         err = obd_init_checks();
         if (err == -EOVERFLOW)
                 return err;
@@ -540,7 +528,6 @@ int init_obdclass(void)
         if (err)
                 return err;
 
-        spin_lock_init(&obd_dev_lock);
         CFS_INIT_LIST_HEAD(&obd_types);
 
         err = cfs_psdev_register(&obd_psdev);
@@ -549,17 +536,17 @@ int init_obdclass(void)
                 return err;
         }
 
-        /* This struct is already zerod for us (static global) */
+        /* This struct is already zeroed for us (static global) */
         for (i = 0; i < class_devno_max(); i++)
                 obd_devs[i] = NULL;
 
         /* Default the dirty page cache cap to 1/2 of system memory.
          * For clients with less memory, a larger fraction is needed
          * for other purposes (mostly for BGL). */
-        if (num_physpages <= 512 << (20 - CFS_PAGE_SHIFT))
-                obd_max_dirty_pages = num_physpages / 4;
+        if (cfs_num_physpages <= 512 << (20 - CFS_PAGE_SHIFT))
+                obd_max_dirty_pages = cfs_num_physpages / 4;
         else
-                obd_max_dirty_pages = num_physpages / 2;
+                obd_max_dirty_pages = cfs_num_physpages / 2;
 
         err = obd_init_caches();
         if (err)
@@ -568,6 +555,13 @@ int init_obdclass(void)
         err = class_procfs_init();
         if (err)
                 return err;
+#endif
+
+        err = lu_global_init();
+        if (err)
+                return err;
+
+#ifdef __KERNEL__
         err = lustre_register_fs();
 #endif
 
@@ -580,9 +574,9 @@ int init_obdclass(void)
 static void cleanup_obdclass(void)
 {
         int i;
+        int lustre_unregister_fs(void);
         __u64 memory_leaked, pages_leaked;
         __u64 memory_max, pages_max;
-        int lustre_unregister_fs(void);
         ENTRY;
 
         lustre_unregister_fs();
@@ -597,6 +591,7 @@ static void cleanup_obdclass(void)
                         OBP(obd, detach)(obd);
                 }
         }
+        lu_global_fini();
 
         obd_cleanup_caches();
         obd_sysctl_clean();
@@ -612,8 +607,6 @@ static void cleanup_obdclass(void)
 
         memory_max = obd_memory_max();
         pages_max = obd_pages_max();
-
-        cfs_mem_cache_destroy(obd_lvfs_ctxt_cache);
 
         lprocfs_free_stats(&obd_memory);
         CDEBUG((memory_leaked) ? D_ERROR : D_INFO,

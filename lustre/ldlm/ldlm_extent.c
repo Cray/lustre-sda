@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -42,6 +44,8 @@
 #define DEBUG_SUBSYSTEM S_LDLM
 #ifndef __KERNEL__
 # include <liblustre.h>
+#else
+# include <libcfs/libcfs.h>
 #endif
 
 #include <lustre_dlm.h>
@@ -52,7 +56,8 @@
 
 #include "ldlm_internal.h"
 
-#define LDLM_MAX_GROWN_EXTENT (32 * 1024 * 1024 - 1)
+#ifdef HAVE_SERVER_SUPPORT
+# define LDLM_MAX_GROWN_EXTENT (32 * 1024 * 1024 - 1)
 
 /* fixup the ldlm_extent after expanding */
 static void ldlm_extent_internal_policy_fixup(struct ldlm_lock *req,
@@ -63,7 +68,7 @@ static void ldlm_extent_internal_policy_fixup(struct ldlm_lock *req,
         __u64 req_start = req->l_req_extent.start;
         __u64 req_end = req->l_req_extent.end;
         __u64 req_align, mask;
- 
+
         if (conflicting > 32 && (req_mode == LCK_PW || req_mode == LCK_CW)) {
                 if (req_end < req_start + LDLM_MAX_GROWN_EXTENT)
                         new_ex->end = min(req_start + LDLM_MAX_GROWN_EXTENT,
@@ -76,11 +81,12 @@ static void ldlm_extent_internal_policy_fixup(struct ldlm_lock *req,
         }
 
         /* we need to ensure that the lock extent is properly aligned to what
-         * the client requested.  We align it to the lowest-common denominator
-         * of the clients requested lock start and end alignment. */
-        mask = 0x1000ULL;
+         * the client requested. Also we need to make sure it's also server
+         * page size aligned otherwise a server page can be covered by two
+         * write locks. */
+        mask = CFS_PAGE_SIZE;
         req_align = (req_end + 1) | req_start;
-        if (req_align != 0) {
+        if (req_align != 0 && (req_align & (mask - 1)) == 0) {
                 while ((req_align & mask) == 0)
                         mask <<= 1;
         }
@@ -133,7 +139,9 @@ static void ldlm_extent_internal_policy_granted(struct ldlm_lock *req,
                         limiter.start = req_start;
 
                 if (interval_is_overlapped(tree->lit_root, &ext))
-                        printk("req_mode = %d, tree->lit_mode = %d, tree->lit_size = %d\n",
+                        CDEBUG(D_INFO, 
+                               "req_mode = %d, tree->lit_mode = %d, "
+                               "tree->lit_size = %d\n",
                                req_mode, tree->lit_mode, tree->lit_size);
                 interval_expand(tree->lit_root, &ext, &limiter);
                 limiter.start = max(limiter.start, ext.start);
@@ -160,7 +168,7 @@ static void
 ldlm_extent_internal_policy_waiting(struct ldlm_lock *req,
                                     struct ldlm_extent *new_ex)
 {
-        struct list_head *tmp;
+        cfs_list_t *tmp;
         struct ldlm_resource *res = req->l_resource;
         ldlm_mode_t req_mode = req->l_req_mode;
         __u64 req_start = req->l_req_extent.start;
@@ -171,11 +179,11 @@ ldlm_extent_internal_policy_waiting(struct ldlm_lock *req,
         lockmode_verify(req_mode);
 
         /* for waiting locks */
-        list_for_each(tmp, &res->lr_waiting) {
+        cfs_list_for_each(tmp, &res->lr_waiting) {
                 struct ldlm_lock *lock;
                 struct ldlm_extent *l_extent;
 
-                lock = list_entry(tmp, struct ldlm_lock, l_res_link);
+                lock = cfs_list_entry(tmp, struct ldlm_lock, l_res_link);
                 l_extent = &lock->l_policy_data.l_extent;
 
                 /* We already hit the minimum requested size, search no more */
@@ -213,7 +221,7 @@ ldlm_extent_internal_policy_waiting(struct ldlm_lock *req,
                         continue;
 
                 /* We grow extents downwards only as far as they don't overlap
-                 * with already-granted locks, on the assumtion that clients
+                 * with already-granted locks, on the assumption that clients
                  * will be writing beyond the initial requested end and would
                  * then need to enqueue a new lock beyond previous request.
                  * l_req_extent->end strictly < req_start, checked above. */
@@ -281,15 +289,18 @@ static int ldlm_check_contention(struct ldlm_lock *lock, int contended_locks)
         struct ldlm_resource *res = lock->l_resource;
         cfs_time_t now = cfs_time_current();
 
+        if (OBD_FAIL_CHECK(OBD_FAIL_LDLM_SET_CONTENTION))
+                return 1;
+
         CDEBUG(D_DLMTRACE, "contended locks = %d\n", contended_locks);
-        if (contended_locks > res->lr_namespace->ns_contended_locks)
+        if (contended_locks > ldlm_res_to_ns(res)->ns_contended_locks)
                 res->lr_contention_time = now;
         return cfs_time_before(now, cfs_time_add(res->lr_contention_time,
-                cfs_time_seconds(res->lr_namespace->ns_contention_time)));
+                cfs_time_seconds(ldlm_res_to_ns(res)->ns_contention_time)));
 }
 
 struct ldlm_extent_compat_args {
-        struct list_head *work_list;
+        cfs_list_t *work_list;
         struct ldlm_lock *lock;
         ldlm_mode_t mode;
         int *locks;
@@ -302,26 +313,24 @@ static enum interval_iter ldlm_extent_compat_cb(struct interval_node *n,
         struct ldlm_extent_compat_args *priv = data;
         struct ldlm_interval *node = to_ldlm_interval(n);
         struct ldlm_extent *extent;
-        struct list_head *work_list = priv->work_list;
+        cfs_list_t *work_list = priv->work_list;
         struct ldlm_lock *lock, *enq = priv->lock;
         ldlm_mode_t mode = priv->mode;
         int count = 0;
         ENTRY;
 
-        LASSERT(!list_empty(&node->li_group));
+        LASSERT(!cfs_list_empty(&node->li_group));
 
-        list_for_each_entry(lock, &node->li_group, l_sl_policy) {
+        cfs_list_for_each_entry(lock, &node->li_group, l_sl_policy) {
                 /* interval tree is for granted lock */
                 LASSERTF(mode == lock->l_granted_mode,
                          "mode = %s, lock->l_granted_mode = %s\n",
                          ldlm_lockname[mode],
                          ldlm_lockname[lock->l_granted_mode]);
-
                 count++;
                 if (lock->l_blocking_ast)
                         ldlm_add_ast_work_item(lock, enq, work_list);
         }
-        LASSERT(count > 0);
 
         /* don't count conflicting glimpse locks */
         extent = ldlm_interval_extent(node);
@@ -345,11 +354,11 @@ static enum interval_iter ldlm_extent_compat_cb(struct interval_node *n,
  * negative error, such as EWOULDBLOCK for group locks
  */
 static int
-ldlm_extent_compat_queue(struct list_head *queue, struct ldlm_lock *req,
+ldlm_extent_compat_queue(cfs_list_t *queue, struct ldlm_lock *req,
                          int *flags, ldlm_error_t *err,
-                         struct list_head *work_list, int *contended_locks)
+                         cfs_list_t *work_list, int *contended_locks)
 {
-        struct list_head *tmp;
+        cfs_list_t *tmp;
         struct ldlm_lock *lock;
         struct ldlm_resource *res = req->l_resource;
         ldlm_mode_t req_mode = req->l_req_mode;
@@ -420,16 +429,16 @@ ldlm_extent_compat_queue(struct list_head *queue, struct ldlm_lock *req,
                         } else {
                                 interval_search(tree->lit_root, &ex,
                                                 ldlm_extent_compat_cb, &data);
-                                if (!list_empty(work_list) && compat)
+                                if (!cfs_list_empty(work_list) && compat)
                                         compat = 0;
                         }
                 }
-        } else {
-                /* for waiting queue */
-                list_for_each(tmp, queue) {
+        } else { /* for waiting queue */
+                cfs_list_for_each(tmp, queue) {
                         check_contention = 1;
 
-                        lock = list_entry(tmp, struct ldlm_lock, l_res_link);
+                        lock = cfs_list_entry(tmp, struct ldlm_lock,
+                                              l_res_link);
 
                         if (req == lock)
                                 break;
@@ -441,12 +450,12 @@ ldlm_extent_compat_queue(struct list_head *queue, struct ldlm_lock *req,
                                    lock in the waiting queue or if there is not any,
                                    then in front of first non-GROUP lock */
                                 if (lock->l_req_mode != LCK_GROUP) {
-                                        /* Ok, we hit non-GROUP lock, there should be no
-                                           more GROUP locks later on, queue in front of
-                                           first non-GROUP lock */
+                                        /* Ok, we hit non-GROUP lock, there should
+                                         * be no more GROUP locks later on, queue in
+                                         * front of first non-GROUP lock */
 
                                         ldlm_resource_insert_lock_after(lock, req);
-                                        list_del_init(&lock->l_res_link);
+                                        cfs_list_del_init(&lock->l_res_link);
                                         ldlm_resource_insert_lock_after(req, lock);
                                         compat = 0;
                                         break;
@@ -535,12 +544,12 @@ ldlm_extent_compat_queue(struct list_head *queue, struct ldlm_lock *req,
                                 scan = 1;
                                 compat = 0;
                                 if (lock->l_req_mode != LCK_GROUP) {
-                                        /* Ok, we hit non-GROUP lock, there should
-                                         * be no more GROUP locks later on, queue in
-                                         * front of first non-GROUP lock */
+                                        /* Ok, we hit non-GROUP lock, there should be no
+                                           more GROUP locks later on, queue in front of
+                                           first non-GROUP lock */
 
                                         ldlm_resource_insert_lock_after(lock, req);
-                                        list_del_init(&lock->l_res_link);
+                                        cfs_list_del_init(&lock->l_res_link);
                                         ldlm_resource_insert_lock_after(req, lock);
                                         break;
                                 }
@@ -568,9 +577,10 @@ ldlm_extent_compat_queue(struct list_head *queue, struct ldlm_lock *req,
                                 /* if a non group lock doesn't overlap skip it */
                                 continue;
                         } else if (lock->l_req_extent.end < req_start ||
-                                   lock->l_req_extent.start > req_end)
+                                   lock->l_req_extent.start > req_end) {
                                 /* false contention, the requests doesn't really overlap */
                                 check_contention = 0;
+                        }
 
                         if (!work_list)
                                 RETURN(0);
@@ -594,34 +604,34 @@ ldlm_extent_compat_queue(struct list_head *queue, struct ldlm_lock *req,
             (*flags & LDLM_FL_DENY_ON_CONTENTION) &&
             req->l_req_mode != LCK_GROUP &&
             req_end - req_start <=
-            req->l_resource->lr_namespace->ns_max_nolock_size)
+            ldlm_res_to_ns(req->l_resource)->ns_max_nolock_size)
                 GOTO(destroylock, compat = -EUSERS);
 
         RETURN(compat);
 destroylock:
-        list_del_init(&req->l_res_link);
+        cfs_list_del_init(&req->l_res_link);
         ldlm_lock_destroy_nolock(req);
         *err = compat;
         RETURN(compat);
 }
 
-static void discard_bl_list(struct list_head *bl_list)
+static void discard_bl_list(cfs_list_t *bl_list)
 {
-        struct list_head *tmp, *pos;
+        cfs_list_t *tmp, *pos;
         ENTRY;
 
-        list_for_each_safe(pos, tmp, bl_list) {
+        cfs_list_for_each_safe(pos, tmp, bl_list) {
                 struct ldlm_lock *lock =
-                        list_entry(pos, struct ldlm_lock, l_bl_ast);
+                        cfs_list_entry(pos, struct ldlm_lock, l_bl_ast);
 
-                list_del_init(&lock->l_bl_ast);
+                cfs_list_del_init(&lock->l_bl_ast);
                 LASSERT(lock->l_flags & LDLM_FL_AST_SENT);
                 lock->l_flags &= ~LDLM_FL_AST_SENT;
                 LASSERT(lock->l_bl_ast_run == 0);
                 LASSERT(lock->l_blocking_lock);
-                LDLM_LOCK_PUT(lock->l_blocking_lock);
+                LDLM_LOCK_RELEASE(lock->l_blocking_lock);
                 lock->l_blocking_lock = NULL;
-                LDLM_LOCK_PUT(lock);
+                LDLM_LOCK_RELEASE(lock);
         }
         EXIT;
 }
@@ -634,15 +644,15 @@ static void discard_bl_list(struct list_head *bl_list)
   *   - blocking ASTs have not been sent
   *   - must call this function with the ns lock held once */
 int ldlm_process_extent_lock(struct ldlm_lock *lock, int *flags, int first_enq,
-                             ldlm_error_t *err, struct list_head *work_list)
+                             ldlm_error_t *err, cfs_list_t *work_list)
 {
         struct ldlm_resource *res = lock->l_resource;
-        struct list_head rpc_list = CFS_LIST_HEAD_INIT(rpc_list);
+        CFS_LIST_HEAD(rpc_list);
         int rc, rc2;
         int contended_locks = 0;
         ENTRY;
 
-        LASSERT(list_empty(&res->lr_converting));
+        LASSERT(cfs_list_empty(&res->lr_converting));
         LASSERT(!(*flags & LDLM_FL_DENY_ON_CONTENTION) ||
                 !(lock->l_flags & LDLM_AST_DISCARD_DATA));
         check_res_locked(res);
@@ -699,18 +709,19 @@ int ldlm_process_extent_lock(struct ldlm_lock *lock, int *flags, int first_enq,
                  * bug 2322: we used to unlink and re-add here, which was a
                  * terrible folly -- if we goto restart, we could get
                  * re-ordered!  Causes deadlock, because ASTs aren't sent! */
-                if (list_empty(&lock->l_res_link))
+                if (cfs_list_empty(&lock->l_res_link))
                         ldlm_resource_add_lock(res, &res->lr_waiting, lock);
                 unlock_res(res);
-
-                rc = ldlm_run_bl_ast_work(&rpc_list);
+                rc = ldlm_run_ast_work(ldlm_res_to_ns(res), &rpc_list,
+                                       LDLM_WORK_BL_AST);
 
                 if (OBD_FAIL_CHECK(OBD_FAIL_LDLM_OST_FAIL_RACE) &&
-                    !ns_is_client(res->lr_namespace))
+                    !ns_is_client(ldlm_res_to_ns(res)))
                         class_fail_export(lock->l_export);
 
                 lock_res(res);
                 if (rc == -ERESTART) {
+
                         /* 15715: The lock was granted and destroyed after
                          * resource lock was dropped. Interval node was freed
                          * in ldlm_lock_destroy. Anyway, this always happens
@@ -745,59 +756,25 @@ int ldlm_process_extent_lock(struct ldlm_lock *lock, int *flags, int first_enq,
         }
         RETURN(0);
 out:
-        if (!list_empty(&rpc_list)) {
+        if (!cfs_list_empty(&rpc_list)) {
                 LASSERT(!(lock->l_flags & LDLM_AST_DISCARD_DATA));
                 discard_bl_list(&rpc_list);
         }
         RETURN(rc);
 }
+#endif /* HAVE_SERVER_SUPPORT */
 
-struct kms_recalc {
-        __u64 old;
-        __u64 new;
-        __s32 stop;
-};
-
-static enum interval_iter ldlm_extent_shift_kms_cb(struct interval_node *n,
-                                                   void *data)
-{
-        struct kms_recalc *kms = data;
-        struct ldlm_interval *node = to_ldlm_interval(n);
-        struct ldlm_lock *lock;
-        ENTRY;
-
-        LASSERT(!list_empty(&node->li_group));
-
-        if (n->in_max_high < kms->new)
-                RETURN(INTERVAL_ITER_CONT);
-
-        list_for_each_entry(lock, &node->li_group, l_sl_policy) {
-                if (lock->l_flags & LDLM_FL_KMS_IGNORE)
-                        continue;
-                if ((lock->l_policy_data.l_extent.end + 1 >= kms->old) ||
-                    (lock->l_policy_data.l_extent.end == OBD_OBJECT_EOF)) {
-                        kms->new = kms->old;
-                        kms->stop = 1;
-                        RETURN(INTERVAL_ITER_STOP);
-                }
-                if (lock->l_policy_data.l_extent.end + 1 > kms->new)
-                        kms->new = lock->l_policy_data.l_extent.end + 1;
-                break;
-        }
-        RETURN(INTERVAL_ITER_CONT);
-}
-
-/* When a lock is canceled by a client, the KMS may undergo change if this
+/* When a lock is cancelled by a client, the KMS may undergo change if this
  * is the "highest lock".  This function returns the new KMS value.
- * Caller must hold ns_lock already.
+ * Caller must hold lr_lock already.
  *
  * NB: A lock on [x,y] protects a KMS of up to y + 1 bytes! */
 __u64 ldlm_extent_shift_kms(struct ldlm_lock *lock, __u64 old_kms)
 {
         struct ldlm_resource *res = lock->l_resource;
-        struct kms_recalc kms = {old_kms, 0, 0};
-        struct ldlm_interval_tree *tree;
-        int i;
+        cfs_list_t *tmp;
+        struct ldlm_lock *lck;
+        __u64 kms = 0;
         ENTRY;
 
         /* don't let another thread in ldlm_extent_shift_kms race in
@@ -805,14 +782,23 @@ __u64 ldlm_extent_shift_kms(struct ldlm_lock *lock, __u64 old_kms)
          * calculation of the kms */
         lock->l_flags |= LDLM_FL_KMS_IGNORE;
 
-        for (i = 0; i < LCK_MODE_NUM && kms.stop == 0; i++) {
-                tree = &res->lr_itree[i];
-                interval_iterate_reverse(tree->lit_root,
-                                         ldlm_extent_shift_kms_cb, &kms);
+        cfs_list_for_each(tmp, &res->lr_granted) {
+                lck = cfs_list_entry(tmp, struct ldlm_lock, l_res_link);
+
+                if (lck->l_flags & LDLM_FL_KMS_IGNORE)
+                        continue;
+
+                if (lck->l_policy_data.l_extent.end >= old_kms)
+                        RETURN(old_kms);
+
+                /* This extent _has_ to be smaller than old_kms (checked above)
+                 * so kms can only ever be smaller or the same as old_kms. */
+                if (lck->l_policy_data.l_extent.end + 1 > kms)
+                        kms = lck->l_policy_data.l_extent.end + 1;
         }
-        LASSERTF(kms.new <= old_kms, "kms "LPU64" old_kms "LPU64"\n", kms.new,
-                 old_kms);
-        RETURN(kms.new);
+        LASSERTF(kms <= old_kms, "kms "LPU64" old_kms "LPU64"\n", kms, old_kms);
+
+        RETURN(kms);
 }
 
 cfs_mem_cache_t *ldlm_interval_slab;
@@ -822,7 +808,7 @@ struct ldlm_interval *ldlm_interval_alloc(struct ldlm_lock *lock)
         ENTRY;
 
         LASSERT(lock->l_resource->lr_type == LDLM_EXTENT);
-        OBD_SLAB_ALLOC(node, ldlm_interval_slab, CFS_ALLOC_IO, sizeof(*node));
+        OBD_SLAB_ALLOC_PTR_GFP(node, ldlm_interval_slab, CFS_ALLOC_IO);
         if (node == NULL)
                 RETURN(NULL);
 
@@ -834,7 +820,7 @@ struct ldlm_interval *ldlm_interval_alloc(struct ldlm_lock *lock)
 void ldlm_interval_free(struct ldlm_interval *node)
 {
         if (node) {
-                LASSERT(list_empty(&node->li_group));
+                LASSERT(cfs_list_empty(&node->li_group));
                 LASSERT(!interval_is_intree(&node->li_node));
                 OBD_SLAB_FREE(node, ldlm_interval_slab, sizeof(*node));
         }
@@ -847,7 +833,7 @@ void ldlm_interval_attach(struct ldlm_interval *n,
         LASSERT(l->l_tree_node == NULL);
         LASSERT(l->l_resource->lr_type == LDLM_EXTENT);
 
-        list_add_tail(&l->l_sl_policy, &n->li_group);
+        cfs_list_add_tail(&l->l_sl_policy, &n->li_group);
         l->l_tree_node = n;
 }
 
@@ -858,11 +844,11 @@ struct ldlm_interval *ldlm_interval_detach(struct ldlm_lock *l)
         if (n == NULL)
                 return NULL;
 
-        LASSERT(!list_empty(&n->li_group));
+        LASSERT(!cfs_list_empty(&n->li_group));
         l->l_tree_node = NULL;
-        list_del_init(&l->l_sl_policy);
+        cfs_list_del_init(&l->l_sl_policy);
 
-        return (list_empty(&n->li_group) ? n : NULL);
+        return (cfs_list_empty(&n->li_group) ? n : NULL);
 }
 
 static inline int lock_mode_to_index(ldlm_mode_t mode)
@@ -885,7 +871,6 @@ void ldlm_extent_add_lock(struct ldlm_resource *res,
         int idx;
 
         LASSERT(lock->l_granted_mode == lock->l_req_mode);
-        LASSERT(!lock->l_destroyed);
 
         node = lock->l_tree_node;
         LASSERT(node != NULL);

@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -37,6 +37,11 @@
 #ifndef _LUSTRE_CFG_H
 #define _LUSTRE_CFG_H
 
+/** \defgroup cfg cfg
+ *
+ * @{
+ */
+
 /*
  * 1cf6
  * lcfG
@@ -45,39 +50,42 @@
 #define LUSTRE_CFG_MAX_BUFCOUNT 8
 
 #define LCFG_HDR_SIZE(count) \
-    size_round(offsetof (struct lustre_cfg, lcfg_buflens[(count)]))
+    cfs_size_round(offsetof (struct lustre_cfg, lcfg_buflens[(count)]))
 
-/* If the LCFG_REQUIRED bit is set in a configuration command,
+/** If the LCFG_REQUIRED bit is set in a configuration command,
  * then the client is required to understand this parameter
  * in order to mount the filesystem. If it does not understand
  * a REQUIRED command the client mount will fail. */
 #define LCFG_REQUIRED         0x0001000
 
 enum lcfg_command_type {
-        LCFG_ATTACH             = 0x00cf001,
-        LCFG_DETACH             = 0x00cf002,
-        LCFG_SETUP              = 0x00cf003,
-        LCFG_CLEANUP            = 0x00cf004,
-        LCFG_ADD_UUID           = 0x00cf005,
-        LCFG_DEL_UUID           = 0x00cf006,
-        LCFG_MOUNTOPT           = 0x00cf007,
-        LCFG_DEL_MOUNTOPT       = 0x00cf008,
-        LCFG_SET_TIMEOUT        = 0x00cf009,
-        LCFG_SET_UPCALL         = 0x00cf00a,
-        LCFG_ADD_CONN           = 0x00cf00b,
-        LCFG_DEL_CONN           = 0x00cf00c,
-        LCFG_LOV_ADD_OBD        = 0x00cf00d,
-        LCFG_LOV_DEL_OBD        = 0x00cf00e,
-        LCFG_PARAM              = 0x00cf00f,
-        LCFG_MARKER             = 0x00cf010,
-        LCFG_LOG_START          = 0x00ce011,
-        LCFG_LOG_END            = 0x00ce012,
-        LCFG_LOV_ADD_INA        = 0x00ce013,
-        LCFG_POOL_NEW           = 0x00ce020,
-        LCFG_POOL_ADD           = 0x00ce021,
-        LCFG_POOL_REM           = 0x00ce022,
-        LCFG_POOL_DEL           = 0x00ce023,
-        LCFG_SET_LDLM_TIMEOUT   = 0x00ce030,
+        LCFG_ATTACH             = 0x00cf001, /**< create a new obd instance */
+        LCFG_DETACH             = 0x00cf002, /**< destroy obd instance */
+        LCFG_SETUP              = 0x00cf003, /**< call type-specific setup */
+        LCFG_CLEANUP            = 0x00cf004, /**< call type-specific cleanup */
+        LCFG_ADD_UUID           = 0x00cf005, /**< add a nid to a niduuid */
+        LCFG_DEL_UUID           = 0x00cf006, /**< remove a nid from a niduuid */
+        LCFG_MOUNTOPT           = 0x00cf007, /**< create a profile (mdc, osc) */
+        LCFG_DEL_MOUNTOPT       = 0x00cf008, /**< destroy a profile */
+        LCFG_SET_TIMEOUT        = 0x00cf009, /**< set obd_timeout */
+        LCFG_SET_UPCALL         = 0x00cf00a, /**< deprecated */
+        LCFG_ADD_CONN           = 0x00cf00b, /**< add a failover niduuid to an obd */
+        LCFG_DEL_CONN           = 0x00cf00c, /**< remove a failover niduuid */
+        LCFG_LOV_ADD_OBD        = 0x00cf00d, /**< add an osc to a lov */
+        LCFG_LOV_DEL_OBD        = 0x00cf00e, /**< remove an osc from a lov */
+        LCFG_PARAM              = 0x00cf00f, /**< set a proc parameter */
+        LCFG_MARKER             = 0x00cf010, /**< metadata about next cfg rec */
+        LCFG_LOG_START          = 0x00ce011, /**< mgc only, process a cfg log */
+        LCFG_LOG_END            = 0x00ce012, /**< stop processing updates */
+        LCFG_LOV_ADD_INA        = 0x00ce013, /**< like LOV_ADD_OBD, inactive */
+        LCFG_ADD_MDC            = 0x00cf014, /**< add an mdc to a lmv */
+        LCFG_DEL_MDC            = 0x00cf015, /**< remove an mdc from a lmv */
+        LCFG_SPTLRPC_CONF       = 0x00ce016, /**< security */
+        LCFG_POOL_NEW           = 0x00ce020, /**< create an ost pool name */
+        LCFG_POOL_ADD           = 0x00ce021, /**< add an ost to a pool */
+        LCFG_POOL_REM           = 0x00ce022, /**< remove an ost from a pool */
+        LCFG_POOL_DEL           = 0x00ce023, /**< destroy an ost pool name */
+        LCFG_SET_LDLM_TIMEOUT   = 0x00ce030, /**< set ldlm_timeout */
 };
 
 struct lustre_cfg_bufs {
@@ -85,9 +93,6 @@ struct lustre_cfg_bufs {
         __u32    lcfg_buflen[LUSTRE_CFG_MAX_BUFCOUNT];
         __u32    lcfg_bufcount;
 };
-
-/* Mountconf transitional hack, should go away after 1.6 */
-#define LCFG_FLG_MOUNTCONF 0x400
 
 struct lustre_cfg {
         __u32 lcfg_version;
@@ -100,6 +105,11 @@ struct lustre_cfg {
 
         __u32 lcfg_bufcount;
         __u32 lcfg_buflens[0];
+};
+
+enum cfg_record_type {
+        PORTALS_CFG_TYPE = 1,
+        LUSTRE_CFG_TYPE = 123,
 };
 
 #define LUSTRE_CFG_BUFLEN(lcfg, idx)            \
@@ -152,7 +162,7 @@ static inline void *lustre_cfg_buf(struct lustre_cfg *lcfg, int index)
 
         offset = LCFG_HDR_SIZE(lcfg->lcfg_bufcount);
         for (i = 0; i < index; i++)
-                offset += size_round(lcfg->lcfg_buflens[i]);
+                offset += cfs_size_round(lcfg->lcfg_buflens[i]);
         return (char *)lcfg + offset;
 }
 
@@ -183,7 +193,7 @@ static inline char *lustre_cfg_string(struct lustre_cfg *lcfg, int index)
          */
         if (s[lcfg->lcfg_buflens[index] - 1] != '\0') {
                 int last = min((int)lcfg->lcfg_buflens[index], 
-                               size_round(lcfg->lcfg_buflens[index]) - 1);
+                               cfs_size_round(lcfg->lcfg_buflens[index]) - 1);
                 char lost = s[last];
                 s[last] = '\0';
                 if (lost != '\0') {
@@ -202,9 +212,9 @@ static inline int lustre_cfg_len(__u32 bufcount, __u32 *buflens)
 
         len = LCFG_HDR_SIZE(bufcount);
         for (i = 0; i < bufcount; i++)
-                len += size_round(buflens[i]);
+                len += cfs_size_round(buflens[i]);
 
-        RETURN(size_round(len));
+        RETURN(cfs_size_round(len));
 }
 
 
@@ -274,5 +284,11 @@ static inline int lustre_cfg_sanity_check(void *buf, int len)
 
         RETURN(0);
 }
+
+#include <lustre/lustre_user.h>
+
+#define INVALID_UID     (-1)
+
+/** @} cfg */
 
 #endif // _LUSTRE_CFG_H

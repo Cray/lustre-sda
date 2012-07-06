@@ -28,6 +28,8 @@
 /*
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -41,42 +43,36 @@
  * Author: Robert Read <rread@clusterfs.com>
  */
 
-#include <stdlib.h>
 #include <sys/ioctl.h>
-#include <fcntl.h>
 #include <sys/socket.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <sys/stat.h>
-#include <sys/param.h>
-#include <stdio.h>
-#include <stdarg.h>
-#include <signal.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+
+#include <ctype.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <glob.h>
+#include <signal.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "obdctl.h"
 
 #include <obd.h>          /* for struct lov_stripe_md */
 #include <lustre/lustre_build_version.h>
 
-#include <unistd.h>
-#include <sys/un.h>
-#include <time.h>
-#include <sys/time.h>
-#include <errno.h>
-#include <string.h>
-#include <ctype.h>
-#include <lustre/liblustreapi.h>
-
-#ifdef HAVE_ASM_PAGE_H
-#include <asm/page.h>           /* needed for PAGE_SIZE - rread */
-#endif
-
 #include <obd_class.h>
 #include <lnet/lnetctl.h>
-#include "parser.h"
-#include "platform.h"
-#include <stdio.h>
+#include <libcfs/libcfsutil.h>
+#include <lustre/liblustreapi.h>
 
 #define MAX_STRING_SIZE 128
 #define DEVICES_LIST "/proc/fs/lustre/devices"
@@ -86,16 +82,21 @@
 #include <sys/shm.h>
 #include <pthread.h>
 
-#define MAX_THREADS 1024
-
+#define MAX_THREADS 4096
+#define MAX_BASE_ID 0xffffffff
 struct shared_data {
-        __u64 counters[MAX_THREADS];
-        __u64 offsets[MAX_THREADS];
-        int   running;
-        int   barrier;
-        int   stop;
         l_mutex_t mutex;
         l_cond_t  cond;
+        int       stopping;
+        struct {
+                __u64 counters[MAX_THREADS];
+                __u64 offsets[MAX_THREADS];
+                int   thr_running;
+                int   start_barrier;
+                int   stop_barrier;
+                struct timeval start_time;
+                struct timeval end_time;
+        } body;
 };
 
 static struct shared_data *shared_data;
@@ -113,16 +114,14 @@ const int nthreads = 1;
 
 static int cur_device = -1;
 
-
-#define MAX_STRIPES     170
-struct lov_oinfo lov_oinfos[MAX_STRIPES];
+struct lov_oinfo lov_oinfos[LOV_MAX_STRIPE_COUNT];
 
 struct lsm_buffer {
         struct lov_stripe_md lsm;
-        struct lov_oinfo *ptrs[MAX_STRIPES];
+        struct lov_oinfo *ptrs[LOV_MAX_STRIPE_COUNT];
 } lsm_buffer;
 
-static int l2_ioctl(int dev_id, unsigned int opc, void *buf)
+static int l2_ioctl(int dev_id, int opc, void *buf)
 {
         return l_ioctl(dev_id, opc, buf);
 }
@@ -133,7 +132,7 @@ int lcfg_ioctl(char * func, int dev_id, struct lustre_cfg *lcfg)
         char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
         int rc;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         data.ioc_type = LUSTRE_CFG_TYPE;
         data.ioc_plen1 = lustre_cfg_len(lcfg->lcfg_bufcount,
@@ -181,7 +180,7 @@ int lcfg_mgs_ioctl(char *func, int dev_id, struct lustre_cfg *lcfg)
         char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
         int rc;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         rc = data.ioc_dev = get_mgs_device();
         if (rc < 0)
                 goto out;
@@ -202,9 +201,6 @@ out:
         if (rc) {
                 if (errno == ENOSYS)
                         fprintf(stderr, "Make sure cfg_device is set first.\n");
-                if (errno == EINVAL)
-                        fprintf(stderr, "cfg_device should be of the form "
-                                "'lustre-MDT0000'\n");
         }
         return rc;
 }
@@ -217,7 +213,7 @@ char *obdo_print(struct obdo *obd)
                 "\nctime: "LPU64"\nsize: "LPU64"\nblocks: "LPU64
                 "\nblksize: %u\nmode: %o\nuid: %d\ngid: %d\nflags: %x\n"
                 "misc: %x\nnlink: %d,\nvalid "LPX64"\n",
-                obd->o_id, obd->o_gr, obd->o_atime, obd->o_mtime, obd->o_ctime,
+                obd->o_id, obd->o_seq, obd->o_atime, obd->o_mtime, obd->o_ctime,
                 obd->o_size, obd->o_blocks, obd->o_blksize, obd->o_mode,
                 obd->o_uid, obd->o_gid, obd->o_flags, obd->o_misc,
                 obd->o_nlink, obd->o_valid);
@@ -235,7 +231,7 @@ static int do_name2dev(char *func, char *name)
         char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
         int rc;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         data.ioc_inllen1 = strlen(name) + 1;
         data.ioc_inlbuf1 = name;
@@ -441,15 +437,19 @@ int do_disconnect(char *func, int verbose)
 }
 
 #ifdef MAX_THREADS
-static void shmem_setup(void)
+static int shmem_setup(void)
 {
-        /* Create new segment */
-        int shmid = shmget(IPC_PRIVATE, sizeof(*shared_data), 0600);
+        pthread_mutexattr_t mattr;
+        pthread_condattr_t  cattr;
+        int                 rc;
+        int                 shmid;
 
+        /* Create new segment */
+        shmid = shmget(IPC_PRIVATE, sizeof(*shared_data), 0600);
         if (shmid == -1) {
                 fprintf(stderr, "Can't create shared data: %s\n",
                         strerror(errno));
-                return;
+                return errno;
         }
 
         /* Attatch to new segment */
@@ -459,7 +459,7 @@ static void shmem_setup(void)
                 fprintf(stderr, "Can't attach shared data: %s\n",
                         strerror(errno));
                 shared_data = NULL;
-                return;
+                return errno;
         }
 
         /* Mark segment as destroyed, so it will disappear when we exit.
@@ -468,7 +468,31 @@ static void shmem_setup(void)
         if (shmctl(shmid, IPC_RMID, NULL) == -1) {
                 fprintf(stderr, "Can't destroy shared data: %s\n",
                         strerror(errno));
+                return errno;
         }
+
+        pthread_mutexattr_init(&mattr);
+        pthread_condattr_init(&cattr);
+
+        rc = pthread_mutexattr_setpshared(&mattr, PTHREAD_PROCESS_SHARED);
+        if (rc != 0) {
+                fprintf(stderr, "Can't set shared mutex attr\n");
+                return rc;
+        }
+
+        rc = pthread_condattr_setpshared(&cattr, PTHREAD_PROCESS_SHARED);
+        if (rc != 0) {
+                fprintf(stderr, "Can't set shared cond attr\n");
+                return rc;
+        }
+
+        pthread_mutex_init(&shared_data->mutex, &mattr);
+        pthread_cond_init(&shared_data->cond, &cattr);
+
+        pthread_mutexattr_destroy(&mattr);
+        pthread_condattr_destroy(&cattr);
+
+        return 0;
 }
 
 static inline void shmem_lock(void)
@@ -481,32 +505,66 @@ static inline void shmem_unlock(void)
         l_mutex_unlock(&shared_data->mutex);
 }
 
+static inline void shmem_wait(void)
+{
+        l_cond_wait(&shared_data->cond, &shared_data->mutex);
+}
+
+static inline void shmem_wakeup_all(void)
+{
+        l_cond_broadcast(&shared_data->cond);
+}
+
 static inline void shmem_reset(int total_threads)
 {
         if (shared_data == NULL)
                 return;
 
-        memset(shared_data, 0, sizeof(*shared_data));
-        l_mutex_init(&shared_data->mutex);
-        l_cond_init(&shared_data->cond);
+        memset(&shared_data->body, 0, sizeof(shared_data->body));
         memset(counter_snapshot, 0, sizeof(counter_snapshot));
         prev_valid = 0;
-        shared_data->barrier = total_threads;
+        shared_data->stopping = 0;
+        shared_data->body.start_barrier = total_threads;
+        shared_data->body.stop_barrier = total_threads;
 }
 
-static inline void shmem_bump(void)
+static inline void shmem_bump(__u32 counter)
 {
-        static int bumped_running;
+        static bool running_not_bumped = true;
 
         if (shared_data == NULL || thread <= 0 || thread > MAX_THREADS)
                 return;
 
         shmem_lock();
-        shared_data->counters[thread - 1]++;
-        if (!bumped_running)
-                shared_data->running++;
+        shared_data->body.counters[thread - 1] += counter;
+        if (running_not_bumped) {
+                shared_data->body.thr_running++;
+                running_not_bumped = false;
+        }
         shmem_unlock();
-        bumped_running = 1;
+}
+
+static void shmem_total(int total_threads)
+{
+        __u64 total = 0;
+        double secs;
+        int i;
+
+        if (shared_data == NULL || total_threads > MAX_THREADS)
+                return;
+
+        shmem_lock();
+        for (i = 0; i < total_threads; i++)
+                total += shared_data->body.counters[i];
+
+        secs = difftime(&shared_data->body.end_time,
+                        &shared_data->body.start_time);
+        shmem_unlock();
+
+        printf("Total: total %llu threads %d sec %f %f/second\n", total,
+                total_threads, secs, total / secs);
+
+        return;
 }
 
 static void shmem_snap(int total_threads, int live_threads)
@@ -522,9 +580,9 @@ static void shmem_snap(int total_threads, int live_threads)
                 return;
 
         shmem_lock();
-        memcpy(counter_snapshot[0], shared_data->counters,
+        memcpy(counter_snapshot[0], shared_data->body.counters,
                total_threads * sizeof(counter_snapshot[0][0]));
-        running = shared_data->running;
+        running = shared_data->body.thr_running;
         shmem_unlock();
 
         gettimeofday(&this_time, NULL);
@@ -539,12 +597,10 @@ static void shmem_snap(int total_threads, int live_threads)
                 }
         }
 
-        secs = (this_time.tv_sec + this_time.tv_usec / 1000000.0) -
-               (prev_time.tv_sec + prev_time.tv_usec / 1000000.0);
-
-        if (prev_valid &&
-            secs > 1.0)                    /* someone screwed with the time? */
-                printf("%d/%d Total: %f/second\n", non_zero, total_threads, total / secs);
+        secs = difftime(&this_time, &prev_time);
+        if (prev_valid && secs > 1.0)    /* someone screwed with the time? */
+                printf("%d/%d Total: %f/second\n", non_zero, total_threads,
+                       total / secs);
 
         memcpy(counter_snapshot[1], counter_snapshot[0],
                total_threads * sizeof(counter_snapshot[0][0]));
@@ -559,24 +615,54 @@ static void shmem_stop(void)
         if (shared_data == NULL)
                 return;
 
-        shared_data->stop = 1;
+        shared_data->stopping = 1;
+}
+
+static void shmem_cleanup(void)
+{
+        if (shared_data == NULL)
+                return;
+
+        shmem_stop();
+
+        pthread_mutex_destroy(&shared_data->mutex);
+        pthread_cond_destroy(&shared_data->cond);
 }
 
 static int shmem_running(void)
 {
-        return (shared_data == NULL ||
-                !shared_data->stop);
+        return (shared_data == NULL || !shared_data->stopping);
 }
-#else
-static void shmem_setup(void)
+
+static void shmem_end_time_locked(void)
 {
+        shared_data->body.stop_barrier--;
+        if (shared_data->body.stop_barrier == 0)
+                gettimeofday(&shared_data->body.end_time, NULL);
+}
+
+static void shmem_start_time_locked(void)
+{
+        shared_data->body.start_barrier--;
+        if (shared_data->body.start_barrier == 0) {
+                shmem_wakeup_all();
+                gettimeofday(&shared_data->body.start_time, NULL);
+        } else {
+                shmem_wait();
+        }
+}
+
+#else
+static int shmem_setup(void)
+{
+        return 0;
 }
 
 static inline void shmem_reset(int total_threads)
 {
 }
 
-static inline void shmem_bump(void)
+static inline void shmem_bump(__u32 counters)
 {
 }
 
@@ -588,7 +674,7 @@ static void shmem_unlock()
 {
 }
 
-static void shmem_stop(void)
+static void shmem_cleanup(void)
 {
 }
 
@@ -794,6 +880,7 @@ int jt_opt_threads(int argc, char **argv)
                 sigaction(SIGALRM, &saveact1, NULL);
         }
 
+        shmem_total(threads);
         sigprocmask(SIG_SETMASK, &saveset, NULL);
 
         return rc;
@@ -832,7 +919,7 @@ int jt_obd_no_transno(int argc, char **argv)
         char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
         int rc;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
 
         if (argc != 1)
@@ -859,7 +946,7 @@ int jt_obd_set_readonly(int argc, char **argv)
         char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
         int rc;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
 
         if (argc != 1)
@@ -886,7 +973,7 @@ int jt_obd_abort_recovery(int argc, char **argv)
         char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
         int rc;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
 
         if (argc != 1)
@@ -920,9 +1007,8 @@ int jt_get_version(int argc, char **argv)
         if (rc)
                 fprintf(stderr, "error: %s: %s\n", jt_cmdname(argv[0]),
                         strerror(-rc));
-        else {
+        else
                 printf("Lustre version: %s\n", version);
-        }
 
         printf("lctl   version: %s\n", BUILD_VERSION);
         return rc;
@@ -994,8 +1080,9 @@ int jt_obd_list_ioctl(int argc, char **argv)
         for (index = 0;; index++) {
                 memset(buf, 0, sizeof(rawbuf));
                 data->ioc_version = OBD_IOCTL_VERSION;
-                data->ioc_inllen1 = sizeof(rawbuf) - size_round(sizeof(*data));
-                data->ioc_inlbuf1 = buf + size_round(sizeof(*data));
+                data->ioc_inllen1 =
+                        sizeof(rawbuf) - cfs_size_round(sizeof(*data));
+                data->ioc_inlbuf1 = buf + cfs_size_round(sizeof(*data));
                 data->ioc_len = obd_ioctl_packlen(data);
                 data->ioc_count = index;
 
@@ -1048,6 +1135,397 @@ int jt_obd_list(int argc, char **argv)
         return 0;
 }
 
+struct jt_fid_space {
+        obd_seq jt_seq;
+        obd_id  jt_id;
+        int     jt_width;
+};
+
+int jt_obd_alloc_fids(struct jt_fid_space *space, struct lu_fid *fid,
+                      __u64 *count)
+{
+        int rc;
+
+        if (space->jt_seq == 0 || space->jt_id == space->jt_width) {
+                struct obd_ioctl_data  data;
+                char rawbuf[MAX_IOC_BUFLEN];
+                char *buf = rawbuf;
+                __u64 seqnr;
+                int max_count;
+
+                memset(&data, 0, sizeof(data));
+                data.ioc_dev = cur_device;
+
+                data.ioc_pbuf1 = (char *)&seqnr;
+                data.ioc_plen1 = sizeof(seqnr);
+
+                data.ioc_pbuf2 = (char *)&max_count;
+                data.ioc_plen2 = sizeof(max_count);
+
+                memset(buf, 0, sizeof(rawbuf));
+                rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
+                if (rc) {
+                        fprintf(stderr, "error: invalid ioctl rc = %d\n", rc);
+                        return rc;
+                }
+
+                rc = l2_ioctl(OBD_DEV_ID, OBD_IOC_ECHO_ALLOC_SEQ, buf);
+                if (rc) {
+                        fprintf(stderr, "ioctl error: rc = %d\n", rc);
+                        return rc;
+                }
+
+                space->jt_seq = *(__u64 *)data.ioc_pbuf1;
+                space->jt_width = *(int *)data.ioc_pbuf2;
+                space->jt_id = 1;
+        }
+        fid->f_seq = space->jt_seq;
+        fid->f_oid = space->jt_id;
+        fid->f_ver = 0;
+
+        space->jt_id = min(space->jt_id + *count, space->jt_width);
+
+        *count = space->jt_id - fid->f_oid;
+        return 0;
+}
+
+#define MD_STEP_COUNT 1000
+int jt_obd_md_common(int argc, char **argv, int cmd)
+{
+        struct obd_ioctl_data  data;
+        struct timeval         start;
+        struct timeval         end_time;
+        char                   rawbuf[MAX_IOC_BUFLEN];
+        char                  *buf = rawbuf;
+        int                    mode = 0000644;
+        int                    create_mode;
+        int                    rc = 0;
+        char                  *parent_basedir = NULL;
+        char                   dirname[4096];
+        int                    parent_base_id = 0;
+        int                    parent_count = 1;
+        __u64                  child_base_id = -1;
+        int                    stripe_count = 0;
+        int                    stripe_index = -1;
+        int                    count = 0;
+        char                  *end;
+        __u64                  seconds = 0;
+        double                 diff;
+        int                    c;
+        int                    xattr_size = 0;
+        __u64                  total_count = 0;
+        char                  *name = NULL;
+        struct jt_fid_space    fid_space = {0};
+        int                    version = 0;
+        struct option          long_opts[] = {
+                {"child_base_id",     required_argument, 0, 'b'},
+                {"stripe_count",      required_argument, 0, 'c'},
+                {"parent_basedir",    required_argument, 0, 'd'},
+                {"parent_dircount",   required_argument, 0, 'D'},
+                {"stripe_index",      required_argument, 0, 'i'},
+                {"mode",              required_argument, 0, 'm'},
+                {"count",             required_argument, 0, 'n'},
+                {"time",              required_argument, 0, 't'},
+                {"version",           no_argument,       0, 'v'},
+                {"xattr_size",        required_argument, 0, 'x'},
+                {0, 0, 0, 0}
+        };
+
+        optind = 0;
+        while ((c = getopt_long(argc, argv, "b:c:d:D:m:n:t:vx:",
+                                long_opts, NULL)) >= 0) {
+                switch (c) {
+                case 'b':
+                        child_base_id = strtoull(optarg, &end, 0);
+                        if (*end) {
+                                fprintf(stderr, "error: %s: bad child_base_id"
+                                        " '%s'\n", jt_cmdname(argv[0]), optarg);
+                                return CMD_HELP;
+                        }
+                        break;
+                case 'c':
+                        stripe_count = strtoul(optarg, &end, 0);
+                        if (*end) {
+                                fprintf(stderr, "error: %s: bad stripe count"
+                                        " '%s'\n", jt_cmdname(argv[0]), optarg);
+                                return CMD_HELP;
+                        }
+                        break;
+                case 'd':
+                        parent_basedir = optarg;
+                        break;
+                case 'D':
+                        parent_count = strtoul(optarg, &end, 0);
+                        if (*end) {
+                                fprintf(stderr, "error: %s: bad parent count"
+                                        " '%s'\n", jt_cmdname(argv[0]), optarg);
+                                return CMD_HELP;
+                        }
+                        break;
+                case 'i':
+                        stripe_index = strtoul(optarg, &end, 0);
+                        if (*end) {
+                                fprintf(stderr, "error: %s: bad stripe index"
+                                        " '%s'\n", jt_cmdname(argv[0]), optarg);
+                                return CMD_HELP;
+                        }
+                        break;
+                case 'm':
+                        mode = strtoul(optarg, &end, 0);
+                        if (*end) {
+                                fprintf(stderr, "error: %s: bad mode '%s'\n",
+                                        jt_cmdname(argv[0]), optarg);
+                                return CMD_HELP;
+                        }
+                        break;
+                case 'n':
+                        total_count = strtoul(optarg, &end, 0);
+                        if (*end || total_count == 0) {
+                                fprintf(stderr, "%s: bad child count '%s'\n",
+                                        jt_cmdname(argv[0]), optarg);
+                                return CMD_HELP;
+                        }
+                        break;
+                case 't':
+                        seconds = strtoull(optarg, &end, 0);
+                        if (*end) {
+                                fprintf(stderr, "error: %s: seconds '%s'\n",
+                                        jt_cmdname(argv[0]), optarg);
+                                return CMD_HELP;
+                        }
+                        break;
+                case 'v':
+                        version = 1;
+                        break;
+                case 'x':
+                        xattr_size = strtoul(optarg, &end, 0);
+                        if (*end) {
+                                fprintf(stderr, "error: %s: xattr_size '%s'\n",
+                                        jt_cmdname(argv[0]), optarg);
+                                return CMD_HELP;
+                        }
+                        SET_BUT_UNUSED(xattr_size);
+                        break;
+                default:
+                        fprintf(stderr, "error: %s: option '%s' "
+                                "unrecognized\n", argv[0], argv[optind - 1]);
+                        return CMD_HELP;
+                }
+        }
+
+        memset(&data, 0, sizeof(data));
+        data.ioc_dev = cur_device;
+        if (child_base_id == -1) {
+                if (optind >= argc)
+                        return CMD_HELP;
+                name = argv[optind];
+                total_count = 1;
+        } else {
+                if (optind < argc) {
+                        fprintf(stderr, "child_base_id and name can not"
+                                        " specified at the same time\n");
+                        return CMD_HELP;
+                }
+        }
+
+        if (stripe_count == 0 && stripe_index != -1) {
+                fprintf(stderr, "If stripe_count is 0, stripe_index can not"
+                                "be specified\n");
+                return CMD_HELP;
+        }
+
+        if (total_count == 0 && seconds == 0) {
+                fprintf(stderr, "count or seconds needs to be indicated\n");
+                return CMD_HELP;
+        }
+
+        if (parent_count <= 0) {
+                fprintf(stderr, "parent count must < 0\n");
+                return CMD_HELP;
+        }
+
+#ifdef MAX_THREADS
+        if (thread) {
+                shmem_lock();
+                /* threads interleave */
+                if (parent_base_id != -1)
+                        parent_base_id += (thread - 1) % parent_count;
+
+                if (child_base_id != -1)
+                        child_base_id +=  (thread - 1) * \
+                                          (MAX_BASE_ID / nthreads);
+
+                shmem_start_time_locked();
+                shmem_unlock();
+        }
+#endif
+        /* If parent directory is not specified, try to get the directory
+         * from name */
+        if (parent_basedir == NULL) {
+                char *last_lash;
+                if (name == NULL) {
+                        fprintf(stderr, "parent_basedir or name must be"
+                                        "indicated!\n");
+                        return CMD_HELP;
+                }
+                /*Get directory and name from name*/
+                last_lash = strrchr(name, '/');
+                if (last_lash == NULL || name[0] != '/') {
+                        fprintf(stderr, "Can not locate %s\n", name);
+                        return CMD_HELP;
+                }
+
+                if (last_lash == name) {
+                        sprintf(dirname, "%s", "/");
+                        name++;
+                } else {
+                        int namelen = (unsigned long)last_lash -
+                                      (unsigned long)name;
+                        snprintf(dirname, namelen, "%s", name);
+                }
+
+                data.ioc_pbuf1 = dirname;
+                data.ioc_plen1 = strlen(dirname);
+
+                data.ioc_pbuf2 = name;
+                data.ioc_plen2 = strlen(name);
+        } else {
+                if (name != NULL) {
+                        data.ioc_pbuf2 = name;
+                        data.ioc_plen2 = strlen(name);
+                } else {
+                        if (parent_base_id > 0)
+                                sprintf(dirname, "%s%d", parent_basedir,
+                                        parent_base_id);
+                        else
+                                sprintf(dirname, "%s", parent_basedir);
+                }
+                data.ioc_pbuf1 = dirname;
+                data.ioc_plen1 = strlen(dirname);
+        }
+
+        if (cmd == ECHO_MD_MKDIR || cmd == ECHO_MD_RMDIR)
+                create_mode = S_IFDIR;
+        else
+                create_mode = S_IFREG;
+
+        data.ioc_obdo1.o_mode = mode | S_IFDIR;
+        data.ioc_obdo1.o_valid = OBD_MD_FLID | OBD_MD_FLTYPE | OBD_MD_FLMODE |
+                                 OBD_MD_FLFLAGS | OBD_MD_FLGROUP;
+        data.ioc_command = cmd;
+
+        gettimeofday(&start, NULL);
+        while (shmem_running()) {
+                struct lu_fid fid;
+
+                data.ioc_obdo2.o_id = child_base_id;
+                data.ioc_obdo2.o_mode = mode | create_mode;
+                data.ioc_obdo2.o_valid = OBD_MD_FLID | OBD_MD_FLTYPE |
+                                         OBD_MD_FLMODE | OBD_MD_FLFLAGS |
+                                         OBD_MD_FLGROUP;
+                data.ioc_obdo2.o_misc = stripe_count;
+                data.ioc_obdo2.o_stripe_idx = stripe_index;
+
+                if (total_count > 0) {
+                        if ((total_count - count) > MD_STEP_COUNT)
+                                data.ioc_count = MD_STEP_COUNT;
+                        else
+                                data.ioc_count = total_count - count;
+                } else {
+                        data.ioc_count = MD_STEP_COUNT;
+                }
+
+                child_base_id += data.ioc_count;
+                count += data.ioc_count;
+                if (cmd == ECHO_MD_CREATE || cmd == ECHO_MD_MKDIR) {
+                        /*Allocate fids for the create */
+                        rc = jt_obd_alloc_fids(&fid_space, &fid,
+                                               &data.ioc_count);
+                        if (rc) {
+                                fprintf(stderr, "Allocate fids error %d.\n",rc);
+                                return rc;
+                        }
+                        data.ioc_obdo1.o_seq = fid.f_seq;
+                        data.ioc_obdo1.o_id = fid.f_oid;
+                }
+                memset(buf, 0, sizeof(rawbuf));
+                rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
+                if (rc) {
+                        fprintf(stderr, "error: %s: invalid ioctl %d\n",
+                                jt_cmdname(argv[0]), rc);
+                        return rc;
+                }
+
+                rc = l2_ioctl(OBD_DEV_ID, OBD_IOC_ECHO_MD, buf);
+                if (rc) {
+                        fprintf(stderr, "error: %s: %s\n",
+                                jt_cmdname(argv[0]), strerror(rc = errno));
+                        return rc;
+                }
+                shmem_bump(data.ioc_count);
+
+                gettimeofday(&end_time, NULL);
+                diff = difftime(&end_time, &start);
+                if (seconds > 0 && (__u64)diff > seconds)
+                        break;
+
+                if (count >= total_count && total_count > 0)
+                        break;
+        }
+
+        if (count > 0 && version) {
+                gettimeofday(&end_time, NULL);
+                diff = difftime(&end_time, &start);
+                printf("%s: %d in %.3fs (%.3f /s): %s",
+                        jt_cmdname(argv[0]), count, diff,
+                        (double)count/diff, ctime(&end_time.tv_sec));
+        }
+
+#ifdef MAX_THREADS
+        if (thread) {
+                shmem_lock();
+                shmem_end_time_locked();
+                shmem_unlock();
+        }
+#endif
+        return rc;
+}
+
+int jt_obd_test_create(int argc, char **argv)
+{
+        return jt_obd_md_common(argc, argv, ECHO_MD_CREATE);
+}
+
+int jt_obd_test_mkdir(int argc, char **argv)
+{
+        return jt_obd_md_common(argc, argv, ECHO_MD_MKDIR);
+}
+
+int jt_obd_test_destroy(int argc, char **argv)
+{
+        return jt_obd_md_common(argc, argv, ECHO_MD_DESTROY);
+}
+
+int jt_obd_test_rmdir(int argc, char **argv)
+{
+        return jt_obd_md_common(argc, argv, ECHO_MD_RMDIR);
+}
+
+int jt_obd_test_lookup(int argc, char **argv)
+{
+        return jt_obd_md_common(argc, argv, ECHO_MD_LOOKUP);
+}
+
+int jt_obd_test_setxattr(int argc, char **argv)
+{
+        return jt_obd_md_common(argc, argv, ECHO_MD_SETATTR);
+}
+
+int jt_obd_test_md_getattr(int argc, char **argv)
+{
+        return jt_obd_md_common(argc, argv, ECHO_MD_GETATTR);
+}
+
 /* Create one or more objects, arg[4] may describe stripe meta-data.  If
  * not, defaults assumed.  This echo-client instance stashes the stripe
  * object ids.  Use get_stripe on this node to print full lsm and
@@ -1063,7 +1541,7 @@ int jt_obd_create(int argc, char **argv)
         int verbose = 1, mode = 0100644, rc = 0, i, valid_lsm = 0;
         char *end;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         if (argc < 2 || argc > 5)
                 return CMD_HELP;
@@ -1092,9 +1570,9 @@ int jt_obd_create(int argc, char **argv)
                         return CMD_HELP;
         }
 
-        if (argc < 5)
+        if (argc < 5) {
                 reset_lsmb (&lsm_buffer);       /* will set default */
-        else {
+        } else {
                 rc = parse_lsm (&lsm_buffer, argv[4]);
                 if (rc != 0) {
                         fprintf(stderr, "error: %s: invalid lsm '%s'\n",
@@ -1131,7 +1609,7 @@ int jt_obd_create(int argc, char **argv)
                 }
                 rc = l2_ioctl(OBD_DEV_ID, OBD_IOC_CREATE, buf);
                 obd_ioctl_unpack(&data, buf, sizeof(rawbuf));
-                shmem_bump();
+                shmem_bump(1);
                 if (rc < 0) {
                         fprintf(stderr, "error: %s: #%d - %s\n",
                                 jt_cmdname(argv[0]), i, strerror(rc = errno));
@@ -1158,7 +1636,7 @@ int jt_obd_setattr(int argc, char **argv)
         char *end;
         int rc;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         if (argc != 2)
                 return CMD_HELP;
@@ -1206,7 +1684,7 @@ int jt_obd_test_setattr(int argc, char **argv)
         if (argc < 2 || argc > 4)
                 return CMD_HELP;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         count = strtoull(argv[1], &end, 0);
         if (*end) {
@@ -1246,7 +1724,7 @@ int jt_obd_test_setattr(int argc, char **argv)
                 data.ioc_obdo1.o_id = objid;
                 data.ioc_obdo1.o_mode = S_IFREG;
                 data.ioc_obdo1.o_valid = OBD_MD_FLID | OBD_MD_FLTYPE | OBD_MD_FLMODE;
-                memset(buf, 0x00, sizeof(rawbuf));
+                memset(buf, 0, sizeof(rawbuf));
                 rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
                 if (rc) {
                         fprintf(stderr, "error: %s: invalid ioctl\n",
@@ -1254,7 +1732,7 @@ int jt_obd_test_setattr(int argc, char **argv)
                         return rc;
                 }
                 rc = l2_ioctl(OBD_DEV_ID, OBD_IOC_SETATTR, &data);
-                shmem_bump();
+                shmem_bump(1);
                 if (rc < 0) {
                         fprintf(stderr, "error: %s: #"LPD64" - %d:%s\n",
                                 jt_cmdname(argv[0]), i, errno, strerror(rc = errno));
@@ -1295,7 +1773,7 @@ int jt_obd_destroy(int argc, char **argv)
         char *end;
         int rc = 0, i;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         if (argc < 2 || argc > 4)
                 return CMD_HELP;
@@ -1340,7 +1818,7 @@ int jt_obd_destroy(int argc, char **argv)
                 }
                 rc = l2_ioctl(OBD_DEV_ID, OBD_IOC_DESTROY, buf);
                 obd_ioctl_unpack(&data, buf, sizeof(rawbuf));
-                shmem_bump();
+                shmem_bump(1);
                 if (rc < 0) {
                         fprintf(stderr, "error: %s: objid "LPX64": %s\n",
                                 jt_cmdname(argv[0]), id, strerror(rc = errno));
@@ -1365,7 +1843,7 @@ int jt_obd_getattr(int argc, char **argv)
         if (argc != 2)
                 return CMD_HELP;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         data.ioc_obdo1.o_id = strtoull(argv[1], &end, 0);
         if (*end) {
@@ -1411,7 +1889,7 @@ int jt_obd_test_getattr(int argc, char **argv)
         if (argc < 2 || argc > 4)
                 return CMD_HELP;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         count = strtoull(argv[1], &end, 0);
         if (*end) {
@@ -1451,7 +1929,7 @@ int jt_obd_test_getattr(int argc, char **argv)
                 data.ioc_obdo1.o_id = objid;
                 data.ioc_obdo1.o_mode = S_IFREG;
                 data.ioc_obdo1.o_valid = 0xffffffff;
-                memset(buf, 0x00, sizeof(rawbuf));
+                memset(buf, 0, sizeof(rawbuf));
                 rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
                 if (rc) {
                         fprintf(stderr, "error: %s: invalid ioctl\n",
@@ -1459,7 +1937,7 @@ int jt_obd_test_getattr(int argc, char **argv)
                         return rc;
                 }
                 rc = l2_ioctl(OBD_DEV_ID, OBD_IOC_GETATTR, &data);
-                shmem_bump();
+                shmem_bump(1);
                 if (rc < 0) {
                         fprintf(stderr, "error: %s: #"LPD64" - %d:%s\n",
                                 jt_cmdname(argv[0]), i, errno, strerror(rc = errno));
@@ -1590,7 +2068,7 @@ int jt_obd_test_brw(int argc, char **argv)
                 }
         }
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
 
         /* communicate the 'type' of brw test and batching to echo_client.
@@ -1638,21 +2116,17 @@ int jt_obd_test_brw(int argc, char **argv)
                         obj_idx = (thread - 1)/nthr_per_obj;
                         objid += obj_idx;
                         stride *= nthr_per_obj;
-                        if (thread == 1)
-                                shared_data->offsets[obj_idx] = stride + thr_offset;
+                        if ((thread - 1) % nthr_per_obj == 0) {
+                                shared_data->body.offsets[obj_idx] =
+                                        stride + thr_offset;
+                        }
                         thr_offset += ((thread - 1) % nthr_per_obj) * len;
                 } else {
                         /* threads disjoint */
                         thr_offset += (thread - 1) * len;
                 }
 
-                shared_data->barrier--;
-                if (shared_data->barrier == 0)
-                        l_cond_broadcast(&shared_data->cond);
-                else
-                        l_cond_wait(&shared_data->cond,
-                                          &shared_data->mutex);
-
+                shmem_start_time_locked();
                 shmem_unlock ();
         }
 #endif
@@ -1676,7 +2150,7 @@ int jt_obd_test_brw(int argc, char **argv)
         cmd = write ? OBD_IOC_BRW_WRITE : OBD_IOC_BRW_READ;
         for (i = 1, next_count = verbose; i <= count && shmem_running(); i++) {
                 data.ioc_obdo1.o_valid &= ~(OBD_MD_FLBLOCKS|OBD_MD_FLGRANT);
-                memset(buf, 0x00, sizeof(rawbuf));
+                memset(buf, 0, sizeof(rawbuf));
                 rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
                 if (rc) {
                         fprintf(stderr, "error: %s: invalid ioctl\n",
@@ -1684,7 +2158,7 @@ int jt_obd_test_brw(int argc, char **argv)
                         return rc;
                 }
                 rc = l2_ioctl(OBD_DEV_ID, cmd, buf);
-                shmem_bump();
+                shmem_bump(1);
                 if (rc) {
                         fprintf(stderr, "error: %s: #%d - %s on %s\n",
                                 jt_cmdname(argv[0]), i, strerror(rc = errno),
@@ -1705,8 +2179,9 @@ int jt_obd_test_brw(int argc, char **argv)
                                 data.ioc_offset += stride;
                         } else if (i < count) {
                                 shmem_lock ();
-                                data.ioc_offset = shared_data->offsets[obj_idx];
-                                shared_data->offsets[obj_idx] += len;
+                                data.ioc_offset =
+                                        shared_data->body.offsets[obj_idx];
+                                shared_data->body.offsets[obj_idx] += len;
                                 shmem_unlock ();
                         }
 #else
@@ -1734,6 +2209,13 @@ int jt_obd_test_brw(int argc, char **argv)
                                ctime(&end.tv_sec));
         }
 
+#ifdef MAX_THREADS
+        if (thread) {
+                shmem_lock();
+                shmem_end_time_locked();
+                shmem_unlock();
+        }
+#endif
         return rc;
 }
 
@@ -1747,7 +2229,7 @@ int jt_obd_lov_getconfig(int argc, char **argv)
         char *path;
         int rc, fd;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
 
         if (argc != 2)
@@ -1782,7 +2264,7 @@ repeat:
                 goto out_uuidarray;
         }
 
-        memset(buf, 0x00, sizeof(rawbuf));
+        memset(buf, 0, sizeof(rawbuf));
         data.ioc_inllen1 = sizeof(desc);
         data.ioc_inlbuf1 = (char *)&desc;
         data.ioc_inllen2 = desc.ld_tgt_count * sizeof(*uuidarray);
@@ -1815,7 +2297,7 @@ repeat:
                         rc = -EINVAL;
                         goto out;
                 }
-                if (desc.ld_default_stripe_count == (__u16)-1)
+                if (desc.ld_default_stripe_count == (__u32)-1)
                         printf("default_stripe_count: %d\n", -1);
                 else
                         printf("default_stripe_count: %u\n",
@@ -1849,7 +2331,7 @@ int jt_obd_ldlm_regress_start(int argc, char **argv)
         char argstring[200];
         int i, count = sizeof(argstring) - 1;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         if (argc > 5)
                 return CMD_HELP;
@@ -1888,7 +2370,7 @@ int jt_obd_ldlm_regress_stop(int argc, char **argv)
         char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
         struct obd_ioctl_data data;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
 
         if (argc != 1)
@@ -1915,7 +2397,7 @@ static int do_activate(int argc, char **argv, int flag)
         char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
         int rc;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         if (argc != 1)
                 return CMD_HELP;
@@ -1954,7 +2436,7 @@ int jt_obd_recover(int argc, char **argv)
         char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
         struct obd_ioctl_data data;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         if (argc > 2)
                 return CMD_HELP;
@@ -1995,7 +2477,7 @@ int jt_obd_mdc_lookup(int argc, char **argv)
         if (argc == 4)
                 verbose = get_verbose(argv[0], argv[3]);
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
 
         data.ioc_inllen1 = strlen(child) + 1;
@@ -2044,11 +2526,10 @@ int jt_cfg_dump_log(int argc, char **argv)
         char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
         int rc;
 
-
         if (argc != 2)
                 return CMD_HELP;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         data.ioc_inllen1 = strlen(argv[1]) + 1;
         data.ioc_inlbuf1 = argv[1];
@@ -2077,9 +2558,9 @@ int jt_llog_catlist(int argc, char **argv)
         if (argc != 1)
                 return CMD_HELP;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
-        data.ioc_inllen1 = sizeof(rawbuf) - size_round(sizeof(data));
+        data.ioc_inllen1 = sizeof(rawbuf) - cfs_size_round(sizeof(data));
         memset(buf, 0, sizeof(rawbuf));
         rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
         if (rc) {
@@ -2106,12 +2587,12 @@ int jt_llog_info(int argc, char **argv)
         if (argc != 2)
                 return CMD_HELP;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         data.ioc_inllen1 = strlen(argv[1]) + 1;
         data.ioc_inlbuf1 = argv[1];
-        data.ioc_inllen2 = sizeof(rawbuf) - size_round(sizeof(data)) -
-                size_round(data.ioc_inllen1);
+        data.ioc_inllen2 = sizeof(rawbuf) - cfs_size_round(sizeof(data)) -
+                cfs_size_round(data.ioc_inllen1);
         memset(buf, 0, sizeof(rawbuf));
         rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
         if (rc) {
@@ -2139,7 +2620,7 @@ int jt_llog_print(int argc, char **argv)
         if (argc != 2 && argc != 4)
                 return CMD_HELP;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         data.ioc_inllen1 = strlen(argv[1]) + 1;
         data.ioc_inlbuf1 = argv[1];
@@ -2155,10 +2636,10 @@ int jt_llog_print(int argc, char **argv)
                 data.ioc_inllen3 = strlen(to) + 1;
                 data.ioc_inlbuf3 = to;
         }
-        data.ioc_inllen4 = sizeof(rawbuf) - size_round(sizeof(data)) -
-                size_round(data.ioc_inllen1) -
-                size_round(data.ioc_inllen2) -
-                size_round(data.ioc_inllen3);
+        data.ioc_inllen4 = sizeof(rawbuf) - cfs_size_round(sizeof(data)) -
+                cfs_size_round(data.ioc_inllen1) -
+                cfs_size_round(data.ioc_inllen2) -
+                cfs_size_round(data.ioc_inllen3);
         memset(buf, 0, sizeof(rawbuf));
         rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
         if (rc) {
@@ -2186,7 +2667,7 @@ int jt_llog_cancel(int argc, char **argv)
         if (argc != 4)
                 return CMD_HELP;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         data.ioc_inllen1 = strlen(argv[1]) + 1;
         data.ioc_inlbuf1 = argv[1];
@@ -2221,7 +2702,7 @@ int jt_llog_check(int argc, char **argv)
         if (argc != 2 && argc != 4)
                 return CMD_HELP;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         data.ioc_inllen1 = strlen(argv[1]) + 1;
         data.ioc_inlbuf1 = argv[1];
@@ -2237,10 +2718,10 @@ int jt_llog_check(int argc, char **argv)
                 data.ioc_inllen3 = strlen(to) + 1;
                 data.ioc_inlbuf3 = to;
         }
-        data.ioc_inllen4 = sizeof(rawbuf) - size_round(sizeof(data)) -
-                size_round(data.ioc_inllen1) -
-                size_round(data.ioc_inllen2) -
-                size_round(data.ioc_inllen3);
+        data.ioc_inllen4 = sizeof(rawbuf) - cfs_size_round(sizeof(data)) -
+                cfs_size_round(data.ioc_inllen1) -
+                cfs_size_round(data.ioc_inllen2) -
+                cfs_size_round(data.ioc_inllen3);
         memset(buf, 0, sizeof(rawbuf));
         rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
         if (rc) {
@@ -2267,7 +2748,7 @@ int jt_llog_remove(int argc, char **argv)
         if (argc != 3 && argc != 2)
                 return CMD_HELP;
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         data.ioc_dev = cur_device;
         data.ioc_inllen1 = strlen(argv[1]) + 1;
         data.ioc_inlbuf1 = argv[1];
@@ -2330,14 +2811,15 @@ static int jt_blockdev_find_module(const char *module)
 {
         FILE *fp;
         int found = 0;
-        char modname[256];
+        char buf[1024];
 
         fp = fopen("/proc/modules", "r");
         if (fp == NULL)
                 return -1;
 
-        while (fscanf(fp, "%s %*s %*s %*s %*s %*s", modname) == 1) {
-                if (strcmp(module, modname) == 0) {
+        while (fgets(buf, 1024, fp) != NULL) {
+                *strchr(buf, ' ') = 0;
+                if (strcmp(module, buf) == 0) {
                         found = 1;
                         break;
                 }
@@ -2465,7 +2947,7 @@ int jt_blockdev_info(int argc, char **argv)
 {
         char *filename;
         int rc, fd;
-        __u64  ino;
+        struct lu_fid fid;
 
         if (argc != 2)
                 return CMD_HELP;
@@ -2478,17 +2960,17 @@ int jt_blockdev_info(int argc, char **argv)
                 return CMD_HELP;
         }
 
-        rc = ioctl(fd, LL_IOC_LLOOP_INFO, &ino);
+        rc = ioctl(fd, LL_IOC_LLOOP_INFO, &fid);
         if (rc < 0) {
                 rc = errno;
                 fprintf(stderr, "error: %s\n", strerror(errno));
                 goto out;
         }
         fprintf(stdout, "lloop device info: ");
-        if (ino == 0ULL)
+        if (fid_is_zero(&fid))
                 fprintf(stdout, "Not attached\n");
         else
-                fprintf(stdout, "attached to inode "LPU64"\n", ino);
+                fprintf(stdout, "attached to inode "DFID"\n", PFID(&fid));
 out:
         close(fd);
         return -rc;
@@ -2507,10 +2989,12 @@ int obd_initialize(int argc, char **argv)
 {
         int i;
 
-        for (i = 0; i < MAX_STRIPES; i++)
+        for (i = 0; i < LOV_MAX_STRIPE_COUNT; i++)
                 lsm_buffer.lsm.lsm_oinfo[i] = lov_oinfos + i;
 
-        shmem_setup();
+        if (shmem_setup() != 0)
+                return -1;
+
         register_ioc_dev(OBD_DEV_ID, OBD_DEV_PATH,
                          OBD_DEV_MAJOR, OBD_DEV_MINOR);
 
@@ -2526,7 +3010,7 @@ void obd_finalize(int argc, char **argv)
         sigact.sa_flags = SA_RESTART;
         sigaction(SIGINT, &sigact, NULL);
 
-        shmem_stop();
+        shmem_cleanup();
         do_disconnect(argv[0], 1);
 }
 
@@ -2766,7 +3250,7 @@ static int pool_cmd(enum lcfg_command_type cmd,
                 return rc;
         }
 
-        memset(&data, 0x00, sizeof(data));
+        memset(&data, 0, sizeof(data));
         rc = data.ioc_dev = get_mgs_device();
         if (rc < 0)
                 goto out;
@@ -3051,11 +3535,10 @@ out:
 
 int jt_get_obj_version(int argc, char **argv)
 {
-        struct ll_fid fid;
+        struct lu_fid fid;
         struct obd_ioctl_data data;
         __u64 version;
         char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf, *fidstr;
-        struct lu_fid f;
         int rc;
 
         if (argc != 2)
@@ -3064,14 +3547,12 @@ int jt_get_obj_version(int argc, char **argv)
         fidstr = argv[1];
         while (*fidstr == '[')
                 fidstr++;
-        sscanf(fidstr, SFID, RFID(&f));
-        /*
-         * fid_is_sane is not suitable here.  We rely on
-         * mds_fid2locked_dentry to report on insane FIDs.
-         */
-        fid.id = f.f_seq;
-        fid.generation = f.f_oid;
-        fid.f_type = f.f_ver;
+        sscanf(fidstr, SFID, RFID(&fid));
+        if (!fid_is_sane(&fid)) {
+                fprintf(stderr, "bad FID format [%s], should be "DFID"\n",
+                        fidstr, (__u64)1, 2, 0);
+                return -EINVAL;
+        }
 
         memset(&data, 0, sizeof data);
         data.ioc_dev = cur_device;
@@ -3088,7 +3569,7 @@ int jt_get_obj_version(int argc, char **argv)
                 return rc;
         }
 
-        rc = l_ioctl(OBD_DEV_ID, OBD_IOC_GET_OBJ_VERSION, buf);
+        rc = l2_ioctl(OBD_DEV_ID, OBD_IOC_GET_OBJ_VERSION, buf);
         if (rc == -1) {
                 fprintf(stderr, "error: %s: ioctl: %s\n",
                         jt_cmdname(argv[0]), strerror(errno));
@@ -3127,5 +3608,111 @@ void  llapi_ping_target(char *obd_type, char *obd_name,
         } else {
                 printf("%s: active\n", obd_name);
         }
-
 }
+
+int jt_changelog_register(int argc, char **argv)
+{
+        char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
+        struct obd_ioctl_data data;
+        char devname[30];
+        int rc;
+
+        if (argc > 2)
+                return CMD_HELP;
+        else if (argc == 2 && strcmp(argv[1], "-n") != 0)
+                return CMD_HELP;
+        if (cur_device < 0)
+                return CMD_HELP;
+
+        memset(&data, 0, sizeof(data));
+        data.ioc_dev = cur_device;
+        memset(buf, 0, sizeof(rawbuf));
+        rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
+        if (rc) {
+                fprintf(stderr, "error: %s: invalid ioctl\n",
+                        jt_cmdname(argv[0]));
+               return rc;
+        }
+
+        rc = l2_ioctl(OBD_DEV_ID, OBD_IOC_CHANGELOG_REG, buf);
+        if (rc < 0) {
+                fprintf(stderr, "error: %s: %s\n", jt_cmdname(argv[0]),
+                        strerror(rc = errno));
+                return rc;
+        }
+        obd_ioctl_unpack(&data, buf, sizeof(rawbuf));
+
+        if (data.ioc_u32_1 == 0) {
+                fprintf(stderr, "received invalid userid!\n");
+                return EPROTO;
+        }
+
+        if (lcfg_get_devname() != NULL)
+                strcpy(devname, lcfg_get_devname());
+        else
+                sprintf(devname, "dev %d", cur_device);
+
+        if (argc == 2)
+                /* -n means bare name */
+                printf(CHANGELOG_USER_PREFIX"%u\n", data.ioc_u32_1);
+        else
+                printf("%s: Registered changelog userid '"CHANGELOG_USER_PREFIX
+                       "%u'\n", devname, data.ioc_u32_1);
+        return 0;
+}
+
+int jt_changelog_deregister(int argc, char **argv)
+{
+        char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
+        struct obd_ioctl_data data;
+        char devname[30];
+        int id, rc;
+
+        if (argc != 2 || cur_device < 0)
+                return CMD_HELP;
+
+        id = strtol(argv[1] + strlen(CHANGELOG_USER_PREFIX), NULL, 10);
+        if ((id == 0) || (strncmp(argv[1], CHANGELOG_USER_PREFIX,
+                                  strlen(CHANGELOG_USER_PREFIX)) != 0)) {
+                fprintf(stderr, "expecting id of the form '"
+                        CHANGELOG_USER_PREFIX"<num>'; got '%s'\n", argv[1]);
+                return CMD_HELP;
+        }
+
+        memset(&data, 0, sizeof(data));
+        data.ioc_dev = cur_device;
+        data.ioc_u32_1 = id;
+        memset(buf, 0, sizeof(rawbuf));
+        rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
+        if (rc) {
+                fprintf(stderr, "error: %s: invalid ioctl\n",
+                        jt_cmdname(argv[0]));
+                return rc;
+        }
+
+        rc = l2_ioctl(OBD_DEV_ID, OBD_IOC_CHANGELOG_DEREG, buf);
+        if (rc < 0) {
+                fprintf(stderr, "error: %s: %s\n", jt_cmdname(argv[0]),
+                        strerror(rc = errno));
+                return rc;
+        }
+        obd_ioctl_unpack(&data, buf, sizeof(rawbuf));
+
+        if (data.ioc_u32_1 != id) {
+                fprintf(stderr, "No changelog user '%s'.  Blocking user"
+                        " is '"CHANGELOG_USER_PREFIX"%d'.\n", argv[1],
+                        data.ioc_u32_1);
+                return ENOENT;
+        }
+
+        if (lcfg_get_devname() != NULL)
+                strcpy(devname, lcfg_get_devname());
+        else
+                sprintf(devname, "dev %d", cur_device);
+
+        printf("%s: Deregistered changelog user '"CHANGELOG_USER_PREFIX"%d'\n",
+               devname, data.ioc_u32_1);
+        return 0;
+}
+
+

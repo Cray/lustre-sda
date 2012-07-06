@@ -26,11 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
- */
-/*
- * Copyright (c) 2011 Whamcloud, Inc.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -118,21 +117,22 @@ int compare(struct lov_user_md *lum_dir, struct lov_user_md *lum_file1,
         int i;
         FILE *fp;
 
-        fp = popen("\\ls -d  /proc/fs/lustre/lov/*lov* | head -1", "r");
+        fp = popen("\\ls -d  /proc/fs/lustre/lov/*clilov* | head -1", "r");
         if (!fp) {
                 llapi_error(LLAPI_MSG_ERROR, -errno,
-                            "open(lustre/lov/*lov*) failed: %s\n");
+                            "open(lustre/lov/*clilov*) failed: %s\n");
                 return 2;
         }
         if (fscanf(fp, "%s", lov_path) < 1) {
                 llapi_error(LLAPI_MSG_ERROR, -EINVAL,
-                            "read lustre/lov/*lov* failed: %s\n");
+                            "read(lustre/lov/*clilov*) failed: %s\n");
                 pclose(fp);
                 return 3;
         }
         pclose(fp);
 
-        snprintf(tmp_path, sizeof(tmp_path) - 1, "%s/stripecount", lov_path);
+        snprintf(tmp_path, sizeof(tmp_path) - 1, "%s/stripecount",
+                 lov_path);
         if (read_proc_entry(tmp_path, buf, sizeof(buf)) < 0)
                 return 5;
         def_stripe_count = (short)atoi(buf);
@@ -146,13 +146,14 @@ int compare(struct lov_user_md *lum_dir, struct lov_user_md *lum_file1,
                 stripe_count = def_stripe_count;
                 min_stripe_count = -1;
         } else {
-                stripe_count = (short)lum_dir->lmm_stripe_count;
+                stripe_count = (signed short)lum_dir->lmm_stripe_count;
                 printf("dir stripe %d, ", stripe_count);
                 min_stripe_count = 1;
         }
 
         printf("default stripe %d, ost count %d\n",
                def_stripe_count, ost_count);
+
         if (stripe_count == 0) {
                 min_stripe_count = -1;
                 stripe_count = 1;
@@ -173,8 +174,8 @@ int compare(struct lov_user_md *lum_dir, struct lov_user_md *lum_file1,
 
         if (lum_file1->lmm_stripe_count < stripe_count)
                 llapi_err_noerrno(LLAPI_MSG_WARN,
-                                  "warning: file1 used fewer stripes "
-                                  "%d < dir %d (likely due to bug 4900)\n",
+                                  "warning: file1 used fewer stripes"
+                                  " %d < dir %d (likely due to bug 4900)\n",
                                   lum_file1->lmm_stripe_count, stripe_count);
 
         if (lum_dir != NULL)
@@ -216,8 +217,7 @@ int compare(struct lov_user_md *lum_dir, struct lov_user_md *lum_file1,
                         llapi_err_noerrno(LLAPI_MSG_WARN,
                                   "warning: non-sequential "
                                   "file1 stripe[%d] %d != file2 stripe[0] %d\n",
-                                  stripe,
-                                  lum_file1->lmm_objects[stripe].l_ost_idx,
+                                  stripe, lum_file1->lmm_objects[stripe].l_ost_idx,
                                   idx);
                 }
         }

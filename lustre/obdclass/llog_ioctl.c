@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -74,7 +76,7 @@ static int str2logid(struct llog_logid *logid, char *str, int len)
                 RETURN(-EINVAL);
 
         *end = '\0';
-        logid->lgl_ogr = simple_strtoull(start, &endp, 0);
+        logid->lgl_oseq = simple_strtoull(start, &endp, 0);
         if (endp != end)
                 RETURN(-EINVAL);
 
@@ -103,9 +105,9 @@ static int llog_check_cb(struct llog_handle *handle, struct llog_rec_hdr *rec,
         if (ioc_data && (ioc_data->ioc_inllen1)) {
                 l = 0;
                 remains = ioc_data->ioc_inllen4 +
-                        size_round(ioc_data->ioc_inllen1) +
-                        size_round(ioc_data->ioc_inllen2) +
-                        size_round(ioc_data->ioc_inllen3);
+                        cfs_size_round(ioc_data->ioc_inllen1) +
+                        cfs_size_round(ioc_data->ioc_inllen2) +
+                        cfs_size_round(ioc_data->ioc_inllen3);
                 from = simple_strtol(ioc_data->ioc_inlbuf2, &endp, 0);
                 if (*endp != '\0')
                         RETURN(-EINVAL);
@@ -135,7 +137,7 @@ static int llog_check_cb(struct llog_handle *handle, struct llog_rec_hdr *rec,
                 if (rc) {
                         CDEBUG(D_IOCTL,
                                "cannot find log #"LPX64"#"LPX64"#%08x\n",
-                               lir->lid_id.lgl_oid, lir->lid_id.lgl_ogr,
+                               lir->lid_id.lgl_oid, lir->lid_id.lgl_oseq,
                                lir->lid_id.lgl_ogen);
                         RETURN(rc);
                 }
@@ -147,6 +149,7 @@ static int llog_check_cb(struct llog_handle *handle, struct llog_rec_hdr *rec,
                 case OST_RAID1_REC:
                 case MDS_UNLINK_REC:
                 case MDS_SETATTR_REC:
+                case MDS_SETATTR64_REC:
                 case OBD_CFG_REC:
                 case LLOG_HDR_MAGIC: {
                          l = snprintf(out, remains, "[index]: %05d  [type]: "
@@ -192,9 +195,9 @@ static int llog_print_cb(struct llog_handle *handle, struct llog_rec_hdr *rec,
         if (ioc_data->ioc_inllen1) {
                 l = 0;
                 remains = ioc_data->ioc_inllen4 +
-                        size_round(ioc_data->ioc_inllen1) +
-                        size_round(ioc_data->ioc_inllen2) +
-                        size_round(ioc_data->ioc_inllen3);
+                        cfs_size_round(ioc_data->ioc_inllen1) +
+                        cfs_size_round(ioc_data->ioc_inllen2) +
+                        cfs_size_round(ioc_data->ioc_inllen3);
                 from = simple_strtol(ioc_data->ioc_inlbuf2, &endp, 0);
                 if (*endp != '\0')
                         RETURN(-EINVAL);
@@ -221,7 +224,7 @@ static int llog_print_cb(struct llog_handle *handle, struct llog_rec_hdr *rec,
                 l = snprintf(out, remains,
                              "[index]: %05d  [logid]: #"LPX64"#"LPX64"#%08x\n",
                              cur_index, lir->lid_id.lgl_oid,
-                             lir->lid_id.lgl_ogr, lir->lid_id.lgl_ogen);
+                             lir->lid_id.lgl_oseq, lir->lid_id.lgl_ogen);
         } else {
                 l = snprintf(out, remains,
                              "[index]: %05d  [type]: %02x  [len]: %04d\n",
@@ -243,11 +246,11 @@ static int llog_remove_log(struct llog_handle *cat, struct llog_logid *logid)
         int rc, index = 0;
 
         ENTRY;
-        down_write(&cat->lgh_lock);
+        cfs_down_write(&cat->lgh_lock);
         rc = llog_cat_id2handle(cat, &log, logid);
         if (rc) {
                 CDEBUG(D_IOCTL, "cannot find log #"LPX64"#"LPX64"#%08x\n",
-                       logid->lgl_oid, logid->lgl_ogr, logid->lgl_ogen);
+                       logid->lgl_oid, logid->lgl_oseq, logid->lgl_ogen);
                 GOTO(out, rc = -ENOENT);
         }
 
@@ -262,7 +265,7 @@ static int llog_remove_log(struct llog_handle *cat, struct llog_logid *logid)
         rc = llog_cancel_rec(cat, index);
 out:
         llog_free_handle(log);
-        up_write(&cat->lgh_lock);
+        cfs_up_write(&cat->lgh_lock);
         RETURN(rc);
 
 }
@@ -313,7 +316,7 @@ int llog_ioctl(struct llog_ctxt *ctxt, int cmd, struct obd_ioctl_data *data)
         case OBD_IOC_LLOG_INFO: {
                 int l;
                 int remains = data->ioc_inllen2 +
-                        size_round(data->ioc_inllen1);
+                        cfs_size_round(data->ioc_inllen1);
                 char *out = data->ioc_bulk;
 
                 l = snprintf(out, remains,
@@ -321,7 +324,7 @@ int llog_ioctl(struct llog_ctxt *ctxt, int cmd, struct obd_ioctl_data *data)
                              "flags:            %x (%s)\n"
                              "records count:    %d\n"
                              "last index:       %d\n",
-                             handle->lgh_id.lgl_oid, handle->lgh_id.lgl_ogr,
+                             handle->lgh_id.lgl_oid, handle->lgh_id.lgl_oseq,
                              handle->lgh_id.lgl_ogen,
                              handle->lgh_hdr->llh_flags,
                              handle->lgh_hdr->llh_flags &
@@ -363,9 +366,9 @@ int llog_ioctl(struct llog_ctxt *ctxt, int cmd, struct obd_ioctl_data *data)
                         GOTO(out_close, err = -EINVAL);
 
                 if (handle->lgh_hdr->llh_flags & LLOG_F_IS_CAT) {
-                        down_write(&handle->lgh_lock);
+                        cfs_down_write(&handle->lgh_lock);
                         err = llog_cancel_rec(handle, cookie.lgc_index);
-                        up_write(&handle->lgh_lock);
+                        cfs_up_write(&handle->lgh_lock);
                         GOTO(out_close, err);
                 }
 
@@ -432,12 +435,12 @@ int llog_catalog_list(struct obd_device *obd, int count,
         ENTRY;
         size = sizeof(*idarray) * count;
 
-        OBD_VMALLOC(idarray, size);
+        OBD_ALLOC_LARGE(idarray, size);
         if (!idarray)
                 RETURN(-ENOMEM);
 
-        mutex_down(&obd->obd_llog_cat_process);
-        rc = llog_get_cat_list(obd, obd, name, 0, count, idarray);
+        cfs_mutex_lock(&obd->obd_olg.olg_cat_processing);
+        rc = llog_get_cat_list(obd, name, 0, count, idarray);
         if (rc)
                 GOTO(out, rc);
 
@@ -447,7 +450,7 @@ int llog_catalog_list(struct obd_device *obd, int count,
                 id = &idarray[i].lci_logid;
                 l = snprintf(out, remains,
                              "catalog log: #"LPX64"#"LPX64"#%08x\n",
-                             id->lgl_oid, id->lgl_ogr, id->lgl_ogen);
+                             id->lgl_oid, id->lgl_oseq, id->lgl_ogen);
                 out += l;
                 remains -= l;
                 if (remains <= 0) {
@@ -457,9 +460,9 @@ int llog_catalog_list(struct obd_device *obd, int count,
         }
 out:
         /* release semaphore */
-        mutex_up(&obd->obd_llog_cat_process);
+        cfs_mutex_unlock(&obd->obd_olg.olg_cat_processing);
 
-        OBD_VFREE(idarray, size);
+        OBD_FREE_LARGE(idarray, size);
         RETURN(rc);
 
 }

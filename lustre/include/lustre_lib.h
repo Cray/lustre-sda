@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2006, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -41,7 +43,12 @@
 #ifndef _LUSTRE_LIB_H
 #define _LUSTRE_LIB_H
 
-#include <libcfs/kp30.h>
+/** \defgroup lib lib
+ *
+ * @{
+ */
+
+#include <libcfs/libcfs.h>
 #include <lustre/lustre_idl.h>
 #include <lustre_ver.h>
 #include <lustre_cfg.h>
@@ -57,33 +64,25 @@
 
 /* target.c */
 struct ptlrpc_request;
-struct recovd_data;
-struct recovd_obd;
 struct obd_export;
+struct lu_target;
 #include <lustre_ha.h>
 #include <lustre_net.h>
 #include <lvfs.h>
 
 void target_client_add_cb(struct obd_device *obd, __u64 transno, void *cb_data,
                           int error);
-void target_trans_table_init(struct obd_device *obd);
-__u32 target_trans_table_last_time(struct obd_export *exp);
-void target_trans_table_recalc(struct obd_device *obd, __u32 new_age);
-void target_trans_table_update(struct obd_export *exp, __u64 transno);
-#ifdef __KERNEL__
-int target_fs_version_capable(struct obd_device *obd);
-#else
-static inline int target_fs_version_capable(struct obd_device *obd)
-{
-        return 0;
-}
-#endif
-int target_handle_connect(struct ptlrpc_request *req, svc_handler_t handler);
+int target_handle_connect(struct ptlrpc_request *req);
 int target_handle_disconnect(struct ptlrpc_request *req);
 void target_destroy_export(struct obd_export *exp);
-int target_handle_ping(struct ptlrpc_request *req);
 int target_pack_pool_reply(struct ptlrpc_request *req);
+int target_handle_ping(struct ptlrpc_request *req);
 void target_committed_to_req(struct ptlrpc_request *req);
+int do_set_info_async(struct obd_import *imp,
+                      int opcode, int version,
+                      obd_count keylen, void *key,
+                      obd_count vallen, void *val,
+                      struct ptlrpc_request_set *set);
 
 /* quotacheck callback, dqacq/dqrel callback handler */
 int target_handle_qc_callback(struct ptlrpc_request *req);
@@ -93,39 +92,44 @@ int target_handle_dqacq_callback(struct ptlrpc_request *req);
 #define target_handle_dqacq_callback(req) ldlm_callback_reply(req, -ENOTSUPP)
 #endif
 
+#define OBD_RECOVERY_MAX_TIME (obd_timeout * 18) /* b13079 */
+
+struct l_wait_info;
+
 void target_cancel_recovery_timer(struct obd_device *obd);
-void target_abort_recovery(void *data);
-int target_recovery_check_and_stop(struct obd_device *obd);
+void target_stop_recovery_thread(struct obd_device *obd);
 void target_cleanup_recovery(struct obd_device *obd);
 int target_queue_recovery_request(struct ptlrpc_request *req,
                                   struct obd_device *obd);
-int target_handle_reply(struct ptlrpc_request *req, int rc, int fail);
 void target_send_reply(struct ptlrpc_request *req, int rc, int fail_id);
+int target_bulk_io(struct obd_export *exp, struct ptlrpc_bulk_desc *desc,
+                   struct l_wait_info *lwi);
 
 /* client.c */
 
-int client_sanobd_setup(struct obd_device *obddev, obd_count len, void *buf);
+int client_sanobd_setup(struct obd_device *obddev, struct lustre_cfg* lcfg);
 struct client_obd *client_conn2cli(struct lustre_handle *conn);
 
-struct mdc_open_data;
+struct md_open_data;
 struct obd_client_handle {
-        struct lustre_handle och_fh;
-        struct llog_cookie och_cookie;
-        struct mdc_open_data *och_mod;
+        struct lustre_handle  och_fh;
+        struct lu_fid         och_fid;
+        struct md_open_data  *och_mod;
         __u32 och_magic;
+        int och_flags;
 };
 #define OBD_CLIENT_HANDLE_MAGIC 0xd15ea5ed
 
 /* statfs_pack.c */
-void statfs_pack(struct obd_statfs *osfs, struct kstatfs *sfs);
-void statfs_unpack(struct kstatfs *sfs, struct obd_statfs *osfs);
+void statfs_pack(struct obd_statfs *osfs, cfs_kstatfs_t *sfs);
+void statfs_unpack(cfs_kstatfs_t *sfs, struct obd_statfs *osfs);
 
 /* l_lock.c */
 struct lustre_lock {
         int l_depth;
         cfs_task_t *l_owner;
-        struct semaphore l_sem;
-        spinlock_t l_spin;
+        cfs_semaphore_t l_sem;
+        cfs_spinlock_t l_spin;
 };
 
 void l_lock_init(struct lustre_lock *);
@@ -133,6 +137,19 @@ void l_lock(struct lustre_lock *);
 void l_unlock(struct lustre_lock *);
 int l_has_lock(struct lustre_lock *);
 
+/*
+ * For md echo client
+ */
+enum md_echo_cmd {
+        ECHO_MD_CREATE       = 1, /* Open/Create file on MDT */
+        ECHO_MD_MKDIR        = 2, /* Mkdir on MDT */
+        ECHO_MD_DESTROY      = 3, /* Unlink file on MDT */
+        ECHO_MD_RMDIR        = 4, /* Rmdir on MDT */
+        ECHO_MD_LOOKUP       = 5, /* Lookup on MDT */
+        ECHO_MD_GETATTR      = 6, /* Getattr on MDT */
+        ECHO_MD_SETATTR      = 7, /* Setattr on MDT */
+        ECHO_MD_ALLOC_FID    = 8, /* Get FIDs from MDT */
+};
 
 /*
  *   OBD IOCTLS
@@ -143,53 +160,62 @@ struct obd_ioctl_data {
         __u32 ioc_len;
         __u32 ioc_version;
 
-        __u64 ioc_cookie;
-        __u32 ioc_conn1;
-        __u32 ioc_conn2;
+        union {
+                __u64 ioc_cookie;
+                __u64 ioc_u64_1;
+        };
+        union {
+                __u32 ioc_conn1;
+                __u32 ioc_u32_1;
+        };
+        union {
+                __u32 ioc_conn2;
+                __u32 ioc_u32_2;
+        };
 
         struct obdo ioc_obdo1;
         struct obdo ioc_obdo2;
 
-        obd_size         ioc_count;
-        obd_off          ioc_offset;
-        __u32            ioc_dev;
-        __u32            ioc_command;
+        obd_size ioc_count;
+        obd_off  ioc_offset;
+        __u32    ioc_dev;
+        __u32    ioc_command;
 
         __u64 ioc_nid;
         __u32 ioc_nal;
         __u32 ioc_type;
 
         /* buffers the kernel will treat as user pointers */
-        __u32    ioc_plen1;
-        char    *ioc_pbuf1;
-        __u32    ioc_plen2;
-        char    *ioc_pbuf2;
+        __u32  ioc_plen1;
+        char  *ioc_pbuf1;
+        __u32  ioc_plen2;
+        char  *ioc_pbuf2;
 
         /* inline buffers for various arguments */
-        __u32    ioc_inllen1;
-        char    *ioc_inlbuf1;
-        __u32    ioc_inllen2;
-        char    *ioc_inlbuf2;
-        __u32    ioc_inllen3;
-        char    *ioc_inlbuf3;
-        __u32    ioc_inllen4;
-        char    *ioc_inlbuf4;
+        __u32  ioc_inllen1;
+        char  *ioc_inlbuf1;
+        __u32  ioc_inllen2;
+        char  *ioc_inlbuf2;
+        __u32  ioc_inllen3;
+        char  *ioc_inlbuf3;
+        __u32  ioc_inllen4;
+        char  *ioc_inlbuf4;
 
         char    ioc_bulk[0];
 };
 
 struct obd_ioctl_hdr {
-        __u32    ioc_len;
-        __u32    ioc_version;
+        __u32 ioc_len;
+        __u32 ioc_version;
 };
 
 static inline int obd_ioctl_packlen(struct obd_ioctl_data *data)
 {
-        int len = size_round(sizeof(struct obd_ioctl_data));
-        len += size_round(data->ioc_inllen1);
-        len += size_round(data->ioc_inllen2);
-        len += size_round(data->ioc_inllen3);
-        len += size_round(data->ioc_inllen4);
+        int len = cfs_size_round(sizeof(struct obd_ioctl_data));
+        len += cfs_size_round(data->ioc_inllen1);
+        len += cfs_size_round(data->ioc_inllen2);
+        len += cfs_size_round(data->ioc_inllen3);
+        len += cfs_size_round(data->ioc_inllen4);
         return len;
 }
 
@@ -265,8 +291,11 @@ static inline int obd_ioctl_pack(struct obd_ioctl_data *data, char **pbuf,
         data->ioc_len = obd_ioctl_packlen(data);
         data->ioc_version = OBD_IOCTL_VERSION;
 
-        if (*pbuf && data->ioc_len > max)
+        if (*pbuf && data->ioc_len > max) {
+                fprintf(stderr, "pbuf %p ioc_len %u max %d\n", *pbuf,
+                        data->ioc_len, max);
                 return -EINVAL;
+        }
         if (*pbuf == NULL) {
                 *pbuf = malloc(data->ioc_len);
         }
@@ -284,8 +313,11 @@ static inline int obd_ioctl_pack(struct obd_ioctl_data *data, char **pbuf,
                 LOGL(data->ioc_inlbuf3, data->ioc_inllen3, ptr);
         if (data->ioc_inlbuf4)
                 LOGL(data->ioc_inlbuf4, data->ioc_inllen4, ptr);
-        if (obd_ioctl_is_invalid(overlay))
+        if (obd_ioctl_is_invalid(overlay)) {
+                fprintf(stderr, "ioc_len %u max %d\n",
+                        data->ioc_len, max);
                 return -EINVAL;
+        }
 
         return 0;
 }
@@ -338,8 +370,8 @@ static inline int obd_ioctl_getdata(char **buf, int *len, void *arg)
         int offset = 0;
         ENTRY;
 
-        err = copy_from_user(&hdr, (void *)arg, sizeof(hdr));
-        if (err) 
+        err = cfs_copy_from_user(&hdr, (void *)arg, sizeof(hdr));
+        if (err)
                 RETURN(err);
 
         if (hdr.ioc_version != OBD_IOCTL_VERSION) {
@@ -358,9 +390,7 @@ static inline int obd_ioctl_getdata(char **buf, int *len, void *arg)
                 RETURN(-EINVAL);
         }
 
-        /* XXX allocate this more intelligently, using kmalloc when
-         * appropriate */
-        OBD_VMALLOC(*buf, hdr.ioc_len);
+        OBD_ALLOC_LARGE(*buf, hdr.ioc_len);
         if (*buf == NULL) {
                 CERROR("Cannot allocate control buffer of len %d\n",
                        hdr.ioc_len);
@@ -369,31 +399,31 @@ static inline int obd_ioctl_getdata(char **buf, int *len, void *arg)
         *len = hdr.ioc_len;
         data = (struct obd_ioctl_data *)*buf;
 
-        err = copy_from_user(*buf, (void *)arg, hdr.ioc_len);
+        err = cfs_copy_from_user(*buf, (void *)arg, hdr.ioc_len);
         if (err) {
-                OBD_VFREE(*buf, hdr.ioc_len);
+                OBD_FREE_LARGE(*buf, hdr.ioc_len);
                 RETURN(err);
         }
 
         if (obd_ioctl_is_invalid(data)) {
                 CERROR("ioctl not correctly formatted\n");
-                OBD_VFREE(*buf, hdr.ioc_len);
+                OBD_FREE_LARGE(*buf, hdr.ioc_len);
                 RETURN(-EINVAL);
         }
 
         if (data->ioc_inllen1) {
                 data->ioc_inlbuf1 = &data->ioc_bulk[0];
-                offset += size_round(data->ioc_inllen1);
+                offset += cfs_size_round(data->ioc_inllen1);
         }
 
         if (data->ioc_inllen2) {
                 data->ioc_inlbuf2 = &data->ioc_bulk[0] + offset;
-                offset += size_round(data->ioc_inllen2);
+                offset += cfs_size_round(data->ioc_inllen2);
         }
 
         if (data->ioc_inllen3) {
                 data->ioc_inlbuf3 = &data->ioc_bulk[0] + offset;
-                offset += size_round(data->ioc_inllen3);
+                offset += cfs_size_round(data->ioc_inllen3);
         }
 
         if (data->ioc_inllen4) {
@@ -405,7 +435,7 @@ static inline int obd_ioctl_getdata(char **buf, int *len, void *arg)
 
 static inline int obd_ioctl_popdata(void *arg, void *data, int len)
 {
-        int err = copy_to_user(arg, data, len);
+        int err = cfs_copy_to_user(arg, data, len);
         if (err)
                 err = -EFAULT;
         return err;
@@ -416,7 +446,7 @@ static inline void obd_ioctl_freedata(char *buf, int len)
 {
         ENTRY;
 
-        OBD_VFREE(buf, len);
+        OBD_FREE_LARGE(buf, len);
         EXIT;
         return;
 }
@@ -433,8 +463,8 @@ static inline void obd_ioctl_freedata(char *buf, int len)
  * arg will be treated as a pointer, bsd will call
  * copyin(buf, arg, sizeof(long))
  *
- * To make BSD ioctl handles argument correctly and simplely, 
- * we change _IOR to _IOWR so BSD will copyin obd_ioctl_data 
+ * To make BSD ioctl handles argument correctly and simplely,
+ * we change _IOR to _IOWR so BSD will copyin obd_ioctl_data
  * for us. Does this change affect Linux?  (XXX Liang)
  */
 #define OBD_IOC_CREATE                 _IOWR('f', 101, OBD_IOC_DATA_TYPE)
@@ -461,9 +491,10 @@ static inline void obd_ioctl_freedata(char *buf, int len)
 #define OBD_IOC_BRW_WRITE              _IOWR('f', 126, OBD_IOC_DATA_TYPE)
 #define OBD_IOC_NAME2DEV               _IOWR('f', 127, OBD_IOC_DATA_TYPE)
 #define OBD_IOC_UUID2DEV               _IOWR('f', 130, OBD_IOC_DATA_TYPE)
-/* OBD_IOC_GETNAME_OLD is for compatibility with 1.4.x */
-#define OBD_IOC_GETNAME_OLD            _IOR ('f', 131, OBD_IOC_DATA_TYPE)
+
 #define OBD_IOC_GETNAME                _IOWR('f', 131, OBD_IOC_DATA_TYPE)
+#define OBD_IOC_GETMDNAME              _IOR('f', 131, char[MAX_OBD_NAME])
+#define OBD_IOC_GETDTNAME               OBD_IOC_GETNAME
 
 #define OBD_IOC_LOV_GET_CONFIG         _IOWR('f', 132, OBD_IOC_DATA_TYPE)
 #define OBD_IOC_CLIENT_RECOVER         _IOW ('f', 133, OBD_IOC_DATA_TYPE)
@@ -474,22 +505,35 @@ static inline void obd_ioctl_freedata(char *buf, int len)
 #define OBD_IOC_SET_READONLY           _IOW ('f', 141, OBD_IOC_DATA_TYPE)
 #define OBD_IOC_ABORT_RECOVERY         _IOR ('f', 142, OBD_IOC_DATA_TYPE)
 
+#define OBD_IOC_ROOT_SQUASH            _IOWR('f', 143, OBD_IOC_DATA_TYPE)
+
 #define OBD_GET_VERSION                _IOWR ('f', 144, OBD_IOC_DATA_TYPE)
+
+#define OBD_IOC_GSS_SUPPORT            _IOWR('f', 145, OBD_IOC_DATA_TYPE)
 
 #define OBD_IOC_CLOSE_UUID             _IOWR ('f', 147, OBD_IOC_DATA_TYPE)
 
+#define OBD_IOC_CHANGELOG_SEND         _IOW ('f', 148, OBD_IOC_DATA_TYPE)
 #define OBD_IOC_GETDEVICE              _IOWR ('f', 149, OBD_IOC_DATA_TYPE)
-
+#define OBD_IOC_FID2PATH               _IOWR ('f', 150, OBD_IOC_DATA_TYPE)
+/* see also <lustre/lustre_user.h> for ioctls 151-153 */
+/* OBD_IOC_LOV_SETSTRIPE: See also LL_IOC_LOV_SETSTRIPE */
 #define OBD_IOC_LOV_SETSTRIPE          _IOW ('f', 154, OBD_IOC_DATA_TYPE)
+/* OBD_IOC_LOV_GETSTRIPE: See also LL_IOC_LOV_GETSTRIPE */
 #define OBD_IOC_LOV_GETSTRIPE          _IOW ('f', 155, OBD_IOC_DATA_TYPE)
+/* OBD_IOC_LOV_SETEA: See also LL_IOC_LOV_SETEA */
 #define OBD_IOC_LOV_SETEA              _IOW ('f', 156, OBD_IOC_DATA_TYPE)
-
+/* see <lustre/lustre_user.h> for ioctls 157-159 */
+/* OBD_IOC_QUOTACHECK: See also LL_IOC_QUOTACHECK */
 #define OBD_IOC_QUOTACHECK             _IOW ('f', 160, int)
+/* OBD_IOC_POLL_QUOTACHECK: See also LL_IOC_POLL_QUOTACHECK */
 #define OBD_IOC_POLL_QUOTACHECK        _IOR ('f', 161, struct if_quotacheck *)
-#define OBD_IOC_QUOTACTL               _IOWR('f', 162, struct if_quotactl *)
-
-#define OBD_IOC_MOUNTOPT               _IOWR('f', 170, OBD_IOC_DATA_TYPE)
-
+/* OBD_IOC_QUOTACTL: See also LL_IOC_QUOTACTL */
+#define OBD_IOC_QUOTACTL               _IOWR('f', 162, struct if_quotactl)
+/* see  also <lustre/lustre_user.h> for ioctls 163-176 */
+#define OBD_IOC_CHANGELOG_REG          _IOW ('f', 177, struct obd_ioctl_data)
+#define OBD_IOC_CHANGELOG_DEREG        _IOW ('f', 178, struct obd_ioctl_data)
+#define OBD_IOC_CHANGELOG_CLEAR        _IOW ('f', 179, struct obd_ioctl_data)
 #define OBD_IOC_RECORD                 _IOWR('f', 180, OBD_IOC_DATA_TYPE)
 #define OBD_IOC_ENDRECORD              _IOWR('f', 181, OBD_IOC_DATA_TYPE)
 #define OBD_IOC_PARSE                  _IOWR('f', 182, OBD_IOC_DATA_TYPE)
@@ -515,8 +559,12 @@ static inline void obd_ioctl_freedata(char *buf, int len)
 
 #define OBD_IOC_GET_OBJ_VERSION        _IOR('f', 210, OBD_IOC_DATA_TYPE)
 
+#define OBD_IOC_GET_MNTOPT             _IOW('f', 220, mntopt_t)
+
+#define OBD_IOC_ECHO_MD                _IOR('f', 221, struct obd_ioctl_data)
+#define OBD_IOC_ECHO_ALLOC_SEQ         _IOWR('f', 222, struct obd_ioctl_data)
 /* XXX _IOWR('f', 250, long) has been defined in
- * lnet/include/libcfs/kp30.h for debug, don't use it
+ * libcfs/include/libcfs/libcfs_private.h for debug, don't use it
  */
 
 /* Until such time as we get_info the per-stripe maximum from the OST,
@@ -593,7 +641,6 @@ static inline void obd_ioctl_freedata(char *buf, int len)
  * XXX nikita: some ptlrpc daemon threads have races of that sort.
  *
  */
-
 static inline int back_to_sleep(void *arg)
 {
         return 0;
@@ -604,6 +651,7 @@ static inline int back_to_sleep(void *arg)
 struct l_wait_info {
         cfs_duration_t lwi_timeout;
         cfs_duration_t lwi_interval;
+        int            lwi_allow_intr;
         int  (*lwi_on_timeout)(void *);
         void (*lwi_on_signal)(void *);
         void  *lwi_cb_data;
@@ -615,7 +663,8 @@ struct l_wait_info {
         .lwi_timeout    = time,                 \
         .lwi_on_timeout = cb,                   \
         .lwi_cb_data    = data,                 \
-        .lwi_interval   = 0                     \
+        .lwi_interval   = 0,                    \
+        .lwi_allow_intr = 0                     \
 })
 
 #define LWI_TIMEOUT_INTERVAL(time, interval, cb, data)  \
@@ -623,16 +672,28 @@ struct l_wait_info {
         .lwi_timeout    = time,                         \
         .lwi_on_timeout = cb,                           \
         .lwi_cb_data    = data,                         \
-        .lwi_interval   = interval                      \
+        .lwi_interval   = interval,                     \
+        .lwi_allow_intr = 0                             \
 })
 
 #define LWI_TIMEOUT_INTR(time, time_cb, sig_cb, data)   \
 ((struct l_wait_info) {                                 \
         .lwi_timeout    = time,                         \
         .lwi_on_timeout = time_cb,                      \
-        .lwi_on_signal = sig_cb,                        \
+        .lwi_on_signal  = sig_cb,                       \
         .lwi_cb_data    = data,                         \
-        .lwi_interval    = 0                            \
+        .lwi_interval   = 0,                            \
+        .lwi_allow_intr = 0                             \
+})
+
+#define LWI_TIMEOUT_INTR_ALL(time, time_cb, sig_cb, data)       \
+((struct l_wait_info) {                                         \
+        .lwi_timeout    = time,                                 \
+        .lwi_on_timeout = time_cb,                              \
+        .lwi_on_signal  = sig_cb,                               \
+        .lwi_cb_data    = data,                                 \
+        .lwi_interval   = 0,                                    \
+        .lwi_allow_intr = 1                                     \
 })
 
 #define LWI_INTR(cb, data)  LWI_TIMEOUT_INTR(0, NULL, cb, data)
@@ -643,43 +704,47 @@ struct l_wait_info {
  * wait for @condition to become true, but no longer than timeout, specified
  * by @info.
  */
-#define __l_wait_event(wq, condition, info, ret, excl)                         \
+#define __l_wait_event(wq, condition, info, ret, l_add_wait)                   \
 do {                                                                           \
         cfs_waitlink_t __wait;                                                 \
         cfs_duration_t __timeout = info->lwi_timeout;                          \
         cfs_sigset_t   __blocked;                                              \
+        int   __allow_intr = info->lwi_allow_intr;                             \
                                                                                \
         ret = 0;                                                               \
         if (condition)                                                         \
                 break;                                                         \
                                                                                \
         cfs_waitlink_init(&__wait);                                            \
-        if (excl)                                                              \
-                cfs_waitq_add_exclusive(&wq, &__wait);                         \
-        else                                                                   \
-                cfs_waitq_add(&wq, &__wait);                                   \
+        l_add_wait(&wq, &__wait);                                              \
                                                                                \
         /* Block all signals (just the non-fatal ones if no timeout). */       \
-        if (info->lwi_on_signal != NULL && __timeout == 0)                     \
-                __blocked = l_w_e_set_sigs(LUSTRE_FATAL_SIGS);                 \
+        if (info->lwi_on_signal != NULL && (__timeout == 0 || __allow_intr))   \
+                __blocked = cfs_block_sigsinv(LUSTRE_FATAL_SIGS);              \
         else                                                                   \
-                __blocked = l_w_e_set_sigs(0);                                 \
+                __blocked = cfs_block_sigsinv(0);                              \
                                                                                \
         for (;;) {                                                             \
-                set_current_state(TASK_INTERRUPTIBLE);                         \
+                unsigned       __wstate;                                       \
+                                                                               \
+                __wstate = info->lwi_on_signal != NULL &&                      \
+                           (__timeout == 0 || __allow_intr) ?                  \
+                        CFS_TASK_INTERRUPTIBLE : CFS_TASK_UNINT;               \
+                                                                               \
+                cfs_set_current_state(CFS_TASK_INTERRUPTIBLE);                 \
                                                                                \
                 if (condition)                                                 \
                         break;                                                 \
                                                                                \
                 if (__timeout == 0) {                                          \
-                        cfs_waitq_wait(&__wait, CFS_TASK_INTERRUPTIBLE);       \
+                        cfs_waitq_wait(&__wait, __wstate);                     \
                 } else {                                                       \
                         cfs_duration_t interval = info->lwi_interval?          \
                                              min_t(cfs_duration_t,             \
                                                  info->lwi_interval,__timeout):\
                                              __timeout;                        \
                         cfs_duration_t remaining = cfs_waitq_timedwait(&__wait,\
-                                                   CFS_TASK_INTERRUPTIBLE,     \
+                                                   __wstate,                   \
                                                    interval);                  \
                         __timeout = cfs_time_sub(__timeout,                    \
                                             cfs_time_sub(interval, remaining));\
@@ -691,14 +756,15 @@ do {                                                                           \
                                 }                                              \
                                 /* Take signals after the timeout expires. */  \
                                 if (info->lwi_on_signal != NULL)               \
-                                    (void)l_w_e_set_sigs(LUSTRE_FATAL_SIGS);   \
+                                    (void)cfs_block_sigsinv(LUSTRE_FATAL_SIGS);\
                         }                                                      \
                 }                                                              \
                                                                                \
                 if (condition)                                                 \
                         break;                                                 \
                 if (cfs_signal_pending()) {                                    \
-                        if (info->lwi_on_signal != NULL && __timeout == 0) {   \
+                        if (info->lwi_on_signal != NULL &&                     \
+                            (__timeout == 0 || __allow_intr)) {                \
                                 if (info->lwi_on_signal != LWI_ON_SIGNAL_NOOP) \
                                         info->lwi_on_signal(info->lwi_cb_data);\
                                 ret = -EINTR;                                  \
@@ -715,14 +781,14 @@ do {                                                                           \
                 }                                                              \
         }                                                                      \
                                                                                \
-        cfs_block_sigs(__blocked);                                             \
+	cfs_restore_sigs(__blocked);                                           \
                                                                                \
-        set_current_state(TASK_RUNNING);                                       \
+        cfs_set_current_state(CFS_TASK_RUNNING);                               \
         cfs_waitq_del(&wq, &__wait);                                           \
 } while (0)
 
 #else /* !__KERNEL__ */
-#define __l_wait_event(wq, condition, info, ret, excl)                         \
+#define __l_wait_event(wq, condition, info, ret, l_add_wait)            \
 do {                                                                    \
         long __timeout = info->lwi_timeout;                             \
         long __now;                                                     \
@@ -764,16 +830,19 @@ do {                                                                    \
                         }                                               \
                 }                                                       \
         }                                                               \
+        SET_BUT_UNUSED(wq);                                             \
 } while (0)
 
 #endif /* __KERNEL__ */
+
 
 #define l_wait_event(wq, condition, info)                       \
 ({                                                              \
         int                 __ret;                              \
         struct l_wait_info *__info = (info);                    \
                                                                 \
-        __l_wait_event(wq, condition, __info, __ret, 0);        \
+        __l_wait_event(wq, condition, __info,                   \
+                       __ret, cfs_waitq_add);                   \
         __ret;                                                  \
 })
 
@@ -782,8 +851,37 @@ do {                                                                    \
         int                 __ret;                              \
         struct l_wait_info *__info = (info);                    \
                                                                 \
-        __l_wait_event(wq, condition, __info, __ret, 1);        \
+        __l_wait_event(wq, condition, __info,                   \
+                       __ret, cfs_waitq_add_exclusive);         \
         __ret;                                                  \
+})
+
+#define l_wait_event_exclusive_head(wq, condition, info)        \
+({                                                              \
+        int                 __ret;                              \
+        struct l_wait_info *__info = (info);                    \
+                                                                \
+        __l_wait_event(wq, condition, __info,                   \
+                       __ret, cfs_waitq_add_exclusive_head);    \
+        __ret;                                                  \
+})
+
+#define l_wait_condition(wq, condition)                         \
+({                                                              \
+        struct l_wait_info lwi = { 0 };                         \
+        l_wait_event(wq, condition, &lwi);                      \
+})
+
+#define l_wait_condition_exclusive(wq, condition)               \
+({                                                              \
+        struct l_wait_info lwi = { 0 };                         \
+        l_wait_event_exclusive(wq, condition, &lwi);            \
+})
+
+#define l_wait_condition_exclusive_head(wq, condition)          \
+({                                                              \
+        struct l_wait_info lwi = { 0 };                         \
+        l_wait_event_exclusive_head(wq, condition, &lwi);       \
 })
 
 #ifdef __KERNEL__
@@ -791,5 +889,7 @@ do {                                                                    \
 #else
 #define LIBLUSTRE_CLIENT (1)
 #endif
+
+/** @} lib */
 
 #endif /* _LUSTRE_LIB_H */

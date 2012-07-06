@@ -59,7 +59,7 @@ test_dbench() {
     local SPACE=`df -P $MOUNT | tail -n 1 | awk '{ print $4 }'`
     DB_THREADS=$((SPACE / 50000))
     [ $THREADS -lt $DB_THREADS ] && DB_THREADS=$THREADS
-
+    
     $DEBUG_OFF
     myUID=$RUNAS_ID
     myGID=$RUNAS_GID
@@ -114,7 +114,7 @@ test_iozone() {
     fi
 
     export O_DIRECT
-
+    
     local IOZDIR=$DIR/d0.iozone
     mkdir -p $IOZDIR
     $LFS setstripe -c -1 $IOZDIR
@@ -139,7 +139,7 @@ test_iozone() {
 	{ error "iozone (1) failed" && return 1; }
     rm -f $IOZLOG
     $DEBUG_ON
-
+    
     # check if O_DIRECT support is implemented in kernel
     if [ -z "$O_DIRECT" ]; then
 	touch $DIR/f.iozone
@@ -193,9 +193,10 @@ test_fsx() {
     FSX_SEED=${FSX_SEED:-$RANDOM}
     rm -f $testfile
     $LFS setstripe -c -1 $testfile
-    echo Using FSX_SEED=$FSX_SEED FSX_SIZE=$FSX_SIZE FSX_COUNT=$FSX_COUNT
-    fsx -c 50 -p 1000 -S $FSX_SEED -P $TMP -l $FSX_SIZE \
-	-N $(($FSX_COUNT * 100)) $testfile
+    CMD="fsx -c 50 -p 1000 -S $FSX_SEED -P $TMP -l $FSX_SIZE \
+        -N $((FSX_COUNT * 100)) $testfile"
+    echo "Using: $CMD"
+    $CMD || error "fsx failed"
     rm -f $testfile
     $DEBUG_ON
 }
@@ -261,7 +262,7 @@ space_check () {
     fi
 }
 
-pios_setup() {
+pios_setup() { 
     local testdir=$DIR/$tdir
     mkdir -p $testdir
 
@@ -286,8 +287,8 @@ run_pios () {
     local cmd="$PIOSBIN  -t $pios_THREADCOUNT -n $pios_REGIONCOUNT \
                          -c $pios_CHUNKSIZE -s $pios_REGIONSIZE    \
                          -o $pios_OFFSET $@ -p $testdir"
-
-    if [ ! -d $testdir ]; then
+    
+    if [ ! -d $testdir ]; then  
         error "No test directory created, setup_pios must have failed"
         return 20
     fi
@@ -315,7 +316,7 @@ test_pios_ssf() {
         return 0
     fi
     run_pios || return
-    run_pios  --verify || rc=$?
+    run_pios  --verify || rc=$? 
     pios_cleanup $rc
     return $rc
 }

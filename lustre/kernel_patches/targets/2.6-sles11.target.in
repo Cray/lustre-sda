@@ -1,10 +1,10 @@
 lnxmaj="2.6.32"
-lnxmin=".19"
-lnxrel="0.2"
+lnxmin=".36"
+lnxrel="0.5"
 # use this when there is an "RPM fix" which means that the name of the
 # (source) RPM has been updated but the version of the kernel inside the
 # RPM is not also updated
-rpmfix=".1"
+rpmfix=".2"
 
 # this is the delimeter that goes before the "smp" at the end of the version
 # defaults to empty
@@ -17,7 +17,6 @@ EXTRA_VERSION="${lnxmin#.}-${lnxrel}_lustre.@VERSION@"
 LUSTRE_VERSION=@VERSION@
 
 OFED_VERSION=inkernel
-MPTLINUX_VERSION="4.18.20.04"
 
 BASE_ARCHS="i686 ppc x86_64 ia64 ppc64"
 BIGMEM_ARCHS=""

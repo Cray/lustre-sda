@@ -5,7 +5,6 @@ set -e
 LUSTRE=${LUSTRE:-`dirname $0`/..}
 . $LUSTRE/tests/test-framework.sh
 init_test_env $@
-init_logging
 
 nobjhi=${nobjhi:-1}
 thrhi=${thrhi:-16}
@@ -13,12 +12,14 @@ size=${size:-1024}
 
 # the summary file a bit smaller than OSTSIZE
 . ${CONFIG:=$LUSTRE/tests/cfg/$NAME.sh}
+init_logging
 
 [ "$SLOW" = no ] && { nobjhi=1; thrhi=4; }
 thrlo=${thrlo:-$(( thrhi / 2))}
 
 # Skip these tests
-ALWAYS_EXCEPT="$OBDFILTER_SURVEY_EXCEPT"
+# bug number   23791 23791
+ALWAYS_EXCEPT="1b    2b    $OBDFILTER_SURVEY_EXCEPT"
 
 OBDSURVEY=${OBDSURVEY:-$(which obdfilter-survey)}
 
@@ -32,17 +33,24 @@ if [ $(( size * 1024 )) -ge $minsize  ]; then
     echo min kbytesavail: $minsize using size=${size} MBytes per obd instance
 fi
 
+get_devs() {
+        echo $(do_nodes $1 'lctl dl | grep obdfilter' | \
+             awk '{print $4}' | sort -u)
+}
+
 get_targets () {
         local targets
         local devs
+        local nid
         local oss
 
         for oss in $(osts_nodes); do
-                devs=$(do_node $oss "lctl dl |grep obdfilter |sort" | awk '{print $4}')
+                devs=$(get_devs $oss)
+                nid=$(host_nids_address $oss $NETTYPE)
                 for d in $devs; do
                         # if oss is local -- obdfilter-survey needs dev wo/ host
                         target=$d
-                        [[ $oss = `hostname` ]] || target=$oss:$target
+                        [[ $oss = `hostname` && "$1" == "netdisk" ]] || target=$nid:$target
                         targets="$targets $target"
                 done
         done
@@ -55,9 +63,9 @@ obdflter_survey_targets () {
 	local targets
 
 	case $case in
-		disk)    targets=$(get_targets);;
-		netdisk) targets=$(get_targets);;
-		network) targets="$(osts_nodes)";;
+		disk)    targets=$(get_targets $case);;
+		netdisk) targets=$(get_targets $case);;
+		network) targets=$(host_nids_address $(comma_list $(osts_nodes)) $NETTYPE);;
 		*) error "unknown obdflter-survey case!" ;;
 	esac
 	echo $targets
@@ -86,7 +94,7 @@ print_jbd () {
 	local varsvc=${facet}_svc
 	local dev=$(ldiskfs_canon "*.${!varsvc}.mntdev" $facet)
 
-	# ext4: /proc/fs/jbd2/sda1:8/history
+	# ext4: /proc/fs/jbd2/sda1:8/history 
 	# ext3: /proc/fs/jbd/sdb1/history
 
 	do_facet $facet cat /proc/fs/jbd*/${dev}*/$file
@@ -130,10 +138,6 @@ check_jbd_values_facets () {
 }
 
 test_1b () {
-	local major=$(get_mds_kernel_major)
-	local minor=$(get_mds_kernel_minor)
-	[ "$major"=="2.6" -a $minor -eq 32 ]  && \
-		skip "There is no jbd history in this kernel version." && return
 	local param_file=$TMP/$tfile-params
 
 	do_nodesv $(comma_list $(osts_nodes)) lctl get_param obdfilter.${FSNAME}-*.sync_journal
@@ -163,10 +167,6 @@ test_2a () {
 run_test 2a "Stripe F/S over the Network"
 
 test_2b () {
-	local major=$(get_mds_kernel_major)
-	local minor=$(get_mds_kernel_minor)
-	[ "$major"=="2.6" -a $minor -eq 32 ]  && \
-		skip "There is no jbd history in this kernel version." && return
 	local param_file=$TMP/$tfile-params
 
 	do_nodesv $(comma_list $(osts_nodes)) lctl get_param obdfilter.${FSNAME}-*.sync_journal

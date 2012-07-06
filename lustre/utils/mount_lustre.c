@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -39,7 +41,6 @@
  * Author: Nathan Rutman <nathan@clusterfs.com>
  */
 
-
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
@@ -50,6 +51,7 @@
 #include <errno.h>
 #include <string.h>
 #include <sys/mount.h>
+#include <linux/fs.h>
 #include <mntent.h>
 #include <getopt.h>
 #include "obdctl.h"
@@ -91,6 +93,7 @@ void usage(FILE *out)
                 "\t-v|--verbose: print verbose config settings\n"
                 "\t<mntopt>: one or more comma separated of:\n"
                 "\t\t(no)flock,(no)user_xattr,(no)acl\n"
+                "\t\tabort_recov: abort server recovery handling\n"
                 "\t\tnosvc: only start MGC/MGS obds\n"
                 "\t\tnomgs: only start target obds, using existing MGS\n"
                 "\t\texclude=<ostname>[:<ostname>] : colon-separated list of "
@@ -102,7 +105,7 @@ void usage(FILE *out)
         exit((out != stdout) ? EINVAL : 0);
 }
 
-static int check_mtab_entry(char *spec, char *mtpt, char *type)
+static int check_mtab_entry(char *spec1, char *spec2, char *mtpt, char *type)
 {
         FILE *fp;
         struct mntent *mnt;
@@ -112,7 +115,8 @@ static int check_mtab_entry(char *spec, char *mtpt, char *type)
                 return(0);
 
         while ((mnt = getmntent(fp)) != NULL) {
-                if (strcmp(mnt->mnt_fsname, spec) == 0 &&
+                if ((strcmp(mnt->mnt_fsname, spec1) == 0 ||
+                     strcmp(mnt->mnt_fsname, spec2) == 0) &&
                         strcmp(mnt->mnt_dir, mtpt) == 0 &&
                         strcmp(mnt->mnt_type, type) == 0) {
                         endmntent(fp);
@@ -232,12 +236,16 @@ static const struct opt_map opt_map[] = {
   { "relatime", 0, MS_RELATIME },  /* set file access time on read */
   { "norelatime",1,MS_RELATIME },  /* do not set file access time on read */
 #endif
+#ifdef MS_STRICTATIME
+  { "strictatime",0,MS_STRICTATIME },  /* update access time strictly */
+#endif
   { "auto",     0, 0         },      /* Can be mounted using -a */
   { "noauto",   0, 0         },      /* Can only be mounted explicitly */
   { "nousers",  1, 0         },      /* Forbid ordinary user to mount */
   { "nouser",   1, 0         },      /* Forbid ordinary user to mount */
   { "noowner",  1, 0         },      /* Device owner has no special privs */
   { "_netdev",  0, 0         },      /* Device accessible only via network */
+  { "loop",     0, 0         },
   { NULL,       0, 0         }
 };
 /****************************************************************************/
@@ -262,6 +270,13 @@ static int parse_one_option(const char *check, int *flagp)
         /* Assume any unknown options are valid and pass them on.  The mount
            will fail if lmd_parse, ll_options or ldiskfs doesn't recognize it.*/
         return 0;
+}
+
+static void append_option(char *options, const char *one)
+{
+        if (*options)
+                strcat(options, ",");
+        strcat(options, one);
 }
 
 /* Replace options with subset of Lustre-specific options, and
@@ -293,17 +308,23 @@ int parse_options(char *orig_options, int *flagp)
                                 retry = MAX_RETRIES;
                         else if (retry < 0)
                                 retry = 0;
+                } else if (val && strncmp(arg, "mgssec", 6) == 0) {
+                        append_option(options, opt);
                 } else if (strcmp(opt, "force") == 0) {
                         //XXX special check for 'force' option
                         ++force;
                         printf("force: %d\n", force);
                 } else if (parse_one_option(opt, flagp) == 0) {
                         /* pass this on as an option */
-                        if (*options)
-                                strcat(options, ",");
-                        strcat(options, opt);
+                        append_option(options, opt);
                 }
         }
+#ifdef MS_STRICTATIME
+                /* set strictatime to default if NOATIME or RELATIME
+                   not given explicit */
+        if (!(*flagp & (MS_NOATIME | MS_RELATIME)))
+                *flagp |= MS_STRICTATIME;
+#endif
         strcpy(orig_options, options);
         free(options);
         return 0;
@@ -344,12 +365,12 @@ int write_file(char *path, char *buf)
 /* This is to tune the kernel for good SCSI performance.
  * For that we set the value of /sys/block/{dev}/queue/max_sectors_kb
  * to the value of /sys/block/{dev}/queue/max_hw_sectors_kb */
-int set_blockdev_tunables(char *source)
+int set_blockdev_tunables(char *source, int fan_out)
 {
-        glob_t glob_info;
+        glob_t glob_info = { 0 };
         struct stat stat_buf;
         char *chk_major, *chk_minor;
-        char *savept = NULL, *dev;
+        char *savept, *dev;
         char *ret_path;
         char buf[PATH_MAX] = {'\0'}, path[PATH_MAX] = {'\0'};
         char real_path[PATH_MAX] = {'\0'};
@@ -407,6 +428,7 @@ int set_blockdev_tunables(char *source)
                 if (verbose)
                         fprintf(stderr, "warning: failed to read entries under "
                                 "/sys/block\n");
+                globfree(&glob_info);
                 return rc;
         }
 
@@ -448,7 +470,7 @@ set_params:
                         if (verbose)
                                 fprintf(stderr, "warning: opening %s: %s\n",
                                         real_path, strerror(errno));
-                        return rc;
+                        return 0;
                 }
 
                 if (atoi(buf) >= md_stripe_cache_size)
@@ -481,21 +503,61 @@ set_params:
                 snprintf(real_path, sizeof(real_path), "%s/%s", path,
                          MAX_SECTORS_KB_PATH);
                 rc = write_file(real_path, buf);
-                if (rc && verbose)
-                        fprintf(stderr, "warning: writing to %s: %s\n",
-                                real_path, strerror(errno));
-                /* No MAX_HW_SECTORS_KB_PATH isn't necessary an
-                 * error for some device. */
-                rc = 0;
+                if (rc) {
+                        if (verbose)
+                                fprintf(stderr, "warning: writing to %s: %s\n",
+                                        real_path, strerror(errno));
+                        /* No MAX_SECTORS_KB_PATH isn't necessary an
+                         * error for some device. */
+                        rc = 0;
+                }
         }
+
+        if (fan_out) {
+                char *slave = NULL;
+                glob_info.gl_pathc = 0;
+                glob_info.gl_offs = 0;
+                /* if device is multipath device, tune its slave devices */
+                snprintf(real_path, sizeof(real_path), "%s/slaves/*", path);
+                rc = glob(real_path, GLOB_NOSORT, NULL, &glob_info);
+
+                for (i = 0; rc == 0 && i < glob_info.gl_pathc; i++){
+                        slave = basename(glob_info.gl_pathv[i]);
+                        snprintf(real_path, sizeof(real_path), "/dev/%s", slave);
+                        rc = set_blockdev_tunables(real_path, 0);
+                }
+
+                if (rc == GLOB_NOMATCH) {
+                        /* no slave device is not an error */
+                        rc = 0;
+                } else if (rc && verbose) {
+                        if (slave == NULL) {
+                                fprintf(stderr, "warning: %s, failed to read"
+                                        " entries under %s/slaves\n",
+                                        strerror(errno), path);
+                        } else {
+                                fprintf(stderr, "unable to set tunables for"
+                                        " slave device %s (slave would be"
+                                        " unable to handle IO request from"
+                                        " master %s)\n",
+                                        real_path, source);
+                        }
+                }
+                globfree(&glob_info);
+        }
+
         return rc;
 }
 
 int main(int argc, char *const argv[])
 {
         char default_options[] = "";
-        char *usource, *source;
+        char *usource, *source, *ptr;
         char target[PATH_MAX] = {'\0'};
+        char real_path[PATH_MAX] = {'\0'};
+        char path[256], name[256];
+        FILE *f;
+        size_t sz;
         char *options, *optcopy, *orig_options = default_options;
         int i, nargs = 3, opt, rc, flags, optlen;
         static struct option long_opt[] = {
@@ -558,6 +620,27 @@ int main(int argc, char *const argv[])
                 usage(stderr);
         }
 
+        /**
+         * Try to get the real path to the device, in case it is a
+         * symbolic link for instance
+         */
+        if (realpath(usource, real_path) != NULL) {
+                usource = real_path;
+
+                ptr = strrchr(real_path, '/');
+                if (ptr && strncmp(ptr, "/dm-", 4) == 0 && isdigit(*(ptr + 4))) {
+                        snprintf(path, sizeof(path), "/sys/block/%s/dm/name", ptr+1);
+                        if ((f = fopen(path, "r"))) {
+                                /* read "<name>\n" from sysfs */
+                                if (fgets(name, sizeof(name), f) && (sz = strlen(name)) > 1) {
+                                        name[sz - 1] = '\0';
+                                        snprintf(real_path, sizeof(real_path), "/dev/mapper/%s", name);
+                                }
+                                fclose(f);
+                        }
+                }
+        }
+
         source = convert_hostnames(usource);
         if (!source) {
                 usage(stderr);
@@ -573,7 +656,8 @@ int main(int argc, char *const argv[])
         if (verbose) {
                 for (i = 0; i < argc; i++)
                         printf("arg[%d] = %s\n", i, argv[i]);
-                printf("source = %s (%s), target = %s\n", usource, source, target);
+                printf("source = %s (%s), target = %s\n", usource, source,
+                       target);
                 printf("options = %s\n", orig_options);
         }
 
@@ -591,7 +675,7 @@ int main(int argc, char *const argv[])
         }
 
         if (!force) {
-                rc = check_mtab_entry(usource, target, "lustre");
+                rc = check_mtab_entry(usource, source, target, "lustre");
                 if (rc && !(flags & MS_REMOUNT)) {
                         fprintf(stderr, "%s: according to %s %s is "
                                 "already mounted on %s\n",
@@ -634,14 +718,12 @@ int main(int argc, char *const argv[])
                 printf("mounting device %s at %s, flags=%#x options=%s\n",
                        source, target, flags, optcopy);
 
-        if (!strstr(usource, ":/") && set_blockdev_tunables(source)) {
+        if (!strstr(usource, ":/") && set_blockdev_tunables(source, 1)) {
                 if (verbose)
                         fprintf(stderr, "%s: unable to set tunables for %s"
                                 " (may cause reduced IO performance)\n",
                                 argv[0], source);
         }
-
-        register_service_tags(usource, source, target);
 
         if (!fake) {
                 /* flags and target get to lustre_get_sb, but not
@@ -684,9 +766,8 @@ int main(int argc, char *const argv[])
                         usource, target, strerror(errno));
                 if (errno == ENODEV)
                         fprintf(stderr, "Are the lustre modules loaded?\n"
-                                "Check /etc/modprobe.conf and /proc/filesystems"
-                                "\nNote 'alias lustre llite' should be removed"
-                                " from modprobe.conf\n");
+                                "Check /etc/modprobe.conf and "
+                                "/proc/filesystems\n");
                 if (errno == ENOTBLK)
                         fprintf(stderr, "Do you need -o loop?\n");
                 if (errno == ENOMEDIUM)

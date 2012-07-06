@@ -26,10 +26,17 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
+ * Test program to compare the attributes of a files to verify that it
+ * desired file attributes are present.  This file predates availability
+ * of the stat(3) utility and is deprecated.  Either test(3) ([ ]) or
+ * stat(3) should be used in all new tests.
+ *
  * This file is part of Lustre, http://www.lustre.org/
  * Lustre is a trademark of Sun Microsystems, Inc.
  */
@@ -276,20 +283,18 @@ main (int argc, char **argv)
 					fname, perms);
 		}
 
-		if (size != -1)
-		{
-			if (buf.st_size != size)
-			{
-				if (verbose)
-					printf ("%s has size %Ld, not %Ld\n",
-						fname, (long long)buf.st_size,
-						size);
-				return (1);
-			}
+                if (size != -1) {
+                        if (buf.st_size != size) {
+                                if (verbose)
+                                        printf("%s has size %lld, not %lld\n",
+                                               fname, (long long)buf.st_size,
+                                               size);
+                                return 1;
+                        }
 
-			if (verbose)
-				printf ("%s has size %Ld OK\n", fname, size);
-		}
+                        if (verbose)
+                                printf("%s has size %lld OK\n", fname, size);
+                }
 
 		if (checklink != NULL)
 		{

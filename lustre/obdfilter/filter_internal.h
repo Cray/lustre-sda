@@ -28,6 +28,8 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -40,18 +42,18 @@
 #ifdef __KERNEL__
 # include <linux/spinlock.h>
 #endif
-#include <lustre_disk.h>
 #include <lustre_handles.h>
 #include <lustre_debug.h>
 #include <obd.h>
+#include <obd_class.h>
 #include <lprocfs_status.h>
 
 #define FILTER_LAYOUT_VERSION "2"
 
 #define FILTER_INIT_OBJID 0
 
-#define FILTER_SUBDIR_COUNT      32            /* set to zero for no subdirs */
-#define FILTER_GROUPS 3 /* must be at least 3; not dynamic yet */
+#define FILTER_SUBDIR_COUNT 32 /* set to zero for no subdirs */
+#define FILTER_GROUPS        3 /* must be at least 3; not dynamic yet */
 
 #define FILTER_ROCOMPAT_SUPP (0)
 
@@ -72,12 +74,13 @@ extern struct file_operations filter_per_nid_stats_fops;
 
 /* per-client-per-object persistent state (LRU) */
 struct filter_mod_data {
-        struct list_head fmd_list;      /* linked to fed_mod_list */
-        __u64            fmd_id;        /* object being written to */
-        __u64            fmd_gr;        /* group being written to */
-        __u64            fmd_mactime_xid;/* xid highest {m,a,c}time setattr */
-        unsigned long    fmd_expire;    /* jiffies when it should expire */
-        int              fmd_refcount;  /* reference counter - list holds 1 */
+        cfs_list_t       fmd_list;       /* linked to fed_mod_list */
+        __u64            fmd_id;         /* object being written to */
+        __u64            fmd_gr;         /* group being written to */
+        __u64            fmd_mactime_xid;/* xid highest {m,a,c}time
+                                              * setattr */
+        unsigned long    fmd_expire;   /* jiffies when it should expire */
+        int              fmd_refcount; /* reference counter, list holds 1 */
 };
 
 #ifdef HAVE_BGL_SUPPORT
@@ -86,7 +89,7 @@ struct filter_mod_data {
 #define FILTER_FMD_MAX_NUM_DEFAULT  32
 #endif
 /* Client cache seconds */
-#define FILTER_FMD_MAX_AGE_DEFAULT ((obd_timeout + 10) * HZ)
+#define FILTER_FMD_MAX_AGE_DEFAULT ((obd_timeout + 10) * CFS_HZ)
 
 #ifndef HAVE_PAGE_CONSTANT
 #define mapping_cap_page_constant_write(mapping) 0
@@ -95,9 +98,9 @@ struct filter_mod_data {
 #endif
 
 struct filter_mod_data *filter_fmd_find(struct obd_export *exp,
-                                        obd_id objid, obd_gr group);
+                                        obd_id objid, obd_seq seq);
 struct filter_mod_data *filter_fmd_get(struct obd_export *exp,
-                                       obd_id objid, obd_gr group);
+                                       obd_id objid, obd_seq seq);
 void filter_fmd_put(struct obd_export *exp, struct filter_mod_data *fmd);
 void filter_fmd_expire(struct obd_export *exp);
 
@@ -120,35 +123,41 @@ enum {
 #define OBDFILTER_CREATED_SCRATCHPAD_ENTRIES 1024
 extern int *obdfilter_created_scratchpad;
 
+extern void target_recovery_fini(struct obd_device *obd);
+extern void target_recovery_init(struct lu_target *lut,
+                                 svc_handler_t handler);
+
 /* filter.c */
 void f_dput(struct dentry *);
 struct dentry *filter_fid2dentry(struct obd_device *, struct dentry *dir,
-                                 obd_gr group, obd_id id);
-struct dentry *__filter_oa2dentry(struct obd_device *obd, struct obdo *oa,
+                                 obd_seq seq, obd_id id);
+struct dentry *__filter_oa2dentry(struct obd_device *obd, struct ost_id *ostid,
                                   const char *what, int quiet);
-#define filter_oa2dentry(obd, oa) __filter_oa2dentry(obd, oa, __FUNCTION__, 0)
+#define filter_oa2dentry(obd, ostid) __filter_oa2dentry(obd, ostid,     \
+                                                        __func__, 0)
 
 int filter_finish_transno(struct obd_export *, struct inode *,
                           struct obd_trans_info *, int rc, int force_sync);
 __u64 filter_next_id(struct filter_obd *, struct obdo *);
-__u64 filter_last_id(struct filter_obd *, obd_gr group);
+__u64 filter_last_id(struct filter_obd *, obd_seq seq);
 int filter_update_fidea(struct obd_export *exp, struct inode *inode,
                         void *handle, struct obdo *oa);
-int filter_update_server_data(struct obd_device *, struct file *,
-                              struct lr_server_data *, int force_sync);
-int filter_update_last_objid(struct obd_device *, obd_gr, int force_sync);
-int filter_common_setup(struct obd_device *, obd_count len, void *buf,
+int filter_update_server_data(struct obd_device *);
+int filter_update_last_objid(struct obd_device *, obd_seq, int force_sync);
+int filter_common_setup(struct obd_device *, struct lustre_cfg *lcfg,
                         void *option);
 int filter_destroy(struct obd_export *exp, struct obdo *oa,
                    struct lov_stripe_md *md, struct obd_trans_info *,
-                   struct obd_export *);
+                   struct obd_export *, void *);
 int filter_setattr_internal(struct obd_export *exp, struct dentry *dentry,
                             struct obdo *oa, struct obd_trans_info *oti);
 int filter_setattr(struct obd_export *exp, struct obd_info *oinfo,
                    struct obd_trans_info *oti);
-int filter_recreate(struct obd_device *obd, struct obdo *oa);
 
-struct dentry *filter_create_object(struct obd_device *obd, struct obdo *oa);
+int filter_create(struct obd_export *exp, struct obdo *oa,
+                  struct lov_stripe_md **ea, struct obd_trans_info *oti);
+
+struct obd_llog_group *filter_find_olg(struct obd_device *obd, int seq);
 
 /* filter_lvb.c */
 extern struct ldlm_valblock_ops filter_lvbo;
@@ -157,7 +166,8 @@ extern struct ldlm_valblock_ops filter_lvbo;
 /* filter_io.c */
 int filter_preprw(int cmd, struct obd_export *, struct obdo *, int objcount,
                   struct obd_ioobj *, struct niobuf_remote *,
-                  int *, struct niobuf_local *, struct obd_trans_info *);
+                  int *, struct niobuf_local *, struct obd_trans_info *,
+                  struct lustre_capa *);
 int filter_commitrw(int cmd, struct obd_export *, struct obdo *, int objcount,
                     struct obd_ioobj *, struct niobuf_remote *,  int,
                     struct niobuf_local *, struct obd_trans_info *, int rc);
@@ -197,7 +207,7 @@ struct ost_filterdata {
 };
 int filter_log_sz_change(struct llog_handle *cathandle,
                          struct ll_fid *mds_fid,
-                         __u32 io_epoch,
+                         __u32 ioepoch,
                          struct llog_cookie *logcookie,
                          struct inode *inode);
 //int filter_get_catalog(struct obd_device *);
@@ -225,6 +235,17 @@ static void lprocfs_filter_init_vars(struct lprocfs_static_vars *lvars)
 /* Quota stuff */
 extern quota_interface_t *filter_quota_interface_ref;
 
+int filter_update_capa_key(struct obd_device *obd, struct lustre_capa_key *key);
+int filter_auth_capa(struct obd_export *exp, struct lu_fid *fid, obd_seq seq,
+                     struct lustre_capa *capa, __u64 opc);
+int filter_capa_fixoa(struct obd_export *exp, struct obdo *oa, obd_seq seq,
+                      struct lustre_capa *capa);
+void filter_free_capa_keys(struct filter_obd *filter);
+
+void blacklist_add(uid_t uid);
+void blacklist_del(uid_t uid);
+int blacklist_display(char *buf, int bufsize);
+
 /* sync on lock cancel is useless when we force a journal flush,
  * and if we enable async journal commit, we should also turn on
  * sync on lock cancel if it is not enabled already. */
@@ -235,4 +256,5 @@ static inline void filter_slc_set(struct filter_obd *filter)
         else if (filter->fo_sync_lock_cancel == NEVER_SYNC_ON_CANCEL)
                 filter->fo_sync_lock_cancel = ALWAYS_SYNC_ON_CANCEL;
 }
+
 #endif /* _FILTER_INTERNAL_H */

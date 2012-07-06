@@ -140,6 +140,7 @@ kgnilnd_quiesce_wait(char *reason)
                  * ensure that there is no traffic until quiesce is over ?*/
         } else {
                 /* GO! GO! GO! */
+
                 for (i = 0; i < kgnilnd_data.kgn_ndevs; i++) {
                         kgn_device_t *dev = &kgnilnd_data.kgn_devices[i];
                         kgnilnd_schedule_dgram(dev);
@@ -173,6 +174,9 @@ kgnilnd_reset_stack(void)
         __u32            seconds;
         unsigned long    start, end;
         ENTRY;
+        
+        /* Race with del_peer and its atomics */
+        CFS_RACE(CFS_FAIL_GNI_RACE_RESET);
 
         if (kgnilnd_data.kgn_init != GNILND_INIT_ALL) {
                 CERROR("can't reset the stack, gnilnd is not initialized\n");
@@ -272,7 +276,11 @@ kgnilnd_reset_stack(void)
         /* don't let the little weasily purgatory conns hide from us */
         for (i = 0; i < *kgnilnd_tunables.kgn_peer_hash_size; i++) {
                 list_for_each_entry_safe(peer, peerN, &kgnilnd_data.kgn_peers[i], gnp_list) {
-                        kgnilnd_detach_purgatory_locked(peer, &souls);
+                        kgn_conn_t       *conn, *connN;
+
+                        list_for_each_entry_safe(conn, connN, &peer->gnp_conns, gnc_list) {
+                                kgnilnd_detach_purgatory_locked(conn, &souls);
+                        }
                 }
         }
 
@@ -284,6 +292,11 @@ kgnilnd_reset_stack(void)
         /* validate we are now clean */
         for (i = 0; i < kgnilnd_data.kgn_ndevs; i++) {
                 kgn_device_t    *dev = &kgnilnd_data.kgn_devices[i];
+
+                /* now all the cons/mboxes should be cleaned up, including purgatory
+                 * so go through and release the MDDs for our persistent PHYS fma_blks
+                 */
+                kgnilnd_unmap_phys_fmablk(dev);
 
                 LASSERTF(atomic_read(&dev->gnd_nfmablk) == 0,
                         "reset failed: fma blocks still live %d\n",
@@ -318,9 +331,12 @@ kgnilnd_reset_stack(void)
         
         /* only reset our known devs */
         for (i = 0; i < kgnilnd_data.kgn_ndevs; i++) {
-                rc = kgnilnd_dev_init(&kgnilnd_data.kgn_devices[i]);
+                kgn_device_t    *dev = &kgnilnd_data.kgn_devices[i];
+                rc = kgnilnd_dev_init(dev);
                 LASSERTF(rc == 0, "dev_init failed for dev %d\n", i);
-                rc = kgnilnd_setup_wildcard_dgram(&kgnilnd_data.kgn_devices[i]);
+                kgnilnd_map_phys_fmablk(dev);
+                LASSERTF(rc == 0, "map_phys_fmablk failed for dev %d\n", i);
+                rc = kgnilnd_setup_wildcard_dgram(dev);
                 LASSERTF(rc == 0, "couldnt setup datagrams on dev %d: %d\n",
                         i, rc);
         }

@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -42,25 +42,6 @@
 #endif
 
 #include <darwin/lustre_compat.h>
-
-#define CRCPOLY_LE 0xedb88320
-/**
- * crc32_le() - Calculate bitwise little-endian Ethernet AUTODIN II CRC32
- * @crc - seed value for computation.  ~0 for Ethernet, sometimes 0 for
- *        other uses, or the previous crc32 value if computing incrementally.
- * @p   - pointer to buffer over which CRC is run
- * @len - length of buffer @p
- */
-static inline __u32 crc32_le(__u32 crc, unsigned char const *p, size_t len)
-{
-        int i;
-        while (len--) {
-                crc ^= *p++;
-                for (i = 0; i < 8; i++)
-                crc = (crc >> 1) ^ ((crc & 1) ? CRCPOLY_LE : 0);
-        }
-        return crc;
-}
 
 /* for obd_class.h */
 # ifndef ERR_PTR

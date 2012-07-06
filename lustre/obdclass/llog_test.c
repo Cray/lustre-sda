@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -131,10 +131,8 @@ static int llog_test_1(struct obd_device *obd, char *name)
 static int llog_test_2(struct obd_device *obd, char *name,
                        struct llog_handle **llh)
 {
-        struct llog_handle *loghandle;
-        struct llog_logid logid;
-        int rc;
         struct llog_ctxt *ctxt = llog_get_context(obd, LLOG_TEST_ORIG_CTXT);
+        int rc;
         ENTRY;
 
         CWARN("2a: re-open a log with name: %s\n", name);
@@ -147,7 +145,7 @@ static int llog_test_2(struct obd_device *obd, char *name,
 
         if ((rc = verify_handle("2", *llh, 1)))
                 GOTO(out, rc);
-
+#if 0
         CWARN("2b: create a log without specified NAME & LOGID\n");
         rc = llog_create(ctxt, &loghandle, NULL, NULL);
         if (rc) {
@@ -173,6 +171,7 @@ static int llog_test_2(struct obd_device *obd, char *name,
                 GOTO(out, rc);
         }
         llog_free_handle(loghandle);
+#endif
 out:
         llog_ctxt_put(ctxt);
 
@@ -237,7 +236,7 @@ static int llog_test_3(struct obd_device *obd, struct llog_handle *llh)
 
         if ((rc = verify_handle("3c", llh, num_recs)))
                 RETURN(rc);
-	
+
         CWARN("3d: write log more than BITMAP_SIZE, return -ENOSPC\n");
         for (i = 0; i < LLOG_BITMAP_SIZE(llh->lgh_hdr) + 1; i++) {
                 struct llog_rec_hdr hdr;
@@ -259,14 +258,14 @@ static int llog_test_3(struct obd_device *obd, struct llog_handle *llh)
                         if (rc == -ENOSPC) {
                                 break;
                         } else {
-                       	        CERROR("3c: write recs failed at #%d: %d\n",
-                               	        i + 1, rc);
-                       	        RETURN(rc);
+                                CERROR("3c: write recs failed at #%d: %d\n",
+                                        i + 1, rc);
+                                RETURN(rc);
                         }
                 }
                 num_recs++;
         }
-	if (rc != -ENOSPC) {
+        if (rc != -ENOSPC) {
                 CWARN("3d: write record more than BITMAP size!\n");
                 RETURN(-EINVAL);
         }
@@ -450,7 +449,7 @@ static int llog_test_5(struct obd_device *obd)
         }
 
         CWARN("5c: Cancel 40000 records, see one log zapped\n");
-        rc = llog_cat_process(llh, llog_cancel_rec_cb, "foobar");
+        rc = llog_cat_process(llh, llog_cancel_rec_cb, "foobar", 0, 0);
         if (rc != -4711) {
                 CERROR("5c: process with cat_cancel_cb failed: %d\n", rc);
                 GOTO(out, rc);
@@ -472,7 +471,7 @@ static int llog_test_5(struct obd_device *obd)
         }
 
         CWARN("5e: print plain log entries.. expect 6\n");
-        rc = llog_cat_process(llh, plain_print_cb, "foobar");
+        rc = llog_cat_process(llh, plain_print_cb, "foobar", 0, 0);
         if (rc) {
                 CERROR("5e: process with plain_print_cb failed: %d\n", rc);
                 GOTO(out, rc);
@@ -499,22 +498,34 @@ static int llog_test_5(struct obd_device *obd)
 /* Test client api; open log by name and process */
 static int llog_test_6(struct obd_device *obd, char *name)
 {
-        struct obd_device *mdc_obd;
+        struct obd_device *mgc_obd;
         struct llog_ctxt *ctxt = llog_get_context(obd, LLOG_TEST_ORIG_CTXT);
-        struct obd_uuid *mds_uuid = &ctxt->loc_exp->exp_obd->obd_uuid;
+        struct obd_uuid *mgs_uuid = &ctxt->loc_exp->exp_obd->obd_uuid;
+        struct obd_export *exp;
+        struct obd_uuid uuid = {"LLOG_TEST6_UUID"};
         struct llog_handle *llh = NULL;
         struct llog_ctxt *nctxt;
         int rc;
 
         CWARN("6a: re-open log %s using client API\n", name);
-        mdc_obd = class_find_client_obd(mds_uuid, LUSTRE_MDC_NAME, NULL);
-        if (mdc_obd == NULL) {
-                CERROR("6: no MDC devices connected to %s found.\n",
-                       mds_uuid->uuid);
+        mgc_obd = class_find_client_obd(mgs_uuid, LUSTRE_MGC_NAME, NULL);
+        if (mgc_obd == NULL) {
+                CERROR("6: no MGC devices connected to %s found.\n",
+                       mgs_uuid->uuid);
                 GOTO(ctxt_release, rc = -ENOENT);
         }
 
-        nctxt = llog_get_context(mdc_obd, LLOG_CONFIG_REPL_CTXT);
+        rc = obd_connect(NULL, &exp, mgc_obd, &uuid,
+                         NULL /* obd_connect_data */, NULL);
+        if (rc != -EALREADY) {
+                CERROR("6: connect on connected MDC (%s) failed to return"
+                       " -EALREADY", mgc_obd->obd_name);
+                if (rc == 0)
+                        obd_disconnect(exp);
+                GOTO(ctxt_release, rc = -EINVAL);
+        }
+
+        nctxt = llog_get_context(mgc_obd, LLOG_CONFIG_REPL_CTXT);
         rc = llog_create(nctxt, &llh, NULL, name);
         if (rc) {
                 CERROR("6: llog_create failed %d\n", rc);
@@ -542,7 +553,6 @@ parse_out:
         if (rc) {
                 CERROR("6: llog_close failed: rc = %d\n", rc);
         }
-
 ctxt_release:
         llog_ctxt_put(ctxt);
         RETURN(rc);
@@ -577,10 +587,10 @@ static int llog_test_7(struct obd_device *obd)
         }
 
         rc = llog_destroy(llh);
-        if (rc) 
+        if (rc)
                 CERROR("7: llog_destroy failed: %d\n", rc);
         else
-                llog_free_handle(llh); 
+                llog_free_handle(llh);
 ctxt_release:
         llog_ctxt_put(ctxt);
         RETURN(rc);
@@ -646,13 +656,15 @@ static int llog_run_tests(struct obd_device *obd)
 }
 
 
-static int llog_test_llog_init(struct obd_device *obd, struct obd_device *disk_obd,
-                               int *index)
+static int llog_test_llog_init(struct obd_device *obd,
+                               struct obd_llog_group *olg,
+                               struct obd_device *tgt, int *index)
 {
         int rc;
         ENTRY;
 
-        rc = llog_setup(obd, LLOG_TEST_ORIG_CTXT, disk_obd, 0, NULL, &llog_lvfs_ops);
+        rc = llog_setup(obd, &obd->obd_olg, LLOG_TEST_ORIG_CTXT, tgt, 0, NULL,
+                        &llog_lvfs_ops);
         RETURN(rc);
 }
 
@@ -664,6 +676,15 @@ static int llog_test_llog_finish(struct obd_device *obd, int count)
         rc = llog_cleanup(llog_get_context(obd, LLOG_TEST_ORIG_CTXT));
         RETURN(rc);
 }
+#ifdef LPROCFS
+static struct lprocfs_vars lprocfs_llog_test_obd_vars[] = { {0} };
+static struct lprocfs_vars lprocfs_llog_test_module_vars[] = { {0} };
+static void lprocfs_llog_test_init_vars(struct lprocfs_static_vars *lvars)
+{
+    lvars->module_vars  = lprocfs_llog_test_module_vars;
+    lvars->obd_vars     = lprocfs_llog_test_obd_vars;
+}
+#endif
 
 static int llog_test_cleanup(struct obd_device *obd)
 {
@@ -676,20 +697,9 @@ static int llog_test_cleanup(struct obd_device *obd)
         return rc;
 }
 
-#ifdef LPROCFS
-static struct lprocfs_vars lprocfs_llog_test_obd_vars[] = { {0} };
-static struct lprocfs_vars lprocfs_llog_test_module_vars[] = { {0} };
-static void lprocfs_llog_test_init_vars(struct lprocfs_static_vars *lvars)
-{
-    lvars->module_vars  = lprocfs_llog_test_module_vars;
-    lvars->obd_vars     = lprocfs_llog_test_obd_vars;
-}
-#endif
-
-static int llog_test_setup(struct obd_device *obd, obd_count len, void *buf)
+static int llog_test_setup(struct obd_device *obd, struct lustre_cfg *lcfg)
 {
         struct lprocfs_static_vars lvars;
-        struct lustre_cfg *lcfg = buf;
         struct obd_device *tgt;
         int rc;
         ENTRY;
@@ -704,6 +714,7 @@ static int llog_test_setup(struct obd_device *obd, obd_count len, void *buf)
                 RETURN(-EINVAL);
         }
 
+        /* disk obd */
         tgt = class_name2obd(lustre_cfg_string(lcfg, 1));
         if (!tgt || !tgt->obd_attached || !tgt->obd_set_up) {
                 CERROR("target device not attached or not set up (%s)\n",
@@ -711,7 +722,7 @@ static int llog_test_setup(struct obd_device *obd, obd_count len, void *buf)
                 RETURN(-EINVAL);
         }
 
-        rc = obd_llog_init(obd, tgt, NULL);
+        rc = obd_llog_init(obd, NULL, tgt, NULL);
         if (rc)
                 RETURN(rc);
 
@@ -740,7 +751,8 @@ static int __init llog_test_init(void)
         struct lprocfs_static_vars lvars;
 
         lprocfs_llog_test_init_vars(&lvars);
-        return class_register_type(&llog_obd_ops,lvars.module_vars,"llog_test");
+        return class_register_type(&llog_obd_ops, NULL,
+                                   lvars.module_vars,"llog_test", NULL);
 }
 
 static void __exit llog_test_exit(void)

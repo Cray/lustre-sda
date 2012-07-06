@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -68,7 +68,7 @@ struct llog_handle *llog_alloc_handle(void)
         if (loghandle == NULL)
                 RETURN(ERR_PTR(-ENOMEM));
 
-        init_rwsem(&loghandle->lgh_lock);
+        cfs_init_rwsem(&loghandle->lgh_lock);
 
         RETURN(loghandle);
 }
@@ -83,9 +83,9 @@ void llog_free_handle(struct llog_handle *loghandle)
         if (!loghandle->lgh_hdr)
                 goto out;
         if (loghandle->lgh_hdr->llh_flags & LLOG_F_IS_PLAIN)
-                list_del_init(&loghandle->u.phd.phd_entry);
+                cfs_list_del_init(&loghandle->u.phd.phd_entry);
         if (loghandle->lgh_hdr->llh_flags & LLOG_F_IS_CAT)
-                LASSERT(list_empty(&loghandle->u.chd.chd_head));
+                LASSERT(cfs_list_empty(&loghandle->u.chd.chd_head));
         OBD_FREE(loghandle->lgh_hdr, LLOG_CHUNK_SIZE);
 
  out:
@@ -175,7 +175,7 @@ int llog_init_handle(struct llog_handle *handle, int flags,
         llh->llh_hdr.lrh_type = LLOG_HDR_MAGIC;
         llh->llh_hdr.lrh_len = llh->llh_tail.lrt_len = LLOG_CHUNK_SIZE;
         llh->llh_hdr.lrh_index = llh->llh_tail.lrt_index = 0;
-        llh->llh_timestamp = CURRENT_SECONDS;
+        llh->llh_timestamp = cfs_time_current_sec();
         if (uuid)
                 memcpy(&llh->llh_tgtuuid, uuid, sizeof(llh->llh_tgtuuid));
         llh->llh_bitmap_offset = offsetof(typeof(*llh),llh_bitmap);
@@ -237,12 +237,13 @@ static int llog_process_thread(void *arg)
         if (!buf) {
                 lpi->lpi_rc = -ENOMEM;
 #ifdef __KERNEL__
-                complete(&lpi->lpi_completion);
+                cfs_complete(&lpi->lpi_completion);
 #endif
                 return 0;
         }
 
-        cfs_daemonize_ctxt("llog_process_thread");
+        if (!(lpi->lpi_flags & LLOG_FLAG_NODEAMON))
+                cfs_daemonize_ctxt("llog_process_thread");
 
         if (cd != NULL) {
                 last_called_index = cd->lpcd_first_idx;
@@ -269,6 +270,7 @@ static int llog_process_thread(void *arg)
                        index, last_index);
 
                 /* get the buf with our target record; avoid old garbage */
+                memset(buf, 0, LLOG_CHUNK_SIZE);
                 last_offset = cur_offset;
                 rc = llog_next_block(loghandle, &saved_index, index,
                                      &cur_offset, buf, LLOG_CHUNK_SIZE);
@@ -294,6 +296,13 @@ static int llog_process_thread(void *arg)
                         if (rec->lrh_index == 0)
                                 GOTO(out, 0); /* no more records */
 
+                        if ((rec->lrh_type & LLOG_OP_MASK) != LLOG_OP_MAGIC) {
+                                CERROR("Invalid record type %u, "
+                                       "index %u, len %u", rec->lrh_type,
+                                       rec->lrh_index, rec->lrh_len);
+                                GOTO(out, rc = -EIO);
+                        }
+
                         if (rec->lrh_len == 0 || rec->lrh_len >LLOG_CHUNK_SIZE){
                                 CWARN("invalid length %d in llog record for "
                                       "index %d/%d\n", rec->lrh_len,
@@ -312,7 +321,7 @@ static int llog_process_thread(void *arg)
                                rec->lrh_index, rec->lrh_len,
                                (int)(buf + LLOG_CHUNK_SIZE - (char *)rec));
 
-                        loghandle->lgh_cur_idx    = rec->lrh_index;
+                        loghandle->lgh_cur_idx = rec->lrh_index;
                         loghandle->lgh_cur_offset = (char *)rec - (char *)buf +
                                                     last_offset;
 
@@ -322,10 +331,6 @@ static int llog_process_thread(void *arg)
                                                  lpi->lpi_cbdata);
                                 last_called_index = index;
                                 if (rc == LLOG_PROC_BREAK) {
-                                        CDEBUG(D_HA, "recovery from log: "LPX64
-                                               ":%x stopped\n",
-                                               loghandle->lgh_id.lgl_oid,
-                                               loghandle->lgh_id.lgl_ogen);
                                         GOTO(out, rc);
                                 } else if (rc == LLOG_DEL_RECORD) {
                                         llog_cancel_rec(loghandle,
@@ -352,13 +357,13 @@ static int llog_process_thread(void *arg)
                 OBD_FREE(buf, LLOG_CHUNK_SIZE);
         lpi->lpi_rc = rc;
 #ifdef __KERNEL__
-        complete(&lpi->lpi_completion);
+        cfs_complete(&lpi->lpi_completion);
 #endif
         return 0;
 }
 
-int llog_process(struct llog_handle *loghandle, llog_cb_t cb,
-                 void *data, void *catdata)
+int llog_process_flags(struct llog_handle *loghandle, llog_cb_t cb,
+                       void *data, void *catdata, int flags)
 {
         struct llog_process_info *lpi;
         int                      rc;
@@ -373,22 +378,30 @@ int llog_process(struct llog_handle *loghandle, llog_cb_t cb,
         lpi->lpi_cb        = cb;
         lpi->lpi_cbdata    = data;
         lpi->lpi_catdata   = catdata;
+        lpi->lpi_flags     = flags;
 
 #ifdef __KERNEL__
-        init_completion(&lpi->lpi_completion);
-        rc = cfs_kernel_thread(llog_process_thread, lpi, CLONE_VM | CLONE_FILES);
+        cfs_init_completion(&lpi->lpi_completion);
+        rc = cfs_create_thread(llog_process_thread, lpi, CFS_DAEMON_FLAGS);
         if (rc < 0) {
                 CERROR("cannot start thread: %d\n", rc);
                 OBD_FREE_PTR(lpi);
                 RETURN(rc);
         }
-        wait_for_completion(&lpi->lpi_completion);
+        cfs_wait_for_completion(&lpi->lpi_completion);
 #else
         llog_process_thread(lpi);
 #endif
         rc = lpi->lpi_rc;
         OBD_FREE_PTR(lpi);
         RETURN(rc);
+}
+EXPORT_SYMBOL(llog_process_flags);
+
+int llog_process(struct llog_handle *loghandle, llog_cb_t cb,
+                 void *data, void *catdata)
+{
+        return llog_process_flags(loghandle, cb, data, catdata, 0);
 }
 EXPORT_SYMBOL(llog_process);
 
@@ -441,9 +454,20 @@ int llog_reverse_process(struct llog_handle *loghandle, llog_cb_t cb,
 
                 rec = buf;
                 idx = le32_to_cpu(rec->lrh_index);
-                if (idx < index)
-                        CDEBUG(D_RPCTRACE, "index %u : idx %u\n", index, idx);
+                CDEBUG(D_RPCTRACE, "index %u : idx %u\n", index, idx);
                 while (idx < index) {
+                        if ((void*)rec >= buf + LLOG_CHUNK_SIZE || (void*)rec < buf) {
+                                CERROR("Attempt to navigate outside llog block, "
+                                       "index %u, idx %u", index, idx);
+                                GOTO(out, rc = -EIO);
+                        }   
+                        if ((le32_to_cpu(rec->lrh_type) &  LLOG_OP_MASK)
+                            != LLOG_OP_MAGIC) {
+                                CERROR("Invalid llog record, type %u,len %u\n",
+                                       le32_to_cpu(rec->lrh_type),
+                                       le32_to_cpu(rec->lrh_len));
+                                GOTO(out, rc = -EIO);
+                        }   
                         rec = ((void *)rec + le32_to_cpu(rec->lrh_len));
                         idx ++;
                 }
@@ -461,10 +485,6 @@ int llog_reverse_process(struct llog_handle *loghandle, llog_cb_t cb,
                         if (ext2_test_bit(index, llh->llh_bitmap)) {
                                 rc = cb(loghandle, rec, data);
                                 if (rc == LLOG_PROC_BREAK) {
-                                        CWARN("recovery from log: "LPX64":%x"
-                                              " stopped\n",
-                                              loghandle->lgh_id.lgl_oid,
-                                              loghandle->lgh_id.lgl_ogen);
                                         GOTO(out, rc);
                                 }
                                 if (rc)

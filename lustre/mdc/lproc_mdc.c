@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -39,6 +41,7 @@
 #include <linux/vfs.h>
 #include <obd_class.h>
 #include <lprocfs_status.h>
+#include <lustre_log.h>
 
 #ifdef LPROCFS
 
@@ -49,9 +52,9 @@ static int mdc_rd_max_rpcs_in_flight(char *page, char **start, off_t off,
         struct client_obd *cli = &dev->u.cli;
         int rc;
 
-        spin_lock(&cli->cl_loi_list_lock);
+        client_obd_list_lock(&cli->cl_loi_list_lock);
         rc = snprintf(page, count, "%u\n", cli->cl_max_rpcs_in_flight);
-        spin_unlock(&cli->cl_loi_list_lock);
+        client_obd_list_unlock(&cli->cl_loi_list_lock);
         return rc;
 }
 
@@ -69,12 +72,72 @@ static int mdc_wr_max_rpcs_in_flight(struct file *file, const char *buffer,
         if (val < 1 || val > MDC_MAX_RIF_MAX)
                 return -ERANGE;
 
-        spin_lock(&cli->cl_loi_list_lock);
+        client_obd_list_lock(&cli->cl_loi_list_lock);
         cli->cl_max_rpcs_in_flight = val;
-        spin_unlock(&cli->cl_loi_list_lock);
+        client_obd_list_unlock(&cli->cl_loi_list_lock);
 
         return count;
 }
+
+/* temporary for testing */
+static int mdc_wr_kuc(struct file *file, const char *buffer,
+                      unsigned long count, void *data)
+{
+        struct obd_device *obd = data;
+        struct kuc_hdr *lh;
+        struct hsm_action_list *hal;
+        struct hsm_action_item *hai;
+        int len;
+        int fd, rc;
+
+        rc = lprocfs_write_helper(buffer, count, &fd);
+        if (rc)
+                return rc;
+
+        if (fd < 0)
+                return -ERANGE;
+        CWARN("message to fd %d\n", fd);
+
+        len = sizeof(*lh) + sizeof(*hal) + MTI_NAME_MAXLEN +
+                /* for mockup below */ 2 * cfs_size_round(sizeof(*hai));
+
+        OBD_ALLOC(lh, len);
+
+        lh->kuc_magic = KUC_MAGIC;
+        lh->kuc_transport = KUC_TRANSPORT_HSM;
+        lh->kuc_msgtype = HMT_ACTION_LIST;
+        lh->kuc_msglen = len;
+
+        hal = (struct hsm_action_list *)(lh + 1);
+        hal->hal_version = HAL_VERSION;
+        hal->hal_archive_num = 1;
+        obd_uuid2fsname(hal->hal_fsname, obd->obd_name, MTI_NAME_MAXLEN);
+
+        /* mock up an action list */
+        hal->hal_count = 2;
+        hai = hai_zero(hal);
+        hai->hai_action = HSMA_ARCHIVE;
+        hai->hai_fid.f_oid = 5;
+        hai->hai_len = sizeof(*hai);
+        hai = hai_next(hai);
+        hai->hai_action = HSMA_RESTORE;
+        hai->hai_fid.f_oid = 10;
+        hai->hai_len = sizeof(*hai);
+
+        /* This works for either broadcast or unicast to a single fd */
+        if (fd == 0) {
+                rc = libcfs_kkuc_group_put(KUC_GRP_HSM, lh);
+        } else {
+                cfs_file_t *fp = cfs_get_fd(fd);
+                rc = libcfs_kkuc_msg_put(fp, lh);
+                cfs_put_file(fp);
+        }
+        OBD_FREE(lh, len);
+        if (rc < 0)
+                return rc;
+        return count;
+}
+
 static struct lprocfs_vars lprocfs_mdc_obd_vars[] = {
         { "uuid",            lprocfs_rd_uuid,        0, 0 },
         { "ping",            0, lprocfs_wr_ping,     0, 0, 0222 },
@@ -88,11 +151,22 @@ static struct lprocfs_vars lprocfs_mdc_obd_vars[] = {
         /*{ "filegroups",      lprocfs_rd_filegroups,  0, 0 },*/
         { "mds_server_uuid", lprocfs_rd_server_uuid, 0, 0 },
         { "mds_conn_uuid",   lprocfs_rd_conn_uuid,   0, 0 },
+        /*
+         * FIXME: below proc entry is provided, but not in used, instead
+         * sbi->sb_md_brw_size is used, the per obd variable should be used
+         * when CMD is enabled, and dir pages are managed in MDC layer.
+         * Remember to enable proc write function.
+         */
+        { "max_pages_per_rpc",  lprocfs_obd_rd_max_pages_per_rpc,
+                                /* lprocfs_obd_wr_max_pages_per_rpc */0, 0 },
         { "max_rpcs_in_flight", mdc_rd_max_rpcs_in_flight,
                                 mdc_wr_max_rpcs_in_flight, 0 },
         { "timeouts",        lprocfs_rd_timeouts,    0, 0 },
-        { "import",          lprocfs_rd_import, lprocfs_wr_reconnect, 0 },
+        { "import",          lprocfs_rd_import,      lprocfs_wr_import, 0 },
         { "state",           lprocfs_rd_state,       0, 0 },
+        { "hsm_nl",          0, mdc_wr_kuc,          0, 0, 0222 },
+        { "pinger_recov",    lprocfs_rd_pinger_recov,
+                             lprocfs_wr_pinger_recov, 0, 0 },
         { 0 }
 };
 

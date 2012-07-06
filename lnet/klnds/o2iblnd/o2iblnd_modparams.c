@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -120,7 +120,26 @@ static int pmr_pool_size = 512;
 CFS_MODULE_PARM(pmr_pool_size, "i", int, 0444,
                 "size of the MR cache pmr pool");
 
+/*
+ * 0: disable failover
+ * 1: enable failover if necessary
+ * 2: force to failover (for debug)
+ */
+static int dev_failover = 0;
+CFS_MODULE_PARM(dev_failover, "i", int, 0444,
+               "HCA failover for bonding (0 off, 1 on, other values reserved)");
+
+
+static int require_privileged_port = 0;
+CFS_MODULE_PARM(require_privileged_port, "i", int, 0644,
+                "require privileged port when accepting connection");
+
+static int use_privileged_port = 1;
+CFS_MODULE_PARM(use_privileged_port, "i", int, 0644,
+                "use privileged port when initiating connection");
+
 kib_tunables_t kiblnd_tunables = {
+        .kib_dev_failover           = &dev_failover,
         .kib_service                = &service,
         .kib_cksum                  = &cksum,
         .kib_timeout                = &timeout,
@@ -141,6 +160,8 @@ kib_tunables_t kiblnd_tunables = {
         .kib_fmr_flush_trigger      = &fmr_flush_trigger,
         .kib_fmr_cache              = &fmr_cache,
         .kib_pmr_pool_size          = &pmr_pool_size,
+        .kib_require_priv_port      = &require_privileged_port,
+        .kib_use_priv_port          = &use_privileged_port
 };
 
 #if defined(CONFIG_SYSCTL) && !CFS_SYSFS_MODULE_PARM
@@ -169,7 +190,8 @@ enum {
         O2IBLND_FMR_POOL_SIZE,
         O2IBLND_FMR_FLUSH_TRIGGER,
         O2IBLND_FMR_CACHE,
-        O2IBLND_PMR_POOL_SIZE
+        O2IBLND_PMR_POOL_SIZE,
+        O2IBLND_DEV_FAILOVER
 };
 #else
 
@@ -193,6 +215,7 @@ enum {
 #define O2IBLND_FMR_FLUSH_TRIGGER CTL_UNNUMBERED
 #define O2IBLND_FMR_CACHE        CTL_UNNUMBERED
 #define O2IBLND_PMR_POOL_SIZE    CTL_UNNUMBERED
+#define O2IBLND_DEV_FAILOVER     CTL_UNNUMBERED
 
 #endif
 
@@ -354,6 +377,14 @@ static cfs_sysctl_table_t kiblnd_ctl_table[] = {
                 .ctl_name = O2IBLND_PMR_POOL_SIZE,
                 .procname = "pmr_pool_size",
                 .data     = &pmr_pool_size,
+                .maxlen   = sizeof(int),
+                .mode     = 0444,
+                .proc_handler = &proc_dointvec
+        },
+        {
+                .ctl_name = O2IBLND_DEV_FAILOVER,
+                .procname = "dev_failover",
+                .data     = &dev_failover,
                 .maxlen   = sizeof(int),
                 .mode     = 0444,
                 .proc_handler = &proc_dointvec

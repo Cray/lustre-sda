@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -49,25 +49,22 @@
 #include <linux/lustre_compat25.h>
 #include <linux/lvfs_linux.h>
 #else
-struct group_info { /* unused */ };
+#include <liblustre.h>
 #endif
 
 #define LLOG_LVFS
 
-/* lvfs.c */
-int obd_alloc_fail(const void *ptr, const char *name, const char *type,
-                   size_t size, const char *file, int line);
-
 /* simple.c */
 
 struct lvfs_ucred {
-        struct upcall_cache_entry *luc_uce;
-        __u32 luc_fsuid;
-        __u32 luc_fsgid;
-        cfs_kernel_cap_t luc_cap;
-        __u32 luc_suppgid1;
-        __u32 luc_suppgid2;
-        __u32 luc_umask;
+        __u32                   luc_uid;
+        __u32                   luc_gid;
+        __u32                   luc_fsuid;
+        __u32                   luc_fsgid;
+        cfs_kernel_cap_t        luc_cap;
+        __u32                   luc_umask;
+	struct group_info      *luc_ginfo;
+	struct md_identity     *luc_identity;
 };
 
 struct lvfs_callback_ops {
@@ -83,11 +80,7 @@ struct lvfs_run_ctxt {
         struct lvfs_ucred        luc;
         int                      ngroups;
         struct lvfs_callback_ops cb_ops;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,4)
         struct group_info       *group_info;
-#else
-        struct group_info        group_info;
-#endif
 #ifdef OBD_CTXT_DEBUG
         __u32                    magic;
 #endif
@@ -102,14 +95,14 @@ struct lvfs_run_ctxt {
 #ifdef __KERNEL__
 
 struct dentry *simple_mkdir(struct dentry *dir, struct vfsmount *mnt, 
-                            char *name, int mode, int fix);
+                            const char *name, int mode, int fix);
 struct dentry *simple_mknod(struct dentry *dir, char *name, int mode, int fix);
 int lustre_rename(struct dentry *dir, struct vfsmount *mnt, char *oldname,
                   char *newname);
 int lustre_fread(struct file *file, void *buf, int len, loff_t *off);
 int lustre_fwrite(struct file *file, const void *buf, int len, loff_t *off);
 int lustre_fsync(struct file *file);
-long l_readdir(struct file * file, struct list_head *dentry_list);
+long l_readdir(struct file * file, cfs_list_t *dentry_list);
 int l_notify_change(struct vfsmount *mnt, struct dentry *dchild,
                     struct iattr *newattrs);
 int simple_truncate(struct dentry *dir, struct vfsmount *mnt,
@@ -120,7 +113,7 @@ static inline void l_dput(struct dentry *de)
         if (!de || IS_ERR(de))
                 return;
         //shrink_dcache_parent(de);
-        LASSERT(atomic_read(&de->d_count) > 0);
+	LASSERT(d_refcount(de) > 0);
         dput(de);
 }
 
@@ -153,9 +146,9 @@ static inline struct dentry *ll_lookup_one_len(const char *fid_name,
 
 static inline void ll_sleep(int t)
 {
-        set_current_state(TASK_INTERRUPTIBLE);
-        schedule_timeout(t * HZ);
-        set_current_state(TASK_RUNNING);
+        cfs_set_current_state(CFS_TASK_INTERRUPTIBLE);
+        cfs_schedule_timeout(t * CFS_HZ);
+        cfs_set_current_state(CFS_TASK_RUNNING);
 }
 #endif
 

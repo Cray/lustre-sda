@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2006, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -65,16 +67,17 @@ static inline void ll_remove_from_page_cache(struct page *page)
 #ifdef HAVE_RW_TREE_LOCK
         write_lock_irq(&mapping->tree_lock);
 #else
-	spin_lock_irq(&mapping->tree_lock);
+	cfs_spin_lock_irq(&mapping->tree_lock);
 #endif
         radix_tree_delete(&mapping->page_tree, page->index);
         page->mapping = NULL;
         mapping->nrpages--;
-	__dec_zone_page_state(page, NR_FILE_PAGES);
+        __dec_zone_page_state(page, NR_FILE_PAGES);
+
 #ifdef HAVE_RW_TREE_LOCK
         write_unlock_irq(&mapping->tree_lock);
 #else
-	spin_unlock_irq(&mapping->tree_lock);
+	cfs_spin_unlock_irq(&mapping->tree_lock);
 #endif
 }
 #else /* HAVE_REMOVE_FROM_PAGE_CACHE */
@@ -105,21 +108,12 @@ truncate_complete_page(struct address_space *mapping, struct page *page)
 }
 #endif /* !HAVE_TRUNCATE_COMPLETE_PAGE */
 
-#if !defined(HAVE_D_REHASH_COND) && !defined(HAVE___D_REHASH)
-/* megahack */
-static inline void d_rehash_cond(struct dentry * entry, int lock)
-{
-	if (!lock)
-		spin_unlock(&dcache_lock);
-
-	d_rehash(entry);
-
-	if (!lock)
-		spin_lock(&dcache_lock);
-}
-
-#define __d_rehash(dentry, lock) d_rehash_cond(dentry, lock)
-#endif /* !HAVE_D_REHASH_COND && !HAVE___D_REHASH*/
+#ifdef HAVE_DCACHE_LOCK
+#  define dget_dlock(d)                 dget_locked(d)
+#  define d_refcount(d)                 atomic_read(&(d)->d_count)
+#else
+#  define d_refcount(d)                 ((d)->d_count)
+#endif /* HAVE_DCACHE_LOCK */
 
 #ifdef ATTR_OPEN
 # define ATTR_FROM_OPEN ATTR_OPEN

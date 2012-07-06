@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2001, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -68,27 +70,15 @@
 #endif
 #endif
 
+/* This macro is only for compatibility reasons with older Linux Lustre user
+ * tools. New ioctls should NOT use this macro as the ioctl "size". Instead
+ * the ioctl should get a "size" argument which is the actual data type used
+ * by the ioctl, to ensure the ioctl interface is versioned correctly. */
 #define OBD_IOC_DATA_TYPE               long
 
 #define LUSTRE_FATAL_SIGS (sigmask(SIGKILL) | sigmask(SIGINT) |                \
                            sigmask(SIGTERM) | sigmask(SIGQUIT) |               \
                            sigmask(SIGALRM))
-
-#ifdef __KERNEL__
-static inline sigset_t l_w_e_set_sigs(int sigs)
-{
-        sigset_t old;
-        unsigned long irqflags;
-
-        SIGNAL_MASK_LOCK(current, irqflags);
-        old = current->blocked;
-        siginitsetinv(&current->blocked, sigs);
-        RECALC_SIGPENDING;
-        SIGNAL_MASK_UNLOCK(current, irqflags);
-
-        return old;
-}
-#endif
 
 #ifdef __KERNEL__
 /* initialize ost_lvb according to inode */

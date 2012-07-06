@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -43,7 +43,7 @@
 
 #define LL_FID_NAMELEN (16 + 1 + 8 + 1)
 
-#include <libcfs/kp30.h>
+#include <libcfs/libcfs.h>
 #if defined(__linux__)
 #include <linux/lvfs.h>
 #elif defined(__APPLE__)
@@ -54,7 +54,7 @@
 #error Unsupported operating system.
 #endif
 
-#include <lustre_ucache.h>
+#include <libcfs/lucache.h>
 
 
 #ifdef LIBLUSTRE

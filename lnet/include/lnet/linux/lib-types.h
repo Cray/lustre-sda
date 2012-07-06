@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -43,7 +43,9 @@
 
 #ifdef __KERNEL__
 # include <linux/uio.h>
+# ifdef HAVE_LINUX_KERNEL_LOCK
 # include <linux/smp_lock.h>
+# endif
 # include <linux/types.h>
 #else
 # define LNET_USE_LIB_FREELIST

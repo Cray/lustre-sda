@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -36,7 +38,7 @@
  * lustre/include/obd_ost.h
  *
  * Data structures for object storage targets and client: OST & OSC's
- * 
+ *
  * See also lustre_idl.h for wire formats of requests.
  */
 
@@ -46,15 +48,16 @@
 #include <obd_class.h>
 
 struct osc_brw_async_args {
-        struct obdo     *aa_oa;
-        int              aa_requested_nob;
-        int              aa_nio_count;
-        obd_count        aa_page_count;
-        int              aa_resends;
-        int              aa_pshift;
-        struct brw_page **aa_ppga;
+        struct obdo       *aa_oa;
+        int                aa_requested_nob;
+        int                aa_nio_count;
+        obd_count          aa_page_count;
+        int                aa_resends;
+        struct brw_page  **aa_ppga;
         struct client_obd *aa_cli;
-        struct list_head aa_oaps;
+        cfs_list_t         aa_oaps;
+        struct obd_capa   *aa_ocapa;
+        struct cl_req     *aa_clerq;
 };
 
 #define osc_grant_args osc_brw_async_args
@@ -62,16 +65,30 @@ struct osc_async_args {
         struct obd_info   *aa_oi;
 };
 
-struct osc_enqueue_args {
-        struct obd_export       *oa_exp;
-        struct obd_info         *oa_oi;
-        struct ldlm_enqueue_info*oa_ei;
+struct osc_setattr_args {
+        struct obdo         *sa_oa;
+        obd_enqueue_update_f sa_upcall;
+        void                *sa_cookie;
 };
 
+struct osc_enqueue_args {
+        struct obd_export        *oa_exp;
+        int                      *oa_flags;
+        obd_enqueue_update_f      oa_upcall;
+        void                     *oa_cookie;
+        struct ost_lvb           *oa_lvb;
+        struct lustre_handle     *oa_lockh;
+        struct ldlm_enqueue_info *oa_ei;
+        unsigned int              oa_agl:1;
+};
+
+#if 0
 int osc_extent_blocking_cb(struct ldlm_lock *lock,
                            struct ldlm_lock_desc *new, void *data,
                            int flag);
+#endif
 
+#define POSTID LPU64":"LPU64
 /** 
  * Build DLM resource name from object id & group for osc-ost extent lock.
  */

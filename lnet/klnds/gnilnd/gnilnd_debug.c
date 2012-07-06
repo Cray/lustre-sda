@@ -23,15 +23,14 @@
 #include "gnilnd.h"
 
 void
-_kgnilnd_debug_msg(kgn_msg_t *msg, __u32 mask,
-                struct libcfs_debug_msg_data *data, const char *fmt, ... )
+_kgnilnd_debug_msg(kgn_msg_t *msg, struct libcfs_debug_msg_data *msgdata, 
+                   const char *fmt, ... )
 {
         va_list args;
 
         va_start(args, fmt);
         /* XXX Nic TBD: add handling of gnm_u ? */
-        libcfs_debug_vmsg2(data->msg_cdls, data->msg_subsys, mask, data->msg_file,
-                           data->msg_fn, data->msg_line, fmt, args,
+        libcfs_debug_vmsg2(msgdata, fmt, args,
                            " msg@0x%p m/v/ty/ck/pck/pl %08x/%d/%d/%x/%x/%d x%d:%s\n",
                            msg, msg->gnm_magic, msg->gnm_version, msg->gnm_type,
                            msg->gnm_cksum, msg->gnm_payload_cksum,
@@ -41,14 +40,13 @@ _kgnilnd_debug_msg(kgn_msg_t *msg, __u32 mask,
 }
 
 void
-_kgnilnd_debug_conn(kgn_conn_t *conn, __u32 mask,
-                struct libcfs_debug_msg_data *data, const char *fmt, ... )
+_kgnilnd_debug_conn(kgn_conn_t *conn, struct libcfs_debug_msg_data *msgdata, 
+                    const char *fmt, ... )
 {
         va_list args;
 
         va_start(args, fmt);
-        libcfs_debug_vmsg2(data->msg_cdls, data->msg_subsys, mask, data->msg_file,
-                data->msg_fn, data->msg_line, fmt, args,
+        libcfs_debug_vmsg2(msgdata, fmt, args,
                 " conn@0x%p->%s:%s cq %u, to %ds, "
                 " RX %d @ %lu/%lus; TX %d @ %lus/%lus; "
                 " NOOP %lus/%lu/%lus; sched %lus/%lus/%lus ago \n",
@@ -73,8 +71,8 @@ _kgnilnd_debug_conn(kgn_conn_t *conn, __u32 mask,
 }
 
 void
-_kgnilnd_debug_tx(kgn_tx_t *tx, __u32 mask,
-                struct libcfs_debug_msg_data *data, const char *fmt, ... )
+_kgnilnd_debug_tx(kgn_tx_t *tx, struct libcfs_debug_msg_data *msgdata, 
+                  const char *fmt, ... )
 {
         kgn_tx_ev_id_t  *id   = &tx->tx_id;
         char            *nid = "<?>";
@@ -85,12 +83,11 @@ _kgnilnd_debug_tx(kgn_tx_t *tx, __u32 mask,
         }
         
         va_start(args, fmt);
-        libcfs_debug_vmsg2(data->msg_cdls, data->msg_subsys, mask, data->msg_file,
-                data->msg_fn, data->msg_line, fmt, args,
-                " tx@0x%p->%s id "LPX64"/%u/%d:%d msg %x/%s q %s@%lds->0x%p f %x re %d\n",
+        libcfs_debug_vmsg2(msgdata, fmt, args,
+                " tx@0x%p->%s id "LPX64"/%u/%d:%d msg %x/%s/%d q %s@%lds->0x%p f %x re %d\n",
                 tx, nid, id->txe_cookie, id->txe_smsg_id, id->txe_cqid, 
                 id->txe_idx, tx->tx_msg.gnm_type,
-                kgnilnd_msgtype2str(tx->tx_msg.gnm_type),
+                kgnilnd_msgtype2str(tx->tx_msg.gnm_type), tx->tx_buftype,
                 kgnilnd_tx_state2str(tx->tx_list_state),
                 cfs_duration_sec((long)jiffies - tx->tx_qtime), tx->tx_list_p,
                 tx->tx_state, tx->tx_retrans);
@@ -98,14 +95,13 @@ _kgnilnd_debug_tx(kgn_tx_t *tx, __u32 mask,
 }
 
 void
-_kgnilnd_api_rc_lbug(const char* rcstr, int rc, struct libcfs_debug_msg_data *data, 
+_kgnilnd_api_rc_lbug(const char* rcstr, int rc, struct libcfs_debug_msg_data *msgdata, 
                         const char *fmt, ... )
 {
         va_list args;
 
         va_start(args, fmt);
-        libcfs_debug_vmsg2(data->msg_cdls, data->msg_subsys, D_ERROR, data->msg_file,
-                           data->msg_fn, data->msg_line, fmt, args,
+        libcfs_debug_vmsg2(msgdata, fmt, args,
                            " GNI API violated? Unexpected rc %s(%d)!\n",
                            rcstr, rc);
         va_end(args);

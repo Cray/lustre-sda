@@ -1,18 +1,18 @@
-diff -rupN linux-2.6.27.21-0.1_1//fs/ext4/ext4.h linux-2.6.27.21-0.1_2//fs/ext4/ext4_i.h
+diff -rupN linux-2.6.27.21-0.1_1//fs/ext4/ext4_i.h linux-2.6.27.21-0.1_2//fs/ext4/ext4_i.h
 --- linux-2.6.27.21-0.1_1//fs/ext4/ext4.h	2009-08-24 13:00:59.000000000 +0530
 +++ linux-2.6.27.21-0.1_2//fs/ext4/ext4.h	2009-08-24 13:01:25.000000000 +0530
 @@ -16,6 +16,7 @@
- #include <linux/wait.h>
- #include <linux/blockgroup_lock.h>
- #include <linux/percpu_counter.h>
+ #include <linux/blkdev.h>
+ #include <linux/magic.h>
+ #include <linux/jbd2.h>
 +#include <linux/dynlocks.h>
- #ifdef __KERNEL__
- #include <linux/compat.h>
- #endif
+ #include <linux/quota.h>
+ #include <linux/rwsem.h>
+ #include <linux/rbtree.h>
 @@ -56,7 +57,9 @@ struct ext4_inode_info {
  	__u32	i_flags;
- 	__u32	i_dtime;
  	ext4_fsblk_t	i_file_acl;
+ 	__u32	i_dtime;
 -
 +	/* following fields for parallel directory operations -bzzz */
 +	struct dynlock   i_htree_lock;

@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -44,12 +44,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <asm/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <getopt.h>
 #include <errno.h>
+
+#include <libcfs/libcfs.h>
 #include "lp_utils.h"
 #ifndef _IOWR
 # include <ioctl.h>
@@ -70,7 +73,7 @@ void rw_file(char *name, long stride, unsigned int seed)
         struct lov_user_md lum = {0};
         int fd, rc, i, bad = 0, root = 0;
         long off;
-        long PAGE_SIZE = sysconf(_SC_PAGESIZE);
+        long page_size = sysconf(_SC_PAGESIZE);
 
         sprintf(filename, "%s/%s", testdir, name);
 
@@ -106,7 +109,7 @@ void rw_file(char *name, long stride, unsigned int seed)
         if (stride < 0) {
                 if (rank == 0) {
                         srandom(seed);
-                        while (stride < PAGE_SIZE/2) {
+                        while (stride < page_size/2) {
                                 stride = random();
                                 stride -= stride % 16;
                                 if (stride < 0)

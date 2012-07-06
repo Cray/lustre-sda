@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -47,7 +49,7 @@ double
 timenow ()
 {
    struct timeval tv;
-   
+
    gettimeofday (&tv, NULL);
    return (tv.tv_sec + tv.tv_usec / 1000000.0);
 }
@@ -70,7 +72,7 @@ unsigned long long subull(unsigned long long a, unsigned long long b)
 {
 	if (a < b)
 		return -1ULL - b + a + 1;
-	
+
 	return a - b;
 }
 
@@ -78,7 +80,7 @@ unsigned long long subul(unsigned long a, unsigned long b)
 {
 	if (a < b)
 		return -1UL - b + a + 1;
-	
+
 	return a - b;
 }
 
@@ -103,7 +105,7 @@ do_stat (int fd)
    counters_t new_counter;
    counters_t counter;
    int    n;
-   
+
    lseek (fd, 0, SEEK_SET);
    now = timenow();
    n = read (fd, buffer, sizeof (buffer));
@@ -111,10 +113,10 @@ do_stat (int fd)
    {
       fprintf (stderr, "Can't read statfile\n");
       exit (1);
-   }	 
+   }
    buffer[n] = 0;
-   
-   n = sscanf (buffer, "%lu %lu %lu %lu %lu %lu %lu %Lu %Lu %Lu %Lu",
+
+   n = sscanf(buffer, "%lu %lu %lu %lu %lu %lu %lu %llu %llu %llu %llu",
 	       &new_counter.msgs_alloc, &new_counter.msgs_max,
 	       &new_counter.errors, 
 	       &new_counter.send_count, &new_counter.recv_count,
@@ -126,21 +128,22 @@ do_stat (int fd)
       fprintf (stderr, "Can't parse statfile\n");
       exit (1);
    }
-   
+
    if (last == 0.0) {
-	   printf ("M %lu(%lu) E %lu S %lu/%llu R %lu/%llu F %lu/%llu D %lu/%llu\n", 
+                printf("M %lu(%lu) E %lu S %llu/%lu R %llu/%lu F %llu/%lu "
+                       "D %llu/%lu\n",
 		   new_counter.msgs_alloc, new_counter.msgs_max,
-		   new_counter.errors, 
-		   new_counter.send_count, new_counter.send_length,
-		   new_counter.recv_count, new_counter.recv_length,
-		   new_counter.route_count, new_counter.route_length, 
-		   new_counter.drop_count, new_counter.drop_length);
+		   new_counter.errors,
+		   new_counter.send_length, new_counter.send_count,
+		   new_counter.recv_length, new_counter.recv_count,
+		   new_counter.route_length, new_counter.route_count,
+		   new_counter.drop_length, new_counter.drop_count);
    } else {
 	   t = now - last;
 
 	   counter.msgs_alloc = new_counter.msgs_alloc;
 	   counter.msgs_max = new_counter.msgs_max;
-	   
+
 	   counter.errors = subul(new_counter.errors, old_counter.errors);
 	   counter.send_count = subul(new_counter.send_count, old_counter.send_count);
 	   counter.recv_count = subul(new_counter.recv_count, old_counter.recv_count);
@@ -162,7 +165,7 @@ do_stat (int fd)
 
    old_counter = new_counter;
    fflush (stdout);
-   
+
    lseek (fd, 0, SEEK_SET);
    last = timenow();
 }
@@ -171,7 +174,7 @@ int main (int argc, char **argv)
 {
    int  interval = 0;
    int  fd;
-   
+
    if (argc > 1)
       interval = atoi (argv[1]);
 
@@ -181,11 +184,11 @@ int main (int argc, char **argv)
       fprintf (stderr, "Can't open stat: %s\n", strerror (errno));
       return (1);
    }
-   
+
    do_stat (fd);
    if (interval == 0)
       return (0);
-   
+
    for (;;)
    {
       sleep (interval);

@@ -62,7 +62,7 @@ Priority: optional
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: Test suite for the Lustre filesystem
  Lustre is a scalable, secure, robust, highly-available cluster file system.
- This release is maintained by Whamcloud, Inc. and available from
+ This release is maintained by Whamcloud, Inc. and available from 
  http://wiki.whamcloud.com/
  .
  This package provides a number of test utilities for the Lustre filesystem.

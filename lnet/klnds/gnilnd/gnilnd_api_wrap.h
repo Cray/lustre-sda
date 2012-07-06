@@ -28,14 +28,11 @@ extern void
 _kgnilnd_api_rc_lbug(const char *rcstr, int rc, struct libcfs_debug_msg_data *data, 
                         const char *fmt, ... );
 
-#define kgnilnd_api_rc_lbug(cdls, rc, file, func, line, fmt, a...)            \
+#define kgnilnd_api_rc_lbug(msgdata, rc, fmt, a...)                           \
 do {                                                                          \
-        static struct libcfs_debug_msg_data _msg_dbg_data =                   \
-        DEBUG_MSG_DATA_INIT(cdls, DEBUG_SUBSYSTEM, file, func, line);         \
-        CHECK_STACK();                                                        \
+        CFS_CHECK_STACK(msgdata, D_ERROR, NULL);                              \
         /* we don't mask this - it is always at D_ERROR */                    \
-        _kgnilnd_api_rc_lbug(kgnilnd_api_rc2str(rc), (rc), &_msg_dbg_data,    \
-                             fmt, ##a);                 \
+        _kgnilnd_api_rc_lbug(kgnilnd_api_rc2str(rc), (rc), msgdata, fmt, ##a);\
 } while(0)
 
 #define DO_RETCODE(x) case x: return #x;
@@ -73,10 +70,10 @@ kgnilnd_api_rc2str(gni_return_t rrc)
 #undef apick_fn
 #undef apick_fmt
 
-#define GNILND_API_RC_LBUG(args...)                                             \
-do {                                                                            \
-        kgnilnd_api_rc_lbug(NULL, rrc, __FILE__, __func__, __LINE__,            \
-                apick_fn"("apick_fmt")", ##args);                               \
+#define GNILND_API_RC_LBUG(args...)                                           \
+do {                                                                          \
+        LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, D_ERROR, NULL);                   \
+        kgnilnd_api_rc_lbug(&msgdata, rrc, apick_fn"("apick_fmt")", ##args);                               \
 } while(0)
 
 #define GNILND_API_SWBUG(args...)                                               \

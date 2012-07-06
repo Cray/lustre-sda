@@ -14,8 +14,8 @@ Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
  2 files changed, 132 insertions(+), 34 deletions(-)
 
 diff -puN fs/quota_v2.c~quota-support-64-bit-quota-format fs/quota_v2.c
---- a/fs/quota/quota_v2.c~quota-support-64-bit-quota-format
-+++ a/fs/quota/quota_v2.c
+--- a/fs/quota_v2.c~quota-support-64-bit-quota-format
++++ a/fs/quota_v2.c
 @@ -23,14 +23,24 @@ MODULE_LICENSE("GPL");
  
  #define __QUOTA_V2_PARANOIA
@@ -229,8 +229,8 @@ diff -puN fs/quota_v2.c~quota-support-64-bit-quota-format fs/quota_v2.c
  			sb_dqinfo(dquot->dq_sb, dquot->dq_type)->dqi_priv;
  
 diff -puN fs/quotaio_v2.h~quota-support-64-bit-quota-format fs/quotaio_v2.h
---- a/fs/quota/quotaio_v2.h~quota-support-64-bit-quota-format
-+++ a/fs/quota/quotaio_v2.h
+--- a/fs/quotaio_v2.h~quota-support-64-bit-quota-format
++++ a/fs/quotaio_v2.h
 @@ -17,8 +17,8 @@
  }
  

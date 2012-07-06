@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -42,9 +42,6 @@
 #ifndef __LINUX_SOCKNAL_LIB_H__
 #define __LINUX_SOCKNAL_LIB_H__
 
-#ifndef AUTOCONF_INCLUDED
-#include <linux/config.h>
-#endif
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/version.h>
@@ -52,7 +49,9 @@
 #include <linux/string.h>
 #include <linux/stat.h>
 #include <linux/errno.h>
+#ifdef HAVE_LINUX_KERNEL_LOCK
 #include <linux/smp_lock.h>
+#endif
 #include <linux/unistd.h>
 #include <net/sock.h>
 #include <net/tcp.h>
@@ -71,12 +70,9 @@
 #include <linux/sysctl.h>
 #include <asm/uaccess.h>
 #include <asm/div64.h>
+#include <linux/syscalls.h>
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,5,0))
-# include <linux/syscalls.h>
-#endif
-
-#include <libcfs/kp30.h>
+#include <libcfs/libcfs.h>
 #include <libcfs/linux/portals_compat25.h>
 
 #include <linux/crc32.h>
@@ -91,13 +87,8 @@ static inline __u32 ksocknal_csum(__u32 crc, unsigned char const *p, size_t len)
 #endif
 }
 
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,7))
-# define SOCKNAL_WSPACE(sk)       sk_stream_wspace(sk)
-# define SOCKNAL_MIN_WSPACE(sk)   sk_stream_min_wspace(sk)
-#else
-# define SOCKNAL_WSPACE(sk)     tcp_wspace(sk)
-# define SOCKNAL_MIN_WSPACE(sk) (((sk)->sk_sndbuf*8)/10)
-#endif
+#define SOCKNAL_WSPACE(sk)       sk_stream_wspace(sk)
+#define SOCKNAL_MIN_WSPACE(sk)   sk_stream_min_wspace(sk)
 
 #ifndef CONFIG_SMP
 static inline

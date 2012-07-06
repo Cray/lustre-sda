@@ -26,8 +26,11 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2001, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ */
+/*
+ * Copyright (c) 2012 Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -50,23 +53,12 @@
 # include <linux/fs.h>
 # include <linux/dcache.h>
 # ifdef CONFIG_FS_POSIX_ACL
-#  ifdef HAVE_XATTR_ACL
-#   include <linux/xattr_acl.h>
-#  endif 
-#  ifdef HAVE_LINUX_POSIX_ACL_XATTR_H
-#   include <linux/posix_acl_xattr.h>
-#  endif
-# endif
-# ifndef HAVE_VFS_INTENT_PATCHES
-#  include <linux/lustre_intent.h>
-# endif
-#endif
+#  include <linux/posix_acl_xattr.h>
+# endif /* CONFIG_FS_POSIX_ACL */
+# include <linux/lustre_intent.h>
+#endif /* __KERNEL__ */
 
-struct ldlm_lock_desc;
 struct mds_obd;
-struct ptlrpc_connection;
-struct ptlrpc_client;
-struct obd_export;
 struct ptlrpc_request;
 struct obd_device;
 struct ll_file_data;
@@ -76,9 +68,7 @@ struct ll_file_data;
 struct dentry *mds_fid2locked_dentry(struct obd_device *obd, struct ll_fid *fid,
                                      struct vfsmount **mnt, int lock_mode,
                                      struct lustre_handle *lockh,
-                                     char *name, int namelen, __u64 lockpart);
-struct dentry *mds_fid2dentry(struct mds_obd *mds, struct ll_fid *fid,
-                              struct vfsmount **mnt);
+                                     __u64 lockpart);
 int mds_update_server_data(struct obd_device *, int force_sync);
 
 /* mds/mds_fs.c */

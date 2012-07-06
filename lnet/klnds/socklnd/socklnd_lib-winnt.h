@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -43,7 +43,6 @@
 #define __WINNT_TDILND_LIB_H__
 
 #include <libcfs/libcfs.h>
-#include <libcfs/kp30.h>
 
 #ifndef CONFIG_SMP
 
@@ -58,7 +57,7 @@ int ksocknal_nsched(void)
 static inline int
 ksocknal_nsched(void)
 {
-        return num_online_cpus();
+        return cfs_num_online_cpus();
 }
 
 static inline int
@@ -74,5 +73,13 @@ ksocknal_irqsched2cpu(int i)
 }
 
 #endif
+
+static inline __u32 ksocknal_csum(__u32 crc, unsigned char const *p, size_t len)
+{
+        while (len-- > 0)
+                crc = ((crc + 0x100) & ~0xff) | ((crc + *p++) & 0xff) ;
+        return crc;
+}
+
 
 #endif

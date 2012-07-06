@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -57,8 +57,11 @@ void ptlrpc_fill_bulk_md (lnet_md_t *md, struct ptlrpc_bulk_desc *desc)
         LASSERT (!(md->options & (LNET_MD_IOVEC | LNET_MD_KIOV | LNET_MD_PHYS)));
 
         md->options |= LNET_MD_KIOV;
-        md->start = &desc->bd_iov[0];
         md->length = desc->bd_iov_count;
+        if (desc->bd_enc_iov)
+                md->start = desc->bd_enc_iov;
+        else
+                md->start = desc->bd_iov;
 }
 
 void ptlrpc_add_bulk_page(struct ptlrpc_bulk_desc *desc, cfs_page_t *page,

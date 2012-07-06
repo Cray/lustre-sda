@@ -310,14 +310,13 @@ nid2hostname() {
             # FIXME: Parse the /etc/elanhosts configuration file to
             # convert ElanID to hostname
             ;;
-    gm*)    # Myrinet
-            # FIXME: Use /usr/sbin/gmlndnid to find the hostname of
-            # the specified GM Global node ID 
-            ;;
     ptl*)   # Portals
             # FIXME: Convert portal ID to hostname
             ;;
-    *)  # tcp, o2ib, cib, openib, iib, vib, ra
+    gni*)   # Gemini
+            host_name=$(printf "nid%05d" $addr)
+            ;;
+    *)  # tcp, o2ib, ra
         ip_addr=${addr}
         # Is it IP address or hostname?
         if [ -n "`echo ${ip_addr} | sed -e 's/\([0-9]\{1,3\}\.\)\{3,3\}[0-9]\{1,3\}//'`" ]
@@ -360,8 +359,8 @@ nids2hostname() {
         [ "${nid}" != "${nid#*@*}" ] && nettype=${nid#*@} || nettype=tcp
 
         case "${nettype}" in
-        lo* | elan* | gm* | ptl*) ;;
-        *)  # tcp, o2ib, cib, openib, iib, vib, ra
+        lo* | elan* | ptl*) ;;
+        *)  # tcp, o2ib, ra, gni
             host_name=$(nid2hostname ${nid})
             if [ ${PIPESTATUS[0]} -ne 0 ]; then
                 echo "${host_name}"
@@ -394,8 +393,8 @@ ip2hostname_single_node() {
         [ "${nid}" != "${nid#*@*}" ] && nettype=${nid#*@} || nettype=tcp
 
         case "${nettype}" in
-        lo* | elan* | gm* | ptl*) ;;
-        *)  # tcp, o2ib, cib, openib, iib, vib, ra
+        lo* | elan* | ptl*) ;;
+        *)  # tcp, o2ib, ra, gni
             host_name=$(nid2hostname ${nid})
             if [ ${PIPESTATUS[0]} -ne 0 ]; then
                 echo "${host_name}"
@@ -707,7 +706,7 @@ check_mgs_group() {
           [ "${MGS_NODENAME[j]}" = "${mgs_node}" ] && continue 1
 
           idx=${MGS_IDX[j]}
-          if [ "${FAILOVERS_NAMES[idx]#*$mgs_node*}" != "${FAILOVERS_NAMES[idx]}" ]
+          if [ "${FAILOVERS_NAMES[idx]#*$mgs_node*}" = "${FAILOVERS_NAMES[idx]}" ]
           then
             error_output "check_mgs_group():"\
             "MGS node ${mgs_node} is not in the ${HOST_NAME[idx]}"\
@@ -1063,24 +1062,4 @@ get_lustre_items() {
     done
 
     return 0
-}
-
-# Execute command on comma-seperated hosts
-remote_exec() {
-    local host_list=$1
-    shift
-    local command=$@
-    local host
-
-    [ -z "$host_list" -o -z "$command" ] && return 0
-
-    command="export PATH=\$PATH:/sbin:/usr/sbin; $command"
-
-    if is_pdsh; then
-        $REMOTE $host_list "$command"
-    else
-        for host in ${host_list//,/ }; do
-            $REMOTE $host "$command"
-        done
-    fi
 }

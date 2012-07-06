@@ -28,6 +28,8 @@
 /*
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -65,6 +67,14 @@ int jt_obd_set_readonly(int argc, char **argv);
 int jt_obd_abort_recovery(int argc, char **argv);
 int jt_obd_list(int argc, char **argv);
 int jt_obd_create(int argc, char **argv);
+int jt_obd_test_create(int argc, char **argv);
+int jt_obd_test_mkdir(int argc, char **argv);
+int jt_obd_test_destroy(int argc, char **argv);
+int jt_obd_test_rmdir(int argc, char **argv);
+int jt_obd_test_lookup(int argc, char **argv);
+int jt_obd_test_setxattr(int argc, char **argv);
+int jt_obd_test_md_getattr(int argc, char **argv);
+
 int jt_obd_setattr(int argc, char **argv);
 int jt_obd_test_setattr(int argc, char **argv);
 int jt_obd_destroy(int argc, char **argv);
@@ -122,5 +132,7 @@ int jt_blockdev_detach(int argc, char **argv);
 int jt_blockdev_info(int argc, char **argv);
 
 int jt_pool_cmd(int argc, char **argv);
+int jt_changelog_register(int argc, char **argv);
+int jt_changelog_deregister(int argc, char **argv);
 
 #endif

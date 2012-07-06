@@ -28,6 +28,8 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -39,72 +41,110 @@
 
 #ifdef __KERNEL__
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,5)
-#error sorry, lustre requires at least 2.6.5
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
+#error sorry, lustre requires at least linux kernel 2.6.9 or later
 #endif
 
 #include <linux/fs_struct.h>
+#include <linux/namei.h>
 #include <libcfs/linux/portals_compat25.h>
 
 #include <linux/lustre_patchless_compat.h>
 
+/* Some old kernels (like 2.6.9) may not define such SEEK_XXX. So the
+ * definition allows to compile lustre client on more OS platforms. */
+#ifndef SEEK_SET
+ #define SEEK_SET 0
+ #define SEEK_CUR 1
+ #define SEEK_END 2
+#endif
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,14)
-struct ll_iattr_struct {
+struct ll_iattr {
         struct iattr    iattr;
         unsigned int    ia_attr_flags;
 };
 #else
-#define ll_iattr_struct iattr
+#define ll_iattr iattr
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,14) */
+
+#ifdef HAVE_FS_STRUCT_RWLOCK
+# define LOCK_FS_STRUCT(fs)   cfs_write_lock(&(fs)->lock)
+# define UNLOCK_FS_STRUCT(fs) cfs_write_unlock(&(fs)->lock)
+#else
+# define LOCK_FS_STRUCT(fs)   cfs_spin_lock(&(fs)->lock)
+# define UNLOCK_FS_STRUCT(fs) cfs_spin_unlock(&(fs)->lock)
+#endif
 
 #ifdef HAVE_FS_STRUCT_USE_PATH
 static inline void ll_set_fs_pwd(struct fs_struct *fs, struct vfsmount *mnt,
-                struct dentry *dentry)
+                                 struct dentry *dentry)
 {
         struct path path;
-	struct path old_pwd;
+        struct path old_pwd;
 
         path.mnt = mnt;
         path.dentry = dentry;
-        write_lock(&fs->lock);
+        LOCK_FS_STRUCT(fs);
         old_pwd = fs->pwd;
         path_get(&path);
         fs->pwd = path;
-        write_unlock(&fs->lock);
+        UNLOCK_FS_STRUCT(fs);
 
-	if (old_pwd.dentry)
-		path_put(&old_pwd);
+        if (old_pwd.dentry)
+                path_put(&old_pwd);
 }
+
 #else
+
 static inline void ll_set_fs_pwd(struct fs_struct *fs, struct vfsmount *mnt,
                 struct dentry *dentry)
 {
         struct dentry *old_pwd;
         struct vfsmount *old_pwdmnt;
 
-        write_lock(&fs->lock);
+        LOCK_FS_STRUCT(fs);
         old_pwd = fs->pwd;
         old_pwdmnt = fs->pwdmnt;
         fs->pwdmnt = mntget(mnt);
         fs->pwd = dget(dentry);
-        write_unlock(&fs->lock);
+        UNLOCK_FS_STRUCT(fs);
 
         if (old_pwd) {
                 dput(old_pwd);
                 mntput(old_pwdmnt);
         }
 }
-#endif /* HAVE_FS_STRUCT_USE_PATH */
+#endif
 
-#ifdef HAVE_INODE_I_MUTEX
-#define UNLOCK_INODE_MUTEX(inode) do {mutex_unlock(&(inode)->i_mutex); } while(0)
-#define LOCK_INODE_MUTEX(inode) do {mutex_lock(&(inode)->i_mutex); } while(0)
-#define TRYLOCK_INODE_MUTEX(inode) mutex_trylock(&(inode)->i_mutex)
+/*
+ * set ATTR_BLOCKS to a high value to avoid any risk of collision with other
+ * ATTR_* attributes (see bug 13828)
+ */
+#define ATTR_BLOCKS    (1 << 27)
+
+#if HAVE_INODE_I_MUTEX
+#define UNLOCK_INODE_MUTEX(inode) \
+do {cfs_mutex_unlock(&(inode)->i_mutex); } while(0)
+#define LOCK_INODE_MUTEX(inode) \
+do {cfs_mutex_lock(&(inode)->i_mutex); } while(0)
+#define LOCK_INODE_MUTEX_PARENT(inode) \
+do {cfs_mutex_lock_nested(&(inode)->i_mutex, I_MUTEX_PARENT); } while(0)
+#define TRYLOCK_INODE_MUTEX(inode) cfs_mutex_trylock(&(inode)->i_mutex)
 #else
-#define UNLOCK_INODE_MUTEX(inode) do {up(&(inode)->i_sem); } while(0)
-#define LOCK_INODE_MUTEX(inode) do {down(&(inode)->i_sem); } while(0)
+#define UNLOCK_INODE_MUTEX(inode) do  cfs_up(&(inode)->i_sem); } while(0)
+#define LOCK_INODE_MUTEX(inode) do  cfs_down(&(inode)->i_sem); } while(0)
 #define TRYLOCK_INODE_MUTEX(inode) (!down_trylock(&(inode)->i_sem))
+#define LOCK_INODE_MUTEX_PARENT(inode) LOCK_INODE_MUTEX(inode)
 #endif /* HAVE_INODE_I_MUTEX */
+
+#ifdef HAVE_SEQ_LOCK
+#define LL_SEQ_LOCK(seq) cfs_mutex_lock(&(seq)->lock)
+#define LL_SEQ_UNLOCK(seq) cfs_mutex_unlock(&(seq)->lock)
+#else
+#define LL_SEQ_LOCK(seq) cfs_down(&(seq)->sem)
+#define LL_SEQ_UNLOCK(seq) cfs_up(&(seq)->sem)
+#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,15)
 #define d_child d_u.d_child
@@ -112,36 +152,15 @@ static inline void ll_set_fs_pwd(struct fs_struct *fs, struct vfsmount *mnt,
 #endif
 
 #ifdef HAVE_DQUOTOFF_MUTEX
-#define UNLOCK_DQONOFF_MUTEX(dqopt) do {mutex_unlock(&(dqopt)->dqonoff_mutex); } while(0)
-#define LOCK_DQONOFF_MUTEX(dqopt) do {mutex_lock(&(dqopt)->dqonoff_mutex); } while(0)
+#define UNLOCK_DQONOFF_MUTEX(dqopt) cfs_mutex_unlock(&(dqopt)->dqonoff_mutex)
+#define LOCK_DQONOFF_MUTEX(dqopt) cfs_mutex_lock(&(dqopt)->dqonoff_mutex)
 #else
-#define UNLOCK_DQONOFF_MUTEX(dqopt) do {up(&(dqopt)->dqonoff_sem); } while(0)
-#define LOCK_DQONOFF_MUTEX(dqopt) do {down(&(dqopt)->dqonoff_sem); } while(0)
+#define UNLOCK_DQONOFF_MUTEX(dqopt) cfs_up(&(dqopt)->dqonoff_sem)
+#define LOCK_DQONOFF_MUTEX(dqopt) cfs_down(&(dqopt)->dqonoff_sem)
 #endif /* HAVE_DQUOTOFF_MUTEX */
-
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,4)
-#define NGROUPS_SMALL           NGROUPS
-#define NGROUPS_PER_BLOCK       ((int)(EXEC_PAGESIZE / sizeof(gid_t)))
-
-struct group_info {
-        int        ngroups;
-        atomic_t   usage;
-        gid_t      small_block[NGROUPS_SMALL];
-        int        nblocks;
-        gid_t     *blocks[0];
-};
-#define current_ngroups current->ngroups
-#define current_groups current->groups
-
-struct group_info *groups_alloc(int gidsetsize);
-void groups_free(struct group_info *ginfo);
-#else /* >= 2.6.4 */
 
 #define current_ngroups current_cred()->group_info->ngroups
 #define current_groups current_cred()->group_info->small_block
-
-#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(2,6,4) */
 
 #ifndef page_private
 #define page_private(page) ((page)->private)
@@ -151,9 +170,6 @@ void groups_free(struct group_info *ginfo);
 #ifndef HAVE_GFP_T
 #define gfp_t int
 #endif
-
-#define lock_dentry(___dentry)          spin_lock(&(___dentry)->d_lock)
-#define unlock_dentry(___dentry)        spin_unlock(&(___dentry)->d_lock)
 
 #define ll_kernel_locked()      kernel_locked()
 
@@ -168,10 +184,8 @@ void groups_free(struct group_info *ginfo);
 #endif
 
 /* XXX our code should be using the 2.6 calls, not the other way around */
-#ifndef HAVE_TRYLOCK_PAGE
-#define TryLockPage(page)               TestSetPageLocked(page)
-#else
-#define TryLockPage(page)               (!trylock_page(page))
+#ifdef HAVE_TRYLOCK_PAGE
+#define TestSetPageLocked(page)         (!trylock_page(page))
 #endif
 
 #define Page_Uptodate(page)             PageUptodate(page)
@@ -188,8 +202,16 @@ void groups_free(struct group_info *ginfo);
 #define ll_permission(inode,mask,nd)    permission(inode,mask,nd)
 #endif
 
-#define ll_pgcache_lock(mapping)          spin_lock(&mapping->page_lock)
-#define ll_pgcache_unlock(mapping)        spin_unlock(&mapping->page_lock)
+#ifdef HAVE_GENERIC_PERMISSION_4ARGS
+#define ll_generic_permission(inode, mask, flags, check_acl) \
+        generic_permission(inode, mask, flags, check_acl)
+#else
+#define ll_generic_permission(inode, mask, flags, check_acl) \
+        generic_permission(inode, mask, check_acl)
+#endif
+
+#define ll_pgcache_lock(mapping)          cfs_spin_lock(&mapping->page_lock)
+#define ll_pgcache_unlock(mapping)        cfs_spin_unlock(&mapping->page_lock)
 #define ll_call_writepage(inode, page)  \
                                 (inode)->i_mapping->a_ops->writepage(page, NULL)
 #define ll_invalidate_inode_pages(inode) \
@@ -201,7 +223,6 @@ void groups_free(struct group_info *ginfo);
 #define to_kdev_t(dev)                  (dev)
 #define kdev_t_to_nr(dev)               (dev)
 #define val_to_kdev(dev)                (dev)
-#define ILOOKUP(sb, ino, test, data)    ilookup5(sb, ino, test, (void *)(data));
 
 #ifdef HAVE_BLKDEV_PUT_2ARGS
 #define ll_blkdev_put(a, b) blkdev_put(a, b)
@@ -217,7 +238,7 @@ void groups_free(struct group_info *ginfo);
 
 #include <linux/writeback.h>
 
-static inline int cleanup_group_info(void)
+static inline int cfs_cleanup_group_info(void)
 {
         struct group_info *ginfo;
 
@@ -248,30 +269,9 @@ static inline int cleanup_group_info(void)
 
 #include <linux/proc_fs.h>
 
-#if !defined(HAVE_D_REHASH_COND) && defined(HAVE___D_REHASH)
-#define d_rehash_cond(dentry, lock) __d_rehash(dentry, lock)
-extern void __d_rehash(struct dentry *dentry, int lock);
-#else
-extern void d_rehash_cond(struct dentry*, int lock);
-#endif
-
-#if !defined(HAVE_D_MOVE_LOCKED) && defined(HAVE___D_MOVE)
-#define d_move_locked(dentry, target) __d_move(dentry, target)
-extern void __d_move(struct dentry *dentry, struct dentry *target);
-#endif
-
-#ifdef HAVE_CAN_SLEEP_ARG
-#define ll_flock_lock_file_wait(file, lock, can_sleep) \
-        flock_lock_file_wait(file, lock, can_sleep)
-#else
-#define ll_flock_lock_file_wait(file, lock, can_sleep) \
-        flock_lock_file_wait(file, lock)
-#endif
-
 #define CheckWriteback(page, cmd) \
         ((!PageWriteback(page) && (cmd & OBD_BRW_READ)) || \
          (PageWriteback(page) && (cmd & OBD_BRW_WRITE)))
-
 
 #ifdef HAVE_PAGE_LIST
 static inline int mapping_has_pages(struct address_space *mapping)
@@ -279,9 +279,9 @@ static inline int mapping_has_pages(struct address_space *mapping)
         int rc = 1;
 
         ll_pgcache_lock(mapping);
-        if (list_empty(&mapping->dirty_pages) &&
-            list_empty(&mapping->clean_pages) &&
-            list_empty(&mapping->locked_pages)) {
+        if (cfs_list_empty(&mapping->dirty_pages) &&
+            cfs_list_empty(&mapping->clean_pages) &&
+            cfs_list_empty(&mapping->locked_pages)) {
                 rc = 0;
         }
         ll_pgcache_unlock(mapping);
@@ -302,13 +302,8 @@ static inline int mapping_has_pages(struct address_space *mapping)
 #endif
 
 #ifdef HAVE_SECURITY_PLUG
-#ifdef HAVE_VFS_SYMLINK_5ARGS
 #define ll_vfs_symlink(dir, dentry, mnt, path, mode) \
                 vfs_symlink(dir, dentry, mnt, path, mode)
-#else
-#define ll_vfs_symlink(dir, dentry, mnt, path, mode) \
-                vfs_symlink(dir, dentry, mnt, path)
-#endif
 #else
 #ifdef HAVE_4ARGS_VFS_SYMLINK
 #define ll_vfs_symlink(dir, dentry, mnt, path, mode) \
@@ -317,16 +312,7 @@ static inline int mapping_has_pages(struct address_space *mapping)
 #define ll_vfs_symlink(dir, dentry, mnt, path, mode) \
                        vfs_symlink(dir, dentry, path)
 #endif
-#endif /* HAVE_SECURITY_PLUG */
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,7))
-#define ll_set_dflags(dentry, flags) do { dentry->d_vfs_flags |= flags; } while(0)
-#else
-#define ll_set_dflags(dentry, flags) do { \
-                spin_lock(&dentry->d_lock); \
-                dentry->d_flags |= flags; \
-                spin_unlock(&dentry->d_lock); \
-        } while(0)
 #endif
 
 #ifndef container_of
@@ -369,7 +355,7 @@ static inline int filemap_fdatawrite_range(struct address_space *mapping,
 
 #ifdef HAVE_MAPPING_CAP_WRITEBACK_DIRTY
         if (!mapping_cap_writeback_dirty(mapping))
-		rc = 0;
+                rc = 0;
 #else
         if (mapping->backing_dev_info->memory_backed)
                 rc = 0;
@@ -395,11 +381,31 @@ ll_kern_mount(const char *fstype, int flags, const char *name, void *data)
         if (!type)
                 return ERR_PTR(-ENODEV);
         mnt = vfs_kern_mount(type, flags, name, data);
-        module_put(type->owner);
+        cfs_module_put(type->owner);
         return mnt;
 }
 #else
 #define ll_kern_mount(fstype, flags, name, data) do_kern_mount((fstype), (flags), (name), (data))
+#endif
+
+#ifndef HAVE_ATOMIC_MNT_COUNT
+static inline unsigned int mnt_get_count(struct vfsmount *mnt)
+{
+#ifdef CONFIG_SMP
+        unsigned int count = 0;
+        int cpu;
+
+        for_each_possible_cpu(cpu) {
+                count += per_cpu_ptr(mnt->mnt_pcp, cpu)->mnt_count;
+        }
+
+        return count;
+#else
+        return mnt->mnt_count;
+#endif
+}
+#else
+# define mnt_get_count(mnt)      cfs_atomic_read(&mnt->mnt_count)
 #endif
 
 #ifdef HAVE_STATFS_DENTRY_PARAM
@@ -408,24 +414,28 @@ ll_kern_mount(const char *fstype, int flags, const char *name, void *data)
 #define ll_do_statfs(sb, sfs) (sb)->s_op->statfs((sb), (sfs))
 #endif
 
-#ifndef HAVE_D_OBTAIN_ALIAS
-/* The old d_alloc_anon() didn't free the inode reference on error
- * like d_obtain_alias().  Hide that difference/inconvenience here. */
-static inline struct dentry *d_obtain_alias(struct inode *inode)
+#ifndef HAVE_SB_TIME_GRAN
+#ifndef HAVE_S_TIME_GRAN
+#error Need s_time_gran patch!
+#endif
+static inline u32 get_sb_time_gran(struct super_block *sb)
 {
-	struct dentry *anon = d_alloc_anon(inode);
-
-	if (anon == NULL)
-		iput(inode);
-
-	return anon;
+        return sb->s_time_gran;
 }
+#endif
+
+#ifdef HAVE_RW_TREE_LOCK
+#define TREE_READ_LOCK_IRQ(mapping)     read_lock_irq(&(mapping)->tree_lock)
+#define TREE_READ_UNLOCK_IRQ(mapping) read_unlock_irq(&(mapping)->tree_lock)
+#else
+#define TREE_READ_LOCK_IRQ(mapping) cfs_spin_lock_irq(&(mapping)->tree_lock)
+#define TREE_READ_UNLOCK_IRQ(mapping) cfs_spin_unlock_irq(&(mapping)->tree_lock)
 #endif
 
 #ifdef HAVE_UNREGISTER_BLKDEV_RETURN_INT
 #define ll_unregister_blkdev(a,b)       unregister_blkdev((a),(b))
 #else
-static inline 
+static inline
 int ll_unregister_blkdev(unsigned int dev, const char *name)
 {
         unregister_blkdev(dev, name);
@@ -439,31 +449,227 @@ int ll_unregister_blkdev(unsigned int dev, const char *name)
 #define ll_invalidate_bdev(a,b)         invalidate_bdev((a))
 #endif
 
-#ifdef HAVE_FS_RENAME_DOES_D_MOVE
-#define LL_RENAME_DOES_D_MOVE	FS_RENAME_DOES_D_MOVE
+#ifdef HAVE_INODE_BLKSIZE
+#define ll_inode_blksize(a)     (a)->i_blksize
 #else
-#define LL_RENAME_DOES_D_MOVE	FS_ODD_RENAME
+#define ll_inode_blksize(a)     (1<<(a)->i_blkbits)
 #endif
+
+#ifdef HAVE_FS_RENAME_DOES_D_MOVE
+#define LL_RENAME_DOES_D_MOVE   FS_RENAME_DOES_D_MOVE
+#else
+#define LL_RENAME_DOES_D_MOVE   FS_ODD_RENAME
+#endif
+
+#ifndef HAVE_D_OBTAIN_ALIAS
+/* The old d_alloc_anon() didn't free the inode reference on error
+ * like d_obtain_alias().  Hide that difference/inconvenience here. */
+static inline struct dentry *d_obtain_alias(struct inode *inode)
+{
+	struct dentry *anon = d_alloc_anon(inode);
+
+	if (anon == NULL) {
+		iput(inode);
+                anon = ERR_PTR(-ENOMEM);
+        }
+
+	return anon;
+}
+#endif
+
+/* add a lustre compatible layer for crypto API */
+#include <linux/crypto.h>
+#ifdef HAVE_ASYNC_BLOCK_CIPHER
+#define ll_crypto_hash          crypto_hash
+#define ll_crypto_cipher        crypto_blkcipher
+#define ll_crypto_alloc_hash(name, type, mask)  crypto_alloc_hash(name, type, mask)
+#define ll_crypto_hash_setkey(tfm, key, keylen) crypto_hash_setkey(tfm, key, keylen)
+#define ll_crypto_hash_init(desc)               crypto_hash_init(desc)
+#define ll_crypto_hash_update(desc, sl, bytes)  crypto_hash_update(desc, sl, bytes)
+#define ll_crypto_hash_final(desc, out)         crypto_hash_final(desc, out)
+#define ll_crypto_alloc_blkcipher(name, type, mask) \
+                crypto_alloc_blkcipher(name ,type, mask)
+#define ll_crypto_blkcipher_setkey(tfm, key, keylen) \
+                crypto_blkcipher_setkey(tfm, key, keylen)
+#define ll_crypto_blkcipher_set_iv(tfm, src, len) \
+                crypto_blkcipher_set_iv(tfm, src, len)
+#define ll_crypto_blkcipher_get_iv(tfm, dst, len) \
+                crypto_blkcipher_get_iv(tfm, dst, len)
+#define ll_crypto_blkcipher_encrypt(desc, dst, src, bytes) \
+                crypto_blkcipher_encrypt(desc, dst, src, bytes)
+#define ll_crypto_blkcipher_decrypt(desc, dst, src, bytes) \
+                crypto_blkcipher_decrypt(desc, dst, src, bytes)
+#define ll_crypto_blkcipher_encrypt_iv(desc, dst, src, bytes) \
+                crypto_blkcipher_encrypt_iv(desc, dst, src, bytes)
+#define ll_crypto_blkcipher_decrypt_iv(desc, dst, src, bytes) \
+                crypto_blkcipher_decrypt_iv(desc, dst, src, bytes)
+
+static inline int ll_crypto_hmac(struct ll_crypto_hash *tfm,
+                                 u8 *key, unsigned int *keylen,
+                                 struct scatterlist *sg,
+                                 unsigned int size, u8 *result)
+{
+        struct hash_desc desc;
+        int              rv;
+        desc.tfm   = tfm;
+        desc.flags = 0;
+        rv = crypto_hash_setkey(desc.tfm, key, *keylen);
+        if (rv) {
+                CERROR("failed to hash setkey: %d\n", rv);
+                return rv;
+        }
+        return crypto_hash_digest(&desc, sg, size, result);
+}
+static inline
+unsigned int ll_crypto_tfm_alg_max_keysize(struct crypto_blkcipher *tfm)
+{
+        return crypto_blkcipher_tfm(tfm)->__crt_alg->cra_blkcipher.max_keysize;
+}
+static inline
+unsigned int ll_crypto_tfm_alg_min_keysize(struct crypto_blkcipher *tfm)
+{
+        return crypto_blkcipher_tfm(tfm)->__crt_alg->cra_blkcipher.min_keysize;
+}
+
+#define ll_crypto_hash_blocksize(tfm)       crypto_hash_blocksize(tfm)
+#define ll_crypto_hash_digestsize(tfm)      crypto_hash_digestsize(tfm)
+#define ll_crypto_blkcipher_ivsize(tfm)     crypto_blkcipher_ivsize(tfm)
+#define ll_crypto_blkcipher_blocksize(tfm)  crypto_blkcipher_blocksize(tfm)
+#define ll_crypto_free_hash(tfm)            crypto_free_hash(tfm)
+#define ll_crypto_free_blkcipher(tfm)       crypto_free_blkcipher(tfm)
+#else /* HAVE_ASYNC_BLOCK_CIPHER */
+#include <linux/scatterlist.h>
+#define ll_crypto_hash          crypto_tfm
+#define ll_crypto_cipher        crypto_tfm
+#ifndef HAVE_STRUCT_HASH_DESC
+struct hash_desc {
+        struct ll_crypto_hash *tfm;
+        u32                    flags;
+};
+#endif
+#ifndef HAVE_STRUCT_BLKCIPHER_DESC
+struct blkcipher_desc {
+        struct ll_crypto_cipher *tfm;
+        void                    *info;
+        u32                      flags;
+};
+#endif
+#define ll_crypto_blkcipher_setkey(tfm, key, keylen) \
+        crypto_cipher_setkey(tfm, key, keylen)
+#define ll_crypto_blkcipher_set_iv(tfm, src, len) \
+        crypto_cipher_set_iv(tfm, src, len)
+#define ll_crypto_blkcipher_get_iv(tfm, dst, len) \
+        crypto_cipher_get_iv(tfm, dst, len)
+#define ll_crypto_blkcipher_encrypt(desc, dst, src, bytes) \
+        crypto_cipher_encrypt((desc)->tfm, dst, src, bytes)
+#define ll_crypto_blkcipher_decrypt(desc, dst, src, bytes) \
+        crypto_cipher_decrypt((desc)->tfm, dst, src, bytes)
+#define ll_crypto_blkcipher_decrypt_iv(desc, dst, src, bytes) \
+        crypto_cipher_decrypt_iv((desc)->tfm, dst, src, bytes, (desc)->info)
+#define ll_crypto_blkcipher_encrypt_iv(desc, dst, src, bytes) \
+        crypto_cipher_encrypt_iv((desc)->tfm, dst, src, bytes, (desc)->info)
+
+static inline
+struct ll_crypto_cipher *ll_crypto_alloc_blkcipher(const char * algname,
+                                                   u32 type, u32 mask)
+{
+        char        buf[CRYPTO_MAX_ALG_NAME + 1];
+        const char *pan = algname;
+        u32         flag = 0;
+
+        if (strncmp("cbc(", algname, 4) == 0)
+                flag |= CRYPTO_TFM_MODE_CBC;
+        else if (strncmp("ecb(", algname, 4) == 0)
+                flag |= CRYPTO_TFM_MODE_ECB;
+        if (flag) {
+                char *vp = strnchr(algname, CRYPTO_MAX_ALG_NAME, ')');
+                if (vp) {
+                        memcpy(buf, algname + 4, vp - algname - 4);
+                        buf[vp - algname - 4] = '\0';
+                        pan = buf;
+                } else {
+                        flag = 0;
+                }
+        }
+        return crypto_alloc_tfm(pan, flag);
+}
+
+static inline
+struct ll_crypto_hash *ll_crypto_alloc_hash(const char *alg, u32 type, u32 mask)
+{
+        char        buf[CRYPTO_MAX_ALG_NAME + 1];
+        const char *pan = alg;
+
+        if (strncmp("hmac(", alg, 5) == 0) {
+                char *vp = strnchr(alg, CRYPTO_MAX_ALG_NAME, ')');
+                if (vp) {
+                        memcpy(buf, alg+ 5, vp - alg- 5);
+                        buf[vp - alg - 5] = 0x00;
+                        pan = buf;
+                }
+        }
+        return crypto_alloc_tfm(pan, 0);
+}
+static inline int ll_crypto_hash_init(struct hash_desc *desc)
+{
+       crypto_digest_init(desc->tfm); return 0;
+}
+static inline int ll_crypto_hash_update(struct hash_desc *desc,
+                                        struct scatterlist *sg,
+                                        unsigned int nbytes)
+{
+        struct scatterlist *sl = sg;
+        unsigned int        count;
+                /*
+                 * This way is very weakness. We must ensure that
+                 * the sum of sg[0..i]->length isn't greater than nbytes.
+                 * In the upstream kernel the crypto_hash_update() also
+                 * via the nbytes computed the count of sg[...].
+                 * The old style is more safely. but it gone.
+                 */
+        for (count = 0; nbytes > 0; count ++, sl ++) {
+                nbytes -= sl->length;
+        }
+        crypto_digest_update(desc->tfm, sg, count); return 0;
+}
+static inline int ll_crypto_hash_final(struct hash_desc *desc, u8 *out)
+{
+        crypto_digest_final(desc->tfm, out); return 0;
+}
+static inline int ll_crypto_hmac(struct crypto_tfm *tfm,
+                                 u8 *key, unsigned int *keylen,
+                                 struct scatterlist *sg,
+                                 unsigned int nbytes,
+                                 u8 *out)
+{
+        struct scatterlist *sl = sg;
+        int                 count;
+        for (count = 0; nbytes > 0; count ++, sl ++) {
+                nbytes -= sl->length;
+        }
+        crypto_hmac(tfm, key, keylen, sg, count, out);
+        return 0;
+}
+
+#define ll_crypto_hash_setkey(tfm, key, keylen) crypto_digest_setkey(tfm, key, keylen)
+#define ll_crypto_blkcipher_blocksize(tfm)      crypto_tfm_alg_blocksize(tfm)
+#define ll_crypto_blkcipher_ivsize(tfm) crypto_tfm_alg_ivsize(tfm)
+#define ll_crypto_hash_digestsize(tfm)  crypto_tfm_alg_digestsize(tfm)
+#define ll_crypto_hash_blocksize(tfm)   crypto_tfm_alg_blocksize(tfm)
+#define ll_crypto_free_hash(tfm)        crypto_free_tfm(tfm)
+#define ll_crypto_free_blkcipher(tfm)   crypto_free_tfm(tfm)
+#define ll_crypto_tfm_alg_min_keysize	crypto_tfm_alg_min_keysize
+#define ll_crypto_tfm_alg_max_keysize	crypto_tfm_alg_max_keysize
+#endif /* HAVE_ASYNC_BLOCK_CIPHER */
 
 #ifdef HAVE_FILE_REMOVE_SUID
-#define ll_remove_suid(file, mnt)       file_remove_suid(file)
+# define ll_remove_suid(file, mnt)       file_remove_suid(file)
 #else
- #ifdef HAVE_SECURITY_PLUG
-  #ifdef HAVE_PATH_REMOVE_SUID
-   #define ll_remove_suid(file,mnt)      remove_suid(&file->f_path)
-  #else
-   #define ll_remove_suid(file,mnt)      remove_suid(file->f_dentry,mnt)
-  #endif
- #else
-  #define ll_remove_suid(file,mnt)      remove_suid(file->f_dentry)
- #endif
-#endif
-
-#ifndef HAVE_SYNCHRONIZE_RCU
-/* Linux 2.6.32 provides define when !CONFIG_TREE_PREEMPT_RCU */
-#ifndef synchronize_rcu
-#define synchronize_rcu() synchronize_kernel()
-#endif
+# ifdef HAVE_SECURITY_PLUG
+#  define ll_remove_suid(file,mnt)      remove_suid(file->f_dentry,mnt)
+# else
+#  define ll_remove_suid(file,mnt)      remove_suid(file->f_dentry)
+# endif
 #endif
 
 #ifdef HAVE_SECURITY_PLUG
@@ -488,45 +694,11 @@ int ll_unregister_blkdev(unsigned int dev, const char *name)
                 vfs_rename(old,old_dir,new,new_dir)
 #endif /* HAVE_SECURITY_PLUG */
 
-#ifndef for_each_possible_cpu
-#define for_each_possible_cpu(i) for_each_cpu(i)
+#ifdef for_each_possible_cpu
+#define cfs_for_each_possible_cpu(cpu) for_each_possible_cpu(cpu)
+#elif defined(for_each_cpu)
+#define cfs_for_each_possible_cpu(cpu) for_each_cpu(cpu)
 #endif
-
-#ifndef cpu_to_node
-#define cpu_to_node(cpu)         0
-#endif
-
-#ifdef HAVE_REGISTER_SHRINKER
-
-typedef int (*shrinker_t)(SHRINKER_FIRST_ARG int nr_to_scan, gfp_t gfp_mask);
-
-static inline
-struct shrinker *set_shrinker(int seek, shrinker_t func)
-{
-        struct shrinker *s;
-
-        s = kmalloc(sizeof(*s), GFP_KERNEL);
-        if (s == NULL)
-                return (NULL);
-
-        s->shrink = func;
-        s->seeks = seek;
-
-        register_shrinker(s);
-
-        return s;
-}
-
-static inline
-void remove_shrinker(struct shrinker *shrinker) 
-{
-        if (shrinker == NULL)
-                return;
-
-        unregister_shrinker(shrinker);
-        kfree(shrinker);
-}
-#endif /* HAVE_REGISTER_SHRINKER */
 
 #ifdef HAVE_BIO_ENDIO_2ARG
 #define cfs_bio_io_error(a,b)   bio_io_error((a))
@@ -546,10 +718,6 @@ void remove_shrinker(struct shrinker *shrinker)
 #define cfs_path_put(nd)     path_release(nd)
 #endif
 
-#ifndef list_for_each_safe_rcu
-#define list_for_each_safe_rcu(a,b,c) list_for_each_rcu(a, c)
-#endif
-
 #ifndef abs
 static inline int abs(int x)
 {
@@ -562,19 +730,10 @@ static inline long labs(long x)
 {
         return (x < 0) ? -x : x;
 }
-#endif
-
-/* Using kernel fls(). Userspace will use one defined in user-bitops.h. */
-#ifndef __fls
-#define __fls fls
-#endif
+#endif /* HAVE_REGISTER_SHRINKER */
 
 #ifdef HAVE_INVALIDATE_INODE_PAGES
 #define invalidate_mapping_pages(mapping,s,e) invalidate_inode_pages(mapping)
-#endif
-
-#ifndef SLAB_DESTROY_BY_RCU
-#define SLAB_DESTROY_BY_RCU 0
 #endif
 
 #ifdef HAVE_INODE_IPRIVATE
@@ -583,8 +742,14 @@ static inline long labs(long x)
 #define INODE_PRIVATE_DATA(inode)       ((inode)->u.generic_ip)
 #endif
 
-#ifndef	HAVE_SYSCTL_VFS_CACHE_PRESSURE
-#define	sysctl_vfs_cache_pressure	100
+#ifndef HAVE_SIMPLE_SETATTR
+#define simple_setattr(dentry, ops) inode_setattr((dentry)->d_inode, ops)
+#endif
+
+#ifndef SLAB_DESTROY_BY_RCU
+#define CFS_SLAB_DESTROY_BY_RCU 0
+#else
+#define CFS_SLAB_DESTROY_BY_RCU SLAB_DESTROY_BY_RCU
 #endif
 
 #ifdef HAVE_SB_HAS_QUOTA_ACTIVE
@@ -593,7 +758,9 @@ static inline long labs(long x)
 #define ll_sb_has_quota_active(sb, type) sb_has_quota_enabled(sb, type)
 #endif
 
-#ifdef HAVE_SB_ANY_QUOTA_ACTIVE
+#ifdef HAVE_SB_ANY_QUOTA_LOADED
+#define ll_sb_any_quota_active(sb) sb_any_quota_loaded(sb)
+#elif defined(HAVE_SB_ANY_QUOTA_ACTIVE)
 #define ll_sb_any_quota_active(sb) sb_any_quota_active(sb)
 #else
 #define ll_sb_any_quota_active(sb) sb_any_quota_enabled(sb)
@@ -602,12 +769,30 @@ static inline long labs(long x)
 static inline int
 ll_quota_on(struct super_block *sb, int off, int ver, char *name, int remount)
 {
+        int rc;
+
         if (sb->s_qcop->quota_on) {
-                return sb->s_qcop->quota_on(sb, off, ver, name
+#ifdef HAVE_QUOTA_ON_USE_PATH
+                struct path path;
+
+                rc = kern_path(name, LOOKUP_FOLLOW, &path);
+                if (!rc)
+                        return rc;
+#endif
+                rc = sb->s_qcop->quota_on(sb, off, ver
+#ifdef HAVE_QUOTA_ON_USE_PATH
+                                            , &path
+#else
+                                            , name
+#endif
 #ifdef HAVE_QUOTA_ON_5ARGS
                                             , remount
 #endif
                                            );
+#ifdef HAVE_QUOTA_ON_USE_PATH
+                path_put(&path);
+#endif
+                return rc;
         }
         else
                 return -ENOSYS;
@@ -626,76 +811,114 @@ static inline int ll_quota_off(struct super_block *sb, int off, int remount)
                 return -ENOSYS;
 }
 
-#ifdef HAVE_FILE_UPDATE_TIME
-#define ll_update_time(file) file_update_time(file)
-#else
-#define ll_update_time(file) inode_update_time(file->f_mapping->host, 1)
-#endif
-
-/* Needed for sles9 */
-#ifndef HAVE_ATOMIC_CMPXCHG
-#define atomic_cmpxchg(v, old, new) ((int)cmpxchg(&((v)->counter), old, new))
-#endif
-
-/* Needed for rhel4 and sles9 */
-#ifndef HAVE_ATOMIC_INC_NOT_ZERO
-/**
- * atomic_add_unless - add unless the number is a given value
- * @v: pointer of type atomic_t
- * @a: the amount to add to v...
- * @u: ...unless v is equal to u.
- *
- * Atomically adds @a to @v, so long as it was not @u.
- * Returns non-zero if @v was not @u, and zero otherwise.
- */
-#define atomic_add_unless(v, a, u)				\
-({								\
-	int c, old;						\
-	c = atomic_read(v);					\
-	while (c != (u) && (old = atomic_cmpxchg((v), c, c + (a))) != c) \
-		c = old;					\
-	c != (u);						\
-})
-#define atomic_inc_not_zero(v) atomic_add_unless((v), 1, 0)
-#endif /* !atomic_inc_not_zero */
-
 #ifndef HAVE_BLK_QUEUE_LOG_BLK_SIZE /* added in 2.6.31 */
 #define blk_queue_logical_block_size(q, sz) blk_queue_hardsect_size(q, sz)
 #endif
 
-#ifdef HAVE_DQUOT_INIT
-#define ll_vfs_dq_init DQUOT_INIT
-#define ll_vfs_dq_drop DQUOT_DROP
+#ifndef HAVE_VFS_DQ_OFF
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 0, 0)
+# define ll_vfs_dq_init             DQUOT_INIT
+# define ll_vfs_dq_drop             DQUOT_DROP
+# define ll_vfs_dq_transfer         DQUOT_TRANSFER
+# define ll_vfs_dq_off(sb, remount) DQUOT_OFF(sb)
 #else
-#define ll_vfs_dq_init vfs_dq_init
-#define ll_vfs_dq_drop vfs_dq_drop
+# define ll_vfs_dq_init             dquot_initialize
+# define ll_vfs_dq_drop             dq_drop
+# define ll_vfs_dq_transfer         dquot_transfer
+# define ll_vfs_dq_off(sb, remount) dquot_quota_off(sb, remount)
+#endif
+#else
+# define ll_vfs_dq_init             vfs_dq_init
+# define ll_vfs_dq_drop             vfs_dq_drop
+# define ll_vfs_dq_transfer         vfs_dq_transfer
+# define ll_vfs_dq_off(sb, remount) vfs_dq_off(sb, remount)
+#endif
+
+#ifdef HAVE_BDI_INIT
+#define ll_bdi_init(bdi)    bdi_init(bdi)
+#define ll_bdi_destroy(bdi) bdi_destroy(bdi)
+#else
+#define ll_bdi_init(bdi)    0
+#define ll_bdi_destroy(bdi) do { } while(0)
+#endif
+
+#ifdef HAVE_NEW_BACKING_DEV_INFO
+# define ll_bdi_wb_cnt(bdi) ((bdi).wb_cnt)
+#else
+# define ll_bdi_wb_cnt(bdi) 1
+#endif
+
+#ifdef HAVE_BLK_QUEUE_MAX_SECTORS /* removed in rhel6 */
+#define blk_queue_max_hw_sectors(q, sect) blk_queue_max_sectors(q, sect)
+#endif
+
+#ifndef HAVE_BLKDEV_GET_BY_DEV
+# define blkdev_get_by_dev(dev, mode, holder) open_by_devnum(dev, mode)
 #endif
 
 #ifndef HAVE_REQUEST_QUEUE_LIMITS
-#define queue_max_sectors(rq)           ((rq)->max_sectors)
-#define queue_max_hw_sectors(rq)        ((rq)->max_hw_sectors)
-#define queue_max_hw_segments(rq)       ((rq)->max_hw_segments)
-#define queue_max_phys_segments(rq)     ((rq)->max_phys_segments)
-#endif
-
-#ifndef HAVE_BLK_QUEUE_MAX_SECTORS
-#define blk_queue_max_sectors           blk_queue_max_hw_sectors
+#define queue_max_sectors(rq)             ((rq)->max_sectors)
+#define queue_max_hw_sectors(rq)          ((rq)->max_hw_sectors)
+#define queue_max_phys_segments(rq)       ((rq)->max_phys_segments)
+#define queue_max_hw_segments(rq)         ((rq)->max_hw_segments)
 #endif
 
 #ifndef HAVE_BLK_QUEUE_MAX_SEGMENTS
-#define blk_queue_max_segments(rq, seg)                         \
-        do {                                                    \
-                blk_queue_max_phys_segments(rq, seg);           \
-                blk_queue_max_hw_segments(rq, seg);             \
-        } while (0)
+#define blk_queue_max_segments(rq, seg)                      \
+        do { blk_queue_max_phys_segments(rq, seg);           \
+             blk_queue_max_hw_segments(rq, seg); } while (0)
 #else
 #define queue_max_phys_segments(rq)       queue_max_segments(rq)
 #define queue_max_hw_segments(rq)         queue_max_segments(rq)
 #endif
 
-/* Linux 2.6.34+ no longer define NO_QUOTA */
+
+#ifndef HAVE_BI_HW_SEGMENTS
+#define bio_hw_segments(q, bio) 0
+#endif
+
+#ifndef HAVE_PAGEVEC_LRU_ADD_FILE
+#define pagevec_lru_add_file pagevec_lru_add
+#endif
+
+#ifdef HAVE_ADD_TO_PAGE_CACHE_LRU
+#define ll_add_to_page_cache_lru(pg, mapping, off, gfp) \
+        add_to_page_cache_lru(pg, mapping, off, gfp)
+#define ll_pagevec_init(pv, cold)       do {} while (0)
+#define ll_pagevec_add(pv, pg)          (0)
+#define ll_pagevec_lru_add_file(pv)     do {} while (0)
+#else
+#define ll_add_to_page_cache_lru(pg, mapping, off, gfp) \
+        add_to_page_cache(pg, mapping, off, gfp)
+#define ll_pagevec_init(pv, cold)       pagevec_init(&lru_pvec, cold);
+#define ll_pagevec_add(pv, pg)          pagevec_add(pv, pg)
+#define ll_pagevec_lru_add_file(pv)     pagevec_lru_add_file(pv)
+#endif
+
+#if !defined(HAVE_NODE_TO_CPUMASK) && defined(HAVE_CPUMASK_OF_NODE)
+#define node_to_cpumask(i)         (*(cpumask_of_node(i)))
+#define HAVE_NODE_TO_CPUMASK
+#endif
+
+#ifndef QUOTA_OK
+# define QUOTA_OK 0
+#endif
 #ifndef NO_QUOTA
-#define NO_QUOTA 1
+# define NO_QUOTA (-EDQUOT)
+#endif
+
+#if !defined(_ASM_GENERIC_BITOPS_EXT2_NON_ATOMIC_H_) && !defined(ext2_set_bit)
+# define ext2_set_bit             __test_and_set_bit_le
+# define ext2_clear_bit           __test_and_clear_bit_le
+# define ext2_test_bit            test_bit_le
+# define ext2_find_first_zero_bit find_first_zero_bit_le
+# define ext2_find_next_zero_bit  find_next_zero_bit_le
+#endif
+
+#ifdef ATTR_TIMES_SET
+# define TIMES_SET_FLAGS (ATTR_MTIME_SET | ATTR_ATIME_SET | ATTR_TIMES_SET)
+#else
+# define TIMES_SET_FLAGS (ATTR_MTIME_SET | ATTR_ATIME_SET)
 #endif
 
 #endif /* __KERNEL__ */

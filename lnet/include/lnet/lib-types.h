@@ -56,9 +56,10 @@
 #include <libcfs/list.h>
 #include <lnet/types.h>
 
-#define WIRE_ATTR	__attribute__((packed))
+#define WIRE_ATTR       __attribute__((packed))
 
 /* Packed version of lnet_process_id_t to transfer via network */
+#include <libcfs/libcfs_pack.h>
 typedef struct {
         lnet_nid_t nid;
         lnet_pid_t pid;   /* node id / process id */
@@ -72,10 +73,7 @@ typedef struct {
         __u64 wh_interface_cookie;
         __u64 wh_object_cookie;
 } WIRE_ATTR lnet_handle_wire_t;
-
-/* byte-flip insensitive! */
-#define LNET_WIRE_HANDLE_NONE \
-((const lnet_handle_wire_t) {.wh_interface_cookie = -1, .wh_object_cookie = -1})
+#include <libcfs/libcfs_unpack.h>
 
 typedef enum {
         LNET_MSG_ACK = 0,
@@ -89,6 +87,7 @@ typedef enum {
  * byte boundary in the message header.  Note that all types used in these
  * wire structs MUST be fixed size and the smaller types are placed at the
  * end. */
+#include <libcfs/libcfs_pack.h>
 typedef struct lnet_ack {
         lnet_handle_wire_t  dst_wmd;
         __u64               match_bits;
@@ -140,29 +139,25 @@ typedef struct {
 /* A HELLO message contains a magic number and protocol version
  * code in the header's dest_nid, the peer's NID in the src_nid, and
  * LNET_MSG_HELLO in the type field.  All other common fields are zero
- * (including payload_size; i.e. no payload).  
+ * (including payload_size; i.e. no payload).
  * This is for use by byte-stream LNDs (e.g. TCP/IP) to check the peer is
  * running the same protocol and to find out its NID. These LNDs should
  * exchange HELLO messages when a connection is first established.  Individual
  * LNDs can put whatever else they fancy in lnet_hdr_t::msg.
  */
 typedef struct {
-        __u32	magic;                          /* LNET_PROTO_TCP_MAGIC */
+        __u32   magic;                          /* LNET_PROTO_TCP_MAGIC */
         __u16   version_major;                  /* increment on incompatible change */
         __u16   version_minor;                  /* increment on compatible change */
 } WIRE_ATTR lnet_magicversion_t;
 
 /* PROTO MAGIC for LNDs */
 #define LNET_PROTO_IB_MAGIC                 0x0be91b91
-#define LNET_PROTO_OPENIB_MAGIC             LNET_PROTO_IB_MAGIC
-#define LNET_PROTO_IIB_MAGIC                LNET_PROTO_IB_MAGIC
-#define LNET_PROTO_VIB_MAGIC                LNET_PROTO_IB_MAGIC
 #define LNET_PROTO_RA_MAGIC                 0x0be91b92
 #define LNET_PROTO_QSW_MAGIC                0x0be91b93
 #define LNET_PROTO_GNI_MAGIC                0xb00fbabe /* ask Kim */
 #define LNET_PROTO_TCP_MAGIC                0xeebc0ded
 #define LNET_PROTO_PTL_MAGIC                0x50746C4E /* 'PtlN' unique magic */
-#define LNET_PROTO_GM_MAGIC                 0x6d797269 /* 'myri'! */
 #define LNET_PROTO_MX_MAGIC                 0x4d583130 /* 'MX10'! */
 #define LNET_PROTO_ACCEPTOR_MAGIC           0xacce7100
 #define LNET_PROTO_PING_MAGIC               0x70696E67 /* 'ping' */
@@ -182,6 +177,7 @@ typedef struct {
         __u32       acr_version;                /* protocol version */
         __u64       acr_nid;                    /* target NID */
 } WIRE_ATTR lnet_acceptor_connreq_t;
+#include <libcfs/libcfs_unpack.h>
 
 #define LNET_PROTO_ACCEPTOR_VERSION       1
 
@@ -189,88 +185,88 @@ typedef struct {
 struct lnet_libmd;
 
 typedef struct lnet_msg {
-        struct list_head    msg_activelist;
-        struct list_head    msg_list;           /* Q for credits/MD */
+        cfs_list_t            msg_activelist;
+        cfs_list_t            msg_list;           /* Q for credits/MD */
 
-        lnet_process_id_t   msg_target;
-        __u32               msg_type;
+        lnet_process_id_t     msg_target;
+        __u32                 msg_type;
 
-        unsigned int        msg_vmflush:1;      /* VM trying to free memory */
-        unsigned int        msg_target_is_router:1; /* sending to a router */
-        unsigned int        msg_routing:1;      /* being forwarded */
-        unsigned int        msg_ack:1;          /* ack on finalize (PUT) */
-        unsigned int        msg_sending:1;      /* outgoing message */
-        unsigned int        msg_receiving:1;    /* being received */
-        unsigned int        msg_delayed:1;      /* had to Q for buffer or tx credit */
-        unsigned int        msg_txcredit:1;     /* taken an NI send credit */
-        unsigned int        msg_peertxcredit:1; /* taken a peer send credit */
-        unsigned int        msg_rtrcredit:1;    /* taken a globel router credit */
-        unsigned int        msg_peerrtrcredit:1; /* taken a peer router credit */
-        unsigned int        msg_onactivelist:1; /* on the activelist */
+        unsigned int          msg_vmflush:1;      /* VM trying to free memory */
+        unsigned int          msg_target_is_router:1; /* sending to a router */
+        unsigned int          msg_routing:1;      /* being forwarded */
+        unsigned int          msg_ack:1;          /* ack on finalize (PUT) */
+        unsigned int          msg_sending:1;      /* outgoing message */
+        unsigned int          msg_receiving:1;    /* being received */
+        unsigned int          msg_delayed:1;      /* had to Q for buffer or tx credit */
+        unsigned int          msg_txcredit:1;     /* taken an NI send credit */
+        unsigned int          msg_peertxcredit:1; /* taken a peer send credit */
+        unsigned int          msg_rtrcredit:1;    /* taken a globel router credit */
+        unsigned int          msg_peerrtrcredit:1; /* taken a peer router credit */
+        unsigned int          msg_onactivelist:1; /* on the activelist */
 
-        struct lnet_peer   *msg_txpeer;         /* peer I'm sending to */
-        struct lnet_peer   *msg_rxpeer;         /* peer I received from */
+        struct lnet_peer     *msg_txpeer;         /* peer I'm sending to */
+        struct lnet_peer     *msg_rxpeer;         /* peer I received from */
 
-        void               *msg_private;
-        struct lnet_libmd  *msg_md;
+        void                 *msg_private;
+        struct lnet_libmd    *msg_md;
 
-        unsigned int        msg_len;
-        unsigned int        msg_wanted;
-        unsigned int        msg_offset;
-        unsigned int        msg_niov;
-        struct iovec       *msg_iov;
-        lnet_kiov_t        *msg_kiov;
+        unsigned int          msg_len;
+        unsigned int          msg_wanted;
+        unsigned int          msg_offset;
+        unsigned int          msg_niov;
+        struct iovec         *msg_iov;
+        lnet_kiov_t          *msg_kiov;
 
-        lnet_event_t        msg_ev;
-        lnet_hdr_t          msg_hdr;
+        lnet_event_t          msg_ev;
+        lnet_hdr_t            msg_hdr;
 } lnet_msg_t;
 
 
 typedef struct lnet_libhandle {
-        struct list_head  lh_hash_chain;
-        __u64             lh_cookie;
+        cfs_list_t            lh_hash_chain;
+        __u64                 lh_cookie;
 } lnet_libhandle_t;
 
 #define lh_entry(ptr, type, member) \
-	((type *)((char *)(ptr)-(unsigned long)(&((type *)0)->member)))
+        ((type *)((char *)(ptr)-(char *)(&((type *)0)->member)))
 
 typedef struct lnet_eq {
-        struct list_head  eq_list;
-        lnet_libhandle_t  eq_lh;
-        lnet_seq_t        eq_enq_seq;
-        lnet_seq_t        eq_deq_seq;
-        unsigned int      eq_size;
-        lnet_event_t     *eq_events;
-        int               eq_refcount;
-        lnet_eq_handler_t eq_callback;
+        cfs_list_t            eq_list;
+        lnet_libhandle_t      eq_lh;
+        lnet_seq_t            eq_enq_seq;
+        lnet_seq_t            eq_deq_seq;
+        unsigned int          eq_size;
+        lnet_event_t         *eq_events;
+        int                   eq_refcount;
+        lnet_eq_handler_t     eq_callback;
 } lnet_eq_t;
 
 typedef struct lnet_me {
-        struct list_head   me_list;
-        lnet_libhandle_t   me_lh;
-        lnet_process_id_t  me_match_id;
-        unsigned int       me_portal;
-        __u64              me_match_bits;
-        __u64              me_ignore_bits;
-        lnet_unlink_t      me_unlink;
-        struct lnet_libmd *me_md;
+        cfs_list_t             me_list;
+        lnet_libhandle_t       me_lh;
+        lnet_process_id_t      me_match_id;
+        unsigned int           me_portal;
+        __u64                  me_match_bits;
+        __u64                  me_ignore_bits;
+        lnet_unlink_t          me_unlink;
+        struct lnet_libmd     *me_md;
 } lnet_me_t;
 
 typedef struct lnet_libmd {
-        struct list_head  md_list;
-        lnet_libhandle_t  md_lh;
-        lnet_me_t        *md_me;
-        char             *md_start;
-        unsigned int      md_offset;
-        unsigned int      md_length;
-        unsigned int      md_max_size;
-        int               md_threshold;
-        int               md_refcount;
-        unsigned int      md_options;
-        unsigned int      md_flags;
-        void             *md_user_ptr;
-        lnet_eq_t        *md_eq;
-        unsigned int      md_niov;                /* # frags */
+        cfs_list_t            md_list;
+        lnet_libhandle_t      md_lh;
+        lnet_me_t            *md_me;
+        char                 *md_start;
+        unsigned int          md_offset;
+        unsigned int          md_length;
+        unsigned int          md_max_size;
+        int                   md_threshold;
+        int                   md_refcount;
+        unsigned int          md_options;
+        unsigned int          md_flags;
+        void                 *md_user_ptr;
+        lnet_eq_t            *md_eq;
+        unsigned int          md_niov;                /* # frags */
         union {
                 struct iovec  iov[LNET_MAX_IOV];
                 lnet_kiov_t   kiov[LNET_MAX_IOV];
@@ -283,24 +279,24 @@ typedef struct lnet_libmd {
 #ifdef LNET_USE_LIB_FREELIST
 typedef struct
 {
-        void	          *fl_objs;             /* single contiguous array of objects */
-        int                fl_nobjs;            /* the number of them */
-        int                fl_objsize;          /* the size (including overhead) of each of them */
-        struct list_head   fl_list;             /* where they are enqueued */
+        void                  *fl_objs;          /* single contiguous array of objects */
+        int                    fl_nobjs;         /* the number of them */
+        int                    fl_objsize;       /* the size (including overhead) of each of them */
+        cfs_list_t             fl_list;          /* where they are enqueued */
 } lnet_freelist_t;
 
 typedef struct
 {
-        struct list_head   fo_list;             /* enqueue on fl_list */
-        void              *fo_contents;         /* aligned contents */
+        cfs_list_t             fo_list;             /* enqueue on fl_list */
+        void                  *fo_contents;         /* aligned contents */
 } lnet_freeobj_t;
 #endif
 
 typedef struct {
         /* info about peers we are trying to fail */
-        struct list_head   tp_list;             /* ln_test_peers */
-        lnet_nid_t         tp_nid;              /* matching nid */
-        unsigned int       tp_threshold;        /* # failures to simulate */
+        cfs_list_t             tp_list;             /* ln_test_peers */
+        lnet_nid_t             tp_nid;              /* matching nid */
+        unsigned int           tp_threshold;        /* # failures to simulate */
 } lnet_test_peer_t;
 
 #define LNET_COOKIE_TYPE_MD    1
@@ -316,41 +312,41 @@ struct lnet_ni;                                  /* forward ref */
 typedef struct lnet_lnd
 {
         /* fields managed by portals */
-        struct list_head  lnd_list;             /* stash in the LND table */
-        int               lnd_refcount;         /* # active instances */
+        cfs_list_t            lnd_list;             /* stash in the LND table */
+        int                   lnd_refcount;         /* # active instances */
 
         /* fields initialised by the LND */
-        unsigned int      lnd_type;
-        
+        unsigned int          lnd_type;
+
         int  (*lnd_startup) (struct lnet_ni *ni);
         void (*lnd_shutdown) (struct lnet_ni *ni);
         int  (*lnd_ctl)(struct lnet_ni *ni, unsigned int cmd, void *arg);
 
         /* In data movement APIs below, payload buffers are described as a set
          * of 'niov' fragments which are...
-         * EITHER 
+         * EITHER
          *    in virtual memory (struct iovec *iov != NULL)
          * OR
          *    in pages (kernel only: plt_kiov_t *kiov != NULL).
          * The LND may NOT overwrite these fragment descriptors.
          * An 'offset' and may specify a byte offset within the set of
-         * fragments to start from 
+         * fragments to start from
          */
 
         /* Start sending a preformatted message.  'private' is NULL for PUT and
-	 * GET messages; otherwise this is a response to an incoming message
-	 * and 'private' is the 'private' passed to lnet_parse().  Return
-	 * non-zero for immediate failure, otherwise complete later with
-	 * lnet_finalize() */
-	int (*lnd_send)(struct lnet_ni *ni, void *private, lnet_msg_t *msg);
+         * GET messages; otherwise this is a response to an incoming message
+         * and 'private' is the 'private' passed to lnet_parse().  Return
+         * non-zero for immediate failure, otherwise complete later with
+         * lnet_finalize() */
+        int (*lnd_send)(struct lnet_ni *ni, void *private, lnet_msg_t *msg);
 
         /* Start receiving 'mlen' bytes of payload data, skipping the following
          * 'rlen' - 'mlen' bytes. 'private' is the 'private' passed to
          * lnet_parse().  Return non-zero for immedaite failure, otherwise
          * complete later with lnet_finalize().  This also gives back a receive
          * credit if the LND does flow control. */
-	int (*lnd_recv)(struct lnet_ni *ni, void *private, lnet_msg_t *msg,
-                        int delayed, unsigned int niov, 
+        int (*lnd_recv)(struct lnet_ni *ni, void *private, lnet_msg_t *msg,
+                        int delayed, unsigned int niov,
                         struct iovec *iov, lnet_kiov_t *kiov,
                         unsigned int offset, unsigned int mlen, unsigned int rlen);
 
@@ -369,70 +365,34 @@ typedef struct lnet_lnd
         /* query of peer aliveness */
         void (*lnd_query)(struct lnet_ni *ni, lnet_nid_t peer, cfs_time_t *when);
 
-#ifdef __KERNEL__
+#if defined(__KERNEL__) || defined(HAVE_LIBPTHREAD)
         /* accept a new connection */
         int (*lnd_accept)(struct lnet_ni *ni, cfs_socket_t *sock);
-#else
+#endif
+
+#ifndef __KERNEL__
         /* wait for something to happen */
         void (*lnd_wait)(struct lnet_ni *ni, int milliseconds);
 
         /* ensure non-RDMA messages can be received outside liblustre */
         int (*lnd_setasync)(struct lnet_ni *ni, lnet_process_id_t id, int nasync);
-
-#ifdef HAVE_LIBPTHREAD
-        int (*lnd_accept)(struct lnet_ni *ni, int sock);
-#endif
 #endif
 } lnd_t;
-
-#define LNET_PROTO_PING_MATCHBITS     0x8000000000000000LL
-#define LNET_PROTO_PING_VERSION       2
-#define LNET_PROTO_PING_VERSION1      1
 
 #define LNET_NI_STATUS_UP      0x15aac0de
 #define LNET_NI_STATUS_DOWN    0xdeadface
 #define LNET_NI_STATUS_INVALID 0x00000000
-
 typedef struct {
         lnet_nid_t ns_nid;
         __u32      ns_status;
         __u32      ns_unused;
 } WIRE_ATTR lnet_ni_status_t;
 
-typedef struct {
-        __u32      pi_magic;
-        __u32      pi_version;
-        lnet_pid_t pi_pid;
-        __u32      pi_nnis;
-#define pi_ni      pi_body.pb_ni
-#define pi_nid     pi_body.pb_nid
-
-        union {
-                lnet_nid_t       pb_nid[0]; /* LNET_PROTO_PING_VERSION1 */
-                lnet_ni_status_t pb_ni[0];  /* LNET_PROTO_PING_VERSION */
-        } pi_body;
-} WIRE_ATTR lnet_ping_info_t;
-
-static inline size_t
-lnet_pinginfo_size_v(int n_ids, int version)
-{
-        LASSERT (n_ids >= 0);
-        LASSERT (version == LNET_PROTO_PING_VERSION ||
-                 version == LNET_PROTO_PING_VERSION1);
-
-        if (version == LNET_PROTO_PING_VERSION)
-                return offsetof(lnet_ping_info_t, pi_ni[n_ids]);
-
-        return offsetof(lnet_ping_info_t, pi_nid[n_ids]);
-}
-
-#define lnet_pinginfo_size(n) lnet_pinginfo_size_v((n), LNET_PROTO_PING_VERSION)
-
 #define LNET_MAX_INTERFACES   16
 
 typedef struct lnet_ni {
-        struct list_head  ni_list;              /* chain on ln_nis */
-        struct list_head  ni_txq;               /* messages waiting for tx credits */
+        cfs_list_t        ni_list;              /* chain on ln_nis */
+        cfs_list_t        ni_txq;               /* messages waiting for tx credits */
         int               ni_maxtxcredits;      /* # tx credits  */
         int               ni_txcredits;         /* # tx credits free */
         int               ni_mintxcredits;      /* lowest it's been */
@@ -448,21 +408,31 @@ typedef struct lnet_ni {
         char             *ni_interfaces[LNET_MAX_INTERFACES]; /* equivalent interfaces to use */
 } lnet_ni_t;
 
-/* router checker data, per router */
-#define LNET_MAX_RTR_NIS       16
-#define LNET_MAX_PINGINFO_SIZE lnet_pinginfo_size(LNET_MAX_RTR_NIS)
-
+#define LNET_PROTO_PING_MATCHBITS     0x8000000000000000LL
+#define LNET_PROTO_PING_VERSION       2
+#define LNET_PROTO_PING_VERSION1      1
 typedef struct {
-        struct list_head  rcd_list;             /* chain on the_lnet.ln_zombie_rcd */
+        __u32            pi_magic;
+        __u32            pi_version;
+        lnet_pid_t       pi_pid;
+        __u32            pi_nnis;
+        lnet_ni_status_t pi_ni[0];
+} WIRE_ATTR lnet_ping_info_t;
+
+/* router checker data, per router */
+#define LNET_MAX_RTR_NIS   16
+#define LNET_PINGINFO_SIZE offsetof(lnet_ping_info_t, pi_ni[LNET_MAX_RTR_NIS])
+typedef struct {
+        cfs_list_t        rcd_list;             /* chain on the_lnet.ln_zombie_rcd */
         lnet_handle_md_t  rcd_mdh;              /* ping buffer MD */
         lnet_ping_info_t *rcd_pinginfo;         /* ping buffer */
 } lnet_rc_data_t;
 
 typedef struct lnet_peer {
-        struct list_head  lp_hashlist;          /* chain on peer hash */
-        struct list_head  lp_txq;               /* messages blocking for tx credits */
-        struct list_head  lp_rtrq;              /* messages blocking for router credits */
-        struct list_head  lp_rtr_list;          /* chain on router list */
+        cfs_list_t        lp_hashlist;          /* chain on peer hash */
+        cfs_list_t        lp_txq;               /* messages blocking for tx credits */
+        cfs_list_t        lp_rtrq;              /* messages blocking for router credits */
+        cfs_list_t        lp_rtr_list;          /* chain on router list */
         int               lp_txcredits;         /* # tx credits available */
         int               lp_mintxcredits;      /* low water mark */
         int               lp_rtrcredits;        /* # router credits */
@@ -489,32 +459,33 @@ typedef struct lnet_peer {
 #define lnet_peer_aliveness_enabled(lp) ((lp)->lp_ni->ni_peertimeout > 0)
 
 typedef struct {
-	struct list_head  lr_list;              /* chain on net */
+        cfs_list_t        lr_list;              /* chain on net */
         lnet_peer_t      *lr_gateway;           /* router node */
         unsigned int      lr_hops;              /* how far I am */
 } lnet_route_t;
 
 typedef struct {
-        struct list_head        lrn_list;       /* chain on ln_remote_nets */
-        struct list_head        lrn_routes;     /* routes to me */
+        cfs_list_t              lrn_list;       /* chain on ln_remote_nets */
+        cfs_list_t              lrn_routes;     /* routes to me */
         __u32                   lrn_net;        /* my net number */
 } lnet_remotenet_t;
 
 typedef struct {
-        struct list_head  rbp_bufs;             /* my free buffer pool */
-        struct list_head  rbp_msgs;             /* messages blocking for a buffer */
-        int               rbp_npages;           /* # pages in each buffer */
-        int               rbp_nbuffers;         /* # buffers */
-        int               rbp_credits;          /* # free buffers / blocked messages */
-        int               rbp_mincredits;       /* low water mark */
+        cfs_list_t rbp_bufs;             /* my free buffer pool */
+        cfs_list_t rbp_msgs;             /* messages blocking for a buffer */
+        int        rbp_npages;           /* # pages in each buffer */
+        int        rbp_nbuffers;         /* # buffers */
+        int        rbp_credits;          /* # free buffers / blocked messages */
+        int        rbp_mincredits;       /* low water mark */
 } lnet_rtrbufpool_t;
 
 typedef struct {
-        struct list_head   rb_list;             /* chain on rbp_bufs */
-        lnet_rtrbufpool_t *rb_pool;             /* owning pool */
-        lnet_kiov_t        rb_kiov[0];          /* the buffer space */
+        cfs_list_t             rb_list;             /* chain on rbp_bufs */
+        lnet_rtrbufpool_t     *rb_pool;             /* owning pool */
+        lnet_kiov_t            rb_kiov[0];          /* the buffer space */
 } lnet_rtrbuf_t;
 
+#include <libcfs/libcfs_pack.h>
 typedef struct {
         __u32        msgs_alloc;
         __u32        msgs_max;
@@ -528,6 +499,7 @@ typedef struct {
         __u64        route_length;
         __u64        drop_length;
 } WIRE_ATTR lnet_counters_t;
+#include <libcfs/libcfs_unpack.h>
 
 #define LNET_PEER_HASHSIZE   503                /* prime! */
 
@@ -538,12 +510,14 @@ typedef struct {
 #define LNET_PTL_MATCH_UNIQUE       (1 << 1)    /* unique match, for RDMA */
 #define LNET_PTL_MATCH_WILDCARD     (1 << 2)    /* wildcard match, request portal */
 
-#define LNET_PORTAL_HASH_SIZE        113        /* ME hash size of RDMA portal (prime) */
+/* ME hash of RDMA portal */
+#define LNET_PORTAL_HASH_BITS        8
+#define LNET_PORTAL_HASH_SIZE       (1 << LNET_PORTAL_HASH_BITS)
 
 typedef struct {
-        struct list_head *ptl_mhash;            /* match hash */
-        struct list_head  ptl_mlist;            /* match list */
-        struct list_head  ptl_msgq;             /* messages blocking for MD */
+        cfs_list_t       *ptl_mhash;            /* match hash */
+        cfs_list_t        ptl_mlist;            /* match list */
+        cfs_list_t        ptl_msgq;             /* messages blocking for MD */
         __u64             ptl_ml_version;       /* validity stamp, only changed for new attached MD */
         __u64             ptl_msgq_version;     /* validity stamp */
         unsigned int      ptl_options;
@@ -559,103 +533,99 @@ typedef struct {
 typedef struct
 {
         /* Stuff initialised at LNetInit() */
-        int                ln_init;             /* LNetInit() called? */
-        int                ln_refcount;         /* LNetNIInit/LNetNIFini counter */
-        int                ln_niinit_self;      /* Have I called LNetNIInit myself? */
+        int                    ln_init;             /* LNetInit() called? */
+        int                    ln_refcount;         /* LNetNIInit/LNetNIFini counter */
+        int                    ln_niinit_self;      /* Have I called LNetNIInit myself? */
 
-        int                ln_ptlcompat;        /* do I support talking to portals? */
-        
-        struct list_head   ln_lnds;             /* registered LNDs */
+        cfs_list_t             ln_lnds;             /* registered LNDs */
 
 #ifdef __KERNEL__
-        spinlock_t         ln_lock;
-        cfs_waitq_t        ln_waitq;
-        struct semaphore   ln_api_mutex;
-        struct semaphore   ln_lnd_mutex;
-
-        struct list_head   ln_notify_cbs;		/* notify callbacks */
+        cfs_spinlock_t         ln_lock;
+        cfs_waitq_t            ln_waitq;
+        cfs_mutex_t            ln_api_mutex;
+        cfs_mutex_t            ln_lnd_mutex;
 #else
 # ifndef HAVE_LIBPTHREAD
-        int                ln_lock;
-        int                ln_api_mutex;
-        int                ln_lnd_mutex;
+        int                    ln_lock;
+        int                    ln_api_mutex;
+        int                    ln_lnd_mutex;
 # else
-        pthread_cond_t     ln_cond;
-        pthread_mutex_t    ln_lock;
-        pthread_mutex_t    ln_api_mutex;
-        pthread_mutex_t    ln_lnd_mutex;
+        pthread_cond_t         ln_cond;
+        pthread_mutex_t        ln_lock;
+        pthread_mutex_t        ln_api_mutex;
+        pthread_mutex_t        ln_lnd_mutex;
 # endif
 #endif
 
         /* Stuff initialised at LNetNIInit() */
 
-        int                ln_shutdown;         /* shutdown in progress */
-        int                ln_nportals;         /* # portals */
-        lnet_portal_t     *ln_portals;          /* the vector of portals */
+        int                    ln_shutdown;         /* shutdown in progress */
+        int                    ln_nportals;         /* # portals */
+        lnet_portal_t         *ln_portals;          /* the vector of portals */
 
-        lnet_pid_t         ln_pid;              /* requested pid */
+        lnet_pid_t             ln_pid;              /* requested pid */
 
-        struct list_head   ln_nis;              /* LND instances */
-        lnet_ni_t         *ln_loni;             /* the loopback NI */
-        lnet_ni_t         *ln_eqwaitni;         /* NI to wait for events in */
-        struct list_head   ln_zombie_nis;       /* dying LND instances */
-        int                ln_nzombie_nis;      /* # of NIs to wait for */
+        cfs_list_t             ln_nis;              /* LND instances */
+        lnet_ni_t             *ln_loni;             /* the loopback NI */
+        lnet_ni_t             *ln_eqwaitni;         /* NI to wait for events in */
+        cfs_list_t             ln_zombie_nis;       /* dying LND instances */
+        int                    ln_nzombie_nis;      /* # of NIs to wait for */
 
-        struct list_head   ln_remote_nets;      /* remote networks with routes to them */
-        __u64              ln_remote_nets_version; /* validity stamp */
+        cfs_list_t             ln_remote_nets;      /* remote networks with routes to them */
+        __u64                  ln_remote_nets_version; /* validity stamp */
 
-        struct list_head   ln_routers;          /* list of all known routers */
-        __u64              ln_routers_version;  /* validity stamp */
+        cfs_list_t             ln_routers;       /* list of all known routers */
+        __u64                  ln_routers_version;  /* validity stamp */
 
-        struct list_head  *ln_peer_hash;        /* NID->peer hash */
-        int                ln_npeers;           /* # peers extant */
-        int                ln_peertable_version; /* /proc validity stamp */
-        
-        int                ln_routing;          /* am I a router? */
-        lnet_rtrbufpool_t  ln_rtrpools[LNET_NRBPOOLS]; /* router buffer pools */
-        
-        int                ln_lh_hash_size;     /* size of lib handle hash table */
-        struct list_head  *ln_lh_hash_table;    /* all extant lib handles, this interface */
-        __u64              ln_next_object_cookie; /* cookie generator */
-        __u64              ln_interface_cookie; /* uniquely identifies this ni in this epoch */
+        cfs_list_t            *ln_peer_hash;        /* NID->peer hash */
+        int                    ln_npeers;           /* # peers extant */
+        int                    ln_peertable_version; /* /proc validity stamp */
 
-        char              *ln_network_tokens;   /* space for network names */
-        int                ln_network_tokens_nob;
+        int                    ln_routing;          /* am I a router? */
+        lnet_rtrbufpool_t      ln_rtrpools[LNET_NRBPOOLS]; /* router buffer pools */
 
-        int                ln_testprotocompat;  /* test protocol compatibility flags */
+        int                    ln_lh_hash_size;     /* size of lib handle hash table */
+        cfs_list_t            *ln_lh_hash_table;    /* all extant lib handles, this interface */
+        __u64                  ln_next_object_cookie; /* cookie generator */
+        __u64                  ln_interface_cookie; /* uniquely identifies this ni in this epoch */
 
-        struct list_head   ln_finalizeq;        /* msgs waiting to complete finalizing */
+        char                  *ln_network_tokens;   /* space for network names */
+        int                    ln_network_tokens_nob;
+
+        int                    ln_testprotocompat;  /* test protocol compatibility flags */
+
+        cfs_list_t             ln_finalizeq;        /* msgs waiting to complete finalizing */
 #ifdef __KERNEL__
-        void             **ln_finalizers;       /* threads doing finalization */
-        int                ln_nfinalizers;      /* max # threads finalizing */
+        void                 **ln_finalizers;       /* threads doing finalization */
+        int                    ln_nfinalizers;      /* max # threads finalizing */
 #else
-        int                ln_finalizing;
+        int                    ln_finalizing;
 #endif
-        struct list_head   ln_test_peers;       /* failure simulation */
+        cfs_list_t             ln_test_peers;       /* failure simulation */
 
-        lnet_handle_md_t   ln_ping_target_md;
-        lnet_handle_eq_t   ln_ping_target_eq;
-        lnet_ping_info_t  *ln_ping_info;
+        lnet_handle_md_t       ln_ping_target_md;
+        lnet_handle_eq_t       ln_ping_target_eq;
+        lnet_ping_info_t      *ln_ping_info;
 
 #ifdef __KERNEL__
-	struct semaphore   ln_rc_signal;        /* serialise startup/shutdown */
+        cfs_semaphore_t        ln_rc_signal;        /* serialise startup/shutdown */
 #endif
-        int                ln_rc_state;         /* router checker startup/shutdown state */
-        lnet_handle_eq_t   ln_rc_eqh;           /* router checker's event queue */
-        lnet_handle_md_t   ln_rc_mdh;
-        struct list_head   ln_zombie_rcd;
-        
-#ifdef LNET_USE_LIB_FREELIST
-        lnet_freelist_t    ln_free_mes;
-        lnet_freelist_t    ln_free_msgs;
-        lnet_freelist_t    ln_free_mds;
-        lnet_freelist_t    ln_free_eqs;
-#endif
-        struct list_head   ln_active_msgs;
-        struct list_head   ln_active_mds;
-        struct list_head   ln_active_eqs;
+        int                    ln_rc_state;         /* router checker startup/shutdown state */
+        lnet_handle_eq_t       ln_rc_eqh;           /* router checker's event queue */
+        lnet_handle_md_t       ln_rc_mdh;
+        cfs_list_t             ln_zombie_rcd;
 
-        lnet_counters_t    ln_counters;
+#ifdef LNET_USE_LIB_FREELIST
+        lnet_freelist_t        ln_free_mes;
+        lnet_freelist_t        ln_free_msgs;
+        lnet_freelist_t        ln_free_mds;
+        lnet_freelist_t        ln_free_eqs;
+#endif
+        cfs_list_t             ln_active_msgs;
+        cfs_list_t             ln_active_mds;
+        cfs_list_t             ln_active_eqs;
+
+        lnet_counters_t        ln_counters;
 
 #ifndef __KERNEL__
         /* Temporary workaround to allow uOSS and test programs force
@@ -663,29 +633,8 @@ typedef struct
          * lnet_prepare(). The only way to turn this flag on is to
          * call lnet_server_mode() */
 
-        int                ln_server_mode_flag;
-#endif        
+        int                    ln_server_mode_flag;
+#endif
 } lnet_t;
-
-/* Function that will be called each time an lnd reports (by calling lnd_notify()) 
- * that its connection to a peer has gone up or down.  
- * 
- * Arguments are identical to those of lnet_notify():
- * 
- * 	ni 	Identifies LNET instance.
- * 	nid	Identifies the peer.
- * 	alive	Non-zero if the connection to the peer has come up,
- * 		zero if the connection has gone down.
- * 	when	Timestamp of the transition, in jiffies.
- * 
- * LNET must not be reentered via this function--deadlock will occur,
- * since the LNET global lock is held over the callback.   		*/
-typedef void (*lnet_notify_callback)(struct lnet_ni *ni, lnet_nid_t nid, int alive, cfs_time_t when);
-
-/* List entries to remember callbacks registered by upper layers. */
-typedef struct lnet_notify_entry {
-    	struct list_head ln_list;		/* list of all callbacks */
-    	lnet_notify_callback ln_cb;		/* the callback */
-} lnet_notify_entry_t;
 
 #endif

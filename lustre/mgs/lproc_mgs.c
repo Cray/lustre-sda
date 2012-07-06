@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -40,8 +42,8 @@
 #include <obd.h>
 #include <obd_class.h>
 #include <lprocfs_status.h>
+#include <lustre_param.h>
 #include "mgs_internal.h"
-
 
 #ifdef LPROCFS
 
@@ -61,7 +63,7 @@ static int mgs_fs_seq_show(struct seq_file *seq, void *v)
 {
         struct obd_device *obd = seq->private;
         struct mgs_obd *mgs = &obd->u.mgs;
-        struct list_head dentry_list;
+        cfs_list_t dentry_list;
         struct l_linux_dirent *dirent, *n;
         int rc, len;
         ENTRY;
@@ -73,8 +75,8 @@ static int mgs_fs_seq_show(struct seq_file *seq, void *v)
                 CERROR("Can't read config dir\n");
                 RETURN(rc);
         }
-        list_for_each_entry_safe(dirent, n, &dentry_list, lld_list) {
-                list_del(&dirent->lld_list);
+        cfs_list_for_each_entry_safe(dirent, n, &dentry_list, lld_list) {
+                cfs_list_del(&dirent->lld_list);
                 len = strlen(dirent->lld_name);
                 if ((len > 7) && (strncmp(dirent->lld_name + len - 7, "-client",
                                           len) == 0)) {
@@ -88,6 +90,54 @@ static int mgs_fs_seq_show(struct seq_file *seq, void *v)
 
 LPROC_SEQ_FOPS_RO(mgs_fs);
 
+static void seq_show_srpc_rules(struct seq_file *seq, const char *tgtname,
+                                struct sptlrpc_rule_set *rset)
+{
+        struct sptlrpc_rule    *r;
+        char                    dirbuf[10];
+        char                    flvrbuf[40];
+        char                   *net;
+        int                     i;
+
+        for (i = 0; i < rset->srs_nrule; i++) {
+                r = &rset->srs_rules[i];
+
+                if (r->sr_netid == LNET_NIDNET(LNET_NID_ANY))
+                        net = "default";
+                else
+                        net = libcfs_net2str(r->sr_netid);
+
+                if (r->sr_from == LUSTRE_SP_ANY && r->sr_to == LUSTRE_SP_ANY)
+                        dirbuf[0] = '\0';
+                else
+                        snprintf(dirbuf, sizeof(dirbuf), ".%s2%s",
+                                 sptlrpc_part2name(r->sr_from),
+                                 sptlrpc_part2name(r->sr_to));
+
+                sptlrpc_flavor2name(&r->sr_flvr, flvrbuf, sizeof(flvrbuf));
+                seq_printf(seq, "%s.srpc.flavor.%s%s=%s\n", tgtname,
+                           net, dirbuf, flvrbuf);
+        }
+}
+
+static int mgsself_srpc_seq_show(struct seq_file *seq, void *v)
+{
+        struct obd_device *obd = seq->private;
+        struct fs_db      *fsdb;
+        int                rc;
+
+        rc = mgs_find_or_make_fsdb(obd, MGSSELF_NAME, &fsdb);
+        if (rc)
+                return rc;
+
+        cfs_mutex_lock(&fsdb->fsdb_mutex);
+        seq_show_srpc_rules(seq, fsdb->fsdb_name, &fsdb->fsdb_srpc_gen);
+        cfs_mutex_unlock(&fsdb->fsdb_mutex);
+        return 0;
+}
+
+LPROC_SEQ_FOPS_RO(mgsself_srpc);
+
 int lproc_mgs_setup(struct obd_device *obd)
 {
         struct mgs_obd *mgs = &obd->u.mgs;
@@ -95,9 +145,25 @@ int lproc_mgs_setup(struct obd_device *obd)
 
         rc = lprocfs_obd_seq_create(obd, "filesystems", 0444,
                                     &mgs_fs_fops, obd);
-        mgs->mgs_proc_live = proc_mkdir("live", obd->obd_proc_entry);
-        obd->obd_proc_exports_entry = proc_mkdir("exports",
-                                                 obd->obd_proc_entry);
+        rc = lprocfs_obd_seq_create(obd, "srpc_rules", 0600,
+                                    &mgsself_srpc_fops, obd);
+
+        mgs->mgs_proc_live = lprocfs_register("live", obd->obd_proc_entry,
+                                              NULL, NULL);
+        if (IS_ERR(mgs->mgs_proc_live)) {
+                rc = PTR_ERR(mgs->mgs_proc_live);
+                CERROR("error %d setting up lprocfs for %s\n", rc, "live");
+                mgs->mgs_proc_live = NULL;
+        }
+
+        obd->obd_proc_exports_entry = lprocfs_register("exports",
+                                                       obd->obd_proc_entry,
+                                                       NULL, NULL);
+        if (IS_ERR(obd->obd_proc_exports_entry)) {
+                rc = PTR_ERR(obd->obd_proc_exports_entry);
+                CERROR("error %d setting up lprocfs for %s\n", rc, "exports");
+                obd->obd_proc_exports_entry = NULL;
+        }
 
         return rc;
 }
@@ -118,41 +184,69 @@ int lproc_mgs_cleanup(struct obd_device *obd)
         }
         lprocfs_free_per_client_stats(obd);
         lprocfs_free_obd_stats(obd);
+        lprocfs_free_md_stats(obd);
 
         return lprocfs_obd_cleanup(obd);
 }
 
-static int mgs_live_seq_show(struct seq_file *seq, void *v) 
+static int mgs_live_seq_show(struct seq_file *seq, void *v)
 {
-        struct fs_db *fsdb = seq->private;
+        struct fs_db             *fsdb = seq->private;
+        struct mgs_tgt_srpc_conf *srpc_tgt;
         int i;
-        
-        down(&fsdb->fsdb_sem);
+
+        cfs_mutex_lock(&fsdb->fsdb_mutex);
 
         seq_printf(seq, "fsname: %s\n", fsdb->fsdb_name);
-        seq_printf(seq, "flags: %#x     gen: %d\n", 
+        seq_printf(seq, "flags: %#lx     gen: %d\n",
                    fsdb->fsdb_flags, fsdb->fsdb_gen);
         for (i = 0; i < INDEX_MAP_SIZE * 8; i++)
-                 if (test_bit(i, fsdb->fsdb_mdt_index_map)) 
+                 if (cfs_test_bit(i, fsdb->fsdb_mdt_index_map))
                          seq_printf(seq, "%s-MDT%04x\n", fsdb->fsdb_name, i);
         for (i = 0; i < INDEX_MAP_SIZE * 8; i++)
-                 if (test_bit(i, fsdb->fsdb_ost_index_map)) 
+                 if (cfs_test_bit(i, fsdb->fsdb_ost_index_map))
                          seq_printf(seq, "%s-OST%04x\n", fsdb->fsdb_name, i);
 
-        up(&fsdb->fsdb_sem);
+        seq_printf(seq, "\nSecure RPC Config Rules:\n");
+#if 0
+        seq_printf(seq, "%s.%s=%s\n", fsdb->fsdb_name,
+                   PARAM_SRPC_UDESC, fsdb->fsdb_srpc_fl_udesc ? "yes" : "no");
+#endif
+        for (srpc_tgt = fsdb->fsdb_srpc_tgt; srpc_tgt;
+             srpc_tgt = srpc_tgt->mtsc_next) {
+                seq_show_srpc_rules(seq, srpc_tgt->mtsc_tgt,
+                                    &srpc_tgt->mtsc_rset);
+        }
+        seq_show_srpc_rules(seq, fsdb->fsdb_name, &fsdb->fsdb_srpc_gen);
+
+        lprocfs_rd_ir_state(seq, fsdb);
+
+        cfs_mutex_unlock(&fsdb->fsdb_mutex);
         return 0;
 }
 
-LPROC_SEQ_FOPS_RO(mgs_live);
+static ssize_t mgs_live_seq_write(struct file *file, const char *buf,
+                                  size_t len, loff_t *off)
+{
+        struct seq_file *seq  = file->private_data;
+        struct fs_db    *fsdb = seq->private;
+        ssize_t rc;
+
+        rc = lprocfs_wr_ir_state(file, buf, len, fsdb);
+        if (rc >= 0)
+                rc = len;
+        return rc;
+}
+LPROC_SEQ_FOPS(mgs_live);
 
 int lproc_mgs_add_live(struct obd_device *obd, struct fs_db *fsdb)
 {
         struct mgs_obd *mgs = &obd->u.mgs;
         int rc;
 
-        if (!mgs->mgs_proc_live) 
+        if (!mgs->mgs_proc_live)
                 return 0;
-        rc = lprocfs_seq_create(mgs->mgs_proc_live, fsdb->fsdb_name, 0444, 
+        rc = lprocfs_seq_create(mgs->mgs_proc_live, fsdb->fsdb_name, 0444,
                                 &mgs_live_fops, fsdb);
 
         return 0;
@@ -162,9 +256,10 @@ int lproc_mgs_del_live(struct obd_device *obd, struct fs_db *fsdb)
 {
         struct mgs_obd *mgs = &obd->u.mgs;
 
-        if (!mgs->mgs_proc_live) 
+        if (!mgs->mgs_proc_live)
                 return 0;
-        remove_proc_entry(fsdb->fsdb_name, mgs->mgs_proc_live);
+
+        lprocfs_remove_proc_entry(fsdb->fsdb_name, mgs->mgs_proc_live);
         return 0;
 }
 
@@ -175,6 +270,7 @@ struct lprocfs_vars lprocfs_mgs_obd_vars[] = {
         { "num_exports",     lprocfs_rd_num_exports, 0, 0 },
         { "hash_stats",      lprocfs_obd_rd_hash,    0, 0 },
         { "evict_client",    0, lprocfs_wr_evict_client, 0 },
+        { "ir_timeout",      lprocfs_rd_ir_timeout, lprocfs_wr_ir_timeout, 0 },
         { 0 }
 };
 
@@ -184,9 +280,8 @@ struct lprocfs_vars lprocfs_mgs_module_vars[] = {
 
 void mgs_counter_incr(struct obd_export *exp, int opcode)
 {
-        if (exp->exp_obd && exp->exp_obd->obd_stats)
-                lprocfs_counter_incr(exp->exp_obd->obd_stats, opcode);
-        if (exp->exp_nid_stats && exp->exp_nid_stats->nid_stats)
+        lprocfs_counter_incr(exp->exp_obd->obd_stats, opcode);
+        if (exp->exp_nid_stats && exp->exp_nid_stats->nid_stats != NULL)
                 lprocfs_counter_incr(exp->exp_nid_stats->nid_stats, opcode);
 }
 

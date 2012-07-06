@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -47,8 +47,8 @@
 #error Unsupported Operating System
 #endif
 
+#include <libcfs/libcfs.h>
 #include <lnet/types.h>
-#include <libcfs/kp30.h>
 #include <lnet/lnet.h>
 
 #endif

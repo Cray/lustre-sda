@@ -28,6 +28,8 @@
 /*
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -44,7 +46,7 @@
 #include <stdio.h>
 #include <lnet/lnetctl.h>
 #include "obdctl.h"
-#include "parser.h"
+#include <libcfs/libcfsutil.h>
 
 static int jt_quit(int argc, char **argv) {
         Parser_quit(argc, argv);
@@ -85,7 +87,7 @@ command_t cmdlist[] = {
         /* Network configuration commands */
         {"===== network config =====", jt_noop, 0, "network config"},
         {"--net", jt_opt_net, 0,"run <command> after setting network to <net>\n"
-         "usage: --net <tcp/elan/gm/...> <command>"},
+         "usage: --net <tcp/elan/o2ib/...> <command>"},
         {"network", jt_ptl_network, 0, "configure LNET"
          "usage: network up|down"},
         {"net", jt_ptl_network, 0, "configure LNET"
@@ -123,7 +125,7 @@ command_t cmdlist[] = {
          "usage: dl [-t]"},
 
         /* Device operations */
-        {"==== obd device operations ===", jt_noop, 0, "device operations"},
+        {"==== obd device operations ====", jt_noop, 0, "device operations"},
         {"activate", jt_obd_activate, 0, "activate an import\n"},
         {"deactivate", jt_obd_deactivate, 0, "deactivate an import. "
          "This command should be used on failed OSC devices in an MDT LOV.\n"},
@@ -138,7 +140,7 @@ command_t cmdlist[] = {
         {"local_param", jt_lcfg_param, 0, "set a temporary, local param\n"
          "usage: local_param <target.keyword=val>\n"},
         {"get_param", jt_lcfg_getparam, 0, "get the Lustre or LNET parameter\n"
-         "usage: get_param [-n | -N | -F] <param_path1 param_path2 ...> \n"
+         "usage: get_param [-n|-N|-F] <param_path1 param_path2 ...>\n"
          "Get the value of Lustre or LNET parameter from the specified path.\n"
          "The path can contain shell-style filename patterns.\n"
          "  -n  Print only the value and not parameter name.\n"
@@ -147,19 +149,19 @@ command_t cmdlist[] = {
          "  -F  When -N specified, add '/', '@' or '=' for directories,\n"
          "      symlinks and writeable files, respectively."},
         {"set_param", jt_lcfg_setparam, 0, "set the Lustre or LNET parameter\n"
-         "usage: set_param [-n] <param_path1=value1 param_path2 value2 ...>\n"
+         "usage: set_param [-n] <param_path1=value1 param_path2=value2 ...>\n"
          "Set the value of the Lustre or LNET parameter at the specified path\n"
          "  -n  Disable printing of the key name when printing values."},
         {"list_param", jt_lcfg_listparam, 0,
          "list the Lustre or LNET parameter name\n"
-         "usage: list_param [-FR] <param_path1 param_path2 ...>\n"
+         "usage: list_param [-F|-R] <param_path1 param_path2 ...>\n"
          "List the name of Lustre or LNET parameter from the specified path.\n"
          "  -F  Add '/', '@' or '=' for dirs, symlinks and writeable files,\n"
                 "respectively.\n"
          "  -R  Recursively list all parameters under the specified path.\n"},
 
         /* Debug commands */
-        {"==== debugging control ===", jt_noop, 0, "debug"},
+        {"==== debugging control ====", jt_noop, 0, "debug"},
         {"debug_daemon", jt_dbg_debug_daemon, 0,
          "debug daemon control and dump to a file\n"
          "usage: debug_daemon {start file [#MB]|stop}"},
@@ -189,24 +191,6 @@ command_t cmdlist[] = {
         {"modules", jt_dbg_modules, 0,
          "provide gdb-friendly module information\n"
          "usage: modules <path>"},
-
-        /* Device configuration commands */
-        {"== obd device setup (these are not normally used post 1.4) ==",
-                jt_noop, 0, "device config"},
-        {"attach", jt_lcfg_attach, 0,
-         "set the type, name, and uuid of the current device\n"
-         "usage: attach type name uuid"},
-        {"detach", jt_obd_detach, 0,
-         "remove driver (and name and uuid) from current device\n"
-         "usage: detach"},
-        {"setup", jt_lcfg_setup, 0,
-         "type specific device configuration information\n"
-         "usage: setup <args...>"},
-        {"cleanup", jt_obd_cleanup, 0, "cleanup previously setup device\n"
-         "usage: cleanup [force | failover]"},
-        {"dump_cfg", jt_cfg_dump_log, 0,
-         "print log of recorded commands for this config to kernel debug log\n"
-         "usage: dump_cfg config-uuid-name"},
 
         /* virtual block operations */
         {"==== virtual block device ====", jt_noop, 0, "virtual block device"},
@@ -238,6 +222,33 @@ command_t cmdlist[] = {
          "list pools and pools members\n"
          "usage pool_list  <fsname>[.<poolname>] | <pathname>"},
 
+        /* Changelog commands */
+        {"===  Changelogs ==", jt_noop, 0, "changelog user management"},
+        {"changelog_register", jt_changelog_register, 0,
+         "register a new persistent changelog user, returns id\n"
+         "usage:\tdevice <mdtname>\n\tchangelog_register [-n]"},
+        {"changelog_deregister", jt_changelog_deregister, 0,
+         "deregister an existing changelog user\n"
+         "usage:\tdevice <mdtname>\n\tchangelog_deregister <id>"},
+
+        /* Device configuration commands */
+        {"== device setup (these are not normally used post 1.4) ==",
+                jt_noop, 0, "device config"},
+        {"attach", jt_lcfg_attach, 0,
+         "set the type, name, and uuid of the current device\n"
+         "usage: attach type name uuid"},
+        {"detach", jt_obd_detach, 0,
+         "remove driver (and name and uuid) from current device\n"
+         "usage: detach"},
+        {"setup", jt_lcfg_setup, 0,
+         "type specific device configuration information\n"
+         "usage: setup <args...>"},
+        {"cleanup", jt_obd_cleanup, 0, "cleanup previously setup device\n"
+         "usage: cleanup [force | failover]"},
+        {"dump_cfg", jt_cfg_dump_log, 0,
+         "print log of recorded commands for this config to kernel debug log\n"
+         "usage: dump_cfg config-uuid-name"},
+
         /* Test only commands */
         {"==== testing (DANGEROUS) ====", jt_noop, 0, "testing (DANGEROUS)"},
         {"--threads", jt_opt_threads, 0,
@@ -264,8 +275,6 @@ command_t cmdlist[] = {
         {"disconnect", jt_ptl_disconnect, 0, "disconnect from a remote nid\n"
          "usage: disconnect [<nid>]"},
         {"push", jt_ptl_push_connection, 0, "flush connection to a remote nid\n"
-         "usage: disconnect [<nid>]"},
-        {"push", jt_ptl_push_connection, 0, "flush connection to a remote nid\n"
          "usage: push [<nid>]"},
         {"mynid", jt_ptl_mynid, 0, "inform the socknal of the local nid. "
          "The nid defaults to hostname for tcp networks and is automatically "
@@ -275,13 +284,43 @@ command_t cmdlist[] = {
          "Omitting the count means indefinitely, 0 means restore, "
          "otherwise fail 'count' messages.\n"
          "usage: fail nid|_all_ [count]"},
+
+        /*Test commands for echo client*/
+        {"test_create", jt_obd_test_create, 0,
+         "create files on MDT by echo client\n"
+         "usage: test_create [-d parent_basedir] <-D parent_count> "
+         "[-b child_base_id] <-c stripe_count> <-n count> <-t time>\n"},
+        {"test_mkdir", jt_obd_test_mkdir, 0,
+         "mkdir on MDT by echo client\n"
+         "usage: test_mkdir [-d parent_basedir] <-D parent_count>"
+         "[-b child_base_id] [-n count] <-t time>\n"},
+        {"test_destroy", jt_obd_test_destroy, 0,
+         "Destroy files on MDT by echo client\n"
+         "usage: test_destroy [-d parent_basedir] <-D parent_count>"
+         "[-b child_base_id] [-n count] <-t time>\n"},
+        {"test_rmdir", jt_obd_test_rmdir, 0,
+         "rmdir on MDT by echo client\n"
+         "usage: test_rmdir [-d parent_basedir] <-D parent_count>"
+         "[-b child_base_id] [-n count] <-t time>\n"},
+        {"test_lookup", jt_obd_test_lookup, 0,
+         "lookup files on MDT by echo client\n"
+         "usage: test_lookup [-d parent_basedir] <-D parent_count>"
+         "[-b child_base_id] [-n count] <-t time>\n"},
+        {"test_setxattr", jt_obd_test_setxattr, 0,
+         "Set EA for files/directory on MDT by echo client\n"
+         "usage: test_setxattr [-d parent_baseid] <-D parent_count>"
+         "[-b child_base_id] [-x size] [-n count] <-t time>\n"},
+        {"test_md_getattr", jt_obd_test_md_getattr, 0,
+         "getattr files on MDT by echo client\n"
+         "usage: test_md_getattr [-d parent_basedir] <-D parent_count>"
+         "[-b child_base_id] [-n count] <-t time>\n"},
         {"getattr", jt_obd_getattr, 0,
          "get attribute for OST object <objid>\n"
          "usage: getattr <objid>"},
         {"setattr", jt_obd_setattr, 0,
          "set mode attribute for OST object <objid>\n"
          "usage: setattr <objid> <mode>"},
-         {"create", jt_obd_create, 0,
+        {"create", jt_obd_create, 0,
          "create <num> OST objects (with <mode>)\n"
          "usage: create [num [mode [verbose [lsm data]]]]"},
         {"destroy", jt_obd_destroy, 0,

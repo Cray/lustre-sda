@@ -11,11 +11,7 @@ source ${0%/*}/lbuild-sles
 OFED_DEVEL_LOCATION="$KERNELTREE"
 
 # do we want to rebuild the OFED devel RPM or use the supplied one?
-if ! $PATCHLESS; then
-	REBUILD_OFED_DEVEL_RPM=${REBUILD_OFED_DEVEL_RPM:-true}
-else
-	REBUILD_OFED_DEVEL_RPM=${REBUILD_OFED_DEVEL_RPM:-false}
-fi
+REBUILD_OFED_DEVEL_RPM=${REBUILD_OFED_DEVEL_RPM:-false}
 
 edit_specs() {
 
@@ -30,8 +26,6 @@ cp  %_sourcedir/linux-2.6.16-lustre.patch %_builddir/%{name}-%{version}/lustre.p
 ! grep -q lustre.patch %_sourcedir/series.conf && echo -e "\\n\\tlustre.patch" >> %_sourcedir/series.conf' \
                -e "/flavor=\${config/a\
     [ \"\$flavor\" == \"$RPMSMPTYPE\" ] || continue" \
-               -e "s/^\(BuildRequires:  kernel-dummy\)/# \1/" \
-               -e "s/kernel-dummy\.spec/ /g" \
           SOURCES/kernel-${spec}.spec || fatal 1 "Error while editing SOURCES/kernel-${spec}.spec"
 
         if $KERNEL_LUSTRE_NAMING; then

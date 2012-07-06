@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 1999, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -35,7 +37,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/autoconf.h>
 #include <linux/sysctl.h>
 #include <linux/sched.h>
 #include <linux/mm.h>
@@ -60,7 +61,7 @@ cfs_sysctl_table_header_t *obd_table_header = NULL;
 
 #ifndef HAVE_SYSCTL_UNNUMBERED
 
-#define CTL_LUSTRE      300
+#define OBD_SYSCTL 300
 
 enum {
         OBD_TIMEOUT = 3,        /* RPC timeout before recovery/intr */
@@ -81,8 +82,11 @@ enum {
         OBD_AT_EARLY_MARGIN,
         OBD_AT_HISTORY,
 };
+
 #else
-#define CTL_LUSTRE              CTL_UNNUMBERED
+
+#define OBD_SYSCTL              CTL_UNNUMBERED
+
 #define OBD_FAIL_LOC            CTL_UNNUMBERED
 #define OBD_FAIL_VAL            CTL_UNNUMBERED
 #define OBD_TIMEOUT             CTL_UNNUMBERED
@@ -102,6 +106,7 @@ enum {
 #define OBD_AT_EXTRA            CTL_UNNUMBERED
 #define OBD_AT_EARLY_MARGIN     CTL_UNNUMBERED
 #define OBD_AT_HISTORY          CTL_UNNUMBERED
+
 #endif
 
 int LL_PROC_PROTO(proc_set_timeout)
@@ -114,96 +119,8 @@ int LL_PROC_PROTO(proc_set_timeout)
         return rc;
 }
 
-int LL_PROC_PROTO(proc_max_dirty_pages_in_mb)
-{
-        int rc = 0;
-        DECLARE_LL_PROC_PPOS_DECL;
-
-        if (!table->data || !table->maxlen || !*lenp || (*ppos && !write)) {
-                *lenp = 0;
-                return 0;
-        }
-        if (write) {
-                rc = lprocfs_write_frac_helper(buffer, *lenp,
-                                               (unsigned int*)table->data,
-                                               1 << (20 - CFS_PAGE_SHIFT));
-                /* Don't allow them to let dirty pages exceed 90% of system memory,
-                 * and set a hard minimum of 4MB. */
-                if (obd_max_dirty_pages > ((num_physpages / 10) * 9)) {
-                        CERROR("Refusing to set max dirty pages to %u, which "
-                               "is more than 90%% of available RAM; setting to %lu\n",
-                               obd_max_dirty_pages, ((num_physpages / 10) * 9));
-                        obd_max_dirty_pages = ((num_physpages / 10) * 9);
-                } else if (obd_max_dirty_pages < 4 << (20 - CFS_PAGE_SHIFT)) {
-                        obd_max_dirty_pages = 4 << (20 - CFS_PAGE_SHIFT);
-                }
-        } else {
-                char buf[22];
-                struct ctl_table dummy;
-                int len;
-
-                len = lprocfs_read_frac_helper(buf, sizeof(buf),
-                                               *(unsigned int*)table->data,
-                                               1 << (20 - CFS_PAGE_SHIFT));
-                if (len > *lenp)
-                        len = *lenp;
-                buf[len] = '\0';
-
-                dummy = *table;
-                dummy.data = buf;
-                dummy.maxlen = sizeof(buf);
-
-                rc = ll_proc_dostring(&dummy,write,filp,buffer,lenp, ppos);
-                if (rc)
-                        return -EFAULT;
-                *lenp = len;
-        }
-        *ppos += *lenp;
-        return rc;
-}
-
-#ifdef RANDOM_FAIL_ALLOC
-int LL_PROC_PROTO(proc_alloc_fail_rate)
-{
-        int rc = 0;
-        DECLARE_LL_PROC_PPOS_DECL;
-
-        if (!table->data || !table->maxlen || !*lenp || (*ppos && !write)) {
-                *lenp = 0;
-                return 0;
-        }
-        if (write) {
-                rc = lprocfs_write_frac_helper(buffer, *lenp,
-                                               (unsigned int*)table->data,
-                                               OBD_ALLOC_FAIL_MULT);
-        } else {
-                char buf[22];
-                struct ctl_table dummy;
-                int  len;
-
-                len = lprocfs_read_frac_helper(buf, sizeof(buf),
-                                               *(unsigned int*)table->data,
-                                               OBD_ALLOC_FAIL_MULT);
-                if (len > *lenp)
-                        len = *lenp;
-                buf[len] = '\0';
-                dummy = *table;
-                dummy.data = buf;
-                dummy.maxlen = sizeof(buf);
-
-                rc = ll_proc_dostring(&dummy,write,filp,buffer,lenp, ppos);
-                if(rc)
-                        return -EFAULT;
-                *lenp = len;
-        }
-        *ppos += *lenp;
-        return rc;
-}
-#endif
-
 int LL_PROC_PROTO(proc_memory_alloc)
 {
-        struct ctl_table dummy;
         char buf[22];
         int len;
         DECLARE_LL_PROC_PPOS_DECL;
@@ -219,17 +136,15 @@ int LL_PROC_PROTO(proc_memory_alloc)
         if (len > *lenp)
                 len = *lenp;
         buf[len] = '\0';
-
-        dummy = *table;
-        dummy.data = buf;
-        dummy.maxlen = sizeof(buf);
-
-        return ll_proc_dostring(&dummy,write,filp,buffer,lenp, ppos);
+        if (cfs_copy_to_user(buffer, buf, len))
+                return -EFAULT;
+        *lenp = len;
+        *ppos += *lenp;
+        return 0;
 }
 
 int LL_PROC_PROTO(proc_pages_alloc)
 {
-        struct ctl_table dummy;
         char buf[22];
         int len;
         DECLARE_LL_PROC_PPOS_DECL;
@@ -245,17 +160,15 @@ int LL_PROC_PROTO(proc_pages_alloc)
         if (len > *lenp)
                 len = *lenp;
         buf[len] = '\0';
-
-        dummy = *table;
-        dummy.data = buf;
-        dummy.maxlen = sizeof(buf);
-
-        return ll_proc_dostring(&dummy,write,filp,buffer,lenp, ppos);
+        if (cfs_copy_to_user(buffer, buf, len))
+                return -EFAULT;
+        *lenp = len;
+        *ppos += *lenp;
+        return 0;
 }
 
 int LL_PROC_PROTO(proc_mem_max)
 {
-        struct ctl_table dummy;
         char buf[22];
         int len;
         DECLARE_LL_PROC_PPOS_DECL;
@@ -271,19 +184,17 @@ int LL_PROC_PROTO(proc_mem_max)
         if (len > *lenp)
                 len = *lenp;
         buf[len] = '\0';
-
-        dummy = *table;
-        dummy.data = buf;
-        dummy.maxlen = sizeof(buf);
-
-        return ll_proc_dostring(&dummy,write,filp,buffer,lenp, ppos);
+        if (cfs_copy_to_user(buffer, buf, len))
+                return -EFAULT;
+        *lenp = len;
+        *ppos += *lenp;
+        return 0;
 }
 
 int LL_PROC_PROTO(proc_pages_max)
 {
         char buf[22];
         int len;
-        struct ctl_table dummy;
         DECLARE_LL_PROC_PPOS_DECL;
 
         if (!*lenp || (*ppos && !write)) {
@@ -292,18 +203,92 @@ int LL_PROC_PROTO(proc_pages_max)
         }
         if (write)
                 return -EINVAL;
-         dummy = *table;
-         dummy.data = buf;
-         dummy.maxlen = sizeof(buf);
-         len = snprintf(buf, sizeof(buf), LPU64,
-                        obd_pages_max());
 
-         if (len > *lenp)
-                 len = *lenp;
-         buf[len] = '\0';
-
-         return ll_proc_dostring(&dummy,write,filp,buffer,lenp, ppos);
+        len = snprintf(buf, sizeof(buf), LPU64"\n", obd_pages_max());
+        if (len > *lenp)
+                len = *lenp;
+        buf[len] = '\0';
+        if (cfs_copy_to_user(buffer, buf, len))
+                return -EFAULT;
+        *lenp = len;
+        *ppos += *lenp;
+        return 0;
 }
+
+int LL_PROC_PROTO(proc_max_dirty_pages_in_mb)
+{
+        int rc = 0;
+        DECLARE_LL_PROC_PPOS_DECL;
+
+        if (!table->data || !table->maxlen || !*lenp || (*ppos && !write)) {
+                *lenp = 0;
+                return 0;
+        }
+        if (write) {
+                rc = lprocfs_write_frac_helper(buffer, *lenp,
+                                               (unsigned int*)table->data,
+                                               1 << (20 - CFS_PAGE_SHIFT));
+                /* Don't allow them to let dirty pages exceed 90% of system
+                 * memory and set a hard minimum of 4MB. */
+                if (obd_max_dirty_pages > ((cfs_num_physpages / 10) * 9)) {
+                        CERROR("Refusing to set max dirty pages to %u, which "
+                               "is more than 90%% of available RAM; setting "
+                               "to %lu\n", obd_max_dirty_pages,
+                               ((cfs_num_physpages / 10) * 9));
+                        obd_max_dirty_pages = ((cfs_num_physpages / 10) * 9);
+                } else if (obd_max_dirty_pages < 4 << (20 - CFS_PAGE_SHIFT)) {
+                        obd_max_dirty_pages = 4 << (20 - CFS_PAGE_SHIFT);
+                }
+        } else {
+                char buf[21];
+                int len;
+
+                len = lprocfs_read_frac_helper(buf, sizeof(buf),
+                                               *(unsigned int*)table->data,
+                                               1 << (20 - CFS_PAGE_SHIFT));
+                if (len > *lenp)
+                        len = *lenp;
+                buf[len] = '\0';
+                if (cfs_copy_to_user(buffer, buf, len))
+                        return -EFAULT;
+                *lenp = len;
+        }
+        *ppos += *lenp;
+        return rc;
+}
+
+#ifdef RANDOM_FAIL_ALLOC
+int LL_PROC_PROTO(proc_alloc_fail_rate)
+{
+        int rc          = 0;
+        DECLARE_LL_PROC_PPOS_DECL;
+
+        if (!table->data || !table->maxlen || !*lenp || (*ppos && !write)) {
+                *lenp = 0;
+                return 0;
+        }
+        if (write) {
+                rc = lprocfs_write_frac_helper(buffer, *lenp,
+                                               (unsigned int*)table->data,
+                                               OBD_ALLOC_FAIL_MULT);
+        } else {
+                char buf[21];
+                int  len;
+
+                len = lprocfs_read_frac_helper(buf, 21,
+                                               *(unsigned int*)table->data,
+                                               OBD_ALLOC_FAIL_MULT);
+                if (len > *lenp)
+                        len = *lenp;
+                buf[len] = '\0';
+                if (cfs_copy_to_user(buffer, buf, len))
+                        return -EFAULT;
+                *lenp = len;
+        }
+        *ppos += *lenp;
+        return rc;
+}
+#endif
 
 int LL_PROC_PROTO(proc_at_min)
 {
@@ -329,7 +314,7 @@ int LL_PROC_PROTO(proc_at_history)
 #ifdef CONFIG_SYSCTL
 static cfs_sysctl_table_t obd_table[] = {
         {
-                .ctl_name = OBD_TIMEOUT,
+                INIT_CTL_NAME(OBD_TIMEOUT)
                 .procname = "timeout",
                 .data     = &obd_timeout,
                 .maxlen   = sizeof(int),
@@ -337,63 +322,63 @@ static cfs_sysctl_table_t obd_table[] = {
                 .proc_handler = &proc_set_timeout
         },
         {
-                .ctl_name = OBD_DEBUG_PEER_ON_TIMEOUT,
+                INIT_CTL_NAME(OBD_DEBUG_PEER_ON_TIMEOUT)
                 .procname = "debug_peer_on_timeout",
                 .data     = &obd_debug_peer_on_timeout,
                 .maxlen   = sizeof(int),
                 .mode     = 0644,
-                .proc_handler = &proc_dointvec,
+                .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = OBD_DUMP_ON_TIMEOUT,
+                INIT_CTL_NAME(OBD_DUMP_ON_TIMEOUT)
                 .procname = "dump_on_timeout",
                 .data     = &obd_dump_on_timeout,
                 .maxlen   = sizeof(int),
                 .mode     = 0644,
-                .proc_handler = &proc_dointvec,
+                .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = OBD_DUMP_ON_EVICTION,
+                INIT_CTL_NAME(OBD_DUMP_ON_EVICTION)
                 .procname = "dump_on_eviction",
                 .data     = &obd_dump_on_eviction,
                 .maxlen   = sizeof(int),
                 .mode     = 0644,
-                .proc_handler = &proc_dointvec,
+                .proc_handler = &proc_dointvec
         },
         {
-                .ctl_name = OBD_MEMUSED,
+                INIT_CTL_NAME(OBD_MEMUSED)
                 .procname = "memused",
                 .data     = NULL,
                 .maxlen   = 0,
                 .mode     = 0444,
-                .proc_handler = &proc_memory_alloc,
+                .proc_handler = &proc_memory_alloc
         },
         {
-                .ctl_name = OBD_PAGESUSED,
+                INIT_CTL_NAME(OBD_PAGESUSED)
                 .procname = "pagesused",
                 .data     = NULL,
                 .maxlen   = 0,
                 .mode     = 0444,
-                .proc_handler = &proc_pages_alloc,
+                .proc_handler = &proc_pages_alloc
         },
         {
-                .ctl_name = OBD_MAXMEMUSED,
+                INIT_CTL_NAME(OBD_MAXMEMUSED)
                 .procname = "memused_max",
                 .data     = NULL,
                 .maxlen   = 0,
                 .mode     = 0444,
-                .proc_handler = &proc_mem_max,
+                .proc_handler = &proc_mem_max
         },
         {
-                .ctl_name = OBD_MAXPAGESUSED,
+                INIT_CTL_NAME(OBD_MAXPAGESUSED)
                 .procname = "pagesused_max",
                 .data     = NULL,
                 .maxlen   = 0,
                 .mode     = 0444,
-                .proc_handler = &proc_pages_max,
+                .proc_handler = &proc_pages_max
         },
         {
-                .ctl_name = OBD_LDLM_TIMEOUT,
+                INIT_CTL_NAME(OBD_LDLM_TIMEOUT)
                 .procname = "ldlm_timeout",
                 .data     = &ldlm_timeout,
                 .maxlen   = sizeof(int),
@@ -402,7 +387,7 @@ static cfs_sysctl_table_t obd_table[] = {
         },
 #ifdef RANDOM_FAIL_ALLOC
         {
-                .ctl_name = OBD_ALLOC_FAIL_RATE,
+                INIT_CTL_NAME(OBD_ALLOC_FAIL_RATE)
                 .procname = "alloc_fail_rate",
                 .data     = &obd_alloc_fail_rate,
                 .maxlen   = sizeof(int),
@@ -411,7 +396,7 @@ static cfs_sysctl_table_t obd_table[] = {
         },
 #endif
         {
-                .ctl_name = OBD_MAX_DIRTY_PAGES,
+                INIT_CTL_NAME(OBD_MAX_DIRTY_PAGES)
                 .procname = "max_dirty_mb",
                 .data     = &obd_max_dirty_pages,
                 .maxlen   = sizeof(int),
@@ -419,7 +404,7 @@ static cfs_sysctl_table_t obd_table[] = {
                 .proc_handler = &proc_max_dirty_pages_in_mb
         },
         {
-                .ctl_name = OBD_AT_MIN,
+                INIT_CTL_NAME(OBD_AT_MIN)
                 .procname = "at_min",
                 .data     = &at_min,
                 .maxlen   = sizeof(int),
@@ -427,7 +412,7 @@ static cfs_sysctl_table_t obd_table[] = {
                 .proc_handler = &proc_at_min
         },
         {
-                .ctl_name = OBD_AT_MAX,
+                INIT_CTL_NAME(OBD_AT_MAX)
                 .procname = "at_max",
                 .data     = &at_max,
                 .maxlen   = sizeof(int),
@@ -435,7 +420,7 @@ static cfs_sysctl_table_t obd_table[] = {
                 .proc_handler = &proc_at_max
         },
         {
-                .ctl_name = OBD_AT_EXTRA,
+                INIT_CTL_NAME(OBD_AT_EXTRA)
                 .procname = "at_extra",
                 .data     = &at_extra,
                 .maxlen   = sizeof(int),
@@ -443,7 +428,7 @@ static cfs_sysctl_table_t obd_table[] = {
                 .proc_handler = &proc_at_extra
         },
         {
-                .ctl_name = OBD_AT_EARLY_MARGIN,
+                INIT_CTL_NAME(OBD_AT_EARLY_MARGIN)
                 .procname = "at_early_margin",
                 .data     = &at_early_margin,
                 .maxlen   = sizeof(int),
@@ -451,26 +436,26 @@ static cfs_sysctl_table_t obd_table[] = {
                 .proc_handler = &proc_at_early_margin
         },
         {
-                .ctl_name = OBD_AT_HISTORY,
+                INIT_CTL_NAME(OBD_AT_HISTORY)
                 .procname = "at_history",
                 .data     = &at_history,
                 .maxlen   = sizeof(int),
                 .mode     = 0644,
                 .proc_handler = &proc_at_history
         },
-        { 0 }
+        {       INIT_CTL_NAME(0)    }
 };
 
 static cfs_sysctl_table_t parent_table[] = {
-       {
-               .ctl_name = CTL_LUSTRE,
-               .procname = "lustre",
-               .data     = NULL,
-               .maxlen   = 0,
-               .mode     = 0555,
-               .child    = obd_table
-       },
-       {0}
+        {
+                INIT_CTL_NAME(OBD_SYSCTL)
+                .procname = "lustre",
+                .data     = NULL,
+                .maxlen   = 0,
+                .mode     = 0555,
+                .child    = obd_table
+        },
+        {       INIT_CTL_NAME(0)   }
 };
 #endif
 

@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -43,7 +43,7 @@
 #ifndef __KERNEL__
 # include <liblustre.h>
 #else
-# include <libcfs/kp30.h>
+# include <libcfs/libcfs.h>
 #endif
 
 #include <obd_support.h>

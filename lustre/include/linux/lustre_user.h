@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -40,13 +40,6 @@
 
 #ifndef _LINUX_LUSTRE_USER_H
 #define _LINUX_LUSTRE_USER_H
-
-#ifdef HAVE_ASM_TYPES_H
-#include <asm/types.h>
-#else
-#include <lustre/types.h>
-#endif
-
 
 #ifndef __KERNEL__
 # define NEED_QUOTA_DEFS

@@ -55,13 +55,13 @@ AC_DEFUN([LB_LINUX_RELEASE],
 [LINUXRELEASE=
 rm -f build/conftest.i
 AC_MSG_CHECKING([for Linux release])
-if test -s $LINUX_OBJ/include/linux/utsrelease.h ; then
-	LINUXRELEASEHEADER=utsrelease.h
+if test -s $LINUX_OBJ/include/$AUTOCONF_HDIR/utsrelease.h ; then
+	LINUXRELEASEHEADER=$AUTOCONF_HDIR/utsrelease.h
 else
-	LINUXRELEASEHEADER=version.h
+	LINUXRELEASEHEADER=linux/version.h
 fi
 LB_LINUX_TRY_MAKE([
-	#include <linux/$LINUXRELEASEHEADER>
+	#include <$LINUXRELEASEHEADER>
 ],[
 	char *LINUXRELEASE;
 	LINUXRELEASE=UTS_RELEASE;
@@ -116,7 +116,6 @@ LB_LINUX_TRY_COMPILE([
 		#error "not redhat kernel"
 		#endif
 	],[
-		RHEL_KENEL="yes"
 		RHEL_KERNEL="yes"
 		AC_MSG_RESULT([yes])
 	],[
@@ -233,8 +232,11 @@ LB_CHECK_FILE([$LINUX_CONFIG],[],
 # at 2.6.19 # $LINUX/include/linux/config.h is removed
 # and at more old has only one line
 # include <autoconf.h>
-LB_CHECK_FILE([$LINUX_OBJ/include/linux/autoconf.h],[],
-	[AC_MSG_ERROR([Run make config in $LINUX.])])
+LB_CHECK_FILE([$LINUX_OBJ/include/linux/autoconf.h],[AUTOCONF_HDIR=linux],
+        [LB_CHECK_FILE([$LINUX_OBJ/include/generated/autoconf.h],[AUTOCONF_HDIR=generated
+                       AC_DEFINE(AUTOCONF_INCLUDED, 1, [autoconf.h not define it while move to generated])],
+	[AC_MSG_ERROR([Run make config in $LINUX.])])])
+        AC_SUBST(AUTOCONF_HDIR)
 LB_CHECK_FILE([$LINUX_OBJ/include/linux/version.h],[],
 	[AC_MSG_ERROR([Run make config in $LINUX.])])
 
@@ -358,18 +360,6 @@ AC_SUBST(UML_CFLAGS)
 # these are like AC_TRY_COMPILE, but try to build modules against the
 # kernel, inside the build directory
 
-#
-# LB_LINUX_CONFTEST
-#
-# create a conftest.c file
-#
-AC_DEFUN([LB_LINUX_CONFTEST],
-[cat >conftest.c <<_ACEOF
-$1
-_ACEOF
-])
-
-
 # LB_LANG_PROGRAM(C)([PROLOGUE], [BODY])
 # --------------------------------------
 m4_define([LB_LANG_PROGRAM],
@@ -394,7 +384,7 @@ $2
 AC_DEFUN([LB_LINUX_COMPILE_IFELSE],
 [m4_ifvaln([$1], [AC_LANG_CONFTEST([$1])])dnl
 rm -f build/conftest.o build/conftest.mod.c build/conftest.ko
-AS_IF([AC_TRY_COMMAND(cp conftest.c build && make -d [$2] ${LD:+"LD=$LD"} CC="$CC" -f $PWD/build/Makefile LUSTRE_LINUX_CONFIG=$LINUX_CONFIG LINUXINCLUDE="$EXTRA_LNET_INCLUDE -I$LINUX/arch/`uname -m|sed -e 's/ppc.*/powerpc/' -e 's/x86_64/x86/' -e 's/i.86/x86/'`/include -I$LINUX_OBJ/include -I$LINUX/include -I$LINUX_OBJ/include2 -include include/linux/autoconf.h" -o tmp_include_depends -o scripts -o include/config/MARKER -C $LINUX_OBJ EXTRA_CFLAGS="-Werror-implicit-function-declaration $EXTRA_KCFLAGS" $ARCH_UM $MODULE_TARGET=$PWD/build) >/dev/null && AC_TRY_COMMAND([$3])],
+AS_IF([AC_TRY_COMMAND(cp conftest.c build && make -d [$2] ${LD:+"LD=$LD"} CC="$CC" -f $PWD/build/Makefile LUSTRE_LINUX_CONFIG=$LINUX_CONFIG LINUXINCLUDE="$EXTRA_LNET_INCLUDE -I$LINUX/arch/`uname -m|sed -e 's/ppc.*/powerpc/' -e 's/x86_64/x86/' -e 's/i.86/x86/'`/include -I$LINUX_OBJ/include -I$LINUX/include -I$LINUX_OBJ/include2 -include include/$AUTOCONF_HDIR/autoconf.h" -o tmp_include_depends -o scripts -o include/config/MARKER -C $LINUX_OBJ EXTRA_CFLAGS="-Werror-implicit-function-declaration $EXTRA_KCFLAGS" $ARCH_UM $MODULE_TARGET=$PWD/build) >/dev/null && AC_TRY_COMMAND([$3])],
 	[$4],
 	[_AC_MSG_LOG_CONFTEST
 m4_ifvaln([$5],[$5])dnl])
@@ -436,7 +426,7 @@ AC_DEFUN([LB_LINUX_TRY_COMPILE],
 AC_DEFUN([LB_LINUX_CONFIG],
 [AC_MSG_CHECKING([if Linux was built with CONFIG_$1])
 LB_LINUX_TRY_COMPILE([
-#include <linux/autoconf.h>
+#include <$AUTOCONF_HDIR/autoconf.h>
 ],[
 #ifndef CONFIG_$1
 #error CONFIG_$1 not #defined
@@ -458,7 +448,7 @@ $3
 AC_DEFUN([LB_LINUX_CONFIG_IM],
 [AC_MSG_CHECKING([if Linux was built with CONFIG_$1 in or as module])
 LB_LINUX_TRY_COMPILE([
-#include <linux/autoconf.h>
+#include <$AUTOCONF_HDIR/autoconf.h>
 ],[
 #if !(defined(CONFIG_$1) || defined(CONFIG_$1_MODULE))
 #error CONFIG_$1 and CONFIG_$1_MODULE not #defined
@@ -592,6 +582,32 @@ LB_LINUX_TRY_MAKE([
 ])
 ])
 
+# LC_MODULE_LOADING
+# after 2.6.28 CONFIG_KMOD is removed, and only CONFIG_MODULES remains
+# so we test if request_module is implemented or not
+AC_DEFUN([LC_MODULE_LOADING],
+[AC_MSG_CHECKING([if kernel module loading is possible])
+LB_LINUX_TRY_MAKE([
+        #include <linux/kmod.h>
+],[
+        int myretval=ENOSYS ;
+        return myretval;
+],[
+        $makerule LUSTRE_KERNEL_TEST=conftest.i
+],[
+        grep request_module build/conftest.i | grep -v `grep "int myretval=" build/conftest.i | cut -d= -f2 | cut -d" "  -f1` >/dev/null
+],[
+        AC_MSG_RESULT(yes)
+        AC_DEFINE(HAVE_MODULE_LOADING_SUPPORT, 1,
+                [kernel module loading is possible])
+],[
+        AC_MSG_RESULT(no)
+        AC_MSG_WARN([])
+        AC_MSG_WARN([Kernel module loading support is highly recommended.])
+        AC_MSG_WARN([])
+])
+])
+
 #
 # LB_PROG_LINUX
 #
@@ -696,11 +712,14 @@ AS_VAR_POPDEF([ac_Header])dnl
 AC_DEFUN([LB_USES_DPKG],
 [
 AC_MSG_CHECKING([if this distro uses dpkg])
-if dpkg -l >/dev/null; then
-	AC_MSG_RESULT([yes])
-	uses_dpkg=yes
-else
-	AC_MSG_RESULT([no])
-	uses_dpkg=no
-fi
+case `lsb_release -i -s 2>/dev/null` in
+        Ubuntu | Debian)
+                AC_MSG_RESULT([yes])
+                uses_dpkg=yes
+                ;;
+        *)
+                AC_MSG_RESULT([no])
+                uses_dpkg=no
+                ;;
+esac
 ])

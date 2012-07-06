@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -146,7 +146,7 @@ lstjn_join_session(char *ses, char *grp)
                 return -1;
         }
 
-        fprintf(stdout, "Session %s, ID: %s, %Lu\n",
+        fprintf(stdout, "Session %s, ID: %s, "LPU64"\n",
                 ses, libcfs_nid2str(rep->join_sid.ses_nid),
                 rep->join_sid.ses_stamp);
 
@@ -202,9 +202,17 @@ main(int argc, char **argv)
                 return -1;
         }
 
+        rc = cfs_wi_startup();
+        if (rc != 0) {
+                CERROR("cfs_wi_startup() failed: %d\n", rc);
+                libcfs_debug_cleanup();
+                return -1;
+        }
+
         rc = LNetInit();
         if (rc != 0) {
                 CERROR("LNetInit() failed: %d\n", rc);
+                cfs_wi_shutdown();
                 libcfs_debug_cleanup();
                 return -1;
         }
@@ -216,8 +224,8 @@ main(int argc, char **argv)
         if (rc != 0) {
                 fprintf(stderr, "Can't startup selftest\n");
                 LNetFini();
+                cfs_wi_shutdown();
                 libcfs_debug_cleanup();
-
                 return -1;
         }
 
@@ -243,6 +251,8 @@ out:
         lnet_selftest_fini();
 
         LNetFini();
+
+        cfs_wi_shutdown();
 
         libcfs_debug_cleanup();
 

@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -42,6 +44,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/file.h>
+#include <sys/wait.h>
 #include <stdarg.h>
 
 #define MAX_PATH_LENGTH 4096
@@ -271,15 +274,18 @@ out:
 /** =================================================================
  * test number 3
  *
- * Bug 22660: Two conflicting flocks from same process.
+ * Bug 24040: Two conflicting flocks from same process different fds should fail
+ *            two conflicting flocks from different processes but same fs
+ *            should succeed.
  */
 int t3(int argc, char *argv[])
 {
         int fd, fd2;
+        int pid;
         int rc = EXIT_SUCCESS;
 
         if (argc != 3) {
-                fprintf(stderr, "Usage: ./flock_test 3 filename\n");
+                fprintf(stderr, "Usage: ./flocks_test 3 filename\n");
                 return EXIT_FAILURE;
         }
 
@@ -300,9 +306,46 @@ int t3(int argc, char *argv[])
         if (flock(fd2, LOCK_EX | LOCK_NB) >= 0) {
                 fprintf(stderr, "Second flock succeeded - FAIL\n");
                 rc = EXIT_FAILURE;
+                close(fd2);
+                goto out;
         }
 
         close(fd2);
+
+        pid = fork();
+        if (pid == -1) {
+                perror("fork");
+                rc = EXIT_FAILURE;
+                goto out;
+        }
+
+        if (pid == 0) {
+                if ((fd2 = open(argv[2], O_RDWR)) < 0) {
+                        fprintf(stderr, "Couldn't open file: %s\n", argv[1]);
+                        rc = EXIT_FAILURE;
+                        exit(rc);
+                }
+                if (flock(fd2, LOCK_EX | LOCK_NB) >= 0) {
+                        fprintf(stderr, "Second flock succeeded - FAIL\n");
+                        rc = EXIT_FAILURE;
+                        goto out_child;
+                }
+                if (flock(fd, LOCK_UN) == -1) {
+                        fprintf(stderr, "Child unlock on parent fd failed\n");
+                        rc = EXIT_FAILURE;
+                        goto out_child;
+                }
+                if (flock(fd2, LOCK_EX | LOCK_NB) == -1) {
+                        fprintf(stderr, "Relock after parent unlock failed!\n");
+                        rc = EXIT_FAILURE;
+                        goto out_child;
+                }
+        out_child:
+                close(fd2);
+                exit(rc);
+        }
+
+        waitpid(pid, &rc, 0);
 out:
         close(fd);
         return rc;

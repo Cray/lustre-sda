@@ -68,8 +68,8 @@ reboot_recover_node () {
                         boot_node $c
                         echo "Reintegrating $c"
                         zconf_mount $c $MOUNT ||
-                            error_exit "mount $MOUNT on $c failed"
-                        client_up $c || error_exit "start client on $c failed"
+                            error "mount $MOUNT on $c failed"
+                        client_up $c || error "start client on $c failed"
                     done
                     start_client_loads $item
                     ;;
@@ -161,7 +161,7 @@ failover_pair() {
 
     # Client loads are allowed to die while in recovery, so we just
     # restart them.
-    log "==== Checking the clients loads AFTER failover -- ERRORS_OK=$ERRORS_OK"
+    log "==== Checking the clients loads AFTER failovers -- ERRORS_OK=$ERRORS_OK"
     restart_client_loads $NODES_TO_USE $ERRORS_OK || exit $?
     log "Done checking / re-starting client loads. PASS"
     return 0
@@ -197,7 +197,7 @@ Status: $result: rc=$rc"
         # we are interested in only on failed clients and servers
         local failedclients=$(cat $END_RUN_FILE | grep -v $0)
         # FIXME: need ostfailover-s nodes also for FLAVOR=OST
-        gather_logs $(comma_list $(osts_nodes) $mds_HOST \
+        gather_logs $(comma_list $(osts_nodes) $(mdts_nodes) \
                       $mdsfailover_HOST $failedclients)
     fi
 
@@ -254,7 +254,12 @@ test_pairwise_fail() {
     sleep $FAILOVER_PERIOD
 
     # CMD_TEST_NUM=17.3
-    # No test 3 for 1.8.x Lustre version.
+    if [ $MDSCOUNT -gt 1 ]; then
+        failover_pair MDS MDS "test 3: failover MDS, then another MDS =="
+        sleep $FAILOVER_PERIOD
+    else
+        skip_env "has less than 2 MDTs, test 3 skipped"
+    fi
 
     # CMD_TEST_NUM=17.4
     if [ $OSTCOUNT -gt 1 ]; then

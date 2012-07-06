@@ -18,4 +18,3 @@ trap - ERR
 
 # Execute the command
 "$@"
-

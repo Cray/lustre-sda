@@ -21,8 +21,7 @@ get_rpmbuildopts() {
 # patching common to all releases
 patch_spec_common() {
 
-    sed -i -e 's/^\(%define signmodules \).*/\10/' \
-           -e '/find $RPM_BUILD_ROOT\/lib\/modules\/$KernelVer/a\
+    sed -i -e '/find $RPM_BUILD_ROOT\/lib\/modules\/$KernelVer/a\
     cp -a fs/ext3/* $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/fs/ext3 \
     cp -a fs/ext4/* $RPM_BUILD_ROOT/lib/modules/$KernelVer/build/fs/ext4' \
           SPECS/$SPEC_NAME 2>&1 || \
@@ -111,6 +110,15 @@ prepare_and_build_srpm() {
         return 1
     fi
 
+    # for informative purposes, display a diff between the .config that
+    # was actually built and what we proposed as a .config
+    echo "Diffs between $(basename $CONFIG_FILE) and the built kernel's .config:"
+    local rpmname="$TOPDIR/RPMS/${BUILD_ARCHS# }/kernel-${lnxmaj}-${lnxrel}${buildid}.${BUILD_ARCHS# }.rpm"
+    rpmcfg=$(rpm -qpl $rpmname | grep '/boot/config-')
+    rpm2cpio $rpmname | cpio -id .$rpmcfg
+    diff -u $CONFIG_FILE .$rpmcfg
+    rm -rf .$rpmcfg
+
     return 0
 
 }
@@ -187,9 +195,7 @@ find_linux_rpm-rhel() {
     if [ "$(lsb_release -s -i)" = "RedHatEnterpriseServer" ]; then
         sudo="sudo"
     fi
-    if ! $sudo yumdownloader --destdir "$tmpdir" kernel-devel-"$wanted_kernel" > /dev/null; then
-        fatal 1 "failed to download kernel-devel-$wanted_kernel"
-    fi
+    $sudo yumdownloader --destdir "$tmpdir" kernel-devel-"$wanted_kernel" > /dev/null
     local rpm=$(cd $tmpdir; echo *)
     mv "$tmpdir/$rpm" "$pathtorpms"
     rmdir $tmpdir

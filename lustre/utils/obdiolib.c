@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -152,6 +152,8 @@ obdio_pwrite (struct obdio_conn *conn, __u64 oid,
         conn->oc_data.ioc_obdo1.o_valid =
                 OBD_MD_FLID | OBD_MD_FLTYPE | OBD_MD_FLMODE;
 
+        conn->oc_data.ioc_pbuf1 = (void*)1;
+        conn->oc_data.ioc_plen1 = 1;
         conn->oc_data.ioc_pbuf2 = buffer;
         conn->oc_data.ioc_plen2 = count;
         conn->oc_data.ioc_count = count;
@@ -189,6 +191,7 @@ int
 obdio_cancel (struct obdio_conn *conn, struct lustre_handle *lh)
 {
         obdio_iocinit (conn);
+
         conn->oc_data.ioc_obdo1.o_handle = *lh;
         conn->oc_data.ioc_obdo1.o_valid = OBD_MD_FLHANDLE;
 

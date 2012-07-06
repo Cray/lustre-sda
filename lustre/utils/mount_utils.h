@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -42,6 +44,5 @@
 void fatal(void);
 int run_command(char *, int);
 int get_mountdata(char *, struct lustre_disk_data *);
-void register_service_tags(char *, char *, char *);
 
 #endif

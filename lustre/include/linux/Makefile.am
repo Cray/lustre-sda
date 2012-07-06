@@ -25,7 +25,7 @@
 #
 
 #
-# Copyright  2008 Sun Microsystems, Inc. All rights reserved
+# Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
 # Use is subject to license terms.
 #
 
@@ -37,11 +37,12 @@
 linuxdir = $(includedir)/linux
 
 if UTILS
-linux_HEADERS = lustre_types.h lustre_user.h
+linux_HEADERS = lustre_user.h
 endif
 
-EXTRA_DIST = lprocfs_status.h lustre_debug.h lustre_lib.h \
-  lustre_dlm.h lustre_handles.h lustre_net.h obd_class.h obd_support.h  \
-  lustre_log.h lustre_compat25.h lustre_fsfilt.h lustre_mds.h obd.h \
-  lvfs.h lvfs_linux.h lustre_lite.h  lustre_quota.h \
-  lustre_user.h lustre_types.h lustre_patchless_compat.h lustre_intent.h
+EXTRA_DIST = lprocfs_status.h lustre_acl.h lustre_debug.h lustre_lib.h \
+     lustre_dlm.h  lustre_handles.h lustre_net.h obd_class.h obd_support.h \
+     lustre_log.h lustre_compat25.h lustre_fsfilt.h lustre_mds.h \
+     obd.h lvfs.h lvfs_linux.h lustre_lite.h lustre_quota.h \
+     lustre_user.h lustre_patchless_compat.h lustre_intent.h \
+     obd_cksum.h

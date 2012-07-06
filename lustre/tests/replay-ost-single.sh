@@ -22,7 +22,7 @@ CPU=`awk '/model/ {print $4}' /proc/cpuinfo`
 [ "$CPU" = "UML" ] && EXCEPT="$EXCEPT 6"
 
 # Skip these tests
-# BUG NUMBER:
+# BUG NUMBER: 
 ALWAYS_EXCEPT="$REPLAY_OST_SINGLE_EXCEPT"
 
 #					
@@ -58,7 +58,7 @@ test_0b() {
 run_test 0b "empty replay"
 
 test_1() {
-    date > $TDIR/$tfile
+    date > $TDIR/$tfile || error "error creating $TDIR/$tfile"
     fail ost1
     $CHECKSTAT -t file $TDIR/$tfile || return 1
     rm -f $TDIR/$tfile
@@ -67,12 +67,12 @@ run_test 1 "touch"
 
 test_2() {
     for i in `seq 10`; do
-        echo "tag-$i" > $TDIR/$tfile-$i
-    done
+        echo "tag-$i" > $TDIR/$tfile-$i || error "create $TDIR/$tfile-$i"
+    done 
     fail ost1
     for i in `seq 10`; do
-      grep -q "tag-$i" $TDIR/$tfile-$i || error "f2-$i"
-    done
+      grep -q "tag-$i" $TDIR/$tfile-$i || error "grep $TDIR/$tfile-$i"
+    done 
     rm -f $TDIR/$tfile-*
 }
 run_test 2 "|x| 10 open(O_CREAT)s"
@@ -177,6 +177,12 @@ test_6() {
     f=$TDIR/$tfile
     rm -f $f
     sync && sleep 2 && sync	# wait for delete thread
+
+    # wait till space is returned, following
+    # (( $before > $after_dd)) test counting on that
+    wait_mds_ost_sync || return 4
+    wait_destroy_complete || return 5
+
     before=`kbytesfree`
     dd if=/dev/urandom bs=4096 count=1280 of=$f || return 28
     lfs getstripe $f
@@ -186,13 +192,13 @@ test_6() {
     sleep 2 # ensure we have a fresh statfs
     sync
 #define OBD_FAIL_MDS_REINT_NET_REP       0x119
-    do_facet mds "lctl set_param fail_loc=0x80000119"
+    do_facet $SINGLEMDS "lctl set_param fail_loc=0x80000119"
     after_dd=`kbytesfree`
     log "before: $before after_dd: $after_dd"
     (( $before > $after_dd )) || return 1
     rm -f $f
     fail ost$((stripe_index + 1))
-    wait_recovery_complete ost$((stripe_index + 1)) || error "OST recovery isn't done"
+    wait_recovery_complete ost$((stripe_index + 1)) || error "OST recovery not done"
     $CHECKSTAT -t file $f && return 2 || true
     sync
     # let the delete happen
@@ -207,7 +213,13 @@ run_test 6 "Fail OST before obd_destroy"
 test_7() {
     f=$TDIR/$tfile
     rm -f $f
-    sync && sleep 2 && sync	# wait for delete thread
+    sync && sleep 5 && sync	# wait for delete thread
+
+    # wait till space is returned, following
+    # (( $before > $after_dd)) test counting on that
+    wait_mds_ost_sync || return 4
+    wait_destroy_complete || return 5
+
     before=`kbytesfree`
     dd if=/dev/urandom bs=4096 count=1280 of=$f || return 4
     sync
@@ -219,7 +231,7 @@ test_7() {
     replay_barrier ost1
     rm -f $f
     fail ost1
-    wait_recovery_complete ost1 || error "OST recovery isn't done"
+    wait_recovery_complete ost1 || error "OST recovery not done"
     $CHECKSTAT -t file $f && return 2 || true
     sync
     # let the delete happen
@@ -227,7 +239,7 @@ test_7() {
     wait_destroy_complete || return 5
     after=`kbytesfree`
     log "before: $before after: $after"
-    (( $before <= $after + 40 )) || return 3 # take OST logs into account
+    (( $before <= $after + 40 )) || return 3	# take OST logs into account
 }
 run_test 7 "Fail OST before obd_destroy"
 

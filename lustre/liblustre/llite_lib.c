@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -46,26 +46,13 @@
 #include <sys/stat.h>
 #include <sys/queue.h>
 
-#include <sysio.h>
-#ifdef HAVE_XTIO_H
-#include <xtio.h>
-#endif
-#include <fs.h>
-#include <mount.h>
-#include <inode.h>
-#ifdef HAVE_FILE_H
-#include <file.h>
-#endif
-
-/* both sys/queue.h (libsysio require it) and portals/lists.h have definition
- * of 'LIST_HEAD'. undef it to suppress warnings
- */
-#undef LIST_HEAD
 #include <liblustre.h>
 #include <lnet/lnetctl.h>     /* needed for parse_dump */
 
 #include "lutil.h"
 #include "llite_lib.h"
+
+int slp_global_init(void);
 
 static int lllib_init(void)
 {
@@ -74,9 +61,11 @@ static int lllib_init(void)
             init_obdclass() ||
             ptlrpc_init() ||
             mgc_init() ||
+            lmv_init() ||
             mdc_init() ||
             lov_init() ||
-            osc_init())
+            osc_init() ||
+            slp_global_init())
                 return -1;
 
         return _sysio_fssw_register("lustre", &llu_fssw_ops);
@@ -90,7 +79,6 @@ int liblustre_process_log(struct config_llog_instance *cfg,
         struct lustre_cfg *lcfg;
         char  *peer = "MGS_UUID";
         struct obd_device *obd;
-        struct lustre_handle mgc_conn = {0, };
         struct obd_export *exp;
         char  *name = "mgc_dev";
         class_uuid_t uuid;
@@ -173,14 +161,15 @@ int liblustre_process_log(struct config_llog_instance *cfg,
         if (ocd == NULL)
                 GOTO(out_cleanup, rc = -ENOMEM);
 
-        ocd->ocd_connect_flags = OBD_CONNECT_VERSION | OBD_CONNECT_AT |
-                                 OBD_CONNECT_VBR | OBD_CONNECT_FLOCK_OWNER;
+        ocd->ocd_connect_flags = OBD_CONNECT_VERSION | OBD_CONNECT_FID |
+                                 OBD_CONNECT_AT | OBD_CONNECT_VBR |
+                                 OBD_CONNECT_FULL20;
 #ifdef LIBLUSTRE_POSIX_ACL
         ocd->ocd_connect_flags |= OBD_CONNECT_ACL;
 #endif
         ocd->ocd_version = LUSTRE_VERSION_CODE;
 
-        rc = obd_connect(&mgc_conn, obd, &mgc_uuid, ocd, &exp);
+        rc = obd_connect(NULL, &exp, obd, &mgc_uuid, ocd, NULL);
         if (rc) {
                 CERROR("cannot connect to %s at %s: rc = %d\n",
                        LUSTRE_MGS_OBDNAME, mgsnid, rc);
@@ -210,7 +199,7 @@ out_cleanup:
         err = class_process_config(lcfg);
         lustre_cfg_free(lcfg);
         if (err)
-                CERROR("mdc_cleanup failed: rc = %d\n", err);
+                CERROR("md_cleanup failed: rc = %d\n", err);
 
 out_detach:
         lustre_cfg_bufs_reset(&bufs, name);
@@ -218,7 +207,7 @@ out_detach:
         err = class_process_config(lcfg);
         lustre_cfg_free(lcfg);
         if (err)
-                CERROR("mdc_detach failed: rc = %d\n", err);
+                CERROR("md_detach failed: rc = %d\n", err);
 
 out_del_uuid:
         lustre_cfg_bufs_reset(&bufs, name);

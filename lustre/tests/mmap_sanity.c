@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -456,7 +458,7 @@ static int cancel_lru_locks(char *prefix)
         }
 
         if (prefix)
-                sprintf(cmd, "ls /proc/fs/lustre/ldlm/namespaces/*/lru_size | grep -i %s", prefix);
+                sprintf(cmd, "ls /proc/fs/lustre/ldlm/namespaces/*-%s-*/lru_size", prefix);
         else
                 sprintf(cmd, "ls /proc/fs/lustre/ldlm/namespaces/*/lru_size");
 
@@ -652,7 +654,7 @@ static int mmap_tst7_func(char *mnt, int rw)
                 rc = errno;
                 goto out;
         }
-        buf = mmap(NULL, 2 * page_size,
+        buf = mmap(NULL, page_size * 2,
                    PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
         if (buf == MAP_FAILED) {
                 perror("mmap");
@@ -688,6 +690,69 @@ static int mmap_tst7(char *mnt)
         return rc;
 }
 
+static int mmap_tst8(char *mnt)
+{
+        char  fname[256];
+        char *buf = MAP_FAILED;
+        int fd = -1;
+        int rc = 0;
+        pid_t pid;
+        char xyz[page_size * 2];
+
+        if (snprintf(fname, 256, "%s/mmap_tst8", mnt) >= 256) {
+                fprintf(stderr, "dir name too long\n");
+                rc = ENAMETOOLONG;
+                goto out;
+        }
+        fd = open(fname, O_RDWR | O_CREAT, 0644);
+        if (fd == -1) {
+                perror("open");
+                rc = errno;
+                goto out;
+        }
+        if (ftruncate(fd, page_size) == -1) {
+                perror("truncate");
+                rc = errno;
+                goto out;
+        }
+        buf = mmap(NULL, page_size * 2,
+                   PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (buf == MAP_FAILED) {
+                perror("mmap");
+                rc = errno;
+                goto out;
+        }
+
+        pid = fork();
+        if (pid == 0) { /* child */
+                memcpy(xyz, buf, page_size * 2);
+                /* shouldn't reach here. */
+                exit(0);
+        } else if (pid > 0) { /* parent */
+                int status = 0;
+                pid = waitpid(pid, &status, 0);
+                if (pid < 0) {
+                        perror("wait");
+                        rc = errno;
+                        goto out;
+                }
+
+                rc = EFAULT;
+                if (WIFSIGNALED(status) && SIGBUS == WTERMSIG(status))
+                        rc = 0;
+        } else {
+                perror("fork");
+                rc = errno;
+        }
+
+out:
+        if (buf != MAP_FAILED)
+                munmap(buf, page_size);
+        if (fd != -1)
+                close(fd);
+        return rc;
+}
+
 static int remote_tst(int tc, char *mnt)
 {
         int rc = 0;
@@ -705,7 +770,7 @@ static int remote_tst(int tc, char *mnt)
         }
         return rc;
 }
-        
+
 struct test_case {
         int     tc;                     /* test case number */
         char    *desc;                  /* test description */
@@ -724,6 +789,7 @@ struct test_case tests[] = {
         { 6, "mmap test6: check mmap write/read content on two nodes", 
                 mmap_tst6, 2 },
         { 7, "mmap test7: file i/o with an unmapped buffer", mmap_tst7, 1},
+        { 8, "mmap test8: SIGBUS for beyond file size", mmap_tst8, 1},
         { 0, NULL, 0, 0 }
 };
 

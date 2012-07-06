@@ -26,8 +26,10 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011, Whamcloud, Inc.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -44,10 +46,9 @@
 #endif
 
 #include "ptlrpc_internal.h"
-#include <class_hash.h>
 
-static lustre_hash_t *conn_hash = NULL;
-static lustre_hash_ops_t conn_hash_ops;
+static cfs_hash_t *conn_hash = NULL;
+static cfs_hash_ops_t conn_hash_ops;
 
 struct ptlrpc_connection *
 ptlrpc_connection_get(lnet_process_id_t peer, lnet_nid_t self,
@@ -56,7 +57,7 @@ ptlrpc_connection_get(lnet_process_id_t peer, lnet_nid_t self,
         struct ptlrpc_connection *conn, *conn2;
         ENTRY;
 
-        conn = lustre_hash_lookup(conn_hash, &peer);
+        conn = cfs_hash_lookup(conn_hash, &peer);
         if (conn)
                 GOTO(out, conn);
 
@@ -66,8 +67,8 @@ ptlrpc_connection_get(lnet_process_id_t peer, lnet_nid_t self,
 
         conn->c_peer = peer;
         conn->c_self = self;
-        INIT_HLIST_NODE(&conn->c_hash);
-        atomic_set(&conn->c_refcount, 1);
+        CFS_INIT_HLIST_NODE(&conn->c_hash);
+        cfs_atomic_set(&conn->c_refcount, 1);
         if (uuid)
                 obd_str2uuid(&conn->c_remote_uuid, uuid->uuid);
 
@@ -77,7 +78,7 @@ ptlrpc_connection_get(lnet_process_id_t peer, lnet_nid_t self,
          * connection.  The object which exists in the has will be
          * returned and may be compared against out object.
          */
-        conn2 = lustre_hash_findadd_unique(conn_hash, &peer, &conn->c_hash);
+        conn2 = cfs_hash_findadd_unique(conn_hash, &peer, &conn->c_hash);
         if (conn != conn2) {
                 OBD_FREE_PTR(conn);
                 conn = conn2;
@@ -85,7 +86,7 @@ ptlrpc_connection_get(lnet_process_id_t peer, lnet_nid_t self,
         EXIT;
 out:
         CDEBUG(D_INFO, "conn=%p refcount %d to %s\n",
-               conn, atomic_read(&conn->c_refcount),
+               conn, cfs_atomic_read(&conn->c_refcount),
                libcfs_nid2str(conn->c_peer.nid));
         return conn;
 }
@@ -98,7 +99,7 @@ int ptlrpc_connection_put(struct ptlrpc_connection *conn)
         if (!conn)
                 RETURN(rc);
 
-        LASSERT(!hlist_unhashed(&conn->c_hash));
+        LASSERT(cfs_atomic_read(&conn->c_refcount) > 1);
 
         /*
          * We do not remove connection from hashtable and
@@ -116,11 +117,11 @@ int ptlrpc_connection_put(struct ptlrpc_connection *conn)
          * when ptlrpc_connection_fini()->lh_exit->conn_exit()
          * path is called.
          */
-        if (atomic_dec_return(&conn->c_refcount) == 1)
+        if (cfs_atomic_dec_return(&conn->c_refcount) == 1)
                 rc = 1;
 
         CDEBUG(D_INFO, "PUT conn=%p refcount %d to %s\n",
-               conn, atomic_read(&conn->c_refcount),
+               conn, cfs_atomic_read(&conn->c_refcount),
                libcfs_nid2str(conn->c_peer.nid));
 
         RETURN(rc);
@@ -131,9 +132,9 @@ ptlrpc_connection_addref(struct ptlrpc_connection *conn)
 {
         ENTRY;
 
-        atomic_inc(&conn->c_refcount);
+        cfs_atomic_inc(&conn->c_refcount);
         CDEBUG(D_INFO, "conn=%p refcount %d to %s\n",
-               conn, atomic_read(&conn->c_refcount),
+               conn, cfs_atomic_read(&conn->c_refcount),
                libcfs_nid2str(conn->c_peer.nid));
 
         RETURN(conn);
@@ -143,10 +144,13 @@ int ptlrpc_connection_init(void)
 {
         ENTRY;
 
-        conn_hash = lustre_hash_init("CONN_HASH",
-                                     HASH_CONN_CUR_BITS,
-                                     HASH_CONN_MAX_BITS,
-                                     &conn_hash_ops, LH_REHASH);
+        conn_hash = cfs_hash_create("CONN_HASH",
+                                    HASH_CONN_CUR_BITS,
+                                    HASH_CONN_MAX_BITS,
+                                    HASH_CONN_BKT_BITS, 0,
+                                    CFS_HASH_MIN_THETA,
+                                    CFS_HASH_MAX_THETA,
+                                    &conn_hash_ops, CFS_HASH_DEFAULT);
         if (!conn_hash)
                 RETURN(-ENOMEM);
 
@@ -155,7 +159,7 @@ int ptlrpc_connection_init(void)
 
 void ptlrpc_connection_fini(void) {
         ENTRY;
-        lustre_hash_exit(conn_hash);
+        cfs_hash_putref(conn_hash);
         EXIT;
 }
 
@@ -163,77 +167,80 @@ void ptlrpc_connection_fini(void) {
  * Hash operations for net_peer<->connection
  */
 static unsigned
-conn_hashfn(lustre_hash_t *lh,  void *key, unsigned mask)
+conn_hashfn(cfs_hash_t *hs, const void *key, unsigned mask)
 {
-        return lh_djb2_hash(key, sizeof(lnet_process_id_t), mask);
+        return cfs_hash_djb2_hash(key, sizeof(lnet_process_id_t), mask);
 }
 
 static int
-conn_compare(void *key, struct hlist_node *hnode)
+conn_keycmp(const void *key, cfs_hlist_node_t *hnode)
 {
         struct ptlrpc_connection *conn;
-        lnet_process_id_t *conn_key;
+        const lnet_process_id_t *conn_key;
 
         LASSERT(key != NULL);
         conn_key = (lnet_process_id_t*)key;
-        conn = hlist_entry(hnode, struct ptlrpc_connection, c_hash);
+        conn = cfs_hlist_entry(hnode, struct ptlrpc_connection, c_hash);
 
         return conn_key->nid == conn->c_peer.nid &&
                conn_key->pid == conn->c_peer.pid;
 }
 
 static void *
-conn_key(struct hlist_node *hnode)
+conn_key(cfs_hlist_node_t *hnode)
 {
         struct ptlrpc_connection *conn;
-        conn = hlist_entry(hnode, struct ptlrpc_connection, c_hash);
+        conn = cfs_hlist_entry(hnode, struct ptlrpc_connection, c_hash);
         return &conn->c_peer;
 }
 
 static void *
-conn_get(struct hlist_node *hnode)
+conn_object(cfs_hlist_node_t *hnode)
 {
-        struct ptlrpc_connection *conn;
-
-        conn = hlist_entry(hnode, struct ptlrpc_connection, c_hash);
-        atomic_inc(&conn->c_refcount);
-
-        return conn;
-}
-
-static void *
-conn_put(struct hlist_node *hnode)
-{
-        struct ptlrpc_connection *conn;
-
-        conn = hlist_entry(hnode, struct ptlrpc_connection, c_hash);
-        atomic_dec(&conn->c_refcount);
-
-        return conn;
+        return cfs_hlist_entry(hnode, struct ptlrpc_connection, c_hash);
 }
 
 static void
-conn_exit(struct hlist_node *hnode)
+conn_get(cfs_hash_t *hs, cfs_hlist_node_t *hnode)
 {
         struct ptlrpc_connection *conn;
 
-        conn = hlist_entry(hnode, struct ptlrpc_connection, c_hash);
+        conn = cfs_hlist_entry(hnode, struct ptlrpc_connection, c_hash);
+        cfs_atomic_inc(&conn->c_refcount);
+}
+
+static void
+conn_put_locked(cfs_hash_t *hs, cfs_hlist_node_t *hnode)
+{
+        struct ptlrpc_connection *conn;
+
+        conn = cfs_hlist_entry(hnode, struct ptlrpc_connection, c_hash);
+        cfs_atomic_dec(&conn->c_refcount);
+}
+
+static void
+conn_exit(cfs_hash_t *hs, cfs_hlist_node_t *hnode)
+{
+        struct ptlrpc_connection *conn;
+
+        conn = cfs_hlist_entry(hnode, struct ptlrpc_connection, c_hash);
         /*
          * Nothing should be left. Connection user put it and
          * connection also was deleted from table by this time
          * so we should have 0 refs.
          */
-        LASSERTF(atomic_read(&conn->c_refcount) == 0,
+        LASSERTF(cfs_atomic_read(&conn->c_refcount) == 0,
                  "Busy connection with %d refs\n",
-                 atomic_read(&conn->c_refcount));
+                 cfs_atomic_read(&conn->c_refcount));
         OBD_FREE_PTR(conn);
 }
 
-static lustre_hash_ops_t conn_hash_ops = {
-        .lh_hash    = conn_hashfn,
-        .lh_compare = conn_compare,
-        .lh_key     = conn_key,
-        .lh_get     = conn_get,
-        .lh_put     = conn_put,
-        .lh_exit    = conn_exit,
+static cfs_hash_ops_t conn_hash_ops = {
+        .hs_hash        = conn_hashfn,
+        .hs_keycmp      = conn_keycmp,
+        .hs_key         = conn_key,
+        .hs_object      = conn_object,
+        .hs_get         = conn_get,
+        .hs_put_locked  = conn_put_locked,
+        .hs_exit        = conn_exit,
 };

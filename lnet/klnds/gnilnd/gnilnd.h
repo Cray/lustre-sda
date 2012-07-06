@@ -3,6 +3,8 @@
  *
  * Copyright (C) 2004 Cluster File Systems, Inc.
  *   Author: Eric Barton <eric@bartonsoftware.com>
+ * Copyright (C) 2009-2012 Cray, Inc.
+ *   Author: Nic Henke <nic@cray.com>, James Shimek <jshimek@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
  *
@@ -26,16 +28,15 @@
 #ifndef EXPORT_SYMTAB
 # define EXPORT_SYMTAB
 #endif
-#ifndef AUTOCONF_INCLUDED
-#include <linux/config.h>
-#endif
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/string.h>
 #include <linux/stat.h>
 #include <linux/errno.h>
+#ifdef HAVE_LINUX_KERNEL_LOCK
 #include <linux/smp_lock.h>
+#endif
 #include <linux/unistd.h>
 #include <linux/uio.h>
 #include <linux/time.h>
@@ -61,22 +62,31 @@
 
 #define DEBUG_SUBSYSTEM S_LND
 
-#include <libcfs/kp30.h>
+#include <libcfs/linux/kp30.h>
+#include <libcfs/libcfs.h>
 #include <lnet/lnet.h>
 #include <lnet/lib-lnet.h>
 #include <lnet/lnet-sysctl.h>
 
 #include <gni_pub.h>
 #include "gnilnd_version.h"
-#include "gnilnd_hss_ops.h"
+
 
 /* tunables determined at compile time */
 #define GNILND_MIN_TIMEOUT         5             /* minimum timeout interval (seconds) */
-#define GNILND_BASE_TIMEOUT        60            /* default sane timeout */
 #define GNILND_TO2KA(t)            (((t)-1)/2)   /* timeout -> keepalive interval */
 #define GNILND_MIN_RECONNECT_TO    GNILND_BASE_TIMEOUT/4
 #define GNILND_MAX_RECONNECT_TO    GNILND_BASE_TIMEOUT
 #define GNILND_HARDWARE_TIMEOUT    15            /* maximum time for data to travel between nodes */
+#define GNILND_MDD_TIMEOUT         15            /* MDD hold timeout in minutes */
+#define GNILND_FAST_MAPPING_TRY   \
+        *kgnilnd_tunables.kgn_max_retransmits   /* maximum number to attempt mapping of a tx */
+#define GNILND_MAP_RETRY_RATE      1            /* interval between mapping attempts in jiffies */
+
+/* map failure timeout */
+#define GNILND_MAP_TIMEOUT         \
+        (cfs_time_seconds(*kgnilnd_tunables.kgn_timeout * \
+         *kgnilnd_tunables.kgn_timeout))
 
 /* reaper thread wakup interval */
 #define GNILND_REAPER_THREAD_WAKE  1
@@ -92,10 +102,10 @@
  * don't need the throughput of multiple threads by default */
 #if defined(CONFIG_CRAY_COMPUTE)
 #define GNILND_SCHED_THREADS      1             /* default # of kgnilnd_scheduler threads */
-#define GNILND_FMABLK_MAX         64            /* maximum number of mboxes per fmablk */
+#define GNILND_FMABLK             64            /* default number of mboxes per fmablk */
 #else
 #define GNILND_SCHED_THREADS      3             /* default # of kgnilnd_scheduler threads */
-#define GNILND_FMABLK_MAX         1024          /* maximum number of mboxes per fmablk */
+#define GNILND_FMABLK             1024          /* default number of mboxes per fmablk */
 #endif
 
 /* EXTRA_BITS are there to allow us to hide NOOP/CLOSE and anything else out of band */
@@ -111,15 +121,15 @@
 #define GNILND_MAX_IMMEDIATE      (64<<10)
 
 /* payload size to add to the base mailbox size
- * This is subtracting 2 from the peer_credits as 4 messages are included in the size
+ * This is subtracting 2 from the concurrent_sends as 4 messages are included in the size
  * gni_smsg_buff_size_needed calculates, the MAX_PAYLOAD is added to 
  * the calculation return from that function.*/
 #define GNILND_MBOX_PAYLOAD     \
           (GNILND_MAX_MSG_SIZE * \
-          ((*kgnilnd_tunables.kgn_peer_credits - 2) *2 ));  
+          ((*kgnilnd_tunables.kgn_concurrent_sends - 2) * 2));  
 
 /* timeout -> deadman timer for kgni mdd holds */
-#define GNILND_TIMEOUT2DEADMAN(t)   (t * 5 * 1000) 
+#define GNILND_TIMEOUT2DEADMAN   ((*kgnilnd_tunables.kgn_mdd_timeout) * 1000 * 60) 
 
 /* timeout for failing sends in t is in jiffies*/
 #define GNILND_TIMEOUTRX(t)     (t + cfs_time_seconds(*kgnilnd_tunables.kgn_hardware_timeout))
@@ -127,10 +137,11 @@
 /* time when to release from purgatory in the reaper thread in jiffies */
 #define GNILND_PURG_RELEASE(t)   (GNILND_TIMEOUTRX(t) * 3)
 
-/* Macro for checking the last rx a and b are unsigned long ints 
- * from conn->gnc_last_rx and conn->gnc_last_rx_cq
+/* Macro for finding last_rx 2 datapoints are compared 
+ * and the most recent one in jiffies is returned.
  */
-#define GNILND_LASTRX(a,b) time_after(a,b) ? a : b 
+#define GNILND_LASTRX(conn) time_after(conn->gnc_last_rx, conn->gnc_last_rx_cq) \
+                            ? conn->gnc_last_rx : conn->gnc_last_rx_cq 
 
 /************************************************************************
  * Enum, flag and tag data
@@ -152,6 +163,7 @@
 #define GNILND_TX_WAITING_COMPLETION (1<<2)     /* waiting for smsg_send to complete */
 #define GNILND_TX_PENDING_RDMA       (1<<3)     /* RDMA transaction pending until we get prev. completion */
 #define GNILND_TX_QUIET_ERROR        (1<<4)     /* don't print error on tx_done */
+#define GNILND_TX_FAIL_SMSG          (1<<5)     /* pass down error injection for SMSG fail */
 
 /* stash above max CQID to avoid any collision */
 #define GNILND_MSGID_NOOP           (GNILND_MAX_CQID + 128)
@@ -202,6 +214,13 @@
 #define GNILND_DEL_CONN              0
 #define GNILND_DEL_PEER              1
 #define GNILND_CLEAR_PURGATORY       2
+
+typedef enum kgn_fmablk_state {
+        GNILND_FMABLK_IDLE = 0, /* is allocated or ready to be freed */
+        GNILND_FMABLK_PHYS,     /* allocated out of slab of physical memory */
+        GNILND_FMABLK_VIRT,     /* 'standard' vmalloc hunk */
+        GNILND_FMABLK_FREED,    /* after free */
+} kgn_fmablk_state_t;
 
 typedef enum kgn_tx_list_state {
         GNILND_TX_IDLE = 0,     /* TX is on the idle list, kgn_idle_txs */
@@ -397,7 +416,8 @@ typedef struct kgn_tunables
         int              *kgn_max_reconnect_interval; /* ...exponentially increasing to this */
         int              *kgn_credits;          /* # concurrent sends */
         int              *kgn_fma_cq_size;      /* # entries in receive CQ */
-        int              *kgn_peer_credits;     /* # concurrent sends to 1 peer */
+        int              *kgn_peer_credits;     /* # LNet peer credits */
+        int              *kgn_concurrent_sends; /* max # of max_immediate in mbox */
         int              *kgn_timeout;          /* comms timeout (seconds) */
         int              *kgn_max_immediate;    /* immediate payload breakpoint */
         int              *kgn_checksum;         /* checksum data */
@@ -415,11 +435,12 @@ typedef struct kgn_tunables
         int              *kgn_peer_health;      /* enable/disable peer health */
         int              *kgn_vmap_cksum;       /* enable/disable vmap of kiov checksums */
         int              *kgn_mbox_per_block;   /* mailboxes per fmablk */
+        int              *kgn_nphys_mbox;       /* # mailboxes to preallocate with physical memory */
         int              *kgn_mbox_credits;     /* max credits per fma */
         int              *kgn_sched_threads;    /* number of kgnilnd_scheduler threads */
         int              *kgn_net_hash_size;    /* size of kgn_net_ht */
         int              *kgn_hardware_timeout; /* max time for a message to get across the network */
-
+        int              *kgn_mdd_timeout;      /* max time for ghal to hold an mdd in minutes */
 #if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM
         cfs_sysctl_table_header_t *kgn_sysctl;  /* sysctl interface */
 #endif
@@ -438,7 +459,8 @@ typedef struct kgn_mbox_info
 typedef struct kgn_fma_memblock
 {
         struct list_head    gnm_bufflist;                          /* memblock is part of device's  gnd_fma_buffs */
-        short               gnm_mapped;                            /* usable? (if not: held unmapped but not freed) */
+        kgn_fmablk_state_t  gnm_state;                             /* how this memory allocated & state of it */
+        int                 gnm_hold_timeout;                      /* hold_timeout if used at unmap time */
         int                 gnm_num_mboxs;                         /* total mboxes allocated */
         int                 gnm_avail_mboxs;                       /* number of available mailboxes in the block */
         int                 gnm_held_mboxs;                        /* number of purgatory held  mailboxes */
@@ -448,7 +470,7 @@ typedef struct kgn_fma_memblock
         unsigned int        gnm_blk_size;                          /* how big is our hunk o memory ? */
         void               *gnm_block;                             /* pointer to mem. block */
         gni_mem_handle_t    gnm_hndl;                              /* mem. handle of the block */
-        __u8                gnm_bit_array[GNILND_FMABLK_MAX/8];    /* bit array tracking allocation of mailboxes */
+        unsigned long      *gnm_bit_array;                         /* bit array tracking allocation of mailboxes */
         kgn_mbox_info_t    *gnm_mbox_info;                         /* array of mbox_information about each mbox */
 } kgn_fma_memblock_t;
 
@@ -486,6 +508,7 @@ typedef struct kgn_device
         spinlock_t              gnd_dgram_lock;   /* serialize gnd_dgrams */
         struct list_head        gnd_map_list;     /* list of all mapped regions */
         int                     gnd_map_version;  /* version flag for map list */
+        struct timer_list       gnd_map_timer;    /* wakey-wakey */
         atomic_t                gnd_n_mdd;        /* number of total MDD - fma, tx, etc */
         atomic_t                gnd_n_mdd_held;   /* number of total MDD held - fma, tx, etc */
         atomic_t                gnd_nq_map;       /* # queued waiting for mapping (MDD/GART) */
@@ -495,6 +518,9 @@ typedef struct kgn_device
         __u32                   gnd_map_nvirt;    /* # TX virt mappings */
         __u64                   gnd_map_virtnob;  /* # TX virt bytes mapped */
         spinlock_t              gnd_map_lock;     /* serialize gnd_map_XXX */
+        unsigned long           gnd_next_map;     /* next mapping attempt in jiffies */
+        int                     gnd_map_attempt;  /* last map attempt # */
+        unsigned long           gnd_last_map;     /* map timeout base */
         struct list_head        gnd_rdmaq;        /* RDMA to be sent */
         spinlock_t              gnd_rdmaq_lock;   /* play nice with others */
         atomic64_t              gnd_rdmaq_bytes_out; /* # bytes authorized */
@@ -632,6 +658,7 @@ typedef struct kgn_conn
         __u64               gnc_peerstamp;      /* peer's unique stamp */
         __u64               gnc_peer_connstamp; /* peer's unique connection stamp */
         __u64               gnc_my_connstamp;   /* my unique connection stamp */
+        unsigned long       gnc_first_rx;       /* when I first received an FMA message (jiffies) */
         unsigned long       gnc_last_tx;        /* when I last sent an FMA message (jiffies) */
         unsigned long       gnc_last_rx;        /* when I last sent an FMA message (jiffies) */
         unsigned long       gnc_last_tx_cq;     /* when I last received an FMA CQ (jiffies) */
@@ -668,6 +695,8 @@ typedef struct kgn_conn
         int                 gnc_next_tx;        /* next tx to use in tx_ref_table */
         kgn_tx_t          **gnc_tx_ref_table;   /* table of TX descriptors for this conn */
         int                 gnc_mbox_id;        /* id of mbox in fma_blk                 */
+        short               gnc_needs_detach;   /* flag set in detach_purgatory_all_locked so reaper will clear out purgatory */
+        short               gnc_needs_closing;  /* flag set in del_conns when called from kgnilnd_del_peer_or_conn */
 } kgn_conn_t;
 
 typedef struct kgn_mdd_purgatory
@@ -678,23 +707,23 @@ typedef struct kgn_mdd_purgatory
 
 typedef struct kgn_peer
 {
-        struct list_head    gnp_list;           /* stash on global peer list */
-        struct list_head    gnp_connd_list;     /* schedule on kgn_connd_peers */
-        struct list_head    gnp_conns;          /* all active connections */
-        struct list_head    gnp_tx_queue;       /* msgs waiting for a conn */
-        kgn_net_t          *gnp_net;            /* net instance for this peer */
-        lnet_nid_t          gnp_nid;            /* who's on the other end(s) */
-        atomic_t            gnp_refcount;       /* # users */
-        __u32               gnp_host_id;        /* ph. host ID of the peer */
-        short               gnp_connecting;     /* connection forming */
-        short               gnp_pending_unlink; /* need last conn close to trigger unlink */
-        int                 gnp_last_errno;     /* last error conn saw */        
-        unsigned long       gnp_last_alive;     /* last time I had valid comms */
-        int                 gnp_last_dgram_errno; /* last error dgrams saw */        
-        unsigned long       gnp_last_dgram_time;  /* last time I tried to connect */
-        unsigned long       gnp_reconnect_time; /* CURRENT_SECONDS when reconnect OK */
-        unsigned long       gnp_reconnect_interval; /* exponential backoff */
-        kgn_conn_t         *gnp_purgatory;      /* data for resource hold on conn reset */
+        struct list_head    gnp_list;                   /* stash on global peer list */
+        struct list_head    gnp_connd_list;             /* schedule on kgn_connd_peers */
+        struct list_head    gnp_conns;                  /* all active connections and all conns in purgatory for the peer */
+        struct list_head    gnp_tx_queue;               /* msgs waiting for a conn */
+        kgn_net_t          *gnp_net;                    /* net instance for this peer */
+        lnet_nid_t          gnp_nid;                    /* who's on the other end(s) */
+        atomic_t            gnp_refcount;               /* # users */
+        __u32               gnp_host_id;                /* ph. host ID of the peer */
+        short               gnp_connecting;             /* connection forming */
+        short               gnp_pending_unlink;         /* need last conn close to trigger unlink */
+        int                 gnp_last_errno;             /* last error conn saw */        
+        unsigned long       gnp_last_alive;             /* last time I had valid comms */
+        int                 gnp_last_dgram_errno;       /* last error dgrams saw */        
+        unsigned long       gnp_last_dgram_time;        /* last time I tried to connect */
+        unsigned long       gnp_reconnect_time;         /* CURRENT_SECONDS when reconnect OK */
+        unsigned long       gnp_reconnect_interval;     /* exponential backoff */
+        atomic_t            gnp_dirty_eps;              /* # of old but yet to be destroyed EPs from conns */
 } kgn_peer_t;
 
 /* the kgn_rx_t is a struct for handing to LNET as the private pointer for things
@@ -717,6 +746,8 @@ typedef struct kgn_data
         atomic_t                kgn_nthreads;         /* # live threads */
         int                     kgn_nresets;          /* number of stack resets */
         int                     kgn_in_reset;         /* are we in stack reset ? */
+
+        __u64                   kgn_nid_trans_private;/* private data for each of the HW nid2nic arenas */
 
         kgn_device_t            kgn_devices[GNILND_MAXDEVS]; /* device/ptag/cq etc */
         int                     kgn_ndevs;            /* # devices */
@@ -768,6 +799,13 @@ typedef struct kgn_data
 
         atomic_t                kgn_nkmap_short;      /* # time we kmapped for a short kiov */
         long                    kgn_rdmaq_override;   /* bytes per second override */
+        
+        struct kmem_cache      *kgn_mbox_cache;       /* mailboxes from not-GART */
+        
+        atomic_t                kgn_npending_unlink;  /* # of peers pending unlink */
+        atomic_t                kgn_npending_conns;   /* # of conns with pending closes */
+        atomic_t                kgn_npending_detach;  /* # of conns with a pending detach */
+
 } kgn_data_t;
 
 extern kgn_data_t         kgnilnd_data;
@@ -826,20 +864,17 @@ static inline int kgnilnd_mutex_trylock(struct mutex *lock)
 /* Copied from DEBUG_REQ in Lustre - the dance is needed to save stack space */
 
 extern void
-_kgnilnd_debug_msg(kgn_msg_t *msg, __u32 mask,
+_kgnilnd_debug_msg(kgn_msg_t *msg,
                 struct libcfs_debug_msg_data *data, const char *fmt, ... );
 
-#define kgnilnd_debug_msg(cdls, level, msg, file, func, line, fmt, a...)      \
+#define kgnilnd_debug_msg(msgdata, mask, cdls, msg, fmt, a...)                \
 do {                                                                          \
-        CHECK_STACK();                                                        \
+        CFS_CHECK_STACK(msgdata, mask, cdls);                                 \
                                                                               \
-        if (((level) & D_CANTMASK) != 0 ||                                    \
-            ((libcfs_debug & (level)) != 0 &&                                 \
-             (libcfs_subsystem_debug & DEBUG_SUBSYSTEM) != 0)) {              \
-                static struct libcfs_debug_msg_data _msg_dbg_data =           \
-                DEBUG_MSG_DATA_INIT(cdls, DEBUG_SUBSYSTEM, file, func, line); \
-                _kgnilnd_debug_msg((msg), (level), &_msg_dbg_data, fmt, ##a); \
-        }                                                                     \
+        if (((mask) & D_CANTMASK) != 0 ||                                     \
+            ((libcfs_debug & (mask)) != 0 &&                                  \
+             (libcfs_subsystem_debug & DEBUG_SUBSYSTEM) != 0))                \
+                _kgnilnd_debug_msg((msg), msgdata, fmt, ##a);                 \
 } while(0)
 
 /* for most callers (level is a constant) this is resolved at compile time */
@@ -847,13 +882,16 @@ do {                                                                          \
 do {                                                                          \
         if ((level) & (D_ERROR | D_WARNING | D_NETERROR)) {                   \
             static cfs_debug_limit_state_t cdls;                              \
-            kgnilnd_debug_msg(&cdls, level, msg, __FILE__, __func__, __LINE__,\
-                      "$$ "fmt" from %s ", ## args,                           \
-                      libcfs_nid2str((msg)->gnm_srcnid));                     \
-        } else                                                                \
-            kgnilnd_debug_msg(NULL, level, msg, __FILE__, __func__, __LINE__, \
-                      "$$ "fmt" from %s ", ## args,                           \
-                      libcfs_nid2str((msg)->gnm_srcnid));                     \
+            LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, level, &cdls);                \
+            kgnilnd_debug_msg(&msgdata, level, &cdls, msg,                    \
+                              "$$ "fmt" from %s ", ## args,                   \
+                              libcfs_nid2str((msg)->gnm_srcnid));             \
+        } else {                                                              \
+            LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, level, NULL);                 \
+            kgnilnd_debug_msg(&msgdata, level, NULL, msg,                     \
+                              "$$ "fmt" from %s ", ## args,                   \
+                              libcfs_nid2str((msg)->gnm_srcnid));             \
+        }                                                                     \
 } while (0)
 
 /* user puts 'to nid' in msg for us */
@@ -861,28 +899,28 @@ do {                                                                          \
 do {                                                                          \
         if ((level) & (D_ERROR | D_WARNING | D_NETERROR)) {                   \
             static cfs_debug_limit_state_t cdls;                              \
-            kgnilnd_debug_msg(&cdls, level, msg, __FILE__, __func__, __LINE__,\
-                      "$$ "fmt" ", ## args);                                  \
-        } else                                                                \
-            kgnilnd_debug_msg(NULL, level, msg, __FILE__, __func__, __LINE__, \
-                      "$$ "fmt" ", ## args);                                  \
+            LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, level, &cdls);                \
+            kgnilnd_debug_msg(&msgdata, level, &cdls, msg,                    \
+                              "$$ "fmt" ", ## args);                          \
+        } else {                                                              \
+            LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, level, NULL);                 \
+            kgnilnd_debug_msg(&msgdata, level, NULL, msg,                     \
+                              "$$ "fmt" ", ## args);                          \
+        }                                                                     \
 } while (0)
 
 extern void
-_kgnilnd_debug_conn(kgn_conn_t *conn, __u32 mask,
+_kgnilnd_debug_conn(kgn_conn_t *conn,
                 struct libcfs_debug_msg_data *data, const char *fmt, ... );
 
-#define kgnilnd_debug_conn(cdls, level, conn, file, func, line, fmt, a...)     \
+#define kgnilnd_debug_conn(msgdata, mask, cdls, conn, fmt, a...)               \
 do {                                                                           \
-        CHECK_STACK();                                                         \
+        CFS_CHECK_STACK(msgdata, mask, cdls);                                  \
                                                                                \
-        if (((level) & D_CANTMASK) != 0 ||                                     \
-            ((libcfs_debug & (level)) != 0 &&                                  \
-             (libcfs_subsystem_debug & DEBUG_SUBSYSTEM) != 0)) {               \
-                static struct libcfs_debug_msg_data _msg_dbg_data =            \
-                DEBUG_MSG_DATA_INIT(cdls, DEBUG_SUBSYSTEM, file, func, line);  \
-                _kgnilnd_debug_conn((conn), (level), &_msg_dbg_data, fmt, ##a);\
-        }                                                                      \
+        if (((mask) & D_CANTMASK) != 0 ||                                      \
+            ((libcfs_debug & (mask)) != 0 &&                                   \
+             (libcfs_subsystem_debug & DEBUG_SUBSYSTEM) != 0))                 \
+                _kgnilnd_debug_conn((conn), msgdata, fmt, ##a);                \
 } while(0)
 
 /* for most callers (level is a constant) this is resolved at compile time */
@@ -890,28 +928,28 @@ do {                                                                           \
 do {                                                                            \
         if ((level) & (D_ERROR | D_WARNING | D_NETERROR)) {                     \
             static cfs_debug_limit_state_t cdls;                                \
-            kgnilnd_debug_conn(&cdls, level, conn, __FILE__, __func__, __LINE__,\
-                      "$$ "fmt" ", ## args);                                    \
-        } else                                                                  \
-            kgnilnd_debug_conn(NULL, level, conn, __FILE__, __func__, __LINE__, \
-                      "$$ "fmt" ", ## args);                                    \
+            LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, level, &cdls);                  \
+            kgnilnd_debug_conn(&msgdata, level, &cdls, conn,                    \
+                               "$$ "fmt" ", ## args);                           \
+        } else {                                                                \
+            LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, level, NULL);                   \
+            kgnilnd_debug_conn(&msgdata, level, NULL, conn,                     \
+                               "$$ "fmt" ", ## args);                           \
+        }                                                                       \
 } while (0)
 
 extern void
-_kgnilnd_debug_tx(kgn_tx_t *tx, __u32 mask,
+_kgnilnd_debug_tx(kgn_tx_t *tx,
                 struct libcfs_debug_msg_data *data, const char *fmt, ... );
 
-#define kgnilnd_debug_tx(cdls, level, tx, file, func, line, fmt, a...)         \
+#define kgnilnd_debug_tx(msgdata, mask, cdls, tx, fmt, a...)                   \
 do {                                                                           \
-        CHECK_STACK();                                                         \
+        CFS_CHECK_STACK(msgdata, mask, cdls);                                  \
                                                                                \
-        if (((level) & D_CANTMASK) != 0 ||                                     \
-            ((libcfs_debug & (level)) != 0 &&                                  \
-             (libcfs_subsystem_debug & DEBUG_SUBSYSTEM) != 0)) {               \
-                static struct libcfs_debug_msg_data _msg_dbg_data =            \
-                DEBUG_MSG_DATA_INIT(cdls, DEBUG_SUBSYSTEM, file, func, line);  \
-                _kgnilnd_debug_tx((tx), (level), &_msg_dbg_data, fmt, ##a);    \
-        }                                                                      \
+        if (((mask) & D_CANTMASK) != 0 ||                                      \
+            ((libcfs_debug & (mask)) != 0 &&                                   \
+             (libcfs_subsystem_debug & DEBUG_SUBSYSTEM) != 0))                 \
+                _kgnilnd_debug_tx((tx), msgdata, fmt, ##a);                    \
 } while(0)
 
 /* for most callers (level is a constant) this is resolved at compile time */
@@ -919,11 +957,14 @@ do {                                                                           \
 do {                                                                            \
         if ((level) & (D_ERROR | D_WARNING | D_NETERROR)) {                     \
             static cfs_debug_limit_state_t cdls;                                \
-            kgnilnd_debug_tx(&cdls, level, tx, __FILE__, __func__, __LINE__,    \
-                      "$$ "fmt" ", ## args);                                    \
-        } else                                                                  \
-            kgnilnd_debug_tx(NULL, level, tx, __FILE__, __func__, __LINE__,     \
-                      "$$ "fmt" ", ## args);                                    \
+            LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, level, &cdls);                  \
+            kgnilnd_debug_tx(&msgdata, level, &cdls, tx,                        \
+                              "$$ "fmt" ", ## args);                            \
+        } else {                                                                \
+            LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, level, NULL);                   \
+            kgnilnd_debug_tx(&msgdata, level, NULL, tx,                         \
+                              "$$ "fmt" ", ## args);                            \
+        }                                                                       \
 } while (0)
 
 #define GNITX_ASSERTF(tx, cond, fmt, a...)                                      \
@@ -945,7 +986,7 @@ do {                                                                         \
         CDEBUG(D_NET, "Waiting for thread pause to be over...\n");           \
         while (kgnilnd_data.kgn_quiesce_trigger) {                           \
                 set_current_state(TASK_INTERRUPTIBLE);                       \
-                cfs_schedule_timeout(TASK_INTERRUPTIBLE,                     \
+                cfs_schedule_timeout_and_set_state(TASK_INTERRUPTIBLE,       \
                         cfs_time_seconds(1));                                \
         }                                                                    \
         /* Mom, my homework is done */                                       \
@@ -957,6 +998,20 @@ do {                                                                         \
 #ifndef LIBCFS_DEBUG
 #error "this code uses actions inside LASSERT for ref counting"
 #endif
+
+#define kgnilnd_admin_addref(atomic)                                     \
+do {                                                                            \
+        int     val = atomic_inc_return(&atomic);                               \
+        LASSERTF(val > 0,  #atomic " refcount %d\n", val);                       \
+        CDEBUG(D_NETTRACE, #atomic " refcount %d\n", val);                       \
+} while (0)
+
+#define kgnilnd_admin_decref(atomic)                                     \
+do {                                                                            \
+        int     val = atomic_dec_return(&atomic);                               \
+        LASSERTF(val >=0,  #atomic " refcount %d\n", val);                        \
+        CDEBUG(D_NETTRACE, #atomic " refcount %d\n", val);                       \
+}while (0)
 
 #define kgnilnd_net_addref(net)                                                 \
 do {                                                                            \
@@ -1114,16 +1169,15 @@ kgnilnd_peer_active(kgn_peer_t *peer)
 static inline int
 kgnilnd_can_unlink_peer_locked (kgn_peer_t *peer)
 {
-        CDEBUG(D_NET, "peer 0x%p->%s purgatory %p conns? %d tx? %d\n",
+        CDEBUG(D_NET, "peer 0x%p->%s conns? %d tx? %d\n",
                 peer, libcfs_nid2str(peer->gnp_nid), 
-                peer->gnp_purgatory, !list_empty(&peer->gnp_conns),
+                !list_empty(&peer->gnp_conns),
                 !list_empty(&peer->gnp_tx_queue));
 
         /* kgn_peer_conn_lock protects us from conflict with
          * kgnilnd_peer_notify and gnp_persistent */
-        RETURN(((peer->gnp_purgatory == NULL) &&
-                (list_empty(&peer->gnp_conns)) &&
-                (list_empty(&peer->gnp_tx_queue))));
+        RETURN ((list_empty(&peer->gnp_conns)) &&
+                (list_empty(&peer->gnp_tx_queue)));
 }
 
 /* returns positive if error was for a clean shutdown of conn */
@@ -1151,10 +1205,10 @@ kgnilnd_check_purgatory_errno(int errno)
         /* We don't want to save the purgatory lists these cases:
          *  - EUCLEAN - admin requested via "lctl del_peer"
          *  - ESHUTDOWN - LND is unloading 
-         *  - ESTALE - newer conn indicates resources are safe */
+         */
         RETURN ((errno != -ESHUTDOWN) &&
-                (errno != -EUCLEAN) &&
-                (errno != -ESTALE));
+                (errno != -EUCLEAN));
+                
 }
 
 /* returns positive if a purgatory hold is needed */
@@ -1162,11 +1216,6 @@ static inline int
 kgnilnd_check_purgatory_conn(kgn_conn_t *conn)
 {
         int loopback = 0;
-
-        /* if we are in setack reset, we don't need a hold */
-        if (unlikely(kgnilnd_data.kgn_in_reset)) {
-                RETURN(0);
-        }
 
         if (conn->gnc_peer) {
                 loopback = conn->gnc_peer->gnp_nid == 
@@ -1185,8 +1234,9 @@ kgnilnd_check_purgatory_conn(kgn_conn_t *conn)
         /* we only use a purgatory hold if we've not received the CLOSE msg
          * from our peer - without that message, we can't know the state of
          * the other end of this connection and must put it into purgatory
-         * to prevent reuse and corruption.
-         * the theory is that a TX error can be communicated in all other cases */
+         * to prevent reuse and corruption. 
+         * The theory is that a TX error can be communicated in all other cases 
+         */
         RETURN (likely(!loopback) && !conn->gnc_close_recvd && 
                 kgnilnd_check_purgatory_errno(conn->gnc_error));
 }
@@ -1562,6 +1612,12 @@ int kgnilnd_startup (lnet_ni_t *ni);
 void kgnilnd_shutdown (lnet_ni_t *ni);
 int kgnilnd_base_startup (void);
 void kgnilnd_base_shutdown (void);
+
+int kgnilnd_allocate_phys_fmablk(kgn_device_t *device);
+int kgnilnd_map_phys_fmablk(kgn_device_t *device);
+void kgnilnd_unmap_phys_fmablk(kgn_device_t *device);
+void kgnilnd_free_phys_fmablk(kgn_device_t *device);
+
 int kgnilnd_ctl(lnet_ni_t *ni, unsigned int cmd, void *arg);
 void kgnilnd_query(lnet_ni_t *ni, lnet_nid_t nid, cfs_time_t *when);
 int kgnilnd_send (lnet_ni_t *ni, void *private, lnet_msg_t *lntmsg);
@@ -1576,7 +1632,8 @@ __u16 kgnilnd_cksum_kiov (unsigned int nkiov, lnet_kiov_t *kiov, unsigned int of
 
 /* purgatory functions */
 void kgnilnd_add_purgatory_locked(kgn_conn_t *conn, kgn_peer_t *peer);
-void kgnilnd_detach_purgatory_locked(kgn_peer_t *peer, struct list_head *conn_list);
+void kgnilnd_mark_for_detach_purgatory_all_locked(kgn_peer_t *peer);
+void kgnilnd_detach_purgatory_locked(kgn_conn_t *conn, struct list_head *conn_list);
 void kgnilnd_release_purgatory_list(struct list_head *conn_list);
 
 void kgnilnd_update_reaper_timeout (long timeout);
@@ -1668,6 +1725,24 @@ int kgnilnd_set_conn_params(kgn_dgram_t *dgram);
  * above */
 
 #define DO_TYPE(x) case x: return #x;
+static inline const char *
+kgnilnd_fmablk_state2str(kgn_fmablk_state_t state)
+{
+        /* Only want single char string for this */
+        switch(state)
+        {
+                case GNILND_FMABLK_IDLE:
+                        return "I";
+                case GNILND_FMABLK_PHYS:
+                        return "P";
+                case GNILND_FMABLK_VIRT:
+                        return "V";
+                case GNILND_FMABLK_FREED:
+                        return "F";
+        }
+        return "<unknown state>";
+}
+
 static inline const char *
 kgnilnd_msgtype2str(int type)
 {
@@ -1776,5 +1851,17 @@ kgnilnd_dgram_type2str(kgn_dgram_t *dgram)
 
 /* API wrapper functions - include late to pick up all of the other defines */
 #include "gnilnd_api_wrap.h"
+
+/* pulls in tunables per platform and adds in nid/nic conversion
+ * if RCA wasn't available at build time */
+#include "gnilnd_hss_ops.h"
+
+#if defined(CONFIG_CRAY_GEMINI)
+ #include "gnilnd_gemini.h"
+#elif defined(CONFIG_CRAY_ARIES)
+ #include "gnilnd_aries.h"
+#else 
+ #error "Undefined Network Hardware Type"
+#endif
 
 #endif /* _GNILND_GNILND_H_ */

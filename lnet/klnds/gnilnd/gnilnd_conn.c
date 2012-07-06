@@ -4,6 +4,7 @@
  * Copyright (C) 2012 Cray, Inc.
  *   Author: Igor Gorodetsky <iogordet@cray.com>
  *   Author: Nic Henke <nic@cray.com>
+ *   Author: James Shimek <jshimek@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
  *
@@ -33,13 +34,51 @@ kgnilnd_setup_smsg_attr(gni_smsg_attr_t *smsg_attr)
 }
 
 int 
-kgnilnd_alloc_fmablk(kgn_device_t *device)
+kgnilnd_map_fmablk(kgn_device_t *device, kgn_fma_memblock_t *fma_blk)
+{
+        gni_return_t            rrc;
+        __u32                   flags = GNI_MEM_READWRITE;
+
+        if (fma_blk->gnm_state == GNILND_FMABLK_PHYS) {
+                flags |= GNI_MEM_PHYS_CONT;
+        }
+
+        /* make sure we are mapping a clean block */
+        LASSERTF(fma_blk->gnm_hndl.qword1 == 0UL, "fma_blk %p dirty\n", fma_blk);
+
+        rrc = kgnilnd_mem_register(device->gnd_handle, (__u64)fma_blk->gnm_block,
+                                   fma_blk->gnm_blk_size, device->gnd_rcv_fma_cqh, 
+                                   flags, &fma_blk->gnm_hndl);
+        if (rrc != GNI_RC_SUCCESS) {
+                /* XXX Nic: need a way to silence this for runtime stuff that is ok to fail
+                 * -- like when under MDD or GART pressure on big systems 
+                 */
+                CNETERR("register fmablk failed 0x%p mbox_size %d flags %u\n",
+                        fma_blk, fma_blk->gnm_mbox_size, flags);
+                RETURN(-ENOMEM);
+        }
+
+        /* PHYS_CONT memory isn't really mapped, at least not in GART -
+         *  but all mappings chew up a MDD 
+         */
+        if (fma_blk->gnm_state != GNILND_FMABLK_PHYS) {
+                atomic64_add(fma_blk->gnm_blk_size, &device->gnd_nbytes_map);
+        }
+
+        atomic_inc(&device->gnd_n_mdd);
+        /* nfmablk is live (mapped) blocks */
+        atomic_inc(&device->gnd_nfmablk);
+
+        RETURN(0);
+}
+
+int 
+kgnilnd_alloc_fmablk(kgn_device_t *device, int use_phys)
 {
         int                     rc = 0;
-        kgn_fma_memblock_t      *fma_blk;
         int                     num_mbox;
+        kgn_fma_memblock_t     *fma_blk;
         gni_smsg_attr_t         smsg_attr;
-        gni_return_t            rrc;
         unsigned long           fmablk_vers;
 
         /* we'll use fmablk_vers and the gnd_fmablk_sem to gate access
@@ -63,10 +102,11 @@ kgnilnd_alloc_fmablk(kgn_device_t *device)
 
         LIBCFS_ALLOC(fma_blk, sizeof(kgn_fma_memblock_t));
         if (fma_blk == NULL) {
-                CERROR("could not allocate fma block descriptor\n");
+                CNETERR("could not allocate fma block descriptor\n");
                 rc = -ENOMEM;
-                goto out;
+                GOTO(out, rc);
         }
+
         INIT_LIST_HEAD(&fma_blk->gnm_bufflist);
 
         kgnilnd_setup_smsg_attr(&smsg_attr);
@@ -82,43 +122,71 @@ kgnilnd_alloc_fmablk(kgn_device_t *device)
 
         fma_blk->gnm_mbox_size += GNILND_MBOX_PAYLOAD;
 
-        num_mbox = *kgnilnd_tunables.kgn_mbox_per_block;
-        fma_blk->gnm_blk_size = num_mbox * fma_blk->gnm_mbox_size;
+        /* we'll only use physical during preallocate at startup -- this keeps it nice and 
+         * clean for runtime decisions. We'll keep the PHYS ones around until shutdown 
+         * as reallocating them is tough if there is memory fragmentation */
 
-        LASSERTF(num_mbox >= 1 && num_mbox >= *kgnilnd_tunables.kgn_mbox_per_block, 
-                 "num_mbox %d blk_size %u mbox_size %d tunable %d\n", 
-                 num_mbox, fma_blk->gnm_blk_size, fma_blk->gnm_mbox_size,
-                 *kgnilnd_tunables.kgn_mbox_per_block);
+        if (use_phys) {
+                fma_blk->gnm_block = cfs_mem_cache_alloc(kgnilnd_data.kgn_mbox_cache, CFS_ALLOC_ATOMIC);
+                if (fma_blk->gnm_block == NULL) {
+                        CNETERR("could not allocate physical SMSG mailbox memory\n");
+                        rc = -ENOMEM;
+                        GOTO(free_desc, rc);
+                }
+                fma_blk->gnm_blk_size = KMALLOC_MAX_SIZE;
+                num_mbox = fma_blk->gnm_blk_size / fma_blk->gnm_mbox_size;
+
+                LASSERTF(num_mbox >= 1,
+                         "num_mbox %d blk_size %u mbox_size %d\n", 
+                          num_mbox, fma_blk->gnm_blk_size, fma_blk->gnm_mbox_size);
+
+                fma_blk->gnm_state = GNILND_FMABLK_PHYS;
+
+        } else {
+                num_mbox = *kgnilnd_tunables.kgn_mbox_per_block;
+                fma_blk->gnm_blk_size = num_mbox * fma_blk->gnm_mbox_size;
+
+                LASSERTF(num_mbox >= 1 && num_mbox >= *kgnilnd_tunables.kgn_mbox_per_block, 
+                         "num_mbox %d blk_size %u mbox_size %d tunable %d\n", 
+                         num_mbox, fma_blk->gnm_blk_size, fma_blk->gnm_mbox_size,
+                         *kgnilnd_tunables.kgn_mbox_per_block);
         
-        LIBCFS_ALLOC(fma_blk->gnm_mbox_info, sizeof(kgn_mbox_info_t)*num_mbox);
+                LIBCFS_ALLOC(fma_blk->gnm_block, fma_blk->gnm_blk_size);
+                if (fma_blk->gnm_block == NULL) {
+                        CNETERR("could not allocate virtual SMSG mailbox memory, %d bytes\n", fma_blk->gnm_blk_size);
+                        rc = -ENOMEM;
+                        GOTO(free_desc, rc);
+                }
 
-        if (fma_blk->gnm_mbox_info == NULL) {
-                CERROR("could not allocate mailbox debug storage helper, %lu bytes\n",
-                        sizeof(kgn_mbox_info_t)*num_mbox);
-                rc = -ENOMEM;
-                goto free_desc;
+                fma_blk->gnm_state = GNILND_FMABLK_VIRT;
         }       
 
-        LIBCFS_ALLOC(fma_blk->gnm_block, fma_blk->gnm_blk_size);
-        if (fma_blk->gnm_block == NULL) {
-                CERROR("could not allocate fma mailbox memory, %d bytes\n", fma_blk->gnm_blk_size);
+        /* allocate just enough space for the bits to track the mailboxes */
+        LIBCFS_ALLOC(fma_blk->gnm_bit_array, BITS_TO_LONGS(num_mbox) * sizeof(unsigned long));
+        if (fma_blk->gnm_bit_array == NULL) {
+                CNETERR("could not allocate mailbox bitmask, %lu bytes for %d mbox\n",
+                       sizeof(unsigned long) * BITS_TO_LONGS(num_mbox), num_mbox);
                 rc = -ENOMEM;
-                goto free_info;
+                GOTO(free_blk, rc);
+        }
+        bitmap_zero(fma_blk->gnm_bit_array, num_mbox);
+
+        /* now that the num_mbox is set based on allocation type, get debug info setup */
+        LIBCFS_ALLOC(fma_blk->gnm_mbox_info, sizeof(kgn_mbox_info_t) * num_mbox);
+        if (fma_blk->gnm_mbox_info == NULL) {
+                CNETERR("could not allocate mailbox debug, %lu bytes for %d mbox\n",
+                       sizeof(kgn_mbox_info_t) * num_mbox, num_mbox);
+                rc = -ENOMEM;
+                GOTO(free_bit, rc);
         }
 
-        rrc = kgnilnd_mem_register(device->gnd_handle, (__u64)fma_blk->gnm_block,
-                                   fma_blk->gnm_blk_size, device->gnd_rcv_fma_cqh, 
-                               GNI_MEM_READWRITE, &fma_blk->gnm_hndl);
-        if (rrc != GNI_RC_SUCCESS) {
-                CERROR("register fmablk failed 0x%p num %d msg_maxsize %d credits %d "
-                        "mbox_size %d\n",
-                        fma_blk, num_mbox, smsg_attr.msg_maxsize, 
-                        smsg_attr.mbox_maxcredit, fma_blk->gnm_mbox_size);
-                rc = -ENOMEM;
-                goto free_all;
+        rc = kgnilnd_map_fmablk(device, fma_blk);
+        if (rc) {
+                GOTO(free_info, rc);
         }
-        atomic64_add(fma_blk->gnm_blk_size, &device->gnd_nbytes_map);
-        atomic_inc(&device->gnd_n_mdd);
+
+        fma_blk->gnm_next_avail_mbox = 0;
+        fma_blk->gnm_avail_mboxs = fma_blk->gnm_num_mboxs = num_mbox;
 
         CDEBUG(D_MALLOC, "alloc fmablk 0x%p num %d msg_maxsize %d credits %d "
                 "mbox_size %d MDD "LPX64"."LPX64"\n",
@@ -126,11 +194,7 @@ kgnilnd_alloc_fmablk(kgn_device_t *device)
                 fma_blk->gnm_mbox_size, fma_blk->gnm_hndl.qword1, 
                 fma_blk->gnm_hndl.qword2);
 
-        fma_blk->gnm_next_avail_mbox = 0;
-        fma_blk->gnm_mapped = 1;
-        fma_blk->gnm_avail_mboxs = fma_blk->gnm_num_mboxs = num_mbox;
-
-        /* lock is protecting data structures, not semaphore */
+        /* lock Is protecting data structures, not semaphore */
 
         spin_lock(&device->gnd_fmablk_lock);
         list_add_tail(&fma_blk->gnm_bufflist, &device->gnd_fma_buffs);
@@ -138,7 +202,6 @@ kgnilnd_alloc_fmablk(kgn_device_t *device)
         /* toggle under the lock so once they change the list is also
          * ready for others to traverse */
         atomic_inc(&device->gnd_fmablk_vers);
-        atomic_inc(&device->gnd_nfmablk);
 
         spin_unlock(&device->gnd_fmablk_lock);
 
@@ -146,10 +209,16 @@ kgnilnd_alloc_fmablk(kgn_device_t *device)
 
         return 0;
 
-free_all:
-        LIBCFS_FREE(fma_blk->gnm_block, fma_blk->gnm_blk_size);
 free_info:
         LIBCFS_FREE(fma_blk->gnm_mbox_info, sizeof(kgn_mbox_info_t)*num_mbox);
+free_bit:
+        LIBCFS_FREE(fma_blk->gnm_bit_array, BITS_TO_LONGS(num_mbox) * sizeof (unsigned long));
+free_blk:
+        if (fma_blk->gnm_state == GNILND_FMABLK_VIRT) {
+                LIBCFS_FREE(fma_blk->gnm_block, fma_blk->gnm_blk_size);
+        } else {
+                cfs_mem_cache_free(kgnilnd_data.kgn_mbox_cache, fma_blk->gnm_block);
+        }
 free_desc:
         LIBCFS_FREE(fma_blk, sizeof(kgn_fma_memblock_t));
 out:
@@ -160,71 +229,79 @@ out:
 void 
 kgnilnd_unmap_fmablk(kgn_device_t *dev, kgn_fma_memblock_t *fma_blk)
 {
-        int                     hold_timeout = 0;
         gni_return_t            rrc;
 
-        if (fma_blk->gnm_held_mboxs) {
-                /* if some held, set hold_timeout from conn timeouts used in this block */
-                hold_timeout = GNILND_TIMEOUT2DEADMAN(fma_blk->gnm_max_timeout);
+        /* if some held, set hold_timeout from conn timeouts used in this block 
+         * but not during shutdown, then just nuke and pave */
+        if (fma_blk->gnm_held_mboxs && (!kgnilnd_data.kgn_shutdown)) {
+                fma_blk->gnm_hold_timeout = GNILND_TIMEOUT2DEADMAN;
         }
-
-        /* nfmablk is the number of LIVE fmablks, so decrement here */
-        atomic_dec(&dev->gnd_nfmablk);
 
         /* we are changing the state of a block, tickle version to tell
          * proc code list is stale now */
         atomic_inc(&dev->gnd_fmablk_vers);
 
-        /* mark as unavailable */
-        fma_blk->gnm_mapped = hold_timeout == 0 ? 0 : -1;
+        rrc = kgnilnd_mem_deregister(dev->gnd_handle, &fma_blk->gnm_hndl, fma_blk->gnm_hold_timeout);
 
-        CDEBUG(D_MALLOC, "unmap fmablk 0x%p sz %u total %d avail %d held %d mbox_size %d "
+        CDEBUG(rrc == GNI_RC_SUCCESS ? D_MALLOC : D_CONSOLE|D_NETERROR, 
+               "unmap fmablk 0x%p@%s sz %u total %d avail %d held %d mbox_size %d "
                 "hold_timeout %d\n",
-                fma_blk, fma_blk->gnm_blk_size, 
-                fma_blk->gnm_num_mboxs, fma_blk->gnm_avail_mboxs, 
-                fma_blk->gnm_held_mboxs, fma_blk->gnm_mbox_size, hold_timeout);
+               fma_blk, kgnilnd_fmablk_state2str(fma_blk->gnm_state), 
+               fma_blk->gnm_blk_size, fma_blk->gnm_num_mboxs, 
+               fma_blk->gnm_avail_mboxs, fma_blk->gnm_held_mboxs,
+               fma_blk->gnm_mbox_size, fma_blk->gnm_hold_timeout);
 
-        rrc = kgnilnd_mem_deregister(dev->gnd_handle, &fma_blk->gnm_hndl, hold_timeout);
+        LASSERTF(rrc == GNI_RC_SUCCESS, 
+                "tried to double unmap or something bad, fma_blk %p (rrc %d)\n",
+                fma_blk, rrc);
 
-        if (hold_timeout) {
+        if (fma_blk->gnm_hold_timeout) {
                 atomic_inc(&dev->gnd_n_mdd_held);
         } else {
                 atomic_dec(&dev->gnd_n_mdd);
         }
 
-        atomic64_sub(fma_blk->gnm_blk_size, &dev->gnd_nbytes_map);
-        LASSERTF(rrc == GNI_RC_SUCCESS, 
-                "tried to double unmap or something bad (rrc %d)\n", rrc);
+        /* PHYS blocks don't get mapped */
+        if (fma_blk->gnm_state != GNILND_FMABLK_PHYS) {
+                atomic64_sub(fma_blk->gnm_blk_size, &dev->gnd_nbytes_map);
+        } else if (kgnilnd_data.kgn_in_reset) {
+                /* in stack reset, clear MDD handle for PHYS blocks, as we'll 
+                 * re-use the fma_blk after reset so we don't have to drop/allocate
+                 * all of those physical blocks */
+                fma_blk->gnm_hndl.qword1 = fma_blk->gnm_hndl.qword2 = 0UL;
+        }
+
+        /* Decrement here as this is the # of mapped blocks */
+        atomic_dec(&dev->gnd_nfmablk);
 }
 
+
+/* needs lock on gnd_fmablk_lock to cover gnd_fma_buffs */
 void 
-kgnilnd_free_fmablk(kgn_device_t *dev, kgn_fma_memblock_t *fma_blk)
+kgnilnd_free_fmablk_locked(kgn_device_t *dev, kgn_fma_memblock_t *fma_blk)
 {
-        /* make sure someone didn't make a poopey */
-        LASSERTF(fma_blk->gnm_avail_mboxs == fma_blk->gnm_num_mboxs && 
-                fma_blk->gnm_mapped <= 0,
-                "fma_blk %p free in bad state: blk total %d mapped %d avail %d held %d\n",
-                fma_blk, fma_blk->gnm_mapped, fma_blk->gnm_num_mboxs,
+        LASSERTF(fma_blk->gnm_avail_mboxs == fma_blk->gnm_num_mboxs,
+                 "fma_blk %p@%d free in bad state (%d): blk total %d avail %d held %d\n",
+                 fma_blk, fma_blk->gnm_state, fma_blk->gnm_hold_timeout, fma_blk->gnm_num_mboxs,
                 fma_blk->gnm_avail_mboxs, fma_blk->gnm_held_mboxs);
 
         atomic_inc(&dev->gnd_fmablk_vers);
 
-        if (fma_blk->gnm_mapped < 0) {
+        if (fma_blk->gnm_hold_timeout) {
                 CDEBUG(D_MALLOC, "mdd release fmablk 0x%p sz %u avail %d held %d "
                         "mbox_size %d\n",
                         fma_blk, fma_blk->gnm_blk_size, fma_blk->gnm_avail_mboxs, 
                         fma_blk->gnm_held_mboxs, fma_blk->gnm_mbox_size);
 
+                /* We leave MDD dangling over stack reset */
                 if (!kgnilnd_data.kgn_in_reset) {
-                        kgnilnd_mem_mdd_release(dev->gnd_handle, 
-                                                        &fma_blk->gnm_hndl);
+                        kgnilnd_mem_mdd_release(dev->gnd_handle, &fma_blk->gnm_hndl);
                 }
                 /* ignoring the return code - if kgni/ghal can't find it
                  * it must be released already */
                 atomic_dec(&dev->gnd_n_mdd_held);
                 atomic_dec(&dev->gnd_n_mdd);
         }
-        fma_blk->gnm_mapped = 0;
 
         /* we cant' free the gnm_block until all the conns have released their 
          * purgatory holds. While we have purgatory holds, we might check the conn
@@ -233,13 +310,17 @@ kgnilnd_free_fmablk(kgn_device_t *dev, kgn_fma_memblock_t *fma_blk)
         CDEBUG(D_MALLOC, "fmablk %p free buffer %p mbox_size %d\n",
                 fma_blk, fma_blk->gnm_block, fma_blk->gnm_mbox_size);
        
-        LIBCFS_FREE(fma_blk->gnm_block, fma_blk->gnm_blk_size);
+        if (fma_blk->gnm_state == GNILND_FMABLK_PHYS) {
+                cfs_mem_cache_free(kgnilnd_data.kgn_mbox_cache, fma_blk->gnm_block);
+        } else {
+                LIBCFS_FREE(fma_blk->gnm_block, fma_blk->gnm_blk_size);
+        }
+        fma_blk->gnm_state = GNILND_FMABLK_FREED;
+
         list_del(&fma_blk->gnm_bufflist);
         
-        CDEBUG(D_MALLOC, "free fmablk mbox information %p\n", fma_blk->gnm_mbox_info);
         LIBCFS_FREE(fma_blk->gnm_mbox_info, sizeof(kgn_mbox_info_t)*fma_blk->gnm_num_mboxs);
-        
-        CDEBUG(D_MALLOC, "free fmablk %p header\n", fma_blk);
+        LIBCFS_FREE(fma_blk->gnm_bit_array, BITS_TO_LONGS(fma_blk->gnm_num_mboxs) * sizeof (unsigned long));
         LIBCFS_FREE(fma_blk, sizeof(kgn_fma_memblock_t));
 }
 
@@ -257,13 +338,13 @@ kgnilnd_find_free_mbox(kgn_conn_t *conn)
         list_for_each_entry(fma_blk, &conn->gnc_device->gnd_fma_buffs, 
                             gnm_bufflist) {
                 if (fma_blk->gnm_avail_mboxs <= 0 || 
-                    fma_blk->gnm_mapped <= 0) {
+                    fma_blk->gnm_state <= GNILND_FMABLK_IDLE) {
                         continue;
                 }
                 /* look in bitarray for available mailbox */
                 do {
                         id = find_next_zero_bit(
-                                (unsigned long *)fma_blk->gnm_bit_array, 
+                                fma_blk->gnm_bit_array, 
                                 fma_blk->gnm_num_mboxs, 
                                 fma_blk->gnm_next_avail_mbox);
                       if (id == fma_blk->gnm_num_mboxs && 
@@ -292,10 +373,11 @@ kgnilnd_find_free_mbox(kgn_conn_t *conn)
                 smsg_attr->mem_hndl = fma_blk->gnm_hndl;
                 smsg_attr->buff_size = fma_blk->gnm_mbox_size;
 
-                if (id != (int) smsg_attr->mbox_offset/smsg_attr->buff_size) {
-                        CERROR("Calcuation is invalid wrong mailbox will be freed: correct %d invalid %d\n",
-                        id, (int) smsg_attr->mbox_offset/smsg_attr->buff_size);
-                }
+                /* We'll set the hndl to zero for PHYS blocks unmapped during stack
+                 * reset and re-use the same fma_blk after stack reset. This ensures we've
+                 * properly mapped it before we use it */
+                LASSERTF(fma_blk->gnm_hndl.qword1 != 0UL, "unmapped fma_blk %p, state %d\n", 
+                         fma_blk, fma_blk->gnm_state);
 
                 CDEBUG(D_NET, "conn %p smsg %p fmablk %p "
                         "allocating SMSG mbox %d buf %p "
@@ -332,7 +414,8 @@ kgnilnd_setup_mbox(kgn_conn_t *conn)
 
                 /* nothing in the existing buffers, make a new one */
                 if (smsg_attr->msg_buffer == NULL) {
-                        err = kgnilnd_alloc_fmablk(conn->gnc_device);
+                        /* for runtime allocations, we only want vmalloc */
+                        err = kgnilnd_alloc_fmablk(conn->gnc_device, 0);
                         if (err) {
                                 break;
                         }
@@ -422,8 +505,7 @@ kgnilnd_release_mbox(kgn_conn_t *conn, int purgatory_hold)
                 /* clear conn gnc_fmablk if it is gone - this allows us to 
                  * not worry about state so much in kgnilnd_destroy_conn 
                  * and makes the guaranteed cleanup of the resources easier */
-                LASSERTF(test_and_clear_bit(id, 
-                                (unsigned long *)fma_blk->gnm_bit_array), 
+                LASSERTF(test_and_clear_bit(id, fma_blk->gnm_bit_array), 
                         "conn %p bit %d already cleared in fma_blk %p\n", 
                          conn, id, fma_blk);
                 conn->gnc_fma_blk = NULL;
@@ -432,23 +514,130 @@ kgnilnd_release_mbox(kgn_conn_t *conn, int purgatory_hold)
         if (CFS_FAIL_CHECK(CFS_FAIL_GNI_FMABLK_AVAIL)) {
                 CERROR("LBUGs in your future: forcibly marking fma_blk %p "
                        "as mapped\n", fma_blk);
-                fma_blk->gnm_mapped = 1;
+                fma_blk->gnm_state = GNILND_FMABLK_VIRT;
         }
 
-        /* we can unmap once all are unused (held or avail) */
-        if (fma_blk->gnm_mapped > 0 && 
-           (fma_blk->gnm_avail_mboxs + fma_blk->gnm_held_mboxs) == fma_blk->gnm_num_mboxs) {
-                kgnilnd_unmap_fmablk(dev, fma_blk);
-        }
+        /* we don't release or unmap PHYS blocks as part of the normal cycle --
+         * those are controlled manually from startup/shutdown */
+        if (fma_blk->gnm_state != GNILND_FMABLK_PHYS) {
+                /* we can unmap once all are unused (held or avail) 
+                 * but check hold_timeout to make sure we are not trying to double
+                 * unmap this buffer. If there was no hold_timeout set due to
+                 * held_mboxs, we'll free the mobx here shortly and won't have to
+                 * worry about catching a double free for a 'clean' fma_blk */
+                if (((fma_blk->gnm_avail_mboxs + fma_blk->gnm_held_mboxs) == fma_blk->gnm_num_mboxs) &&
+                    (!fma_blk->gnm_hold_timeout)) {
+                        kgnilnd_unmap_fmablk(dev, fma_blk);
+                }
 
-        /* But we can only free once they are all avail */
-        if (fma_blk->gnm_avail_mboxs == fma_blk->gnm_num_mboxs &&
-            fma_blk->gnm_held_mboxs == 0) {
-                /* all mailboxes are released, free fma_blk */
-                kgnilnd_free_fmablk(dev, fma_blk);
+                /* But we can only free once they are all avail */
+                if (fma_blk->gnm_avail_mboxs == fma_blk->gnm_num_mboxs &&
+                    fma_blk->gnm_held_mboxs == 0) {
+                        /* all mailboxes are released, free fma_blk */
+                        kgnilnd_free_fmablk_locked(dev, fma_blk);
+                }
         }
 
         spin_unlock(&dev->gnd_fmablk_lock);
+}
+
+int
+kgnilnd_count_phys_mbox(kgn_device_t *device)
+{
+        int                     i = 0;
+        kgn_fma_memblock_t     *fma_blk;
+
+        spin_lock(&device->gnd_fmablk_lock);
+
+        list_for_each_entry(fma_blk, &device->gnd_fma_buffs, gnm_bufflist) {
+                if (fma_blk->gnm_state == GNILND_FMABLK_PHYS)
+                        i += fma_blk->gnm_num_mboxs;
+        }
+        spin_unlock(&device->gnd_fmablk_lock);
+
+        RETURN(i);
+}
+
+int
+kgnilnd_allocate_phys_fmablk(kgn_device_t *device)
+{
+        int     rc;
+
+        while (kgnilnd_count_phys_mbox(device) < *kgnilnd_tunables.kgn_nphys_mbox) {
+
+                rc = kgnilnd_alloc_fmablk(device, 1);
+                if (rc) {
+                        CERROR("failed phys mbox allocation, stopping at %d, rc %d\n",
+                                kgnilnd_count_phys_mbox(device), rc);
+                        RETURN(rc);
+                }
+        }
+        RETURN(0);
+}
+
+int
+kgnilnd_map_phys_fmablk(kgn_device_t *device)
+{
+
+        int                     rc = 0;
+        kgn_fma_memblock_t     *fma_blk;
+
+        /* use sem to gate access to single thread, just in case */
+        down(&device->gnd_fmablk_sem);
+
+        spin_lock(&device->gnd_fmablk_lock);
+
+        list_for_each_entry(fma_blk, &device->gnd_fma_buffs, gnm_bufflist) {
+                if (fma_blk->gnm_state == GNILND_FMABLK_PHYS)
+                        rc = kgnilnd_map_fmablk(device, fma_blk);
+                        if (rc)
+                                break;
+        }
+        spin_unlock(&device->gnd_fmablk_lock);
+
+        up(&device->gnd_fmablk_sem);
+
+        RETURN(rc);
+}
+
+void
+kgnilnd_unmap_phys_fmablk(kgn_device_t *device)
+{
+
+        kgn_fma_memblock_t      *fma_blk;
+
+        /* use sem to gate access to single thread, just in case */
+        down(&device->gnd_fmablk_sem);
+
+        spin_lock(&device->gnd_fmablk_lock);
+
+        list_for_each_entry(fma_blk, &device->gnd_fma_buffs, gnm_bufflist) {
+                if (fma_blk->gnm_state == GNILND_FMABLK_PHYS)
+                        kgnilnd_unmap_fmablk(device, fma_blk);
+        }
+        spin_unlock(&device->gnd_fmablk_lock);
+
+        up(&device->gnd_fmablk_sem);
+}
+
+void
+kgnilnd_free_phys_fmablk(kgn_device_t *device)
+{
+
+        kgn_fma_memblock_t      *fma_blk, *fma_blkN;
+
+        /* use sem to gate access to single thread, just in case */
+        down(&device->gnd_fmablk_sem);
+
+        spin_lock(&device->gnd_fmablk_lock);
+
+        list_for_each_entry_safe(fma_blk, fma_blkN, &device->gnd_fma_buffs, gnm_bufflist) {
+                if (fma_blk->gnm_state == GNILND_FMABLK_PHYS)
+                        kgnilnd_free_fmablk_locked(device, fma_blk);
+        }
+        spin_unlock(&device->gnd_fmablk_lock);
+
+        up(&device->gnd_fmablk_sem);
 }
 
 /* kgnilnd dgram nid->struct managment */
@@ -650,7 +839,6 @@ kgnilnd_unpack_connreq(kgn_dgram_t *dgram)
                         return rc;
                 }
                  
-
                 if (net->gnn_ni->ni_nid != connreq->gncr_dstnid) {
                         CERROR("Bad connection data from %s: she sent "
                                "dst_nid %s, but I am %s with dgram 0x%p@%s\n",
@@ -1528,6 +1716,8 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
                 }
         }
 
+        nstale = kgnilnd_close_stale_conns_locked(peer, conn);
+
         /* either way with peer (new or existing), we are ok with ref counts here as the
          * kgnilnd_add_peer_locked will use our ref on new_peer (from create_peer_safe) as the
          * ref for the peer table. */
@@ -1538,8 +1728,13 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
         dgram->gndg_state = GNILND_DGRAM_DONE;
 
         /* initialise timestamps before reaper looks at them */
-        conn->gnc_last_tx = conn->gnc_last_rx = conn->gnc_last_rx_cq = jiffies;
-
+        conn->gnc_last_rx = conn->gnc_last_rx_cq = jiffies;
+        
+        /* last_tx is initialized to jiffies - (keepalive*2) so that if the NOOP fails it will 
+         * immediatly send a NOOP in the reaper thread during the call to 
+         * kgnilnd_check_conn_timeouts_locked
+         */
+        conn->gnc_last_tx = jiffies - (cfs_time_seconds(GNILND_TO2KA(conn->gnc_timeout)) * 2);
         conn->gnc_state = GNILND_CONN_ESTABLISHED;
 
         /* refs are not transferred from dgram to tables, so increment to
@@ -1554,21 +1749,31 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
                       kgnilnd_cqid2connlist(conn->gnc_cqid));
         kgnilnd_data.kgn_conn_version++;
 
+        /* Dont send NOOP if fail_loc is set
+         */
+        if (!CFS_FAIL_CHECK(CFS_FAIL_GNI_ONLY_NOOP)) {
+                tx = kgnilnd_new_tx_msg(GNILND_MSG_NOOP, peer->gnp_net->gnn_ni->ni_nid);
+                if (tx == NULL) {
+                        CNETERR("can't get TX to initiate NOOP to %s\n",
+                                libcfs_nid2str(peer->gnp_nid));
+                } else {        
+                        kgnilnd_queue_tx(conn, tx);
+                }
+        }
+ 
         /* Schedule all packets blocking for a connection */
         list_for_each_entry_safe(tx, txn, &peer->gnp_tx_queue, tx_list) {
                 /* lock held here is the peer_conn lock */
                 kgnilnd_tx_del_state_locked(tx, peer, NULL, GNILND_TX_ALLOCD);
                 kgnilnd_queue_tx(conn, tx);
         }
+
         /* If this is an active connection lets mark its timestamp on the MBoX */
         if (dgram->gndg_conn_out.gncr_dstnid != LNET_NID_ANY) {
                 mbox = &conn->gnc_fma_blk->gnm_mbox_info[conn->gnc_mbox_id];
                 /* conn->gnc_last_rx is jiffies it better exist as it was just set */
                 mbox->mbx_release_purg_active_dgram = conn->gnc_last_rx;
         }
-
-        /* the peer will hang around after this because we just added a conn */
-        kgnilnd_detach_purgatory_locked(peer, &souls);
 
         /* Bug 765042: wake up scheduler for a race with finish_connect and 
          * complete_conn_closed with a conn in purgatory 
@@ -1580,12 +1785,6 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
                 kgnilnd_schedule_device(conn->gnc_device);
         }
 
-        nstale = kgnilnd_close_stale_conns_locked(peer, conn);
-
-        if (nstale != 0)
-                CWARN("Closed %d stale conns to %s\n", nstale, 
-                      libcfs_nid2str(her_nid));
-
         CDEBUG(D_NET, "New conn 0x%p->%s dev %d\n",
                conn, libcfs_nid2str(her_nid), conn->gnc_device->gnd_id);
 
@@ -1593,6 +1792,15 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
         kgnilnd_peer_alive(peer);
         peer->gnp_reconnect_interval = 0; 
         
+        /* clear the unlink attribute if we dont clear it kgnilnd_del_conn_or_peer will wait
+         * on the atomic forever
+         */
+        if (peer->gnp_pending_unlink) {
+                peer->gnp_pending_unlink = 0;
+                kgnilnd_admin_decref(kgnilnd_data.kgn_npending_unlink);
+                CDEBUG(D_NET,"Clearing peer unlink %p\n",peer);
+        } 
+
         /* add ref to make it hang around until after we drop the lock */
         kgnilnd_conn_addref(conn);
 
@@ -1600,8 +1808,6 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
          * CLOSING->CLOSED->DONE in the scheduler thread, so hold the 
          * lock until we are really done */
         write_unlock(&kgnilnd_data.kgn_peer_conn_lock);
-
-        kgnilnd_release_purgatory_list(&souls);
 
         /* Notify LNET that we now have a working connection to this peer.
          * This is a Cray extension to the "standard" LND behavior. */
@@ -1939,7 +2145,6 @@ kgnilnd_dgram_waitq(void *arg)
         /* all gnilnd threads need to run fairly urgently */
         set_user_nice(current, *kgnilnd_tunables.kgn_nice);
 
-
         /* we dont shut down until the device shuts down ... */
         while(!kgnilnd_data.kgn_shutdown) {
                 /* to quiesce or to not quiesce, that is the question */
@@ -1951,7 +2156,7 @@ kgnilnd_dgram_waitq(void *arg)
  
                 /* check once a second */
                 grc = kgnilnd_postdata_probe_wait_by_id(dev->gnd_handle, 
-                       1000, &readyid);
+                                                       1000, &readyid);
 
                 if (grc == GNI_RC_SUCCESS) {
                         CDEBUG(D_INFO, "waking up dgram mover thread\n");
@@ -1987,7 +2192,7 @@ kgnilnd_start_outbound_dgrams(kgn_device_t *dev)
                                         kgn_peer_t, gnp_connd_list);
 
                 /* ref for connd removed in if/else below */
-                list_del_init(&peer->gnp_connd_list);
+               list_del_init(&peer->gnp_connd_list);
 
                 /* gnp_connecting and membership on gnd_connd_peers should be 
                  * done coherently to avoid double adding, etc */
@@ -2017,7 +2222,6 @@ kgnilnd_start_outbound_dgrams(kgn_device_t *dev)
                         spin_lock(&dev->gnd_connd_lock);
                         list_add_tail(&peer->gnp_connd_list,
                                       &dev->gnd_connd_peers);
-                        spin_unlock(&dev->gnd_connd_lock);
                         /* the datagrams are a global pool,
                          * so break out of trying and hope some free
                          * up soon */
@@ -2098,7 +2302,7 @@ kgnilnd_dgram_mover(void *arg)
                 down_read(&kgnilnd_data.kgn_net_rw_sem);
                 
                 rc = kgnilnd_probe_and_process_dgram(dev);
-                if (rc > 0 ) {
+                if (rc > 0) {
                         did_something += rc;
                 }
 

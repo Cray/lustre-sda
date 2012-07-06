@@ -9,7 +9,6 @@ LUSTRE=${LUSTRE:-$(cd $(dirname $0)/..; echo $PWD)}
 . $LUSTRE/tests/test-framework.sh
 init_test_env $@
 . ${CONFIG:=$LUSTRE/tests/cfg/$NAME.sh}
-init_logging
 
 NUMFILES=${NUMFILES:-10}
 NUMDIRS=${NUMDIRS:-4}
@@ -23,7 +22,7 @@ which can be accessable on all of the nodes" && exit 0; }
 which getfattr &>/dev/null || { skip_env "could not find getfattr" && exit 0; }
 which setfattr &>/dev/null || { skip_env "could not find setfattr" && exit 0; }
 
-if [ ! -x $(which $LFSCK_BIN) ]; then
+if [ ! -x `which $LFSCK_BIN` ]; then
     log "$($E2FSCK -V)"
     error "e2fsprogs does not support lfsck"
 fi
@@ -160,7 +159,7 @@ get_files() {
     esac
 
     local files=""
-    local f
+    local f 
     for f in $(seq -f testfile.%g $first $last); do
         test_file=$test_dir/$f
         files="$files $test_file"
@@ -207,6 +206,8 @@ duplicate_files() {
 
 #********************************* Main Flow **********************************#
 
+init_logging
+
 # get the server target devices
 get_svr_devs
 
@@ -240,10 +241,10 @@ if is_empty_fs $MOUNT; then
         error "removing objects failed"
 
     # remove files from MDS
-    remove_files mds $MDSDEV $MDS_REMOVE || error "removing files failed"
+    remove_files $SINGLEMDS $MDTDEV $MDS_REMOVE || error "removing files failed"
 
     # create EAs on files so objects are referenced from different files
-    duplicate_files mds $MDSDEV $MDS_DUPE || \
+    duplicate_files $SINGLEMDS $MDTDEV $MDS_DUPE || \
         error "duplicating files failed"
     FSCK_MAX_ERR=1   # file system errors corrected
 else # is_empty_fs $MOUNT

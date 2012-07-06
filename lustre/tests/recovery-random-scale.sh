@@ -104,7 +104,7 @@ Status: $result: rc=$rc"
         # we are interested in only on failed clients and servers
         local failedclients=$(cat $END_RUN_FILE | grep -v $0)
         # FIXME: need ostfailover-s nodes also for FLAVOR=OST
-        gather_logs $(comma_list $(osts_nodes) $mds_HOST \
+        gather_logs $(comma_list $(osts_nodes) $(mdts_nodes) \
                       $mdsfailover_HOST $failedclients)
     fi
 

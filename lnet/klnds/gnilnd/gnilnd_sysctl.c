@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2012 Cray, Inc.
  *   Author: Nic Henke <nic@cray.com>
+ *   Author: James Shimek <jshimek@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
  *
@@ -137,7 +138,7 @@ int LL_PROC_PROTO(proc_trigger_stack_reset)
        while (kgnilnd_data.kgn_needs_reset != 0) {
                i++;
                LCONSOLE((((i) & (-i)) == i) ? D_WARNING : D_NET,
-                               "Waiting forstack reset request to clear\n");
+                               "Waiting for stack reset request to clear\n");
                cfs_pause(cfs_time_seconds(1 * i));
        }
 
@@ -179,7 +180,7 @@ static cfs_sysctl_table_t kgnilnd_table[] = {
          * to go via /proc for portability.
          */
         {
-                .ctl_name = GNILND_VERSION,
+                INIT_CTL_NAME(GNILND_VERSION)
                 .procname = "version",
                 .data     = KGNILND_BUILD_REV,
                 .maxlen   = sizeof(KGNILND_BUILD_REV),
@@ -187,7 +188,7 @@ static cfs_sysctl_table_t kgnilnd_table[] = {
                 .proc_handler = &proc_dostring
         },
         {
-                .ctl_name = GNILND_THREAD_PAUSE,
+                INIT_CTL_NAME(GNILND_THREAD_PAUSE)
                 .procname = "thread_pause",
                 .data     = &kgnilnd_sysctl.ksd_pause_trigger,
                 .maxlen   = sizeof(int),
@@ -195,7 +196,7 @@ static cfs_sysctl_table_t kgnilnd_table[] = {
                 .proc_handler = &proc_toggle_thread_pause,
         },
         {
-                .ctl_name = GNILND_HW_QUIESCE,
+                INIT_CTL_NAME(GNILND_HW_QUIESCE)
                 .procname = "hw_quiesce",
                 .data     = &kgnilnd_sysctl.ksd_quiesce_secs,
                 .maxlen   = sizeof(__u32),
@@ -203,7 +204,7 @@ static cfs_sysctl_table_t kgnilnd_table[] = {
                 .proc_handler = &proc_hw_quiesce,
         },
         {
-                .ctl_name = GNILND_STACK_RESET,
+                INIT_CTL_NAME(GNILND_STACK_RESET)
                 .procname = "stack_reset",
                 .data     = NULL,
                 .maxlen   = sizeof(int),
@@ -211,26 +212,26 @@ static cfs_sysctl_table_t kgnilnd_table[] = {
                 .proc_handler = &proc_trigger_stack_reset,
         },
         {
-                .ctl_name = GNILND_RDMAQ_OVERRIDE,
+                INIT_CTL_NAME(GNILND_RDMAQ_OVERRIDE)
                 .procname = "rdmaq_override",
                 .data     = &kgnilnd_sysctl.ksd_rdmaq_override,
                 .maxlen   = sizeof(int),
                 .mode     = 0644,
                 .proc_handler = &proc_toggle_rdmaq_override,
         },
-        {0}
+        {       INIT_CTL_NAME(0)   }
 };
 
 static cfs_sysctl_table_t kgnilnd_top_table[2] = {
         {
-                .ctl_name = CTL_GNILND,
+                INIT_CTL_NAME(CTL_GNILND)
                 .procname = "kgnilnd",
                 .data     = NULL,
                 .maxlen   = 0,
                 .mode     = 0555,
                 .child    = kgnilnd_table
         },
-        {0}
+        {       INIT_CTL_NAME(0)   }
 };
          
 void kgnilnd_insert_sysctl(void)

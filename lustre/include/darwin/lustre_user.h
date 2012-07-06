@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -40,8 +40,6 @@
 
 #ifndef _DARWIN_LUSTRE_USER_H
 #define _DARWIN_LUSTRE_USER_H
-
-#include <lustre/types.h>
 
 #ifndef __KERNEL__
 /* for llmount */
@@ -65,10 +63,12 @@ typedef struct stat     lstat_t;
 # define LPU64 "%llu"
 # define LPD64 "%lld"
 # define LPX64 "%#llx"
+# define LPO64 "%#llo"
 #elif (BITS_PER_LONG == 64 || __WORDSIZE == 64)
 # define LPU64 "%lu"
 # define LPD64 "%ld"
 # define LPX64 "%#lx"
+# define LPO64 "%#lo"
 #endif
 #endif /* !LPU64 */
 

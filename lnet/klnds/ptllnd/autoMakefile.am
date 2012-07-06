@@ -5,3 +5,4 @@ endif
 endif
 
 MOSTLYCLEANFILES = @MOSTLYCLEANFILES@
+EXTRA_DIST = $(kptllnd-objs:%.o=%.c) ptllnd.h
