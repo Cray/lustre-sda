@@ -117,19 +117,25 @@ static int vmap_cksum = 0;
 CFS_MODULE_PARM(vmap_cksum, "i", int, 0644,
                 "use vmap for all kiov checksumming, default off");
 
-/* this is an optimization for service nodes where they could be
- * seeing 10k+ conns/mailboxes */
-#if defined(CONFIG_CRAY_COMPUTE)
-static int mbox_per_block = 64;
-#else
 static int mbox_per_block = GNILND_FMABLK_MAX;
-#endif
 CFS_MODULE_PARM(mbox_per_block, "i", int, 0644,
                 "mailboxes per block");
 
 static int mbox_credits = GNILND_MBOX_CREDITS;
 CFS_MODULE_PARM(mbox_credits, "i", int, 0644,
                 "number of credits per mailbox");
+
+static int sched_threads = GNILND_SCHED_THREADS;
+CFS_MODULE_PARM(sched_threads, "i", int, 0444,
+                "number of threads for moving data");
+
+static int net_hash_size = 11;
+CFS_MODULE_PARM(net_hash_size, "i", int, 0444,
+                "prime number for net hash sizing, default 11");
+
+static int hardware_timeout = GNILND_HARDWARE_TIMEOUT;
+CFS_MODULE_PARM(hardware_timeout, "i", int, 0444,
+                "maximum time for traffic to get from one node to another");
 
 kgn_tunables_t kgnilnd_tunables = {
         .kgn_min_reconnect_interval = &min_reconnect_interval,
@@ -154,7 +160,10 @@ kgn_tunables_t kgnilnd_tunables = {
         .kgn_peer_health            = &peer_health,
         .kgn_vmap_cksum             = &vmap_cksum,
         .kgn_mbox_per_block         = &mbox_per_block,
-        .kgn_mbox_credits           = &mbox_credits
+        .kgn_mbox_credits           = &mbox_credits,
+        .kgn_sched_threads          = &sched_threads,
+        .kgn_net_hash_size          = &net_hash_size,
+        .kgn_hardware_timeout       = &hardware_timeout
 };
 
 #if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM
@@ -333,6 +342,30 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .data     = &mbox_credits,
                 .maxlen   = sizeof(int),
                 .mode     = 0644,
+                .proc_handler = &proc_dointvec
+        },
+        {
+                .ctl_name = 25,
+                .procname = "sched_threads"
+                .data     = &sched_threads,
+                .maxlen   = sizeof(int),
+                .mode     = 0444,
+                .proc_handler = &proc_dointvec
+        },
+        {
+                .ctl_name = 26,
+                .procname = "net_hash_size",
+                .data     = &net_hash_size,
+                .maxlen   = sizeof(int),
+                .mode     = 0444,
+                .proc_handler = &proc_dointvec
+        },
+        {
+                .ctl_name = 27,
+                .procname = "hardware_timeout",
+                .data     = &hardware_timeout,
+                .maxlen   = sizeof(int),
+                .mode     = 0444,
                 .proc_handler = &proc_dointvec
         },
         {0}

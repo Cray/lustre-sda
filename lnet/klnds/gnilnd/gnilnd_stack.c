@@ -1,7 +1,7 @@
 /* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
  * vim:expandtab:shiftwidth=8:tabstop=8:
  *
- * Copyright (C) 2009 Cray, Inc.
+ * Copyright (C) 2012 Cray, Inc.
  *   Author: Igor Gorodetsky <iogordet@cray.com>
  *   Author: Nic Henke <nic@cray.com>
  *
@@ -166,7 +166,6 @@ void
 kgnilnd_reset_stack(void)
 {
         int              i, rc = 0;
-        gni_return_t     grc;
         kgn_net_t       *net;
         kgn_peer_t      *peer, *peerN;
         CFS_LIST_HEAD   (souls);
@@ -204,25 +203,20 @@ kgnilnd_reset_stack(void)
         LCONSOLE_WARN("%s: resetting all resources (count %d)\n",
                       reason, kgnilnd_data.kgn_nresets);
 
-        list_for_each_entry(net, &kgnilnd_data.kgn_nets, gnn_list) {
-                rc = kgnilnd_cancel_all_dgrams(net);
-                LASSERTF(rc == 0, "couldn't cleanup datagrams: %d\n",rc);
+        for (i = 0; i < *kgnilnd_tunables.kgn_net_hash_size; i++) {
+                list_for_each_entry(net, &kgnilnd_data.kgn_nets[i], gnn_list) {
+                        rc = kgnilnd_cancel_net_dgrams(net);
+                        LASSERTF(rc == 0, "couldn't cleanup datagrams: %d\n",rc);
+                }
         }
 
         /* error -ENOTRECOVERABLE is stack reset */
         kgnilnd_del_conn_or_peer(NULL, LNET_NID_ANY, GNILND_DEL_CONN, -ENOTRECOVERABLE);  
-
-        list_for_each_entry(net, &kgnilnd_data.kgn_nets, gnn_list) {
-                kgnilnd_wait_for_canceled_dgrams(net);
-
-                /* we now have no datagrams left on the net, so tear down 
-                 * the cdm we use for datagrams - this ensures any dangling
-                 * matches to the wildcards are nuked too */
-                grc = kgnilnd_cdm_destroy(net->gnn_domain);
-                LASSERTF(grc == GNI_RC_SUCCESS, 
-                        "bad rc on net %d from gni_cdm_destroy: %d\n", 
-                        net->gnn_netnum, grc);
-                net->gnn_domain = NULL;
+        
+        for (i = 0; i < kgnilnd_data.kgn_ndevs; i++) {
+                kgn_device_t    *dev = &kgnilnd_data.kgn_devices[i];
+                kgnilnd_cancel_wc_dgrams(dev);
+                kgnilnd_wait_for_canceled_dgrams(dev);
         }
 
         /* manually do some conn processing ala kgnilnd_process_conns */
@@ -230,7 +224,7 @@ kgnilnd_reset_stack(void)
                 kgn_device_t    *dev = &kgnilnd_data.kgn_devices[i];
                 kgn_conn_t      *conn;
                 int              conn_sched;
-
+                
                 /* go find all the closed conns that need to be nuked - the
                  * scheduler thread isn't running to do this for us */
 
@@ -242,12 +236,14 @@ kgnilnd_reset_stack(void)
                 while (!list_empty(&dev->gnd_ready_conns)) {
                         conn = list_first_entry(&dev->gnd_ready_conns, 
                                                 kgn_conn_t, gnc_schedlist);
+                        conn_sched = xchg(&conn->gnc_scheduled, GNILND_CONN_PROCESS);
+
+                        LASSERTF(conn_sched != GNILND_CONN_IDLE &&
+                                 conn_sched != GNILND_CONN_PROCESS,
+                                 "conn %p on ready list but in bad state: %d\n", 
+                                 conn, conn_sched);
 
                         list_del_init(&conn->gnc_schedlist);
-                        conn_sched = xchg(&conn->gnc_scheduled, GNILND_CONN_IDLE);
-                        LASSERTF(conn_sched != GNILND_CONN_IDLE,
-                                "conn %p on ready list but not scheduled: %d\n",
-                                conn, conn_sched);
 
                         if (conn->gnc_state == GNILND_CONN_CLOSING) {
                                 /* bump to CLOSED to fake out send of CLOSE */
@@ -266,6 +262,8 @@ kgnilnd_reset_stack(void)
                          * aborts above.
                          * there is an LASSERTF in kgnilnd_complete_closed_conn that will take 
                          * care of catching anything else for us */
+
+                        kgnilnd_schedule_process_conn(conn, -1);
 
                         kgnilnd_conn_decref(conn);
                 }
@@ -322,30 +320,9 @@ kgnilnd_reset_stack(void)
         for (i = 0; i < kgnilnd_data.kgn_ndevs; i++) {
                 rc = kgnilnd_dev_init(&kgnilnd_data.kgn_devices[i]);
                 LASSERTF(rc == 0, "dev_init failed for dev %d\n", i);
-        }
-
-        list_for_each_entry(net, &kgnilnd_data.kgn_nets, gnn_list) {
-                __u32           dummy_host_id;
-                /* make sure we get a new fresh CDM to use */
-
-                grc = kgnilnd_cdm_create(net->gnn_inst_id, 
-                                         *kgnilnd_tunables.kgn_ptag,
-                                         GNILND_COOKIE, 0, &net->gnn_domain);
-                LASSERTF(grc == GNI_RC_SUCCESS, 
-                         "gni_cdm_create for CDM %d returned %d for net %d\n",
-                         net->gnn_inst_id, net->gnn_netnum, grc);
-
-                /* this device already has a host_id, so just throw this one away
-                 * -- it better be the same as the device! */
-                grc = kgnilnd_cdm_attach(net->gnn_domain, net->gnn_dev->gnd_id, 
-                                         &dummy_host_id, &net->gnn_handle);
-                LASSERTF(grc == GNI_RC_SUCCESS, 
-                         "gni_cdm_attach for CDM %d returned %d for net %d\n",
-                         net->gnn_inst_id, net->gnn_netnum, grc);
-
-                rc = kgnilnd_setup_wildcard_dgram(net);
-                LASSERTF(rc == 0, "couldn't setup datagrams on net %d: %d\n",
-                         net->gnn_netnum, rc);
+                rc = kgnilnd_setup_wildcard_dgram(&kgnilnd_data.kgn_devices[i]);
+                LASSERTF(rc == 0, "couldnt setup datagrams on dev %d: %d\n",
+                        i, rc);
         }
 
         /* Now the fun restarts... - release the hounds! */
@@ -566,7 +543,7 @@ kgnilnd_critical_error(struct gni_err *err_handle)
         kgn_device_t  *dev = &kgnilnd_data.kgn_devices[0];
         LASSERTF(dev != NULL, "dev 0 is NULL\n");
 
-        if (!kgnilnd_data.kgn_ruhroh_shutdown){
+        if (!kgnilnd_data.kgn_ruhroh_shutdown) {
                 CDEBUG(D_NET, "requesting stack reset\n");
                 kgnilnd_data.kgn_needs_reset = 1;
                 wake_up(&kgnilnd_data.kgn_ruhroh_waitq);

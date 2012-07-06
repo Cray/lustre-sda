@@ -546,6 +546,7 @@ typedef struct kib_conn
         int                 ibc_scheduled:1;    /* scheduled for attention */
         int                 ibc_ready:1;        /* CQ callback fired */
         unsigned long       ibc_last_send;      /* time of last send */
+        struct list_head    ibc_connd_list;     /* link chain for kiblnd_check_conns only */
         struct list_head    ibc_early_rxs;      /* rxs completed before ESTABLISHED */
         struct list_head    ibc_tx_noops;       /* IBLND_MSG_NOOPs for IBLND_MSG_VERSION_1 */
         struct list_head    ibc_tx_queue;       /* sends that need a credit */
@@ -562,7 +563,7 @@ typedef struct kib_conn
         kib_connvars_t     *ibc_connvars;       /* in-progress connection state */
 } kib_conn_t;
 
-#define IBLND_CONN_INIT               0         /* being intialised */
+#define IBLND_CONN_INIT               0         /* being initialised */
 #define IBLND_CONN_ACTIVE_CONNECT     1         /* active sending req */
 #define IBLND_CONN_PASSIVE_WAIT       2         /* passive waiting for rtu */
 #define IBLND_CONN_ESTABLISHED        3         /* connection established */
@@ -663,7 +664,7 @@ kiblnd_send_keepalive(kib_conn_t *conn)
 }
 
 static inline int
-kiblnd_send_noop(kib_conn_t *conn)
+kiblnd_need_noop(kib_conn_t *conn)
 {
         LASSERT (conn->ibc_state >= IBLND_CONN_ESTABLISHED);
 
@@ -681,7 +682,7 @@ kiblnd_send_noop(kib_conn_t *conn)
         }
 
         if (!list_empty(&conn->ibc_tx_noops) ||       /* NOOP already queued */
-            !list_empty(&conn->ibc_tx_queue_nocred) || /* can be piggybacked */
+            !list_empty(&conn->ibc_tx_queue_nocred) || /* piggyback NOOP */
             conn->ibc_credits == 0)                    /* no credit */
                 return 0;
 

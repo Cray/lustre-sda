@@ -88,7 +88,6 @@ unsigned int cfs_rand(void)
 
    return ((seed_x << 16) + (seed_y & 65535));
 }
-EXPORT_SYMBOL(cfs_rand);
 
 /**
  * cfs_srand - sets the inital seed
@@ -105,7 +104,6 @@ void cfs_srand(unsigned int seed1, unsigned int seed2)
    if (seed2)
        seed_y = seed2;
 }
-EXPORT_SYMBOL(cfs_srand);
 
 /**
  * cfs_get_random_bytes - generate a bunch of random numbers
@@ -143,4 +141,9 @@ void cfs_get_random_bytes(void *buf, int size)
                 memcpy(buf, &tmp, size);
         }
 }
-EXPORT_SYMBOL(cfs_get_random_bytes); 
+
+#ifdef __KERNEL__
+EXPORT_SYMBOL(cfs_rand);
+EXPORT_SYMBOL(cfs_srand);
+EXPORT_SYMBOL(cfs_get_random_bytes);
+#endif /* __KERNEL__ */

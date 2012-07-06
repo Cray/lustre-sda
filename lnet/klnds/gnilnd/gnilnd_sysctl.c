@@ -1,7 +1,7 @@
 /* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
  * vim:expandtab:shiftwidth=8:tabstop=8:
  *
- * Copyright (C) 2009 Cray, Inc.
+ * Copyright (C) 2012 Cray, Inc.
  *   Author: Nic Henke <nic@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
@@ -134,7 +134,7 @@ int LL_PROC_PROTO(proc_trigger_stack_reset)
 
         /* Wait for the reset to complete.  This prevents any races in testing
          * where we'd immediately try to send traffic again */
-       while (kgnilnd_data.kgn_needs_reset != 0){
+       while (kgnilnd_data.kgn_needs_reset != 0) {
                i++;
                LCONSOLE((((i) & (-i)) == i) ? D_WARNING : D_NET,
                                "Waiting forstack reset request to clear\n");

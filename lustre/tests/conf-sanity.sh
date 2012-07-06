@@ -2370,6 +2370,113 @@ test_59() {
 }
 run_test 59 "writeconf mount option"
 
+test_62 () { #LNET routes,ip2nets params
+    $LCTL network down
+    unload_modules
+    local cfg_file=$DIR/lnet_config.test
+    local result=$DIR/res.tmp
+    rm -f $cfg_file
+
+    echo "check missing routes configuration file"
+    load_module libcfs
+    load_module lnet routes="$cfg_file"
+    $LCTL network up 2> $result
+    local RES=`cat $result` # | grep error\ 2`
+    $LCTL network down
+    unload_modules
+    [[ "$RES" != "LNET configure error 22: Invalid argument" ]] &&
+        error "invalid state of LNET: $RES"
+
+    echo "check zero routes configuration file"
+    touch $cfg_file
+    load_module libcfs
+    load_module lnet routes="$cfg_file"
+    $LCTL network up 1> $result
+    RES=`cat $result`
+    $LCTL network down
+    unload_modules
+    [[ "$RES" != "LNET configured" ]] &&
+        error "invalid state of LNET: $RES"
+
+    echo "check invalid config file data"
+    dd if=/dev/urandom of=$cfg_file bs=512 count=1
+    load_module libcfs
+    load_module lnet routes="$cfg_file"
+    $LCTL network up 2> $result
+    RES=`cat $result`
+    $LCTL network down
+    unload_modules
+    [[ "$RES" != "LNET configure error 22: Invalid argument" ]] &&
+        error "invalid state of LNET: $RES"
+
+    echo "check valid config file data"
+    [[ "$NETTYPE" == "tcp" ]] && local ntype=o2ib
+    [[ "$NETTYPE" == "o2ib" ]] && local ntype=tcp
+
+    echo $ntype'0 192.168.0.[1-8]@'$NETTYPE'0' > $cfg_file
+    load_module libcfs
+    load_module lnet routes="$cfg_file"
+    $LCTL network up 1> $result
+    RES=`cat $result`
+    [[ "$RES" != "LNET configured" ]] &&
+        { $LCTL network down; unload_modules;
+          error "invalid state of LNET: $RES"; }
+
+    $LCTL route_list 1>$result
+    RES=`cat $result | grep o2ib | wc -l`
+    $LCTL network down
+    unload_modules
+    [[ "$RES" != "8" ]] &&
+        error "invalid LNET routing table: $RES"
+    rm -f $cfg_file
+
+    echo "check missing ip2nets configuration file"
+    load_module libcfs
+    load_module lnet networks=$'\0' ip2nets="$cfg_file"
+    $LCTL network up 2> $result
+    local RES=`cat $result`
+    $LCTL network down
+    unload_modules
+    [[ "$RES" != "LNET configure error 100: Network is down" ]] &&
+          error "invalid state of LNET: $RES"
+
+    echo "check zero ip2nets configuration file"
+    touch $cfg_file
+    load_module libcfs
+    load_module lnet networks=$'\0' ip2nets="$cfg_file"
+    $LCTL network up 2> $result
+    RES=`cat $result`
+    $LCTL network down
+    unload_modules
+    [[ "$RES" != "LNET configure error 100: Network is down" ]] &&
+        error "invalid state of LNET: $RES"
+
+    echo "check invalid ip2nets config file data"
+    dd if=/dev/urandom of=$cfg_file bs=512 count=1
+    load_module libcfs
+    load_module lnet networks=$'\0' ip2nets="$cfg_file"
+    $LCTL network up 2> $result
+    RES=`cat $result`
+    $LCTL network down
+    unload_modules
+    [[ "$RES" != "LNET configure error 100: Network is down" ]] &&
+        error "invalid state of LNET: $RES"
+
+    echo "check valid ip2nets config file data"
+    echo $NETTYPE'0 *.*.*.*;' > $cfg_file
+    load_module libcfs
+    load_module lnet networks=$'\0' ip2nets="$cfg_file"
+    $LCTL network up 1> $result
+    RES=`cat $result`
+    $LCTL network down
+    unload_modules
+    [[ "$RES" != "LNET configured" ]] &&
+        error "invalid state of LNET: $RES"
+    rm -f $cfg_file
+    rm -f $result
+}
+run_test 62 "check lnet module params (routes,ip2nets) using config file."
+
 if ! combined_mgs_mds ; then
 	stop mgs
 fi

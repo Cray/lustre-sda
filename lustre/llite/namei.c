@@ -228,10 +228,13 @@ int ll_mdc_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
                 }
                 break;
         case LDLM_CB_CANCELING: {
-                struct inode *inode = ll_inode_from_lock(lock);
+                struct inode *inode = ll_inode_from_resource(lock);
                 __u64 bits = lock->l_policy_data.l_inodebits.bits;
                 struct lu_fid *fid;
                 ldlm_mode_t mode = lock->l_req_mode;
+
+                /* Inode is set to lock->l_resource->lr_lvb_inode for mdc - bug 24555 */
+                LASSERT(lock->l_ast_data == NULL);
 
                 /* Invalidate all dentries associated with this inode */
                 if (inode == NULL)
@@ -680,7 +683,7 @@ struct lookup_intent *ll_convert_intent(struct open_intent *oit,
                 it->it_op = IT_OPEN;
                 if (lookup_flags & LOOKUP_CREATE)
                         it->it_op |= IT_CREAT;
-                it->it_create_mode = oit->create_mode;
+                it->it_create_mode = (oit->create_mode & S_IALLUGO) | S_IFREG;
                 it->it_flags = oit->flags;
         } else {
                 it->it_op = IT_GETATTR;

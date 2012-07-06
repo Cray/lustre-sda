@@ -43,7 +43,7 @@ DIST_SUBDIRS := linux darwin
 if LIBLUSTRE
 noinst_LIBRARIES= libcfs.a
 libcfs_a_SOURCES= debug.c prng.c user-prim.c user-lock.c user-tcpip.c \
-                  user-bitops.c
+                  user-bitops.c fail.c
 libcfs_a_CPPFLAGS = $(LLCPPFLAGS)
 libcfs_a_CFLAGS = $(LLCFLAGS)
 endif

@@ -106,7 +106,12 @@ extern int cfs_race_state;
 #define CFS_FAIL_GNI_DONT_NOTIFY        0xf03b
 #define CFS_FAIL_GNI_VIRT_SMALL_MAP     0xf03c
 #define CFS_FAIL_GNI_DELAY_RDMAQ        0xf03d
-
+#define CFS_FAIL_GNI_PAUSE_SHUTDOWN     0xf03e
+#define CFS_FAIL_GNI_PAUSE_DGRAM_COMP   0xf03f
+#define CFS_FAIL_GNI_NET_LOOKUP         0xf040
+#define CFS_FAIL_GNI_RECV_TIMEOUT       0xf041
+#define CFS_FAIL_GNI_SEND_TIMEOUT       0xf042
+ 
 /* Failure injection control */
 #define CFS_FAIL_MASK_SYS    0x0000FF00
 #define CFS_FAIL_MASK_LOC   (0x000000FF | CFS_FAIL_MASK_SYS)

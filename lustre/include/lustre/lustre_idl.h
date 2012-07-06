@@ -362,6 +362,9 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb, int msgsize);
 #define OBD_CONNECT_64BITHASH    0x4000000000ULL /* client supports 64-bits
                                                   * directory hash */
 #define OBD_CONNECT_MAXBYTES     0x8000000000ULL /* max stripe size */
+#define OBD_CONNECT_FLOCK_OWNER 0x200000000000ULL /* for the fixed 1.8
+                                                   * policy and 2.x server */
+
 /* also update obd_connect_names[] for lprocfs_rd_connect_flags()
  * and lustre/utils/wirecheck.c */
 
@@ -1620,12 +1623,12 @@ struct ldlm_inodebits {
         __u64 bits;
 };
 
-struct ldlm_flock {
-        __u64 start;
-        __u64 end;
-        __u64 blocking_export;  /* not actually used over the wire */
-        __u32 blocking_pid;     /* not actually used over the wire */
-        __u32 pid;
+struct ldlm_flock_wire {
+        __u64 lfw_start;
+        __u64 lfw_end;
+        __u64 lfw_owner;
+        __u32 lfw_padding;
+        __u32 lfw_pid;
 };
 
 /* it's important that the fields of the ldlm_extent structure match
@@ -1636,11 +1639,11 @@ struct ldlm_flock {
 
 typedef union {
         struct ldlm_extent l_extent;
-        struct ldlm_flock  l_flock;
+        struct ldlm_flock_wire l_flock;
         struct ldlm_inodebits l_inodebits;
-} ldlm_policy_data_t;
+} ldlm_wire_policy_data_t;
 
-extern void lustre_swab_ldlm_policy_data (ldlm_policy_data_t *d);
+extern void lustre_swab_ldlm_policy_data (ldlm_wire_policy_data_t *d);
 
 struct ldlm_intent {
         __u64 opc;
@@ -1660,7 +1663,7 @@ struct ldlm_lock_desc {
         struct ldlm_resource_desc l_resource;
         ldlm_mode_t l_req_mode;
         ldlm_mode_t l_granted_mode;
-        ldlm_policy_data_t l_policy_data;
+        ldlm_wire_policy_data_t l_policy_data;
 };
 
 extern void lustre_swab_ldlm_lock_desc (struct ldlm_lock_desc *l);

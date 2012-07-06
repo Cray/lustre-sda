@@ -355,6 +355,10 @@ struct ldlm_pool {
          */
         int                    pl_grant_plan;
         /**
+         * Semaphore to protect against concurent pool shrinking.
+         */
+        struct semaphore       pl_shrink_lock;
+        /**
          * Pool statistics.
          */
         struct lprocfs_stats  *pl_stats;
@@ -500,6 +504,28 @@ struct ldlm_interval_tree {
         ldlm_mode_t           lit_mode; /* lock mode */
         struct interval_node *lit_root; /* actually ldlm_interval */
 };
+
+struct ldlm_flock {
+        __u64 start;
+        __u64 end;
+        __u64 owner;
+        __u64 blocking_owner;
+        void *blocking_export;
+        __u32 pid;
+};
+
+typedef union {
+        struct ldlm_extent l_extent;
+        struct ldlm_flock l_flock;
+        struct ldlm_inodebits l_inodebits;
+} ldlm_policy_data_t;
+
+void ldlm_convert_policy_to_wire(ldlm_type_t type,
+                                 const ldlm_policy_data_t *lpolicy,
+                                 ldlm_wire_policy_data_t *wpolicy);
+void ldlm_convert_policy_to_local(ldlm_type_t type,
+                                  const ldlm_wire_policy_data_t *wpolicy,
+                                  ldlm_policy_data_t *lpolicy);
 
 struct ldlm_lock {
         struct portals_handle l_handle; // must be first in the structure
@@ -734,7 +760,6 @@ void ldlm_register_intent(struct ldlm_namespace *ns, ldlm_res_policy arg);
 void ldlm_lock2handle(struct ldlm_lock *lock, struct lustre_handle *lockh);
 struct ldlm_lock *__ldlm_handle2lock(struct lustre_handle *, int flags);
 void ldlm_cancel_callback(struct ldlm_lock *);
-int ldlm_lock_set_data(struct lustre_handle *, void *data);
 int ldlm_lock_remove_from_lru(struct ldlm_lock *);
 struct ldlm_lock *ldlm_handle2lock_ns(struct ldlm_namespace *,
                                       struct lustre_handle *);

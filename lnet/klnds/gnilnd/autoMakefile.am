@@ -10,4 +10,3 @@ endif
 endif
 
 MOSTLYCLEANFILES = @MOSTLYCLEANFILES@
-DIST_SOURCES = $(kgnilnd-objs:%.o=%.c) gnilnd.h gni_api_wrap.h
