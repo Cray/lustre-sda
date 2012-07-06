@@ -1598,21 +1598,35 @@ int
 kgnilnd_start_connect (kgn_peer_t *peer)
 {
         int              rc = 0;
-
         /* sync point for kgnilnd_del_peer_locked - do an early check to 
          * catch the most common hits where del_peer is done by the 
          * time we get here */
-        read_lock(&kgnilnd_data.kgn_peer_conn_lock);
-        if (!kgnilnd_peer_active(peer)) {
+        if (CFS_FAIL_CHECK(CFS_FAIL_GNI_GNP_CONNECTING1)) {
+                while (CFS_FAIL_TIMEOUT(CFS_FAIL_GNI_GNP_CONNECTING1, 1)) {};
+        }
+
+        write_lock(&kgnilnd_data.kgn_peer_conn_lock);
+        if (!kgnilnd_peer_active(peer) || peer->gnp_connecting != GNILND_PEER_CONNECT) {
                 /* raced with peer getting unlinked */
-                read_unlock(&kgnilnd_data.kgn_peer_conn_lock);
+                write_unlock(&kgnilnd_data.kgn_peer_conn_lock);
                 rc = ESTALE;
                 GOTO(out, rc);
         }
-        read_unlock(&kgnilnd_data.kgn_peer_conn_lock);
+        peer->gnp_connecting = GNILND_PEER_POSTING;
+        write_unlock(&kgnilnd_data.kgn_peer_conn_lock);
 
         set_mb(peer->gnp_last_dgram_time, jiffies);
-        rc = kgnilnd_post_dgram(peer->gnp_net->gnn_dev, peer->gnp_nid, GNILND_CONNREQ_REQ, 0);
+        if (CFS_FAIL_CHECK(CFS_FAIL_GNI_GNP_CONNECTING2)) {
+                while (CFS_FAIL_TIMEOUT(CFS_FAIL_GNI_GNP_CONNECTING2, 1)) {};
+        }
+
+        if (CFS_FAIL_CHECK(CFS_FAIL_GNI_GNP_CONNECTING3)) {
+                while (CFS_FAIL_TIMEOUT(CFS_FAIL_GNI_GNP_CONNECTING3, 1)) {};
+                rc = cfs_fail_val ? cfs_fail_val : -ENOMEM; 
+        } else {
+                rc = kgnilnd_post_dgram(peer->gnp_net->gnn_dev, 
+                                        peer->gnp_nid, GNILND_CONNREQ_REQ, 0);
+        }
         if (rc < 0) {
                 set_mb(peer->gnp_last_dgram_errno, rc);
                 GOTO(failed, rc);
@@ -1620,7 +1634,13 @@ kgnilnd_start_connect (kgn_peer_t *peer)
 
         /* while we're posting someone could have decided this peer/dgram needed to
          * die a quick death, so we check for state change and process accordingly */
-        if (!kgnilnd_peer_active(peer)) {
+        
+        write_lock(&kgnilnd_data.kgn_peer_conn_lock);
+        if (!kgnilnd_peer_active(peer) || peer->gnp_connecting == GNILND_PEER_NEEDS_DEATH ) {
+                if (peer->gnp_connecting == GNILND_PEER_NEEDS_DEATH) {
+                        peer->gnp_connecting = GNILND_PEER_KILL;
+                }
+                write_unlock(&kgnilnd_data.kgn_peer_conn_lock);
                 /* positive RC to avoid dgram cleanup - we'll have to 
                  * wait for the kgni GNI_POST_TERMINATED event to 
                  * finish cleaning up */
@@ -1628,7 +1648,8 @@ kgnilnd_start_connect (kgn_peer_t *peer)
                 kgnilnd_find_and_cancel_dgram(peer->gnp_net->gnn_dev, peer->gnp_nid);
                 GOTO(out, rc);
         }
-
+        peer->gnp_connecting = GNILND_PEER_POSTED;
+        write_unlock(&kgnilnd_data.kgn_peer_conn_lock);
         /* reaper thread will take care of any timeouts */
         CDEBUG(D_NET, "waiting for connect to finish to %s rc %d\n", 
                libcfs_nid2str(peer->gnp_nid), rc);
@@ -1677,7 +1698,8 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
         if (peer != new_peer) {
                 /* if this was an active connect attempt but we can't find a peer waiting for it
                  * we will dump in the trash */
-                if (!peer->gnp_connecting && dgram->gndg_conn_out.gncr_dstnid != LNET_NID_ANY) {
+
+                if (peer->gnp_connecting == GNILND_PEER_IDLE && dgram->gndg_conn_out.gncr_dstnid != LNET_NID_ANY) {
                         CDEBUG(D_NET, "dropping completed connreq for %s peer 0x%p->%s\n",
                                libcfs_nid2str(her_nid), peer, libcfs_nid2str(peer->gnp_nid));
                         write_unlock(&kgnilnd_data.kgn_peer_conn_lock);
@@ -1688,7 +1710,7 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
                 /* check to see if we can catch a connecting peer before it is
                  * removed from the connd_peers list - if not, we need to
                  * let the connreqs race and be handled by kgnilnd_conn_isdup_locked() */
-                if (peer->gnp_connecting) {
+                if (peer->gnp_connecting != GNILND_PEER_IDLE) {
                         spin_lock(&peer->gnp_net->gnn_dev->gnd_connd_lock);
                         if (!list_empty(&peer->gnp_connd_list)) {
                                 list_del_init(&peer->gnp_connd_list);
@@ -1700,8 +1722,8 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
                         rc = 0;
                 }
 
-                /* no matter what, we are no longer waiting to connect this peer now */
-                peer->gnp_connecting = 0;
+                /* no matter what, we are no longer waiting to connect this peer now */ 
+                peer->gnp_connecting = GNILND_PEER_IDLE;
 
                 /* Refuse to duplicate an existing connection (both sides might try to
                  * connect at once).  NB we return success!  We _are_ connected so we
@@ -1865,7 +1887,7 @@ kgnilnd_process_nak(kgn_dgram_t *dgram)
         /* need to check peerstamp/connstamp against the ones we find
          * to make sure we don't close new (and good?) conns that we
          * formed after this connreq failed */
-        if (!peer->gnp_connecting) {
+        if (peer->gnp_connecting == GNILND_PEER_IDLE) {
                 kgn_conn_t        conn;
 
                 if (list_empty(&peer->gnp_conns)) {
@@ -2043,7 +2065,7 @@ inform_peer:
                         kgnilnd_peer_addref(peer);
 
                         /* if he still cares about the outstanding connect */
-                        if (peer->gnp_connecting == 1) {
+                        if (peer->gnp_connecting >= GNILND_PEER_CONNECT) {
                                 /* check if he is on the connd list and remove.. */
                                 spin_lock(&peer->gnp_net->gnn_dev->gnd_connd_lock);
                                 if (!list_empty(&peer->gnp_connd_list)) {
@@ -2053,9 +2075,9 @@ inform_peer:
                                 }
                                 spin_unlock(&peer->gnp_net->gnn_dev->gnd_connd_lock);
 
-                                /* clear gnp_connecting so we don't have non-connecting peer
+                                /* clear gnp_connecting so we don't have a non-connecting peer
                                  * on gnd_connd_list */
-                                peer->gnp_connecting = 0;
+                                peer->gnp_connecting = GNILND_PEER_IDLE;
 
                                 set_mb(peer->gnp_last_dgram_errno, rc);
 
@@ -2200,7 +2222,7 @@ kgnilnd_start_outbound_dgrams(kgn_device_t *dev)
                  * to get the peer to gnp_connecting in the first place. We just need to
                  * rely on gnd_connd_lock to serialize someone pulling him from the list
                  * BEFORE clearing gnp_connecting */
-                LASSERTF(peer->gnp_connecting, "peer 0x%p->%s not connecting\n",
+                LASSERTF(peer->gnp_connecting != GNILND_PEER_IDLE, "peer 0x%p->%s not connecting\n",
                          peer, libcfs_nid2str(peer->gnp_nid));
 
                 spin_unlock(&dev->gnd_connd_lock);
@@ -2210,7 +2232,7 @@ kgnilnd_start_outbound_dgrams(kgn_device_t *dev)
 
                 did_something += 1;
                 rc = kgnilnd_start_connect(peer);
-                
+
                 if (likely(rc >= 0)) {
                         /* 0 on success, positive on 'just drop peer' errors */
                         kgnilnd_peer_decref(peer);
@@ -2218,10 +2240,25 @@ kgnilnd_start_outbound_dgrams(kgn_device_t *dev)
                         /* if we are out of wildcards, add back to
                          * connd_list - then break out and we'll try later
                          * if other errors, we'll bail & cancel pending tx */ 
-
-                        spin_lock(&dev->gnd_connd_lock);
-                        list_add_tail(&peer->gnp_connd_list,
-                                      &dev->gnd_connd_peers);
+                        write_lock(&kgnilnd_data.kgn_peer_conn_lock);
+                        if (peer->gnp_connecting == GNILND_PEER_POSTING) { 
+                                peer->gnp_connecting = GNILND_PEER_CONNECT;
+                                spin_lock(&dev->gnd_connd_lock);
+                                list_add_tail(&peer->gnp_connd_list,
+                                              &dev->gnd_connd_peers);
+                        } else {
+                                /* connecting changed while we were posting */
+                                
+                                LASSERTF(peer->gnp_connecting == GNILND_PEER_NEEDS_DEATH, "Peer is in invalid" 
+                                        " state 0x%p->%s, connecting %d\n",
+                                        peer, libcfs_nid2str(peer->gnp_nid), peer->gnp_connecting);
+                                peer->gnp_connecting = GNILND_PEER_KILL;
+                                spin_lock(&dev->gnd_connd_lock);
+                                /* remove the peer ref frrom the cond list */
+                                kgnilnd_peer_decref(peer);
+                                /* let the system handle itself */
+                        }
+                        write_unlock(&kgnilnd_data.kgn_peer_conn_lock);
                         /* the datagrams are a global pool,
                          * so break out of trying and hope some free
                          * up soon */
@@ -2232,11 +2269,20 @@ kgnilnd_start_outbound_dgrams(kgn_device_t *dev)
                         CNETERR("could not start connecting to %s "
                                 "rc %d: Will retry until TX timeout\n",
                                libcfs_nid2str(peer->gnp_nid), rc);
-                        /* just let it ride - the reaper will
-                         * try to trigger this again soon */
+                        /* It didnt post so just set connecting back to zero now.
+                         * The reaper will reattempt the connection if it needs too.
+                         * If the peer needs death set it so the reaper will cleanup. 
+                         */
                         write_lock(&kgnilnd_data.kgn_peer_conn_lock);
-                        kgnilnd_peer_increase_reconnect_locked(peer);
-                        peer->gnp_connecting = 0;
+                        if (peer->gnp_connecting == GNILND_PEER_POSTING) {
+                                peer->gnp_connecting = GNILND_PEER_IDLE;
+                                kgnilnd_peer_increase_reconnect_locked(peer);
+                        } else {
+                                LASSERTF(peer->gnp_connecting == GNILND_PEER_NEEDS_DEATH, "Peer is in invalid"
+                                        " state 0x%p->%s, connecting %d\n",
+                                        peer, libcfs_nid2str(peer->gnp_nid), peer->gnp_connecting);
+                                peer->gnp_connecting = GNILND_PEER_KILL;
+                        }
                         write_unlock(&kgnilnd_data.kgn_peer_conn_lock);
 
                         /* hold onto ref until we are really done - if it was

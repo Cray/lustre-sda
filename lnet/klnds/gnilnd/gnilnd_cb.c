@@ -2429,7 +2429,6 @@ kgnilnd_check_peer_timeouts_locked (kgn_peer_t *peer, struct list_head *todie,
         /* now regardless of starting new conn, find tx on peer queue that 
          * are old and smell bad - do this first so we don't trigger 
          * reconnect on empty queue if we timeout all */
-
         list_for_each_entry_safe(tx, txN, &peer->gnp_tx_queue, tx_list) {
                 if (time_after_eq(jiffies, tx->tx_qtime + timeout)) {
                         if (count == 0) {
@@ -2445,11 +2444,12 @@ kgnilnd_check_peer_timeouts_locked (kgn_peer_t *peer, struct list_head *todie,
                 }
         }
 
-        if (count) {
+        if (count || peer->gnp_connecting == GNILND_PEER_KILL) {
                 CDEBUG(D_NET, "canceling %d tx for peer 0x%p->%s\n",
                         count, peer, libcfs_nid2str(peer->gnp_nid));
                 /* if we nuked all the TX, stop peer connection attempt (if there is one..) */
-                if (list_empty(&peer->gnp_tx_queue)) {
+                if (list_empty(&peer->gnp_tx_queue) || 
+                        peer->gnp_connecting == GNILND_PEER_KILL) {
                         /* we pass down todie to use a common function - but we know there are 
                          * no TX to add */
                         kgnilnd_cancel_peer_connect_locked(peer, todie);
@@ -2465,13 +2465,16 @@ kgnilnd_check_peer_timeouts_locked (kgn_peer_t *peer, struct list_head *todie,
          * to be sent, we'll check the reconnect interval and fire up a new
          * connection request */
 
-        if ((!peer->gnp_connecting) && 
+        if ((peer->gnp_connecting == GNILND_PEER_IDLE) && 
             (time_after_eq(jiffies, peer->gnp_reconnect_time)) &&
              !list_empty(&peer->gnp_tx_queue) && reconnect) {
 
                 CDEBUG(D_NET, "starting connect to %s\n",
                         libcfs_nid2str(peer->gnp_nid));
-                peer->gnp_connecting = 1;
+                LASSERTF(peer->gnp_connecting == GNILND_PEER_IDLE, "Peer was idle and we" 
+                        "have a write_lock, state issue %d\n", peer->gnp_connecting);
+
+                peer->gnp_connecting = GNILND_PEER_CONNECT;
                 kgnilnd_peer_addref(peer); /* extra ref for connd */
 
                 spin_lock(&peer->gnp_net->gnn_dev->gnd_connd_lock);

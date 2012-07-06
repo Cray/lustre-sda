@@ -196,6 +196,13 @@
 #define GNILND_DGRAM_SCHED           1
 #define GNILND_DGRAM_PROCESS         2
 
+#define GNILND_PEER_IDLE             0
+#define GNILND_PEER_CONNECT          1
+#define GNILND_PEER_POSTING          2
+#define GNILND_PEER_POSTED           3
+#define GNILND_PEER_NEEDS_DEATH      4
+#define GNILND_PEER_KILL             5
+
 /* for gnc_close_recvd */
 #define GNILND_CLOSE_RX              1
 #define GNILND_CLOSE_INJECT1         2

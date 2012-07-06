@@ -313,10 +313,6 @@ kgnilnd_find_or_create_conn_locked(kgn_peer_t *peer) {
                 return conn;
         }
 
-        /* if we are not already connecting, fire up new connection */
-        if (peer->gnp_connecting)
-                return NULL;
-
         /* if the peer was previously connecting, check if we should
          * trigger another connection attempt yet. */ 
         if (time_before(jiffies, peer->gnp_reconnect_time)) {
@@ -332,11 +328,17 @@ kgnilnd_find_or_create_conn_locked(kgn_peer_t *peer) {
                                 libcfs_nid2str(peer->gnp_nid)); 
                         return NULL;
                 }
-        } 
+        }
+ 
+        if (peer->gnp_connecting != GNILND_PEER_IDLE) {
+                /* if we are not connecting, fire up a new connection */
+                /* or if we are anything but IDLE DONT start a new connection */ 
+               return NULL;
+        }
 
         CDEBUG(D_NET, "starting connect to %s\n",
                 libcfs_nid2str(peer->gnp_nid));
-        peer->gnp_connecting = 1;
+        peer->gnp_connecting = GNILND_PEER_CONNECT;
         kgnilnd_peer_addref(peer); /* extra ref for connd */
 
         spin_lock(&dev->gnd_connd_lock);
@@ -475,7 +477,7 @@ kgnilnd_peer_notify(kgn_peer_t *peer, int error)
                peer, libcfs_nid2str(peer->gnp_nid), peer->gnp_connecting, conn, 
                kgnilnd_data.kgn_in_reset, error);
 
-        if ((peer->gnp_connecting == 0) && 
+        if ((peer->gnp_connecting == GNILND_PEER_IDLE) && 
             (conn == NULL) &&
             (!kgnilnd_data.kgn_in_reset) &&
             (!kgnilnd_conn_clean_errno(error))) {
@@ -657,9 +659,6 @@ kgnilnd_complete_closed_conn(kgn_conn_t *conn)
         int                     logmsg;
         ENTRY;
 
-        /* just in case it is unlinkable and could be freed... */
-        kgnilnd_peer_addref(conn->gnc_peer);
-
         /* Dump log  on cksum error - wait until complete phase to let 
          * RX of error happen */
         if (*kgnilnd_tunables.kgn_checksum_dump && 
@@ -703,15 +702,9 @@ kgnilnd_complete_closed_conn(kgn_conn_t *conn)
                         nlive++;
                         GNIDBG_TX(D_NET, tx, "cleaning up on close, nlive %d", nlive);
                         
-                        if (tx->tx_list_state == GNILND_TX_RDMAQ) {
-                                kgnilnd_tx_del_state_locked(tx, NULL, conn, GNILND_TX_ALLOCD);
-                        } else if (tx->tx_list_state == GNILND_TX_MAPQ) {
-                                kgnilnd_tx_del_state_locked(tx, NULL, conn, GNILND_TX_ALLOCD);
-                        } else {
-                                /* don't worry about gnc_lock here as nobody else should be 
-                                 * touching this conn */
-                                kgnilnd_tx_del_state_locked(tx, NULL, conn, GNILND_TX_ALLOCD);
-                        }
+                        /* don't worry about gnc_lock here as nobody else should be 
+                         * touching this conn */
+                        kgnilnd_tx_del_state_locked(tx, NULL, conn, GNILND_TX_ALLOCD);
                         list_add_tail(&tx->tx_list, &sinners);
                 }
         }
@@ -790,14 +783,6 @@ kgnilnd_complete_closed_conn(kgn_conn_t *conn)
         kgnilnd_peer_notify(conn->gnc_peer, 
                             conn->gnc_error == -ECONNRESET ? conn->gnc_peer_error
                                                            : conn->gnc_error);
-
-        /* Remove peer ref that was added at the top of this function. This would be removed 
-         *  when we detach from purgatory but if we arent in purgatory we need to remove it here.
-         */
-
-        if (!conn->gnc_in_purgatory) {
-                kgnilnd_peer_decref(conn->gnc_peer);
-        }
 
         EXIT;
 }
@@ -995,7 +980,7 @@ kgnilnd_destroy_peer (kgn_peer_t *peer)
         LASSERTF(!kgnilnd_peer_active(peer),
                  "peer 0x%p->%s\n",
                 peer, libcfs_nid2str(peer->gnp_nid));
-        LASSERTF(!peer->gnp_connecting,
+        LASSERTF(peer->gnp_connecting == GNILND_PEER_IDLE || peer->gnp_connecting == GNILND_PEER_KILL,
                  "peer 0x%p->%s, connecting %d\n",
                 peer, libcfs_nid2str(peer->gnp_nid), peer->gnp_connecting);
         LASSERTF(list_empty(&peer->gnp_conns),
@@ -1170,8 +1155,6 @@ kgnilnd_release_purgatory_list(struct list_head *conn_list)
                         list_del_init(&gmp->gmp_list);
                         LIBCFS_FREE(gmp, sizeof(*gmp));
                 } 
-                /* lose peer ref from complete_closed_conn*/
-                kgnilnd_peer_decref(conn->gnc_peer);
                 /* lose conn ref for purgatory */
                 kgnilnd_conn_decref(conn);
         }
@@ -1368,9 +1351,13 @@ kgnilnd_cancel_peer_connect_locked(kgn_peer_t *peer, struct list_head *zombies)
 {
         kgn_tx_t        *tx, *txn; 
 
-        /* we don't care about state of gnp_connecting - we could be between
+        /* we do care about state of gnp_connecting - we could be between
          * reconnect attempts, so try to find the dgram and cancel the TX 
-         * anyways. */
+         * anyways. If we are in the process of posting DONT do anything;
+         * once it fails or succeeds we can nuke the connect attempt.
+         * We have no idea where in kgnilnd_post_dgram we are so we cant 
+         * attempt to cancel until the function is done.
+         */
 
         /* make sure peer isn't in process of connecting or waiting for connect*/
         spin_lock(&peer->gnp_net->gnn_dev->gnd_connd_lock);
@@ -1380,13 +1367,23 @@ kgnilnd_cancel_peer_connect_locked(kgn_peer_t *peer, struct list_head *zombies)
                 kgnilnd_peer_decref(peer);
         }
         spin_unlock(&peer->gnp_net->gnn_dev->gnd_connd_lock);
-        peer->gnp_connecting = 0;
-        set_mb(peer->gnp_last_dgram_errno, -ETIMEDOUT);
+        
+        if (peer->gnp_connecting == GNILND_PEER_POSTING || peer->gnp_connecting == GNILND_PEER_NEEDS_DEATH) {
+                peer->gnp_connecting = GNILND_PEER_NEEDS_DEATH;
+                /* We are in process of posting right now the xchg set it up for us to
+                 * cancel the connect so we are finished for now */
+        } else {
+                /* no need for exchange we have the peer lock and its ready for us to nuke */
+                LASSERTF(peer->gnp_connecting != GNILND_PEER_POSTING,
+                        "Peer in invalid state 0x%p->%s, connecting %d\n",
+                        peer, libcfs_nid2str(peer->gnp_nid), peer->gnp_connecting);
+                peer->gnp_connecting = GNILND_PEER_IDLE;
+                set_mb(peer->gnp_last_dgram_errno, -ETIMEDOUT);
+                kgnilnd_find_and_cancel_dgram(peer->gnp_net->gnn_dev,
+                                                      peer->gnp_nid);
+        }
 
-        kgnilnd_find_and_cancel_dgram(peer->gnp_net->gnn_dev,
-                                              peer->gnp_nid);
-
-        /* now nuke any pending TX */
+        /* The least we can do is nuke the tx's no matter what.... */
         list_for_each_entry_safe(tx, txn, &peer->gnp_tx_queue, tx_list) {
                 kgnilnd_tx_del_state_locked(tx, peer, NULL, 
                                            GNILND_TX_ALLOCD);
