@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2006, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -44,10 +44,13 @@
 # include <linux/version.h>
 # include <linux/module.h>
 # include <linux/init.h>
-#  include <linux/smp_lock.h>
-#  include <linux/buffer_head.h>
-#  include <linux/workqueue.h>
-#  include <linux/mount.h>
+# include <linux/fs.h>
+# include <linux/jbd.h>
+# include <linux/ext3_fs.h>
+# include <linux/smp_lock.h>
+# include <linux/buffer_head.h>
+# include <linux/workqueue.h>
+# include <linux/mount.h>
 #else /* __KERNEL__ */
 # include <liblustre.h>
 #endif
@@ -67,19 +70,19 @@ static int target_quotacheck_callback(struct obd_export *exp,
                                       struct obd_quotactl *oqctl)
 {
         struct ptlrpc_request *req;
-        struct obd_quotactl *body;
-        int rc, size[2] = { sizeof(struct ptlrpc_body), sizeof(*oqctl) };
+        struct obd_quotactl   *body;
+        int                    rc;
         ENTRY;
 
-        req = ptlrpc_prep_req(exp->exp_imp_reverse, LUSTRE_OBD_VERSION,
-                              OBD_QC_CALLBACK, 2, size, NULL);
-        if (!req)
+        req = ptlrpc_request_alloc_pack(exp->exp_imp_reverse, &RQF_QC_CALLBACK,
+                                        LUSTRE_OBD_VERSION, OBD_QC_CALLBACK);
+        if (req == NULL)
                 RETURN(-ENOMEM);
 
-        body = lustre_msg_buf(req->rq_reqmsg, REQ_REC_OFF, sizeof(*body));
+        body = req_capsule_client_get(&req->rq_pill, &RMF_OBD_QUOTACTL);
         *body = *oqctl;
 
-        ptlrpc_req_set_repsize(req, 1, NULL);
+        ptlrpc_request_set_replen(req);
 
         rc = ptlrpc_queue_wait(req);
         ptlrpc_req_finished(req);
@@ -99,7 +102,7 @@ static int target_quotacheck_thread(void *data)
         cfs_daemonize_ctxt("quotacheck");
 
         exp = qta->qta_exp;
-        obd = exp->exp_obd;
+        obd = qta->qta_obd;
         oqctl = &qta->qta_oqctl;
 
         push_ctxt(&saved, &obd->obd_lvfs_ctxt, NULL);
@@ -112,42 +115,58 @@ static int target_quotacheck_thread(void *data)
 
         rc = target_quotacheck_callback(exp, oqctl);
         class_export_put(exp);
-
-        atomic_inc(qta->qta_sem);
-
+        cfs_up(qta->qta_sem);
         OBD_FREE_PTR(qta);
         return rc;
 }
 
-int target_quota_check(struct obd_export *exp, struct obd_quotactl *oqctl)
+int target_quota_check(struct obd_device *obd, struct obd_export *exp,
+                       struct obd_quotactl *oqctl)
 {
-        struct obd_device *obd = exp->exp_obd;
         struct obd_device_target *obt = &obd->u.obt;
         struct quotacheck_thread_args *qta;
         int rc = 0;
         ENTRY;
 
-        if (!atomic_dec_and_test(&obt->obt_quotachecking)) {
-                CDEBUG(D_INFO, "other people are doing quotacheck\n");
-                GOTO(out, rc = -EBUSY);
-        }
-
         OBD_ALLOC_PTR(qta);
         if (!qta)
-                GOTO(out, rc = -ENOMEM);
+                RETURN(ENOMEM);
+
+        cfs_down(&obt->obt_quotachecking);
 
         qta->qta_exp = exp;
+        qta->qta_obd = obd;
         qta->qta_oqctl = *oqctl;
         qta->qta_oqctl.qc_id = obt->obt_qfmt; /* override qfmt version */
         qta->qta_sb = obt->obt_sb;
         qta->qta_sem = &obt->obt_quotachecking;
 
+        /* quotaoff firstly */
+        oqctl->qc_cmd = Q_QUOTAOFF;
         if (!strcmp(obd->obd_type->typ_name, LUSTRE_MDS_NAME)) {
+                rc = do_mds_quota_off(obd, oqctl);
+                if (rc && rc != -EALREADY) {
+                        CERROR("off quota on MDS failed: %d\n", rc);
+                        GOTO(out, rc);
+                }
+
                 /* quota master */
                 rc = init_admin_quotafiles(obd, &qta->qta_oqctl);
                 if (rc) {
                         CERROR("init_admin_quotafiles failed: %d\n", rc);
-                        OBD_FREE_PTR(qta);
+                        GOTO(out, rc);
+                }
+        } else {
+                struct lvfs_run_ctxt saved;
+                struct lustre_quota_ctxt *qctxt = &obt->obt_qctxt;
+
+                push_ctxt(&saved, &obd->obd_lvfs_ctxt, NULL);
+                rc = fsfilt_quotactl(obd, obt->obt_sb, oqctl);
+                pop_ctxt(&saved, &obd->obd_lvfs_ctxt, NULL);
+                if (!rc) {
+                        qctxt->lqc_flags &= ~UGQUOTA2LQC(oqctl->qc_type);
+                } else if (!quota_is_off(qctxt, oqctl)) {
+                        CERROR("off quota on OSS failed: %d\n", rc);
                         GOTO(out, rc);
                 }
         }
@@ -155,52 +174,60 @@ int target_quota_check(struct obd_export *exp, struct obd_quotactl *oqctl)
         /* we get ref for exp because target_quotacheck_callback() will use this
          * export later b=18126 */
         class_export_get(exp);
-        rc = kernel_thread(target_quotacheck_thread, qta, CLONE_VM|CLONE_FILES);
+        rc = cfs_create_thread(target_quotacheck_thread, qta,
+                               CFS_DAEMON_FLAGS);
         if (rc >= 0) {
+                /* target_quotacheck_thread will drop the ref on exp and release
+                 * obt_quotachecking */
                 CDEBUG(D_INFO, "%s: target_quotacheck_thread: %d\n",
                        obd->obd_name, rc);
                 RETURN(0);
+        } else {
+                CERROR("%s: error starting quotacheck_thread: %d\n",
+                       obd->obd_name, rc);
+                class_export_put(exp);
+                EXIT;
         }
 
-        class_export_put(exp);
-        CERROR("%s: error starting quotacheck_thread: %d\n",
-               obd->obd_name, rc);
-        OBD_FREE_PTR(qta);
 out:
-        atomic_inc(&obt->obt_quotachecking);
-        RETURN(rc);
+        cfs_up(&obt->obt_quotachecking);
+        OBD_FREE_PTR(qta);
+        return rc;
 }
 
 #endif /* __KERNEL__ */
 #endif /* HAVE_QUOTA_SUPPORT */
 
-int client_quota_check(struct obd_export *exp, struct obd_quotactl *oqctl)
+int client_quota_check(struct obd_device *unused, struct obd_export *exp,
+                       struct obd_quotactl *oqctl)
 {
-        struct client_obd *cli = &exp->exp_obd->u.cli;
-        struct ptlrpc_request *req;
-        struct obd_quotactl *body;
-        __u32 size[2] = { sizeof(struct ptlrpc_body), sizeof(*body) };
-        int ver, opc, rc;
+        struct client_obd       *cli = &exp->exp_obd->u.cli;
+        struct ptlrpc_request   *req;
+        struct obd_quotactl     *body;
+        const struct req_format *rf;
+        int                      ver, opc, rc;
         ENTRY;
 
         if (!strcmp(exp->exp_obd->obd_type->typ_name, LUSTRE_MDC_NAME)) {
+                rf  = &RQF_MDS_QUOTACHECK;
                 ver = LUSTRE_MDS_VERSION;
                 opc = MDS_QUOTACHECK;
         } else if (!strcmp(exp->exp_obd->obd_type->typ_name, LUSTRE_OSC_NAME)) {
+                rf  = &RQF_OST_QUOTACHECK;
                 ver = LUSTRE_OST_VERSION;
                 opc = OST_QUOTACHECK;
         } else {
                 RETURN(-EINVAL);
         }
 
-        req = ptlrpc_prep_req(class_exp2cliimp(exp), ver, opc, 2, size, NULL);
-        if (!req)
-                GOTO(out, rc = -ENOMEM);
+        req = ptlrpc_request_alloc_pack(class_exp2cliimp(exp), rf, ver, opc);
+        if (req == NULL)
+                RETURN(-ENOMEM);
 
-        body = lustre_msg_buf(req->rq_reqmsg, REQ_REC_OFF, sizeof(*body));
+        body = req_capsule_client_get(&req->rq_pill, &RMF_OBD_QUOTACTL);
         *body = *oqctl;
 
-        ptlrpc_req_set_repsize(req, 1, NULL);
+        ptlrpc_request_set_replen(req);
 
         /* the next poll will find -ENODATA, that means quotacheck is
          * going on */
@@ -208,7 +235,6 @@ int client_quota_check(struct obd_export *exp, struct obd_quotactl *oqctl)
         rc = ptlrpc_queue_wait(req);
         if (rc)
                 cli->cl_qchk_stat = rc;
-out:
         ptlrpc_req_finished(req);
         RETURN(rc);
 }
@@ -239,7 +265,33 @@ int client_quota_poll_check(struct obd_export *exp, struct if_quotacheck *qchk)
         RETURN(rc);
 }
 
-int lov_quota_check(struct obd_export *exp, struct obd_quotactl *oqctl)
+int lmv_quota_check(struct obd_device *unused, struct obd_export *exp,
+                    struct obd_quotactl *oqctl)
+{
+        struct obd_device *obd = class_exp2obd(exp);
+        struct lmv_obd *lmv = &obd->u.lmv;
+        struct lmv_tgt_desc *tgt;
+        int i, rc = 0;
+        ENTRY;
+
+        for (i = 0, tgt = lmv->tgts; i < lmv->desc.ld_tgt_count; i++, tgt++) {
+                int err;
+
+                if (!tgt->ltd_active) {
+                        CERROR("lmv idx %d inactive\n", i);
+                        RETURN(-EIO);
+                }
+
+                err = obd_quotacheck(tgt->ltd_exp, oqctl);
+                if (err && !rc)
+                        rc = err;
+        }
+
+        RETURN(rc);
+}
+
+int lov_quota_check(struct obd_device *unused, struct obd_export *exp,
+                    struct obd_quotactl *oqctl)
 {
         struct obd_device *obd = class_exp2obd(exp);
         struct lov_obd *lov = &obd->u.lov;
@@ -254,7 +306,8 @@ int lov_quota_check(struct obd_export *exp, struct obd_quotactl *oqctl)
 
                 /* Skip quota check on the administratively disabled OSTs. */
                 if (!lov->lov_tgts[i]->ltd_activate) {
-                        CWARN("lov idx %d was administratively disabled\n", i);
+                        CWARN("lov idx %d was administratively disabled, "
+                              "skip quotacheck on it.\n", i);
                         continue;
                 }
 

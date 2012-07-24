@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -56,14 +56,14 @@ struct l_file *l_dentry_open(struct lvfs_run_ctxt *, struct l_dentry *,
                              int flags);
 
 struct l_linux_dirent {
-        struct list_head lld_list;
+        cfs_list_t      lld_list;
         ino_t           lld_ino;
         unsigned long   lld_off;
         char            lld_name[LL_FID_NAMELEN];
 };
 struct l_readdir_callback {
         struct l_linux_dirent *lrc_dirent;
-        struct list_head      *lrc_list;
+        cfs_list_t            *lrc_list;
 };
 
 #define LVFS_DENTRY_PARAM_MAGIC         20070216UL
@@ -74,22 +74,22 @@ struct lvfs_dentry_params
         __u32            ldp_magic;
 };
 #define LVFS_DENTRY_PARAMS_INIT         { .ldp_magic = LVFS_DENTRY_PARAM_MAGIC }
-/* Only use the least 3 bits of ldp_flags for goal policy */
-typedef enum {
-        DP_GOAL_POLICY       = 0,
-        DP_LASTGROUP_REVERSE = 1,
-} dp_policy_t;
 
+#define BDEVNAME_DECLARE_STORAGE(foo) char foo[BDEVNAME_SIZE]
+#define ll_bdevname(SB, STORAGE) __bdevname(kdev_t_to_nr(SB->s_dev), STORAGE)
 #define lvfs_sbdev(SB)       ((SB)->s_bdev)
 #define lvfs_sbdev_type      struct block_device *
-   int fsync_bdev(struct block_device *);
 #define lvfs_sbdev_sync      fsync_bdev
+
+int fsync_bdev(struct block_device *);
 
 /* Instead of calling within lvfs (a layering violation) */
 #define lvfs_set_rdonly(obd, sb) \
         __lvfs_set_rdonly(lvfs_sbdev(sb), fsfilt_journal_sbdev(obd, sb))
 
 void __lvfs_set_rdonly(lvfs_sbdev_type dev, lvfs_sbdev_type jdev);
+
 int lvfs_check_rdonly(lvfs_sbdev_type dev);
+void lvfs_clear_rdonly(lvfs_sbdev_type dev);
 
 #endif /*  __LVFS_LINUX_H__ */

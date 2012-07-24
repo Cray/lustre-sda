@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -51,7 +51,8 @@ brw_client_fini (sfw_test_instance_t *tsi)
 
         LASSERT (tsi->tsi_is_client);
 
-        list_for_each_entry (tsu, &tsi->tsi_units, tsu_list) {
+        cfs_list_for_each_entry_typed (tsu, &tsi->tsi_units,
+                                       sfw_test_unit_t, tsu_list) {
                 bulk = tsu->tsu_private;
                 if (bulk == NULL) continue;
 
@@ -81,7 +82,8 @@ brw_client_init (sfw_test_instance_t *tsi)
             flags != LST_BRW_CHECK_FULL && flags != LST_BRW_CHECK_SIMPLE)
                 return -EINVAL;
 
-        list_for_each_entry (tsu, &tsi->tsi_units, tsu_list) {
+        cfs_list_for_each_entry_typed (tsu, &tsi->tsi_units,
+                                       sfw_test_unit_t, tsu_list) {
                 bulk = srpc_alloc_bulk(npg, breq->blk_opc == LST_BRW_READ);
                 if (bulk == NULL) {
                         brw_client_fini(tsi);
@@ -108,7 +110,7 @@ brw_inject_one_error (void)
 #ifndef __KERNEL__
         gettimeofday(&tv, NULL);
 #else
-        do_gettimeofday(&tv);
+        cfs_gettimeofday(&tv);
 #endif
 
         if ((tv.tv_usec & 1) == 0) return 0;
@@ -150,7 +152,7 @@ int
 brw_check_page (cfs_page_t *pg, int pattern, __u64 magic)
 {
         char  *addr = cfs_page_address(pg);
-        __u64  data;
+        __u64  data = 0; /* make compiler happy */
         int    i;
 
         LASSERT (addr != NULL);
@@ -253,7 +255,7 @@ brw_client_prep_rpc (sfw_test_unit_t *tsu,
 
         req = &rpc->crpc_reqstmsg.msg_body.brw_reqst;
         req->brw_flags = flags;
-        req->brw_rw    = breq->blk_opc; 
+        req->brw_rw    = breq->blk_opc;
         req->brw_len   = npg * CFS_PAGE_SIZE;
 
         *rpcpp = rpc;
@@ -276,7 +278,7 @@ brw_client_done_rpc (sfw_test_unit_t *tsu, srpc_client_rpc_t *rpc)
                 CERROR ("BRW RPC to %s failed with %d\n",
                         libcfs_id2str(rpc->crpc_dest), rpc->crpc_status);
                 if (!tsi->tsi_stopping) /* rpc could have been aborted */
-                        atomic_inc(&sn->sn_brw_errors);
+                        cfs_atomic_inc(&sn->sn_brw_errors);
                 goto out;
         }
 
@@ -290,8 +292,8 @@ brw_client_done_rpc (sfw_test_unit_t *tsu, srpc_client_rpc_t *rpc)
                 libcfs_id2str(rpc->crpc_dest), reply->brw_status);
 
         if (reply->brw_status != 0) {
-                atomic_inc(&sn->sn_brw_errors);
-                rpc->crpc_status = -reply->brw_status;
+                cfs_atomic_inc(&sn->sn_brw_errors);
+                rpc->crpc_status = -(int)reply->brw_status;
                 goto out;
         }
 
@@ -300,7 +302,7 @@ brw_client_done_rpc (sfw_test_unit_t *tsu, srpc_client_rpc_t *rpc)
         if (brw_check_bulk(&rpc->crpc_bulk, reqst->brw_flags, magic) != 0) {
                 CERROR ("Bulk data from %s is corrupted!\n",
                         libcfs_id2str(rpc->crpc_dest));
-                atomic_inc(&sn->sn_brw_errors);
+                cfs_atomic_inc(&sn->sn_brw_errors);
                 rpc->crpc_status = -EBADMSG;
         }
 
@@ -388,7 +390,7 @@ brw_server_handle (srpc_server_rpc_t *rpc)
                 __swab64s(&reqst->brw_rpyid);
                 __swab64s(&reqst->brw_bulkid);
         }
-        LASSERT (reqstmsg->msg_type == srpc_service2request(sv->sv_id));
+        LASSERT (reqstmsg->msg_type == (__u32)srpc_service2request(sv->sv_id));
 
         rpc->srpc_done = brw_server_rpc_done;
 
@@ -401,7 +403,7 @@ brw_server_handle (srpc_server_rpc_t *rpc)
                 reply->brw_status = EINVAL;
                 return 0;
         }
-        
+
         reply->brw_status = 0;
         rc = sfw_alloc_pages(rpc, reqst->brw_len / CFS_PAGE_SIZE,
                              reqst->brw_rw == LST_BRW_WRITE);
@@ -415,18 +417,20 @@ brw_server_handle (srpc_server_rpc_t *rpc)
         return 0;
 }
 
-sfw_test_client_ops_t brw_test_client =
+sfw_test_client_ops_t brw_test_client;
+void brw_init_test_client(void)
 {
-        .tso_init      = brw_client_init,
-        .tso_fini      = brw_client_fini,
-        .tso_prep_rpc  = brw_client_prep_rpc,
-        .tso_done_rpc  = brw_client_done_rpc,
+        brw_test_client.tso_init       = brw_client_init;
+        brw_test_client.tso_fini       = brw_client_fini;
+        brw_test_client.tso_prep_rpc   = brw_client_prep_rpc;
+        brw_test_client.tso_done_rpc   = brw_client_done_rpc;
 };
 
-srpc_service_t brw_test_service =
+srpc_service_t brw_test_service;
+void brw_init_test_service(void)
 {
-        .sv_name       = "brw test",
-        .sv_handler    = brw_server_handle,
-        .sv_bulk_ready = brw_bulk_ready,
-        .sv_id         = SRPC_SERVICE_BRW,
-};
+        brw_test_service.sv_id         = SRPC_SERVICE_BRW;
+        brw_test_service.sv_name       = "brw_test";
+        brw_test_service.sv_handler    = brw_server_handle;
+        brw_test_service.sv_bulk_ready = brw_bulk_ready;
+}

@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -37,6 +37,11 @@
 #ifndef __LUSTRE_HANDLES_H_
 #define __LUSTRE_HANDLES_H_
 
+/** \defgroup handles handles
+ *
+ * @{
+ */
+
 #if defined(__linux__)
 #include <linux/lustre_handles.h>
 #elif defined(__APPLE__)
@@ -45,6 +50,14 @@
 #include <winnt/lustre_handles.h>
 #else
 #error Unsupported operating system.
+#endif
+
+#include <libcfs/libcfs.h>
+
+#if !defined(HAVE_RCU) || !defined(__KERNEL__)
+typedef struct {
+        int foo;
+} cfs_rcu_head_t;
 #endif
 
 typedef void (*portals_handle_addref_cb)(void *object);
@@ -62,15 +75,15 @@ typedef void (*portals_handle_addref_cb)(void *object);
  * uses some offsetof() magic. */
 
 struct portals_handle {
-        struct list_head h_link;
+        cfs_list_t h_link;
         __u64 h_cookie;
         portals_handle_addref_cb h_addref;
 
         /* newly added fields to handle the RCU issue. -jxiong */
-        spinlock_t h_lock;
+        cfs_spinlock_t h_lock;
         void *h_ptr;
         void (*h_free_cb)(void *, size_t);
-        struct rcu_head h_rcu;
+        cfs_rcu_head_t h_rcu;
         unsigned int h_size;
         __u8 h_in:1;
         __u8 h_unused[3];
@@ -82,9 +95,12 @@ struct portals_handle {
 /* Add a handle to the hash table */
 void class_handle_hash(struct portals_handle *, portals_handle_addref_cb);
 void class_handle_unhash(struct portals_handle *);
+void class_handle_hash_back(struct portals_handle *);
 void *class_handle2object(__u64 cookie);
-void class_handle_free_cb(struct rcu_head *);
+void class_handle_free_cb(cfs_rcu_head_t *);
 int class_handle_init(void);
 void class_handle_cleanup(void);
+
+/** @} handles */
 
 #endif

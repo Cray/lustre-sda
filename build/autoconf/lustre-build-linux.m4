@@ -116,7 +116,6 @@ LB_LINUX_TRY_COMPILE([
 		#error "not redhat kernel"
 		#endif
 	],[
-		RHEL_KENEL="yes"
 		RHEL_KERNEL="yes"
 		AC_MSG_RESULT([yes])
 	],[
@@ -358,18 +357,6 @@ AC_SUBST(UML_CFLAGS)
 # these are like AC_TRY_COMPILE, but try to build modules against the
 # kernel, inside the build directory
 
-#
-# LB_LINUX_CONFTEST
-#
-# create a conftest.c file
-#
-AC_DEFUN([LB_LINUX_CONFTEST],
-[cat >conftest.c <<_ACEOF
-$1
-_ACEOF
-])
-
-
 # LB_LANG_PROGRAM(C)([PROLOGUE], [BODY])
 # --------------------------------------
 m4_define([LB_LANG_PROGRAM],
@@ -592,6 +579,32 @@ LB_LINUX_TRY_MAKE([
 ])
 ])
 
+# LC_MODULE_LOADING
+# after 2.6.28 CONFIG_KMOD is removed, and only CONFIG_MODULES remains
+# so we test if request_module is implemented or not
+AC_DEFUN([LC_MODULE_LOADING],
+[AC_MSG_CHECKING([if kernel module loading is possible])
+LB_LINUX_TRY_MAKE([
+        #include <linux/kmod.h>
+],[
+        int myretval=ENOSYS ;
+        return myretval;
+],[
+        $makerule LUSTRE_KERNEL_TEST=conftest.i
+],[
+        grep request_module build/conftest.i | grep -v `grep "int myretval=" build/conftest.i | cut -d= -f2 | cut -d" "  -f1` >/dev/null
+],[
+        AC_MSG_RESULT(yes)
+        AC_DEFINE(HAVE_MODULE_LOADING_SUPPORT, 1,
+                [kernel module loading is possible])
+],[
+        AC_MSG_RESULT(no)
+        AC_MSG_WARN([])
+        AC_MSG_WARN([Kernel module loading support is highly recommended.])
+        AC_MSG_WARN([])
+])
+])
+
 #
 # LB_PROG_LINUX
 #
@@ -696,11 +709,14 @@ AS_VAR_POPDEF([ac_Header])dnl
 AC_DEFUN([LB_USES_DPKG],
 [
 AC_MSG_CHECKING([if this distro uses dpkg])
-if dpkg -l >/dev/null; then
-	AC_MSG_RESULT([yes])
-	uses_dpkg=yes
-else
-	AC_MSG_RESULT([no])
-	uses_dpkg=no
-fi
+case `lsb_release -i -s 2>/dev/null` in
+        Ubuntu | Debian)
+                AC_MSG_RESULT([yes])
+                uses_dpkg=yes
+                ;;
+        *)
+                AC_MSG_RESULT([no])
+                uses_dpkg=no
+                ;;
+esac
 ])

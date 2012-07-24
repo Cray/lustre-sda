@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -53,7 +53,6 @@
 
 #include <obd_class.h>
 #include <lustre_net.h>
-#include <lustre_mds.h>
 #include <lustre_ha.h>
 
 #include <linux/rbtree.h>
@@ -65,7 +64,6 @@
 
 typedef struct percpu_counter lcounter_t;
 
-#define lcounter_read_positive(counter) percpu_counter_read_positive(counter)
 #define lcounter_read(counter)          (int)percpu_counter_read(counter)
 #define lcounter_inc(counter)           percpu_counter_inc(counter)
 #define lcounter_dec(counter)           percpu_counter_dec(counter)
@@ -79,13 +77,12 @@ typedef struct percpu_counter lcounter_t;
 #define lcounter_destroy(counter)       percpu_counter_destroy(counter)
 
 #else
-typedef struct { atomic_t count; } lcounter_t;
+typedef struct { cfs_atomic_t count; } lcounter_t;
 
-#define lcounter_read(counter)          atomic_read(&counter->count)
-#define lcounter_read_positive(counter) lcounter_read(counter)
-#define lcounter_inc(counter)           atomic_inc(&counter->count)
-#define lcounter_dec(counter)           atomic_dec(&counter->count)
-#define lcounter_init(counter)          atomic_set(&counter->count, 0)
+#define lcounter_read(counter)          cfs_atomic_read(&counter->count)
+#define lcounter_inc(counter)           cfs_atomic_inc(&counter->count)
+#define lcounter_dec(counter)           cfs_atomic_dec(&counter->count)
+#define lcounter_init(counter)          cfs_atomic_set(&counter->count, 0)
 #define lcounter_destroy(counter)       
 
 #endif /* if defined HAVE_PERCPU_COUNTER */

@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -46,6 +46,8 @@
 #include <utime.h>
 #include <stdarg.h>
 
+#include <liblustre.h>
+
 #include "test_common.h"
 
 int exit_on_err = 1;
@@ -53,6 +55,10 @@ int exit_on_err = 1;
 /******************************************************************
  * util functions
  ******************************************************************/
+
+#ifdef EXIT
+#undef EXIT
+#endif
 
 #define EXIT(err)					\
 	do {						\
@@ -359,7 +365,7 @@ void t_grep_v(const char *path, char *str)
 
 void t_ls(int fd, char *buf, int size)
 {
-	struct dirent64 *ent;
+	cfs_dirent_t *ent;
 	int rc, pos;
 	loff_t base = 0;
 
@@ -367,7 +373,7 @@ void t_ls(int fd, char *buf, int size)
 	while ((rc = getdirentries64(fd, buf, size, &base)) > 0) {
 		pos = 0;
 		while (pos < rc) {
-			ent = (struct dirent64 *) ((char*) buf + pos);
+			ent = (cfs_dirent_t *) ((char*) buf + pos);
 			printf("%s\n", ent->d_name);
 			pos += ent->d_reclen;
 		}

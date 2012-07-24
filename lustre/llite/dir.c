@@ -30,6 +30,9 @@
  * Use is subject to license terms.
  */
 /*
+ * Copyright (c) 2011 Whamcloud, Inc.
+ */
+/*
  * This file is part of Lustre, http://www.lustre.org/
  * Lustre is a trademark of Sun Microsystems, Inc.
  *
@@ -45,6 +48,7 @@
 #include <linux/smp_lock.h>
 #include <asm/uaccess.h>
 #include <linux/buffer_head.h>   // for wait_on_buffer
+#include <linux/pagevec.h>
 
 #define DEBUG_SUBSYSTEM S_LLITE
 
@@ -54,6 +58,7 @@
 #include <lustre/lustre_idl.h>
 #include <lustre_lite.h>
 #include <lustre_dlm.h>
+#include <lustre_fid.h>
 #include "llite_internal.h"
 
 #ifndef HAVE_PAGE_CHECKED
@@ -65,43 +70,203 @@
 #endif
 #endif
 
+/*
+ * (new) readdir implementation overview.
+ *
+ * Original lustre readdir implementation cached exact copy of raw directory
+ * pages on the client. These pages were indexed in client page cache by
+ * logical offset in the directory file. This design, while very simple and
+ * intuitive had some inherent problems:
+ *
+ *     . it implies that byte offset to the directory entry serves as a
+ *     telldir(3)/seekdir(3) cookie, but that offset is not stable: in
+ *     ext3/htree directory entries may move due to splits, and more
+ *     importantly,
+ *
+ *     . it is incompatible with the design of split directories for cmd3,
+ *     that assumes that names are distributed across nodes based on their
+ *     hash, and so readdir should be done in hash order.
+ *
+ * New readdir implementation does readdir in hash order, and uses hash of a
+ * file name as a telldir/seekdir cookie. This led to number of complications:
+ *
+ *     . hash is not unique, so it cannot be used to index cached directory
+ *     pages on the client (note, that it requires a whole pageful of hash
+ *     collided entries to cause two pages to have identical hashes);
+ *
+ *     . hash is not unique, so it cannot, strictly speaking, be used as an
+ *     entry cookie. ext3/htree has the same problem and lustre implementation
+ *     mimics their solution: seekdir(hash) positions directory at the first
+ *     entry with the given hash.
+ *
+ * Client side.
+ *
+ * 0. caching
+ *
+ * Client caches directory pages using hash of the first entry as an index. As
+ * noted above hash is not unique, so this solution doesn't work as is:
+ * special processing is needed for "page hash chains" (i.e., sequences of
+ * pages filled with entries all having the same hash value).
+ *
+ * First, such chains have to be detected. To this end, server returns to the
+ * client the hash of the first entry on the page next to one returned. When
+ * client detects that this hash is the same as hash of the first entry on the
+ * returned page, page hash collision has to be handled. Pages in the
+ * hash chain, except first one, are termed "overflow pages".
+ *
+ * Solution to index uniqueness problem is to not cache overflow
+ * pages. Instead, when page hash collision is detected, all overflow pages
+ * from emerging chain are immediately requested from the server and placed in
+ * a special data structure (struct ll_dir_chain). This data structure is used
+ * by ll_readdir() to process entries from overflow pages. When readdir
+ * invocation finishes, overflow pages are discarded. If page hash collision
+ * chain weren't completely processed, next call to readdir will again detect
+ * page hash collision, again read overflow pages in, process next portion of
+ * entries and again discard the pages. This is not as wasteful as it looks,
+ * because, given reasonable hash, page hash collisions are extremely rare.
+ *
+ * 1. directory positioning
+ *
+ * When seekdir(hash) is called, original
+ *
+ *
+ *
+ *
+ *
+ *
+ *
+ *
+ * Server.
+ *
+ * identification of and access to overflow pages
+ *
+ * page format
+ *
+ * Page in MDS_READPAGE RPC is packed in LU_PAGE_SIZE, and each page contains
+ * a header lu_dirpage which describes the start/end hash, and whether this
+ * page is empty (contains no dir entry) or hash collide with next page.
+ * After client receives reply, several pages will be integrated into dir page
+ * in CFS_PAGE_SIZE (if CFS_PAGE_SIZE greater than LU_PAGE_SIZE), and the
+ * lu_dirpage for this integrated page will be adjusted.
+ *
+ */
+
 /* returns the page unlocked, but with a reference */
-static int ll_dir_readpage(struct file *file, struct page *page)
+static int ll_dir_readpage(struct file *file, struct page *page0)
 {
-        struct inode *inode = page->mapping->host;
-        struct ll_fid mdc_fid;
-        __u64 offset;
+        struct inode *inode = page0->mapping->host;
+        int hash64 = ll_i2sbi(inode)->ll_flags & LL_SBI_64BIT_HASH;
+        struct obd_export *exp = ll_i2sbi(inode)->ll_md_exp;
         struct ptlrpc_request *request;
-        struct mds_body *body;
-        int rc = 0;
+        struct mdt_body *body;
+        struct obd_capa *oc;
+        __u64 hash;
+        struct page **page_pool;
+        struct page *page;
+#ifndef HAVE_ADD_TO_PAGE_CACHE_LRU
+        struct pagevec lru_pvec;
+#endif
+        struct lu_dirpage *dp;
+        int max_pages = ll_i2sbi(inode)->ll_md_brw_size >> CFS_PAGE_SHIFT;
+        int nrdpgs = 0; /* number of pages read actually */
+        int npages;
+        int i;
+        int rc;
         ENTRY;
 
-        offset = (__u64)page->index << CFS_PAGE_SHIFT;
-        CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p) off "LPU64"\n",
-               inode->i_ino, inode->i_generation, inode, offset);
+        if (file) {
+                struct ll_file_data *fd = LUSTRE_FPRIVATE(file);
 
-        ll_pack_fid(&mdc_fid, inode->i_ino, inode->i_generation, S_IFDIR);
+                hash = fd->fd_dir.lfd_next;
+        } else {
+                struct ll_inode_info *lli = ll_i2info(inode);
 
-        rc = mdc_readpage(ll_i2sbi(inode)->ll_mdc_exp, &mdc_fid,
-                          offset, page, &request);
-        if (!rc) {
-                body = lustre_msg_buf(request->rq_repmsg, REPLY_REC_OFF,
-                                      sizeof(*body));
-                LASSERT(body != NULL); /* checked by mdc_readpage() */
-                /* swabbed by mdc_readpage() */
-                LASSERT(lustre_rep_swabbed(request, REPLY_REC_OFF));
+                cfs_spin_lock(&lli->lli_sa_lock);
+                if (lli->lli_sai)
+                        LASSERT(lli->lli_sai->sai_pid == cfs_curproc_pid());
+                else
+                        LASSERT(lli->lli_opendir_pid == cfs_curproc_pid());
+                hash = lli->lli_sa_pos;
+                cfs_spin_unlock(&lli->lli_sa_lock);
+        }
+        CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p) hash "LPU64"\n",
+               inode->i_ino, inode->i_generation, inode, hash);
 
-                if (body->size != i_size_read(inode)) {
-                        ll_inode_size_lock(inode, 0);
-                        i_size_write(inode, body->size);
-                        ll_inode_size_unlock(inode, 0);
+        LASSERT(max_pages > 0 && max_pages <= PTLRPC_MAX_BRW_PAGES);
+
+        OBD_ALLOC(page_pool, sizeof(page) * max_pages);
+        if (page_pool != NULL) {
+                page_pool[0] = page0;
+        } else {
+                page_pool = &page0;
+                max_pages = 1;
+        }
+        for (npages = 1; npages < max_pages; npages++) {
+                page = page_cache_alloc_cold(inode->i_mapping);
+                if (!page)
+                        break;
+                page_pool[npages] = page;
+        }
+
+        oc = ll_mdscapa_get(inode);
+        rc = md_readpage(exp, ll_inode2fid(inode), oc, hash, page_pool, npages,
+                         &request);
+        capa_put(oc);
+        if (rc == 0) {
+                body = req_capsule_server_get(&request->rq_pill, &RMF_MDT_BODY);
+                /* Checked by mdc_readpage() */
+                LASSERT(body != NULL);
+
+                if (body->valid & OBD_MD_FLSIZE)
+                        cl_isize_write(inode, body->size);
+
+                nrdpgs = (request->rq_bulk->bd_nob_transferred+CFS_PAGE_SIZE-1)
+                         >> CFS_PAGE_SHIFT;
+                SetPageUptodate(page0);
+        }
+        unlock_page(page0);
+        ptlrpc_req_finished(request);
+
+        CDEBUG(D_VFSTRACE, "read %d/%d pages\n", nrdpgs, npages);
+
+        ll_pagevec_init(&lru_pvec, 0);
+        for (i = 1; i < npages; i++) {
+                unsigned long offset;
+                int ret;
+
+                page = page_pool[i];
+
+                if (rc < 0 || i >= nrdpgs) {
+                        page_cache_release(page);
+                        continue;
                 }
 
                 SetPageUptodate(page);
-        }
-        ptlrpc_req_finished(request);
 
-        unlock_page(page);
+                dp = cfs_kmap(page);
+                hash = le64_to_cpu(dp->ldp_hash_start);
+                cfs_kunmap(page);
+
+                offset = hash_x_index(hash, hash64);
+
+                prefetchw(&page->flags);
+                ret = ll_add_to_page_cache_lru(page, inode->i_mapping, offset,
+                                               GFP_KERNEL);
+                if (ret == 0) {
+                        unlock_page(page);
+                        page_cache_get(page);
+                        if (ll_pagevec_add(&lru_pvec, page) == 0)
+                                ll_pagevec_lru_add_file(&lru_pvec);
+                } else {
+                        CDEBUG(D_VFSTRACE, "page %lu add to page cache failed:"
+                               " %d\n", offset, ret);
+                }
+                page_cache_release(page);
+        }
+        ll_pagevec_lru_add_file(&lru_pvec);
+
+        if (page_pool != &page0)
+                OBD_FREE(page_pool, sizeof(struct page *) * max_pages);
         EXIT;
         return rc;
 }
@@ -116,529 +281,28 @@ struct address_space_operations_ext ll_dir_aops = {
 };
 #endif
 
-static inline unsigned ll_dir_page_mask(struct inode *inode)
-{
-        return ~(inode->i_sb->s_blocksize - 1);
-}
-
-/*
- * Check consistency of a single entry.
- */
-static int ll_dir_check_entry(struct inode *dir, struct ll_dir_entry *ent,
-                              unsigned offset, unsigned rec_len, pgoff_t index)
-{
-        const char *msg;
-
-        /*
-         * Consider adding more checks.
-         */
-
-        if (unlikely(rec_len < ll_dir_rec_len(1)))
-                msg = "entry is too short";
-        else if (unlikely(rec_len & 3))
-                msg = "wrong alignment";
-        else if (unlikely(rec_len < ll_dir_rec_len(ent->lde_name_len)))
-                msg = "rec_len doesn't match name_len";
-        else if (unlikely(((offset + rec_len - 1) ^ offset) &
-                          ll_dir_page_mask(dir)))
-                msg = "directory entry across blocks";
-        else
-                return 0;
-        CERROR("%s: bad entry in directory %lu/%u: %s - "
-               "offset=%lu+%u, inode=%lu, rec_len=%d,"
-               " name_len=%d\n", ll_i2mdcexp(dir)->exp_obd->obd_name,
-               dir->i_ino, dir->i_generation, msg,
-               index << CFS_PAGE_SHIFT,
-               offset, (unsigned long)le32_to_cpu(ent->lde_inode),
-               rec_len, ent->lde_name_len);
-        return -EIO;
-}
-
-static void ll_dir_check_page(struct inode *dir, struct page *page)
-{
-        int      err;
-        unsigned size = dir->i_sb->s_blocksize;
-        char    *addr = page_address(page);
-        unsigned off;
-        unsigned limit;
-        unsigned reclen;
-
-        struct ll_dir_entry *ent;
-
-        err = 0;
-        if ((i_size_read(dir) >> CFS_PAGE_SHIFT) == (__u64)page->index) {
-                /*
-                 * Last page.
-                 */
-                limit = i_size_read(dir) & ~CFS_PAGE_MASK;
-                if (limit & (size - 1)) {
-                        CERROR("%s: dir %lu/%u size %llu doesn't match %u\n",
-                               ll_i2mdcexp(dir)->exp_obd->obd_name, dir->i_ino,
-                               dir->i_generation, i_size_read(dir), size);
-                        err++;
-                } else {
-                        /*
-                         * Place dummy forwarding entries to streamline
-                         * ll_readdir().
-                         */
-                        for (off = limit; off < CFS_PAGE_SIZE; off += size) {
-                                ent = ll_entry_at(addr, off);
-                                ent->lde_rec_len = cpu_to_le16(size);
-                                ent->lde_name_len = 0;
-                                ent->lde_inode = 0;
-                        }
-                }
-        } else
-                limit = CFS_PAGE_SIZE;
-
-        for (off = 0;
-             !err && off <= limit - ll_dir_rec_len(1); off += reclen) {
-                ent    = ll_entry_at(addr, off);
-                reclen = le16_to_cpu(ent->lde_rec_len);
-                err    = ll_dir_check_entry(dir, ent, off, reclen, page->index);
-        }
-
-        if (!err && off != limit) {
-                ent = ll_entry_at(addr, off);
-                CERROR("%s: entry in directory %lu/%u spans the page boundary "
-                       "offset="LPU64"+%u, inode=%lu\n",
-                       ll_i2mdcexp(dir)->exp_obd->obd_name,
-                       dir->i_ino, dir->i_generation,
-                       (__u64)page->index << CFS_PAGE_SHIFT,
-                       off, (unsigned long)le32_to_cpu(ent->lde_inode));
-                err++;
-        }
-        if (err)
-                SetPageError(page);
-        SetPageChecked(page);
-}
-
-struct page *ll_get_dir_page(struct inode *dir, unsigned long n)
-{
-        struct ldlm_res_id res_id;
-        struct lustre_handle lockh;
-        struct obd_device *obddev = class_exp2obd(ll_i2sbi(dir)->ll_mdc_exp);
-        struct address_space *mapping = dir->i_mapping;
-        struct page *page;
-        ldlm_policy_data_t policy = {.l_inodebits = {MDS_INODELOCK_UPDATE} };
-        int rc;
-
-        fid_build_reg_res_name(ll_inode_lu_fid(dir), &res_id);
-        rc = ldlm_lock_match(obddev->obd_namespace, LDLM_FL_BLOCK_GRANTED,
-                             &res_id, LDLM_IBITS, &policy, LCK_CR, &lockh);
-        if (!rc) {
-                struct lookup_intent it = { .it_op = IT_READDIR };
-                struct ldlm_enqueue_info einfo = { LDLM_IBITS, LCK_CR,
-                       ll_mdc_blocking_ast, ldlm_completion_ast, NULL, NULL };
-                struct ptlrpc_request *request;
-                struct mdc_op_data data = { { 0 } };
-
-                ll_prepare_mdc_op_data(&data, dir, NULL, NULL, 0, 0, NULL);
-
-                rc = mdc_enqueue(ll_i2sbi(dir)->ll_mdc_exp, &einfo, &it,
-                                 &data, &lockh, NULL, 0, 0);
-
-                request = (struct ptlrpc_request *)it.d.lustre.it_data;
-                if (request)
-                        ptlrpc_req_finished(request);
-                if (rc < 0) {
-                        CERROR("lock enqueue: rc: %d\n", rc);
-                        return ERR_PTR(rc);
-                }
-
-                CDEBUG(D_INODE, "setting lr_lvb_inode to inode %p (%lu/%u)\n",
-                       dir, dir->i_ino, dir->i_generation);
-                mdc_set_lock_data(&it.d.lustre.it_lock_handle, dir, NULL);
-        }
-        ldlm_lock_dump_handle(D_OTHER, &lockh);
-
-        page = read_cache_page(mapping, n,
-                               (filler_t*)mapping->a_ops->readpage, NULL);
-        if (IS_ERR(page))
-                GOTO(out_unlock, page);
-
-        wait_on_page(page);
-        (void)kmap(page);
-        if (!PageUptodate(page))
-                goto fail;
-        if (!PageChecked(page))
-                ll_dir_check_page(dir, page);
-        if (PageError(page))
-                goto fail;
-
-out_unlock:
-        ldlm_lock_decref(&lockh, LCK_CR);
-        return page;
-
-fail:
-        ll_put_page(page);
-        page = ERR_PTR(-EIO);
-        goto out_unlock;
-}
-
-static inline unsigned ll_dir_validate_entry(char *base, unsigned offset,
-                                             unsigned mask)
-{
-        struct ll_dir_entry *de = ll_entry_at(base, offset);
-        struct ll_dir_entry *p  = ll_entry_at(base, offset & mask);
-        while (p < de && p->lde_rec_len > 0)
-                p = ll_dir_next_entry(p);
-        return (char *)p - base;
-}
-
-/*
- * File type constants. The same as in ext2 for compatibility.
- */
-
-enum {
-        LL_DIR_FT_UNKNOWN,
-        LL_DIR_FT_REG_FILE,
-        LL_DIR_FT_DIR,
-        LL_DIR_FT_CHRDEV,
-        LL_DIR_FT_BLKDEV,
-        LL_DIR_FT_FIFO,
-        LL_DIR_FT_SOCK,
-        LL_DIR_FT_SYMLINK,
-        LL_DIR_FT_MAX
-};
-
-static unsigned char ll_dir_filetype_table[LL_DIR_FT_MAX] = {
-        [LL_DIR_FT_UNKNOWN]  = DT_UNKNOWN,
-        [LL_DIR_FT_REG_FILE] = DT_REG,
-        [LL_DIR_FT_DIR]      = DT_DIR,
-        [LL_DIR_FT_CHRDEV]   = DT_CHR,
-        [LL_DIR_FT_BLKDEV]   = DT_BLK,
-        [LL_DIR_FT_FIFO]     = DT_FIFO,
-        [LL_DIR_FT_SOCK]     = DT_SOCK,
-        [LL_DIR_FT_SYMLINK]  = DT_LNK,
-};
-
-/*
- * Process one page. Returns:
- *
- *     -ve: filldir commands readdir to stop.
- *     +ve: number of entries submitted to filldir.
- *       0: no live entries on this page.
- */
-
-static int ll_readdir_page(char *addr, __u64 base, unsigned *offset,
-                           filldir_t filldir, void *cookie)
-{
-        struct ll_dir_entry *de;
-        char *end;
-        int nr;
-
-        de = ll_entry_at(addr, *offset);
-        end = addr + CFS_PAGE_SIZE - ll_dir_rec_len(1);
-        for (nr = 0 ;(char*)de <= end; de = ll_dir_next_entry(de)) {
-                if (de->lde_inode != 0) {
-                        nr++;
-                        *offset = (char *)de - addr;
-                        if (filldir(cookie, de->lde_name, de->lde_name_len,
-                                    base | *offset, le32_to_cpu(de->lde_inode),
-                                    ll_dir_filetype_table[de->lde_file_type &
-                                                          (LL_DIR_FT_MAX - 1)]))
-                                return -1;
-                }
-        }
-        return nr;
-}
-
-static int ll_readdir_18(struct file *filp, void *dirent, filldir_t filldir)
-{
-        struct inode *inode = filp->f_dentry->d_inode;
-        loff_t pos          = filp->f_pos;
-        unsigned offset     = pos & ~CFS_PAGE_MASK;
-        pgoff_t idx         = pos >> CFS_PAGE_SHIFT;
-        pgoff_t npages      = dir_pages(inode);
-        unsigned chunk_mask = ll_dir_page_mask(inode);
-        int need_revalidate = (filp->f_version != inode->i_version);
-        int rc              = 0;
-        int done; /* when this becomes negative --- stop iterating */
-
-        ENTRY;
-
-        CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p) pos %llu/%llu\n",
-               inode->i_ino, inode->i_generation, inode,
-               pos, i_size_read(inode));
-
-        /*
-         * Checking ->i_size without the lock. Should be harmless, as server
-         * re-checks.
-         */
-        if (pos > i_size_read(inode) - ll_dir_rec_len(1))
-                RETURN(0);
-
-        for (done = 0; idx < npages; idx++, offset = 0) {
-                /*
-                 * We can assume that all blocks on this page are filled with
-                 * entries, because ll_dir_check_page() placed special dummy
-                 * entries for us.
-                 */
-
-                char *kaddr;
-                struct page *page;
-
-                CDEBUG(D_EXT2,"read %lu of dir %lu/%u page %lu/%lu "
-                       "size %llu\n",
-                       CFS_PAGE_SIZE, inode->i_ino, inode->i_generation,
-                       idx, npages, i_size_read(inode));
-                page = ll_get_dir_page(inode, idx);
-
-                /* size might have been updated by mdc_readpage */
-                npages = dir_pages(inode);
-
-                if (IS_ERR(page)) {
-                        rc = PTR_ERR(page);
-                        CERROR("error reading dir %lu/%u page %lu: rc %d\n",
-                               inode->i_ino, inode->i_generation, idx, rc);
-                        continue;
-                }
-
-                kaddr = page_address(page);
-                if (need_revalidate) {
-                        /*
-                         * File offset was changed by lseek() and possibly
-                         * points in the middle of an entry. Re-scan from the
-                         * beginning of the chunk.
-                         */
-                        offset = ll_dir_validate_entry(kaddr, offset,
-                                                       chunk_mask);
-                        need_revalidate = 0;
-                }
-                done = ll_readdir_page(kaddr, idx << CFS_PAGE_SHIFT,
-                                       &offset, filldir, dirent);
-                ll_put_page(page);
-                if (done > 0)
-                        /*
-                         * Some entries were sent to the user space, return
-                         * success.
-                         */
-                        rc = 0;
-                else if (done < 0)
-                        /*
-                         * filldir is satisfied.
-                         */
-                        break;
-        }
-
-        filp->f_pos = (idx << CFS_PAGE_SHIFT) | offset;
-        filp->f_version = inode->i_version;
-        touch_atime(filp->f_vfsmnt, filp->f_dentry);
-
-        RETURN(rc);
-}
-
-/*      
- * Chain of hash overflow pages.
- */            
-struct ll_dir_chain {
-        /* XXX something. Later */
-};
-  
-static inline void ll_dir_chain_init(struct ll_dir_chain *chain)
-{  
-}
-
-static inline void ll_dir_chain_fini(struct ll_dir_chain *chain)
-{
-}
-
-static inline unsigned long hash_x_index(__u64 hash, int hash64)
-{
-#ifdef __KERNEL__
-        if (BITS_PER_LONG == 32 && hash64)
-                hash >>= 32;
-#endif
-        return ~0UL - hash;
-}
-
-/**
- * Layout of readdir pages, as transmitted on wire.
- */
-struct lu_dirent {
-        /** valid if LUDA_FID is set. */
-        struct lu_fid lde_fid;
-        /** a unique entry identifier: a hash or an offset. */
-        __u64         lde_hash;
-        /** total record length, including all attributes. */
-        __u16         lde_reclen;
-        /** name length */
-        __u16         lde_namelen;
-        /** optional variable size attributes following this entry.
-         *  taken from enum lu_dirent_attrs.
-         */
-        __u32         lde_attrs;
-        /** name is followed by the attributes indicated in ->ldp_attrs, in
-         *  their natural order. After the last attribute, padding bytes are
-         *  added to make ->lde_reclen a multiple of 8.
-         */
-        char          lde_name[0];
-};
-
-struct lu_dirpage {
-        __u64            ldp_hash_start;
-        __u64            ldp_hash_end;
-        __u16            ldp_flags;
-        __u16            ldp_pad0;
-        __u32            ldp_pad1;
-        struct lu_dirent ldp_entries[0];
-};
-
-/*
- * Definitions of optional directory entry attributes formats.
- *
- * Individual attributes do not have their length encoded in a generic way. It
- * is assumed that consumer of an attribute knows its format. This means that
- * it is impossible to skip over an unknown attribute, except by skipping over all
- * remaining attributes (by using ->lde_reclen), which is not too
- * constraining, because new server versions will append new attributes at
- * the end of an entry.
- */
-
-/**
- * Fid directory attribute: a fid of an object referenced by the entry. This
- * will be almost always requested by the client and supplied by the server.
- *
- * Aligned to 8 bytes.
- */
-/* To have compatibility with 1.8, lets have fid in lu_dirent struct. */
-
-/**
- * File type.
- *
- * Aligned to 2 bytes.
- */
-struct luda_type {
-        __u16 lt_type;
-};
-
-enum lu_dirpage_flags {
-        LDF_EMPTY = 1 << 0
-};
-
-static inline int lu_dirent_calc_size(int namelen, __u16 attr)
-{
-        int size;
-
-        if (attr & LUDA_TYPE) {
-                const unsigned align = sizeof(struct luda_type) - 1;
-                size = (sizeof(struct lu_dirent) + namelen + align) & ~align;
-                size += sizeof(struct luda_type);
-        } else
-                size = sizeof(struct lu_dirent) + namelen;
-
-        return (size + 7) & ~7;
-}
-
-/**
- * return IF_* type for given lu_dirent entry.
- * IF_* flag shld be converted to particular OS file type in
- * platform llite module.
- */
-__u16 ll_dirent_type_get(struct lu_dirent *ent)
-{
-        __u16 type = 0;
-        struct luda_type *lt;
-        int len = 0;
-
-        if (le32_to_cpu(ent->lde_attrs) & LUDA_TYPE) {
-                const unsigned align = sizeof(struct luda_type) - 1;
-
-                len = le16_to_cpu(ent->lde_namelen);
-                len = (len + align) & ~align;
-                lt = (void *) ent->lde_name + len;
-                type = CFS_IFTODT(le16_to_cpu(lt->lt_type));
-        }
-        return type;
-}
-
-static inline struct lu_dirent *lu_dirent_start(struct lu_dirpage *dp)
-{
-        if (le16_to_cpu(dp->ldp_flags) & LDF_EMPTY)
-                return NULL;
-        else
-                return dp->ldp_entries;
-}
-
-static inline struct lu_dirent *lu_dirent_next(struct lu_dirent *ent)
-{
-        struct lu_dirent *next;
-
-        if (le16_to_cpu(ent->lde_reclen) != 0)
-                next = ((void *)ent) + le16_to_cpu(ent->lde_reclen);
-        else
-                next = NULL;
-
-        return next;
-}
-
-static inline int lu_dirent_size(struct lu_dirent *ent)
-{
-        if (le16_to_cpu(ent->lde_reclen) == 0) {
-                return lu_dirent_calc_size(le16_to_cpu(ent->lde_namelen),
-                                           le32_to_cpu(ent->lde_attrs));
-        }
-        return le16_to_cpu(ent->lde_reclen);
-}
-
-#ifdef HAVE_RW_TREE_LOCK
-#define TREE_READ_LOCK_IRQ(mapping)     read_lock_irq(&(mapping)->tree_lock)
-#define TREE_READ_UNLOCK_IRQ(mapping) read_unlock_irq(&(mapping)->tree_lock)
-#else
-#define TREE_READ_LOCK_IRQ(mapping) spin_lock_irq(&(mapping)->tree_lock)
-#define TREE_READ_UNLOCK_IRQ(mapping) spin_unlock_irq(&(mapping)->tree_lock)
-#endif
-
-/* returns the page unlocked, but with a reference */
-static int ll_dir_readpage_20(struct file *file, struct page *page)
-{
-        struct inode *inode = page->mapping->host;
-        struct ptlrpc_request *request;
-        struct mdt_body *body;
-        struct ll_fid fid;
-        __u64 hash;
-        int rc;
-        ENTRY;
-
-        /*XXX: statahead is disabled by force under interoperability mode.
-         *     So file must not be NULL here. Fix me when enable statahead
-         *     under interoperability mode. */
-        LASSERT(file != NULL);
-        hash = ((struct ll_file_data *)LUSTRE_FPRIVATE(file))->fd_dir.lfd_next;
-        CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p) off %lu\n",
-               inode->i_ino, inode->i_generation, inode, (unsigned long)hash);
-
-        ll_inode2fid(&fid, inode);
-        rc = mdc_readpage(ll_i2sbi(inode)->ll_mdc_exp, &fid,
-                          hash, page, &request);
-        if (!rc) {
-                body = lustre_msg_buf(request->rq_repmsg, REPLY_REC_OFF,
-                                      sizeof(*body));
-                /* Checked by mdc_readpage() */
-                LASSERT(body != NULL);
-
-                if (body->valid & OBD_MD_FLSIZE) {
-                        ll_inode_size_lock(inode, 0);
-                        i_size_write(inode, body->size);
-                        ll_inode_size_unlock(inode, 0);
-                }
-                SetPageUptodate(page);
-        }
-        ptlrpc_req_finished(request);
-
-        unlock_page(page);
-        EXIT;
-        return rc;
-}
-
-
 static void ll_check_page(struct inode *dir, struct page *page)
 {
         /* XXX: check page format later */
         SetPageChecked(page);
 }
 
+static void ll_release_page(struct page *page, __u64 hash,
+                            __u64 start, __u64 end)
+{
+        kunmap(page);
+        lock_page(page);
+        if (likely(page->mapping != NULL)) {
+                ll_truncate_complete_page(page);
+                unlock_page(page);
+        } else {
+                unlock_page(page);
+                CWARN("NULL mapping page %p, truncated by others: "
+                      "hash("LPX64") | start("LPX64") | end("LPX64")\n",
+                      page, hash, start, end);
+        }
+        page_cache_release(page);
+}
 
 /*
  * Find, kmap and return page that contains given hash.
@@ -656,7 +320,6 @@ static struct page *ll_dir_page_locate(struct inode *dir, __u64 *hash,
         unsigned long offset = hash_x_index(*hash, hash64);
         struct page *page;
         int found;
-        ENTRY;
 
         TREE_READ_LOCK_IRQ(mapping);
         found = radix_tree_gang_lookup(&mapping->page_tree,
@@ -676,7 +339,7 @@ static struct page *ll_dir_page_locate(struct inode *dir, __u64 *hash,
                  */
                 wait_on_page(page);
                 if (PageUptodate(page)) {
-                        dp = kmap(page);
+                        dp = cfs_kmap(page);
                         if (BITS_PER_LONG == 32 && hash64) {
                                 *start = le64_to_cpu(dp->ldp_hash_start) >> 32;
                                 *end   = le64_to_cpu(dp->ldp_hash_end) >> 32;
@@ -687,12 +350,21 @@ static struct page *ll_dir_page_locate(struct inode *dir, __u64 *hash,
                         }
                         LASSERTF(*start <= *hash, "start = "LPX64",end = "
                                  LPX64",hash = "LPX64"\n", *start, *end, *hash);
+                        CDEBUG(D_VFSTRACE, "page %lu [%llu %llu], hash "LPU64"\n",
+                               offset, *start, *end, *hash);
                         if (*hash > *end || (*end != *start && *hash == *end)) {
-                                kunmap(page);
-                                lock_page(page);
-                                truncate_complete_page(page->mapping, page);
-                                unlock_page(page);
-                                page_cache_release(page);
+                                /*
+                                 * upon hash collision, remove this page,
+                                 * otherwise put page reference, and
+                                 * ll_get_dir_page() will issue RPC to fetch
+                                 * the page we want.
+                                 */
+                                if (dp->ldp_flags & cpu_to_le32(LDF_COLLIDE)) {
+                                        ll_release_page(page, *hash, *start, *end);
+                                } else {
+                                        cfs_kunmap(page);
+                                        page_cache_release(page);
+                                }
                                 page = NULL;
                         }
                 } else {
@@ -704,62 +376,69 @@ static struct page *ll_dir_page_locate(struct inode *dir, __u64 *hash,
                 TREE_READ_UNLOCK_IRQ(mapping);
                 page = NULL;
         }
-        RETURN(page);
+        return page;
 }
 
-static struct page *ll_get_dir_page_20(struct file *filp, struct inode *dir,
-                                       __u64 hash, int exact,
-                                       struct ll_dir_chain *chain)
+struct page *ll_get_dir_page(struct file *filp, struct inode *dir, __u64 hash,
+                             int exact, struct ll_dir_chain *chain)
 {
-        struct ldlm_res_id res_id;
-        struct lustre_handle lockh;
-        struct obd_device *obddev = class_exp2obd(ll_i2sbi(dir)->ll_mdc_exp);
+        ldlm_policy_data_t policy = {.l_inodebits = {MDS_INODELOCK_UPDATE} };
         struct address_space *mapping = dir->i_mapping;
+        struct lustre_handle lockh;
         struct lu_dirpage *dp;
         struct page *page;
-        ldlm_policy_data_t policy = {.l_inodebits = {MDS_INODELOCK_UPDATE} };
         ldlm_mode_t mode;
         int rc;
         __u64 start = 0;
         __u64 end = 0;
         __u64 lhash = hash;
+        struct ll_inode_info *lli = ll_i2info(dir);
         int hash64 = ll_i2sbi(dir)->ll_flags & LL_SBI_64BIT_HASH;
-        ENTRY;
- 
-        fid_build_reg_res_name(ll_inode_lu_fid(dir), &res_id);
+
         mode = LCK_PR;
-        rc = ldlm_lock_match(obddev->obd_namespace, LDLM_FL_BLOCK_GRANTED,
-                             &res_id, LDLM_IBITS, &policy, mode, &lockh);
+        rc = md_lock_match(ll_i2sbi(dir)->ll_md_exp, LDLM_FL_BLOCK_GRANTED,
+                           ll_inode2fid(dir), LDLM_IBITS, &policy, mode, &lockh);
         if (!rc) {
-                struct lookup_intent it = { .it_op = IT_READDIR };
                 struct ldlm_enqueue_info einfo = { LDLM_IBITS, mode,
-                       ll_mdc_blocking_ast, ldlm_completion_ast, NULL, NULL };
+                       ll_md_blocking_ast, ldlm_completion_ast,
+                       NULL, NULL, dir };
+                struct lookup_intent it = { .it_op = IT_READDIR };
                 struct ptlrpc_request *request;
-                struct mdc_op_data op_data = { { 0 } };
+                struct md_op_data *op_data;
 
-                ll_prepare_mdc_op_data(&op_data, dir, NULL, NULL, 0, 0, NULL);
+                op_data = ll_prep_md_op_data(NULL, dir, NULL, NULL, 0, 0,
+                                             LUSTRE_OPC_ANY, NULL);
+                if (IS_ERR(op_data))
+                        return (void *)op_data;
 
-                rc = mdc_enqueue(ll_i2sbi(dir)->ll_mdc_exp, &einfo, &it,
-                                 &op_data, &lockh, NULL, 0, 0);
+                rc = md_enqueue(ll_i2sbi(dir)->ll_md_exp, &einfo, &it,
+                                op_data, &lockh, NULL, 0, NULL, 0);
+
+                ll_finish_md_op_data(op_data);
 
                 request = (struct ptlrpc_request *)it.d.lustre.it_data;
                 if (request)
                         ptlrpc_req_finished(request);
                 if (rc < 0) {
-                        CERROR("lock enqueue: rc: %d\n", rc);
-                        RETURN(ERR_PTR(rc));
+                        CERROR("lock enqueue: "DFID" at "LPU64": rc %d\n",
+                               PFID(ll_inode2fid(dir)), hash, rc);
+                        return ERR_PTR(rc);
                 }
-
-                CDEBUG(D_INODE, "setting l_data to inode %p (%lu/%u)\n",
-                       dir, dir->i_ino, dir->i_generation);
-                mdc_set_lock_data(&it.d.lustre.it_lock_handle, dir, NULL);
-
+        } else {
+                /* for cross-ref object, l_ast_data of the lock may not be set,
+                 * we reset it here */
+                md_set_lock_data(ll_i2sbi(dir)->ll_md_exp, &lockh.cookie,
+                                 dir, NULL);
         }
         ldlm_lock_dump_handle(D_OTHER, &lockh);
 
+        cfs_down(&lli->lli_readdir_sem);
         page = ll_dir_page_locate(dir, &lhash, &start, &end);
-        if (IS_ERR(page))
+        if (IS_ERR(page)) {
+                CERROR("dir page locate: "DFID" at "LPU64": rc %ld\n",
+                       PFID(ll_inode2fid(dir)), lhash, PTR_ERR(page));
                 GOTO(out_unlock, page);
+        }
 
         if (page != NULL) {
                 /*
@@ -776,40 +455,46 @@ static struct page *ll_get_dir_page_20(struct file *filp, struct inode *dir,
                  * it as an "overflow" page. 1. invalidate all pages at
                  * once. 2. use HASH|1 as an index for P1.
                  */
-                if (exact && hash != start) {
+                if (exact && lhash != start) {
                         /*
                          * readdir asked for a page starting _exactly_ from
                          * given hash, but cache contains stale page, with
                          * entries with smaller hash values. Stale page should
                          * be invalidated, and new one fetched.
                          */
-                        CDEBUG(D_INFO, "Stale readpage page %p: %#lx != %#lx\n",
-                              page, (unsigned long)lhash, (unsigned long)start);
-                        lock_page(page);
-                        truncate_complete_page(page->mapping, page);
-                        unlock_page(page);
-                        page_cache_release(page);
+                        CDEBUG(D_OTHER, "Stale readpage page %p: "
+                               "start = "LPX64",end = "LPX64"hash ="LPX64"\n",
+                               page, start, end, lhash);
+                        ll_release_page(page, lhash, start, end);
                 } else {
                         GOTO(hash_collision, page);
                 }
         }
 
         page = read_cache_page(mapping, hash_x_index(hash, hash64),
-                               (filler_t*)ll_dir_readpage_20, filp);
-        if (IS_ERR(page))
+                               (filler_t*)mapping->a_ops->readpage, filp);
+        if (IS_ERR(page)) {
+                CERROR("read cache page: "DFID" at "LPU64": rc %ld\n",
+                       PFID(ll_inode2fid(dir)), hash, PTR_ERR(page));
                 GOTO(out_unlock, page);
+        }
 
         wait_on_page(page);
         (void)kmap(page);
-        if (!PageUptodate(page))
+        if (!PageUptodate(page)) {
+                CERROR("page not updated: "DFID" at "LPU64": rc %d\n",
+                       PFID(ll_inode2fid(dir)), hash, -5);
                 goto fail;
+        }
         if (!PageChecked(page))
                 ll_check_page(dir, page);
-        if (PageError(page))
+        if (PageError(page)) {
+                CERROR("page error: "DFID" at "LPU64": rc %d\n",
+                       PFID(ll_inode2fid(dir)), hash, -5);
                 goto fail;
+        }
 hash_collision:
         dp = page_address(page);
-
         if (BITS_PER_LONG == 32 && hash64) {
                 start = le64_to_cpu(dp->ldp_hash_start) >> 32;
                 end   = le64_to_cpu(dp->ldp_hash_end) >> 32;
@@ -835,8 +520,9 @@ hash_collision:
                 goto fail;
         }
 out_unlock:
+        cfs_up(&lli->lli_readdir_sem);
         ldlm_lock_decref(&lockh, mode);
-        RETURN(page);
+        return page;
 
 fail:
         ll_put_page(page);
@@ -844,19 +530,20 @@ fail:
         goto out_unlock;
 }
 
-static int ll_readdir_20(struct file *filp, void *cookie, filldir_t filldir)
+int ll_readdir(struct file *filp, void *cookie, filldir_t filldir)
 {
-        struct inode         *inode = filp->f_dentry->d_inode;
-        struct ll_sb_info    *sbi   = ll_i2sbi(inode);
-        struct ll_file_data  *fd    = LUSTRE_FPRIVATE(filp);
-        __u64                 pos   = fd->fd_dir.lfd_pos;
-        int                   api32 = ll_need_32bit_api(sbi);
-        int                   hash64= sbi->ll_flags & LL_SBI_64BIT_HASH;
+        struct inode         *inode      = filp->f_dentry->d_inode;
+        struct ll_inode_info *info       = ll_i2info(inode);
+        struct ll_sb_info    *sbi        = ll_i2sbi(inode);
+        struct ll_file_data  *fd         = LUSTRE_FPRIVATE(filp);
+        __u64                 pos        = fd->fd_dir.lfd_pos;
+        int                   api32      = ll_need_32bit_api(sbi);
+        int                   hash64     = sbi->ll_flags & LL_SBI_64BIT_HASH;
         struct page          *page;
         struct ll_dir_chain   chain;
-        int                   rc;
         int                   done;
         int                   shift;
+        int                   rc;
         ENTRY;
 
         CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p) pos %lu/%llu 32bit_api %d\n",
@@ -875,17 +562,16 @@ static int ll_readdir_20(struct file *filp, void *cookie, filldir_t filldir)
         ll_dir_chain_init(&chain);
 
         fd->fd_dir.lfd_next = pos;
-        page = ll_get_dir_page_20(filp, inode, pos, 0, &chain);
-
+        page = ll_get_dir_page(filp, inode, pos, 0, &chain);
 
         while (rc == 0 && !done) {
                 struct lu_dirpage *dp;
                 struct lu_dirent  *ent;
 
                 if (!IS_ERR(page)) {
-                        /* 
-                         * If page is empty (end of directoryis reached),
-                         * use this value. 
+                        /*
+                         * If page is empty (end of directory is reached),
+                         * use this value.
                          */
                         __u64 hash = MDS_DIR_END_OFF;
                         __u64 next;
@@ -898,6 +584,10 @@ static int ll_readdir_20(struct file *filp, void *cookie, filldir_t filldir)
                                 struct lu_fid  fid;
                                 __u64          lhash;
                                 __u64          ino;
+
+                                /*
+                                 * XXX: implement correct swabbing here.
+                                 */
 
                                 hash = le64_to_cpu(ent->lde_hash);
                                 if (hash < pos)
@@ -914,14 +604,17 @@ static int ll_readdir_20(struct file *filp, void *cookie, filldir_t filldir)
                                          */
                                         continue;
 
-                                fid_le_to_cpu(&fid, &ent->lde_fid);
-                                ino = ll_fid_build_ino((struct ll_fid *)&fid,
-                                                       api32);
                                 if (api32 && hash64)
                                         lhash = hash >> 32;
                                 else
                                         lhash = hash;
+                                fid_le_to_cpu(&fid, &ent->lde_fid);
+                                ino = cl_fid_build_ino(&fid, api32);
                                 type = ll_dirent_type_get(ent);
+                                /* For 'll_nfs_get_name_filldir()', it will try
+                                 * to access the 'ent' through its 'lde_name',
+                                 * so the parameter 'name' for 'filldir()' must
+                                 * be part of the 'ent'. */
                                 done = filldir(cookie, ent->lde_name, namelen,
                                                lhash, ino, type);
                         }
@@ -940,9 +633,8 @@ static int ll_readdir_20(struct file *filp, void *cookie, filldir_t filldir)
                                          * page.
                                          */
                                         fd->fd_dir.lfd_next = pos;
-                                        page = ll_get_dir_page_20(filp, inode,
-                                                                  pos, 1,
-                                                                  &chain);
+                                        page = ll_get_dir_page(filp, inode, pos,
+                                                               1, &chain);
                                 } else {
                                         /*
                                          * go into overflow page.
@@ -954,8 +646,7 @@ static int ll_readdir_20(struct file *filp, void *cookie, filldir_t filldir)
                 } else {
                         rc = PTR_ERR(page);
                         CERROR("error reading dir "DFID" at %lu: rc %d\n",
-                               PFID(ll_inode_lu_fid(inode)),
-                               (unsigned long)pos, rc);
+                               PFID(&info->lli_fid), (unsigned long)pos, rc);
                 }
         }
 
@@ -979,29 +670,7 @@ static int ll_readdir_20(struct file *filp, void *cookie, filldir_t filldir)
         RETURN(rc);
 }
 
-static int ll_readdir(struct file *filp, void *cookie, filldir_t filldir)
-{
-        struct inode      *inode = filp->f_dentry->d_inode;
-        struct ll_sb_info *sbi = ll_i2sbi(inode);
-
-        if (sbi->ll_mdc_exp->exp_connect_flags & OBD_CONNECT_FID) {
-                return ll_readdir_20(filp, cookie, filldir);
-        } else {
-                return ll_readdir_18(filp, cookie, filldir);
-        }
-}
-
-#define QCTL_COPY(out, in)              \
-do {                                    \
-        Q_COPY(out, in, qc_cmd);        \
-        Q_COPY(out, in, qc_type);       \
-        Q_COPY(out, in, qc_id);         \
-        Q_COPY(out, in, qc_stat);       \
-        Q_COPY(out, in, qc_dqinfo);     \
-        Q_COPY(out, in, qc_dqblk);      \
-} while (0)
-
-static int ll_send_mgc_param(struct obd_export *mgc, char *string)
+int ll_send_mgc_param(struct obd_export *mgc, char *string)
 {
         struct mgs_send_param *msp;
         int rc = 0;
@@ -1015,12 +684,12 @@ static int ll_send_mgc_param(struct obd_export *mgc, char *string)
                                 sizeof(struct mgs_send_param), msp, NULL);
         if (rc)
                 CERROR("Failed to set parameter: %d\n", rc);
-
         OBD_FREE_PTR(msp);
+
         return rc;
 }
 
-static char *ll_get_fsname(struct inode *inode)
+char *ll_get_fsname(struct inode *inode)
 {
         struct lustre_sb_info *lsi = s2lsi(inode->i_sb);
         char *ptr, *fsname;
@@ -1041,46 +710,60 @@ int ll_dir_setstripe(struct inode *inode, struct lov_user_md *lump,
                      int set_default)
 {
         struct ll_sb_info *sbi = ll_i2sbi(inode);
-        struct mdc_op_data data = { { 0 } };
+        struct md_op_data *op_data;
         struct ptlrpc_request *req = NULL;
+        int rc = 0;
         struct lustre_sb_info *lsi = s2lsi(inode->i_sb);
         struct obd_device *mgc = lsi->lsi_mgc;
         char *fsname = NULL, *param = NULL;
-        struct iattr attr = { 0 };
-        int lum_size = 0, rc = 0;
+        int lum_size;
 
         if (lump != NULL) {
-                if (lump->lmm_magic == LOV_USER_MAGIC_V3)
-                        lum_size = sizeof(struct lov_user_md_v3);
-                else
-                        lum_size = sizeof(struct lov_user_md_v1);
                 /*
                  * This is coming from userspace, so should be in
                  * local endian.  But the MDS would like it in little
                  * endian, so we swab it before we send it.
                  */
-                if ((lump->lmm_magic != cpu_to_le32(LOV_USER_MAGIC_V1)) &&
-                    (lump->lmm_magic != cpu_to_le32(LOV_USER_MAGIC_V3))) {
-                        rc = lustre_swab_lov_user_md(lump);
-                        if (rc) 
-                                return rc;
-                }
-        } else { /* NULL value means remove LOV EA */
+                switch (lump->lmm_magic) {
+                case LOV_USER_MAGIC_V1: {
+                        if (lump->lmm_magic != cpu_to_le32(LOV_USER_MAGIC_V1))
+                                lustre_swab_lov_user_md_v1(lump);
+                        lum_size = sizeof(struct lov_user_md_v1);
+                        break;
+                        }
+                case LOV_USER_MAGIC_V3: {
+                        if (lump->lmm_magic != cpu_to_le32(LOV_USER_MAGIC_V3))
+                                lustre_swab_lov_user_md_v3(
+                                        (struct lov_user_md_v3 *)lump);
+                        lum_size = sizeof(struct lov_user_md_v3);
+                        break;
+                        }
+                default: {
+                        CDEBUG(D_IOCTL, "bad userland LOV MAGIC:"
+                                        " %#08x != %#08x nor %#08x\n",
+                                        lump->lmm_magic, LOV_USER_MAGIC_V1,
+                                        LOV_USER_MAGIC_V3);
+                        RETURN(-EINVAL);
+                        }
+               }
+        } else {
                 lum_size = sizeof(struct lov_user_md_v1);
         }
 
-        ll_prepare_mdc_op_data(&data, inode, NULL, NULL, 0, 0, NULL);
+        op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
+                                     LUSTRE_OPC_ANY, NULL);
+        if (IS_ERR(op_data))
+                RETURN(PTR_ERR(op_data));
 
         /* swabbing is done in lov_setstripe() on server side */
-        rc = mdc_setattr(sbi->ll_mdc_exp, &data,
-                         &attr, lump, lum_size, NULL, 0, &req);
+        rc = md_setattr(sbi->ll_md_exp, op_data, lump, lum_size,
+                        NULL, 0, &req, NULL);
+        ll_finish_md_op_data(op_data);
+        ptlrpc_req_finished(req);
         if (rc) {
-                ptlrpc_req_finished(req);
                 if (rc != -EPERM && rc != -EACCES)
                         CERROR("mdc_setattr fails: rc = %d\n", rc);
-                return rc;
         }
-        ptlrpc_req_finished(req);
 
         /* In the following we use the fact that LOV_USER_MAGIC_V1 and
          LOV_USER_MAGIC_V3 have the same initial fields so we do not
@@ -1098,14 +781,14 @@ int ll_dir_setstripe(struct inode *inode, struct lov_user_md *lump,
                         goto end;
 
                 /* Set root stripecount */
-                sprintf(param, "%s-MDT0000.lov.stripecount=%u", fsname,
+                sprintf(param, "%s-MDT0000.lov.stripecount=%hd", fsname,
                         lump ? le16_to_cpu(lump->lmm_stripe_count) : 0);
                 rc = ll_send_mgc_param(mgc->u.cli.cl_mgc_mgsexp, param);
                 if (rc)
                         goto end;
 
                 /* Set root stripeoffset */
-                sprintf(param, "%s-MDT0000.lov.stripeoffset=%u", fsname,
+                sprintf(param, "%s-MDT0000.lov.stripeoffset=%hd", fsname,
                         lump ? le16_to_cpu(lump->lmm_stripe_offset) :
                         (typeof(lump->lmm_stripe_offset))(-1));
                 rc = ll_send_mgc_param(mgc->u.cli.cl_mgc_mgsexp, param);
@@ -1124,32 +807,34 @@ int ll_dir_getstripe(struct inode *inode, struct lov_mds_md **lmmp,
                      int *lmm_size, struct ptlrpc_request **request)
 {
         struct ll_sb_info *sbi = ll_i2sbi(inode);
-        struct ll_fid     fid;
-        struct mds_body   *body;
+        struct mdt_body   *body;
         struct lov_mds_md *lmm = NULL;
         struct ptlrpc_request *req = NULL;
         int rc, lmmsize;
-
-        ll_inode2fid(&fid, inode);
+        struct md_op_data *op_data;
 
         rc = ll_get_max_mdsize(sbi, &lmmsize);
         if (rc)
                 RETURN(rc);
 
-        rc = mdc_getattr(sbi->ll_mdc_exp, &fid,
-                        OBD_MD_FLEASIZE|OBD_MD_FLDIREA,
-                        lmmsize, &req);
+        op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL,
+                                     0, lmmsize, LUSTRE_OPC_ANY,
+                                     NULL);
+        if (op_data == NULL)
+                RETURN(-ENOMEM);
+
+        op_data->op_valid = OBD_MD_FLEASIZE | OBD_MD_FLDIREA;
+        rc = md_getattr(sbi->ll_md_exp, op_data, &req);
+        ll_finish_md_op_data(op_data);
         if (rc < 0) {
-                CDEBUG(D_INFO, "mdc_getattr failed on inode "
+                CDEBUG(D_INFO, "md_getattr failed on inode "
                        "%lu/%u: rc %d\n", inode->i_ino,
                        inode->i_generation, rc);
                 GOTO(out, rc);
         }
-        body = lustre_msg_buf(req->rq_repmsg, REPLY_REC_OFF,
-                        sizeof(*body));
-        LASSERT(body != NULL); /* checked by mdc_getattr_name */
-        /* swabbed by mdc_getattr_name */
-        LASSERT(lustre_rep_swabbed(req, REPLY_REC_OFF));
+
+        body = req_capsule_server_get(&req->rq_pill, &RMF_MDT_BODY);
+        LASSERT(body != NULL);
 
         lmmsize = body->eadatasize;
 
@@ -1158,9 +843,9 @@ int ll_dir_getstripe(struct inode *inode, struct lov_mds_md **lmmp,
                 GOTO(out, rc = -ENODATA);
         }
 
-        lmm = lustre_msg_buf(req->rq_repmsg, REPLY_REC_OFF + 1, lmmsize);
+        lmm = req_capsule_server_sized_get(&req->rq_pill,
+                                           &RMF_MDT_MD, lmmsize);
         LASSERT(lmm != NULL);
-        LASSERT(lustre_rep_swabbed(req, REPLY_REC_OFF + 1));
 
         /*
          * This is coming from the MDS, so is probably in
@@ -1168,14 +853,19 @@ int ll_dir_getstripe(struct inode *inode, struct lov_mds_md **lmmp,
          * passing it to userspace.
          */
         /* We don't swab objects for directories */
-        if (((le32_to_cpu(lmm->lmm_magic) == LOV_MAGIC_V1) ||
-            (le32_to_cpu(lmm->lmm_magic) == LOV_MAGIC_V3)) &&
-            (LOV_MAGIC != cpu_to_le32(LOV_MAGIC))) {
-                rc = lustre_swab_lov_user_md((struct lov_user_md*)lmm);
-                if (rc)
-                        GOTO(out, rc);
+        switch (le32_to_cpu(lmm->lmm_magic)) {
+        case LOV_MAGIC_V1:
+                if (LOV_MAGIC != cpu_to_le32(LOV_MAGIC))
+                        lustre_swab_lov_user_md_v1((struct lov_user_md_v1 *)lmm);
+                break;
+        case LOV_MAGIC_V3:
+                if (LOV_MAGIC != cpu_to_le32(LOV_MAGIC))
+                        lustre_swab_lov_user_md_v3((struct lov_user_md_v3 *)lmm);
+                break;
+        default:
+                CERROR("unknown magic: %lX\n", (unsigned long)lmm->lmm_magic);
+                rc = -EPROTO;
         }
-
 out:
         *lmmp = lmm;
         *lmm_size = lmmsize;
@@ -1183,11 +873,151 @@ out:
         return rc;
 }
 
+/*
+ *  Get MDT index for the inode.
+ */
+int ll_get_mdt_idx(struct inode *inode)
+{
+        struct ll_sb_info *sbi = ll_i2sbi(inode);
+        struct md_op_data *op_data;
+        int rc, mdtidx;
+        ENTRY;
+
+        op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0,
+                                     0, LUSTRE_OPC_ANY, NULL);
+        if (op_data == NULL)
+                RETURN(-ENOMEM);
+
+        op_data->op_valid |= OBD_MD_MDTIDX;
+        rc = md_getattr(sbi->ll_md_exp, op_data, NULL);
+        mdtidx = op_data->op_mds;
+        ll_finish_md_op_data(op_data);
+        if (rc < 0) {
+                CDEBUG(D_INFO, "md_getattr_name: %d\n", rc);
+                RETURN(rc);
+        }
+        return mdtidx;
+}
+
+static int copy_and_ioctl(int cmd, struct obd_export *exp, void *data, int len)
+{
+        void *ptr;
+        int rc;
+
+        OBD_ALLOC(ptr, len);
+        if (ptr == NULL)
+                return -ENOMEM;
+        if (cfs_copy_from_user(ptr, data, len)) {
+                OBD_FREE(ptr, len);
+                return -EFAULT;
+        }
+        rc = obd_iocontrol(cmd, exp, len, data, NULL);
+        OBD_FREE(ptr, len);
+        return rc;
+}
+
+static int quotactl_ioctl(struct ll_sb_info *sbi, struct if_quotactl *qctl)
+{
+        int cmd = qctl->qc_cmd;
+        int type = qctl->qc_type;
+        int id = qctl->qc_id;
+        int valid = qctl->qc_valid;
+        int rc = 0;
+        ENTRY;
+
+        switch (cmd) {
+        case LUSTRE_Q_INVALIDATE:
+        case LUSTRE_Q_FINVALIDATE:
+        case Q_QUOTAON:
+        case Q_QUOTAOFF:
+        case Q_SETQUOTA:
+        case Q_SETINFO:
+                if (!cfs_capable(CFS_CAP_SYS_ADMIN) ||
+                    sbi->ll_flags & LL_SBI_RMT_CLIENT)
+                        RETURN(-EPERM);
+                break;
+        case Q_GETQUOTA:
+                if (((type == USRQUOTA && cfs_curproc_euid() != id) ||
+                     (type == GRPQUOTA && !in_egroup_p(id))) &&
+                    (!cfs_capable(CFS_CAP_SYS_ADMIN) ||
+                     sbi->ll_flags & LL_SBI_RMT_CLIENT))
+                        RETURN(-EPERM);
+                break;
+        case Q_GETINFO:
+                break;
+        default:
+                CERROR("unsupported quotactl op: %#x\n", cmd);
+                RETURN(-ENOTTY);
+        }
+
+        if (valid != QC_GENERAL) {
+                if (sbi->ll_flags & LL_SBI_RMT_CLIENT)
+                        RETURN(-EOPNOTSUPP);
+
+                if (cmd == Q_GETINFO)
+                        qctl->qc_cmd = Q_GETOINFO;
+                else if (cmd == Q_GETQUOTA)
+                        qctl->qc_cmd = Q_GETOQUOTA;
+                else
+                        RETURN(-EINVAL);
+
+                switch (valid) {
+                case QC_MDTIDX:
+                        rc = obd_iocontrol(OBD_IOC_QUOTACTL, sbi->ll_md_exp,
+                                           sizeof(*qctl), qctl, NULL);
+                        break;
+                case QC_OSTIDX:
+                        rc = obd_iocontrol(OBD_IOC_QUOTACTL, sbi->ll_dt_exp,
+                                           sizeof(*qctl), qctl, NULL);
+                        break;
+                case QC_UUID:
+                        rc = obd_iocontrol(OBD_IOC_QUOTACTL, sbi->ll_md_exp,
+                                           sizeof(*qctl), qctl, NULL);
+                        if (rc == -EAGAIN)
+                                rc = obd_iocontrol(OBD_IOC_QUOTACTL,
+                                                   sbi->ll_dt_exp,
+                                                   sizeof(*qctl), qctl, NULL);
+                        break;
+                default:
+                        rc = -EINVAL;
+                        break;
+                }
+
+                if (rc)
+                        RETURN(rc);
+
+                qctl->qc_cmd = cmd;
+        } else {
+                struct obd_quotactl *oqctl;
+
+                OBD_ALLOC_PTR(oqctl);
+                if (oqctl == NULL)
+                        RETURN(-ENOMEM);
+
+                QCTL_COPY(oqctl, qctl);
+                rc = obd_quotactl(sbi->ll_md_exp, oqctl);
+                if (rc) {
+                        if (rc != -EALREADY && cmd == Q_QUOTAON) {
+                                oqctl->qc_cmd = Q_QUOTAOFF;
+                                obd_quotactl(sbi->ll_md_exp, oqctl);
+                        }
+                        OBD_FREE_PTR(oqctl);
+                        RETURN(rc);
+                }
+
+                QCTL_COPY(qctl, oqctl);
+                OBD_FREE_PTR(oqctl);
+        }
+
+        RETURN(rc);
+}
+
 static int ll_dir_ioctl(struct inode *inode, struct file *file,
                         unsigned int cmd, unsigned long arg)
 {
         struct ll_sb_info *sbi = ll_i2sbi(inode);
         struct obd_ioctl_data *data;
+        int rc = 0;
         ENTRY;
 
         CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p), cmd=%#x\n",
@@ -1208,15 +1038,27 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
         /* We need to special case any other ioctls we want to handle,
          * to send them to the MDS/OST as appropriate and to properly
          * network encode the arg field.
-        case EXT3_IOC_SETVERSION_OLD:
-        case EXT3_IOC_SETVERSION:
+        case FSFILT_IOC_SETVERSION_OLD:
+        case FSFILT_IOC_SETVERSION:
         */
+        case LL_IOC_GET_MDTIDX: {
+                int mdtidx;
+
+                mdtidx = ll_get_mdt_idx(inode);
+                if (mdtidx < 0)
+                        RETURN(mdtidx);
+
+                if (put_user((int)mdtidx, (int*)arg))
+                        RETURN(-EFAULT);
+
+                return 0;
+        }
         case IOC_MDC_LOOKUP: {
                 struct ptlrpc_request *request = NULL;
-                struct ll_fid fid;
+                int namelen, len = 0;
                 char *buf = NULL;
                 char *filename;
-                int namelen, rc, len = 0;
+                struct md_op_data *op_data;
 
                 rc = obd_ioctl_getdata(&buf, &len, (void *)arg);
                 if (rc)
@@ -1224,25 +1066,28 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
                 data = (void *)buf;
 
                 filename = data->ioc_inlbuf1;
-                namelen = data->ioc_inllen1;
+                namelen = strlen(filename);
 
                 if (namelen < 1) {
                         CDEBUG(D_INFO, "IOC_MDC_LOOKUP missing filename\n");
-                        GOTO(out, rc = -EINVAL);
+                        GOTO(out_free, rc = -EINVAL);
                 }
 
-                ll_inode2fid(&fid, inode);
-                rc = mdc_getattr_name(sbi->ll_mdc_exp, &fid, filename, namelen,
-                                      OBD_MD_FLID, 0, &request);
+                op_data = ll_prep_md_op_data(NULL, inode, NULL, filename, namelen,
+                                             0, LUSTRE_OPC_ANY, NULL);
+                if (op_data == NULL)
+                        GOTO(out_free, rc = -ENOMEM);
+
+                op_data->op_valid = OBD_MD_FLID;
+                rc = md_getattr_name(sbi->ll_md_exp, op_data, &request);
+                ll_finish_md_op_data(op_data);
                 if (rc < 0) {
-                        CDEBUG(D_INFO, "mdc_getattr_name: %d\n", rc);
-                        GOTO(out, rc);
+                        CDEBUG(D_INFO, "md_getattr_name: %d\n", rc);
+                        GOTO(out_free, rc);
                 }
-
                 ptlrpc_req_finished(request);
-
                 EXIT;
-        out:
+out_free:
                 obd_ioctl_freedata(buf, len);
                 return rc;
         }
@@ -1252,19 +1097,17 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
                 struct lov_user_md_v1 *lumv1p = (struct lov_user_md_v1 *)arg;
                 struct lov_user_md_v3 *lumv3p = (struct lov_user_md_v3 *)arg;
 
-                int rc = 0;
                 int set_default = 0;
 
                 LASSERT(sizeof(lumv3) == sizeof(*lumv3p));
                 LASSERT(sizeof(lumv3.lmm_objects[0]) ==
                         sizeof(lumv3p->lmm_objects[0]));
-
                 /* first try with v1 which is smaller than v3 */
-                if (copy_from_user(lumv1, lumv1p, sizeof(*lumv1)))
+                if (cfs_copy_from_user(lumv1, lumv1p, sizeof(*lumv1)))
                         RETURN(-EFAULT);
 
                 if (lumv1->lmm_magic == LOV_USER_MAGIC_V3) {
-                        if (copy_from_user(&lumv3, lumv3p, sizeof(lumv3)))
+                        if (cfs_copy_from_user(&lumv3, lumv3p, sizeof(lumv3)))
                                 RETURN(-EFAULT);
                 }
 
@@ -1274,7 +1117,7 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
                 /* in v1 and v3 cases lumv1 points to data */
                 rc = ll_dir_setstripe(inode, lumv1, set_default);
 
-                return rc;
+                RETURN(rc);
         }
         case LL_IOC_OBD_STATFS:
                 RETURN(ll_obd_statfs(inode, (void *)arg));
@@ -1283,11 +1126,11 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
         case IOC_MDC_GETFILEINFO:
         case IOC_MDC_GETFILESTRIPE: {
                 struct ptlrpc_request *request = NULL;
-                struct mds_body *body;
                 struct lov_user_md *lump;
                 struct lov_mds_md *lmm = NULL;
+                struct mdt_body *body;
                 char *filename = NULL;
-                int rc, lmmsize;
+                int lmmsize;
 
                 if (cmd == IOC_MDC_GETFILEINFO ||
                     cmd == IOC_MDC_GETFILESTRIPE) {
@@ -1302,11 +1145,9 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
                 }
 
                 if (request) {
-                        body = lustre_msg_buf(request->rq_repmsg, REPLY_REC_OFF,
-                                              sizeof(*body));
-                        LASSERT(body != NULL); /* checked by mdc_getattr_name */
-                        /* swabbed by mdc_getattr_name */
-                        LASSERT(lustre_rep_swabbed(request, REPLY_REC_OFF));
+                        body = req_capsule_server_get(&request->rq_pill,
+                                                      &RMF_MDT_BODY);
+                        LASSERT(body != NULL);
                 } else {
                         GOTO(out_req, rc);
                 }
@@ -1327,9 +1168,9 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
                         lmdp = (struct lov_user_mds_data *)arg;
                         lump = &lmdp->lmd_lmm;
                 }
-                if (copy_to_user(lump, lmm, lmmsize) != 0) {
-                        if (copy_to_user(lump, lmm, sizeof(*lump)) != 0)
-                                GOTO(out_lmm, rc = -EFAULT);
+                if (cfs_copy_to_user(lump, lmm, lmmsize)) {
+                        if (cfs_copy_to_user(lump, lmm, sizeof(*lump)))
+                                GOTO(out_req, rc = -EFAULT);
                         rc = -EOVERFLOW;
                 }
         skip_lmm:
@@ -1349,17 +1190,14 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
                         st.st_atime   = body->atime;
                         st.st_mtime   = body->mtime;
                         st.st_ctime   = body->ctime;
-                        st.st_ino     = body->ino;
+                        st.st_ino     = inode->i_ino;
 
                         lmdp = (struct lov_user_mds_data *)arg;
-                        if (copy_to_user(&lmdp->lmd_st, &st, sizeof(st)))
-                                GOTO(out_lmm, rc = -EFAULT);
+                        if (cfs_copy_to_user(&lmdp->lmd_st, &st, sizeof(st)))
+                                GOTO(out_req, rc = -EFAULT);
                 }
 
                 EXIT;
-        out_lmm:
-                if (lmm && lmm->lmm_magic == LOV_MAGIC_JOIN)
-                        OBD_FREE(lmm, lmmsize);
         out_req:
                 ptlrpc_req_finished(request);
                 if (filename)
@@ -1373,7 +1211,6 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
                 struct lov_mds_md *lmm;
                 int lmmsize;
                 lstat_t st;
-                int rc;
 
                 lumd = (struct lov_user_mds_data *)arg;
                 lum = &lumd->lmd_lmm;
@@ -1382,28 +1219,36 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
                 if (rc)
                         RETURN(rc);
 
-                OBD_ALLOC(lmm, lmmsize);
-                if (copy_from_user(lmm, lum, lmmsize))
+                OBD_ALLOC_LARGE(lmm, lmmsize);
+                if (cfs_copy_from_user(lmm, lum, lmmsize))
                         GOTO(free_lmm, rc = -EFAULT);
 
-                if (LOV_USER_MAGIC != cpu_to_le32(LOV_USER_MAGIC)) {
-                        rc = lustre_swab_lov_user_md(
-                                                (struct lov_user_md_v1 *)lmm);
-                        if (rc) 
-                                GOTO(free_lmm, rc);
-                        rc = lustre_swab_lov_user_md_objects(
-                                                (struct lov_user_md*)lmm);
-                        if (rc) 
-                                GOTO(free_lmm, rc);
+                switch (lmm->lmm_magic) {
+                case LOV_USER_MAGIC_V1:
+                        if (LOV_USER_MAGIC_V1 == cpu_to_le32(LOV_USER_MAGIC_V1))
+                                break;
+                        /* swab objects first so that stripes num will be sane */
+                        lustre_swab_lov_user_md_objects(
+                                ((struct lov_user_md_v1 *)lmm)->lmm_objects,
+                                ((struct lov_user_md_v1 *)lmm)->lmm_stripe_count);
+                        lustre_swab_lov_user_md_v1((struct lov_user_md_v1 *)lmm);
+                        break;
+                case LOV_USER_MAGIC_V3:
+                        if (LOV_USER_MAGIC_V3 == cpu_to_le32(LOV_USER_MAGIC_V3))
+                                break;
+                        /* swab objects first so that stripes num will be sane */
+                        lustre_swab_lov_user_md_objects(
+                                ((struct lov_user_md_v3 *)lmm)->lmm_objects,
+                                ((struct lov_user_md_v3 *)lmm)->lmm_stripe_count);
+                        lustre_swab_lov_user_md_v3((struct lov_user_md_v3 *)lmm);
+                        break;
+                default:
+                        GOTO(free_lmm, rc = -EINVAL);
                 }
 
-                rc = obd_unpackmd(sbi->ll_osc_exp, &lsm, lmm, lmmsize);
+                rc = obd_unpackmd(sbi->ll_dt_exp, &lsm, lmm, lmmsize);
                 if (rc < 0)
                         GOTO(free_lmm, rc = -ENOMEM);
-
-                rc = obd_checkmd(sbi->ll_osc_exp, sbi->ll_mdc_exp, lsm);
-                if (rc)
-                        GOTO(free_lsm, rc);
 
                 /* Perform glimpse_size operation. */
                 memset(&st, 0, sizeof(st));
@@ -1412,23 +1257,21 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
                 if (rc)
                         GOTO(free_lsm, rc);
 
-                if (copy_to_user(&lumd->lmd_st, &st, sizeof(st)))
+                if (cfs_copy_to_user(&lumd->lmd_st, &st, sizeof(st)))
                         GOTO(free_lsm, rc = -EFAULT);
 
                 EXIT;
         free_lsm:
-                obd_free_memmd(sbi->ll_osc_exp, &lsm);
+                obd_free_memmd(sbi->ll_dt_exp, &lsm);
         free_lmm:
-                OBD_FREE(lmm, lmmsize);
+                OBD_FREE_LARGE(lmm, lmmsize);
                 return rc;
         }
         case OBD_IOC_LLOG_CATINFO: {
                 struct ptlrpc_request *req = NULL;
-                char *buf = NULL;
-                int rc, len = 0;
-                char *bufs[3] = { NULL }, *str;
-                int lens[3] = { sizeof(struct ptlrpc_body) };
-                int size[2] = { sizeof(struct ptlrpc_body) };
+                char                  *buf = NULL;
+                char                  *str;
+                int                    len = 0;
 
                 rc = obd_ioctl_getdata(&buf, &len, (void *)arg);
                 if (rc)
@@ -1440,31 +1283,42 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
                         RETURN(-EINVAL);
                 }
 
-                lens[REQ_REC_OFF] = data->ioc_inllen1;
-                bufs[REQ_REC_OFF] = data->ioc_inlbuf1;
-                if (data->ioc_inllen2) {
-                        lens[REQ_REC_OFF + 1] = data->ioc_inllen2;
-                        bufs[REQ_REC_OFF + 1] = data->ioc_inlbuf2;
-                } else {
-                        lens[REQ_REC_OFF + 1] = 0;
-                        bufs[REQ_REC_OFF + 1] = NULL;
-                }
-
-                req = ptlrpc_prep_req(sbi2mdc(sbi)->cl_import,
-                                      LUSTRE_LOG_VERSION, LLOG_CATINFO, 3, lens,
-                                      bufs);
-                if (!req)
+                req = ptlrpc_request_alloc(sbi2mdc(sbi)->cl_import,
+                                           &RQF_LLOG_CATINFO);
+                if (req == NULL)
                         GOTO(out_catinfo, rc = -ENOMEM);
 
-                size[REPLY_REC_OFF] = data->ioc_plen1;
-                ptlrpc_req_set_repsize(req, 2, size);
+                req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
+                                     data->ioc_inllen1);
+                req_capsule_set_size(&req->rq_pill, &RMF_STRING, RCL_CLIENT,
+                                     data->ioc_inllen2);
+
+                rc = ptlrpc_request_pack(req, LUSTRE_LOG_VERSION, LLOG_CATINFO);
+                if (rc) {
+                        ptlrpc_request_free(req);
+                        GOTO(out_catinfo, rc);
+                }
+
+                str = req_capsule_client_get(&req->rq_pill, &RMF_NAME);
+                memcpy(str, data->ioc_inlbuf1, data->ioc_inllen1);
+                if (data->ioc_inllen2) {
+                        str = req_capsule_client_get(&req->rq_pill,
+                                                     &RMF_STRING);
+                        memcpy(str, data->ioc_inlbuf2, data->ioc_inllen2);
+                }
+
+                req_capsule_set_size(&req->rq_pill, &RMF_STRING, RCL_SERVER,
+                                     data->ioc_plen1);
+                ptlrpc_request_set_replen(req);
 
                 rc = ptlrpc_queue_wait(req);
-                str = lustre_msg_string(req->rq_repmsg, REPLY_REC_OFF,
-                                        data->ioc_plen1);
-                if (!rc)
-                        if (copy_to_user(data->ioc_pbuf1, str,data->ioc_plen1))
+                if (!rc) {
+                        str = req_capsule_server_get(&req->rq_pill,
+                                                     &RMF_STRING);
+                        if (cfs_copy_to_user(data->ioc_pbuf1, str,
+                                             data->ioc_plen1))
                                 rc = -EFAULT;
+                }
                 ptlrpc_req_finished(req);
         out_catinfo:
                 obd_ioctl_freedata(buf, len);
@@ -1472,242 +1326,206 @@ static int ll_dir_ioctl(struct inode *inode, struct file *file,
         }
         case OBD_IOC_QUOTACHECK: {
                 struct obd_quotactl *oqctl;
-                int rc, error = 0;
+                int error = 0;
 
-                if (!cfs_capable(CFS_CAP_SYS_ADMIN))
+                if (!cfs_capable(CFS_CAP_SYS_ADMIN) ||
+                    sbi->ll_flags & LL_SBI_RMT_CLIENT)
                         RETURN(-EPERM);
 
                 OBD_ALLOC_PTR(oqctl);
                 if (!oqctl)
                         RETURN(-ENOMEM);
                 oqctl->qc_type = arg;
-                rc = obd_quotacheck(sbi->ll_mdc_exp, oqctl);
+                rc = obd_quotacheck(sbi->ll_md_exp, oqctl);
                 if (rc < 0) {
-                        CDEBUG(D_INFO, "mdc_quotacheck failed: rc %d\n", rc);
+                        CDEBUG(D_INFO, "md_quotacheck failed: rc %d\n", rc);
                         error = rc;
                 }
 
-                rc = obd_quotacheck(sbi->ll_osc_exp, oqctl);
+                rc = obd_quotacheck(sbi->ll_dt_exp, oqctl);
                 if (rc < 0)
-                        CDEBUG(D_INFO, "osc_quotacheck failed: rc %d\n", rc);
+                        CDEBUG(D_INFO, "obd_quotacheck failed: rc %d\n", rc);
 
                 OBD_FREE_PTR(oqctl);
                 return error ?: rc;
         }
         case OBD_IOC_POLL_QUOTACHECK: {
                 struct if_quotacheck *check;
-                int rc;
 
-                if (!cfs_capable(CFS_CAP_SYS_ADMIN))
+                if (!cfs_capable(CFS_CAP_SYS_ADMIN) ||
+                    sbi->ll_flags & LL_SBI_RMT_CLIENT)
                         RETURN(-EPERM);
 
                 OBD_ALLOC_PTR(check);
                 if (!check)
                         RETURN(-ENOMEM);
 
-                rc = obd_iocontrol(cmd, sbi->ll_mdc_exp, 0, (void *)check,
+                rc = obd_iocontrol(cmd, sbi->ll_md_exp, 0, (void *)check,
                                    NULL);
                 if (rc) {
                         CDEBUG(D_QUOTA, "mdc ioctl %d failed: %d\n", cmd, rc);
-                        if (copy_to_user((void *)arg, check, sizeof(*check)))
-                                CDEBUG(D_QUOTA, "copy_to_user failed\n");
+                        if (cfs_copy_to_user((void *)arg, check,
+                                             sizeof(*check)))
+                                CDEBUG(D_QUOTA, "cfs_copy_to_user failed\n");
                         GOTO(out_poll, rc);
                 }
 
-                rc = obd_iocontrol(cmd, sbi->ll_osc_exp, 0, (void *)check,
+                rc = obd_iocontrol(cmd, sbi->ll_dt_exp, 0, (void *)check,
                                    NULL);
                 if (rc) {
                         CDEBUG(D_QUOTA, "osc ioctl %d failed: %d\n", cmd, rc);
-                        if (copy_to_user((void *)arg, check, sizeof(*check)))
-                                CDEBUG(D_QUOTA, "copy_to_user failed\n");
+                        if (cfs_copy_to_user((void *)arg, check,
+                                             sizeof(*check)))
+                                CDEBUG(D_QUOTA, "cfs_copy_to_user failed\n");
                         GOTO(out_poll, rc);
                 }
         out_poll:
                 OBD_FREE_PTR(check);
                 RETURN(rc);
         }
-        case OBD_IOC_QUOTACTL: {
-                struct if_quotactl *qctl;
-                struct obd_quotactl *oqctl;
+#if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2,7,50,0)
+        case LL_IOC_QUOTACTL_18: {
+                /* copy the old 1.x quota struct for internal use, then copy
+                 * back into old format struct.  For 1.8 compatibility. */
+                struct if_quotactl_18 *qctl_18;
+                struct if_quotactl *qctl_20;
 
-                int cmd, type, id, rc = 0;
+                OBD_ALLOC_PTR(qctl_18);
+                if (!qctl_18)
+                        RETURN(-ENOMEM);
+
+                OBD_ALLOC_PTR(qctl_20);
+                if (!qctl_20)
+                        GOTO(out_quotactl_18, rc = -ENOMEM);
+
+                if (cfs_copy_from_user(qctl_18, (void *)arg, sizeof(*qctl_18)))
+                        GOTO(out_quotactl_20, rc = -ENOMEM);
+
+                QCTL_COPY(qctl_20, qctl_18);
+                qctl_20->qc_idx = 0;
+
+                /* XXX: dqb_valid was borrowed as a flag to mark that
+                 *      only mds quota is wanted */
+                if (qctl_18->qc_cmd == Q_GETQUOTA &&
+                    qctl_18->qc_dqblk.dqb_valid) {
+                        qctl_20->qc_valid = QC_MDTIDX;
+                        qctl_20->qc_dqblk.dqb_valid = 0;
+                } else if (qctl_18->obd_uuid.uuid[0] != '\0') {
+                        qctl_20->qc_valid = QC_UUID;
+                        qctl_20->obd_uuid = qctl_18->obd_uuid;
+                } else {
+                        qctl_20->qc_valid = QC_GENERAL;
+                }
+
+                rc = quotactl_ioctl(sbi, qctl_20);
+
+                if (rc == 0) {
+                        QCTL_COPY(qctl_18, qctl_20);
+                        qctl_18->obd_uuid = qctl_20->obd_uuid;
+
+                        if (cfs_copy_to_user((void *)arg, qctl_18,
+                                             sizeof(*qctl_18)))
+                                rc = -EFAULT;
+                }
+
+        out_quotactl_20:
+                OBD_FREE_PTR(qctl_20);
+        out_quotactl_18:
+                OBD_FREE_PTR(qctl_18);
+                RETURN(rc);
+        }
+#else
+#warning "remove old LL_IOC_QUOTACTL_18 compatibility code"
+#endif /* LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2,7,50,0) */
+        case LL_IOC_QUOTACTL: {
+                struct if_quotactl *qctl;
 
                 OBD_ALLOC_PTR(qctl);
                 if (!qctl)
                         RETURN(-ENOMEM);
 
-                OBD_ALLOC_PTR(oqctl);
-                if (!oqctl) {
-                        OBD_FREE_PTR(qctl);
-                        RETURN(-ENOMEM);
-                }
-                if (copy_from_user(qctl, (void *)arg, sizeof(*qctl)))
+                if (cfs_copy_from_user(qctl, (void *)arg, sizeof(*qctl)))
                         GOTO(out_quotactl, rc = -EFAULT);
 
-                cmd = qctl->qc_cmd;
-                type = qctl->qc_type;
-                id = qctl->qc_id;
-                switch (cmd) {
-                case LUSTRE_Q_INVALIDATE:
-                case LUSTRE_Q_FINVALIDATE:
-                case Q_QUOTAON:
-                case Q_QUOTAOFF:
-                case Q_SETQUOTA:
-                case Q_SETINFO:
-                        if (!cfs_capable(CFS_CAP_SYS_ADMIN))
-                                GOTO(out_quotactl, rc = -EPERM);
-                        break;
-                case Q_GETQUOTA:
-                        if (((type == USRQUOTA && cfs_curproc_euid() != id) ||
-                             (type == GRPQUOTA && !in_egroup_p(id))) &&
-                            !cfs_capable(CFS_CAP_SYS_ADMIN))
-                                GOTO(out_quotactl, rc = -EPERM);
+                rc = quotactl_ioctl(sbi, qctl);
 
-                        /* XXX: dqb_valid is borrowed as a flag to mark that
-                         *      only mds quota is wanted */
-                        if (qctl->qc_dqblk.dqb_valid) {
-                                qctl->obd_uuid = sbi->ll_mdc_exp->exp_obd->
-                                                        u.cli.cl_target_uuid;
-                                qctl->qc_dqblk.dqb_valid = 0;
-                        }
-
-                        break;
-                case Q_GETINFO:
-                        break;
-                default:
-                        CERROR("unsupported quotactl op: %#x\n", cmd);
-                        GOTO(out_quotactl, -ENOTTY);
-                }
-
-                QCTL_COPY(oqctl, qctl);
-
-                if (qctl->obd_uuid.uuid[0]) {
-                        struct obd_device *obd;
-                        struct obd_uuid *uuid = &qctl->obd_uuid;
-
-                        obd = class_find_client_notype(uuid,
-                                         &sbi->ll_osc_exp->exp_obd->obd_uuid);
-                        if (!obd)
-                                GOTO(out_quotactl, rc = -ENOENT);
-
-                        if (cmd == Q_GETINFO)
-                                oqctl->qc_cmd = Q_GETOINFO;
-                        else if (cmd == Q_GETQUOTA)
-                                oqctl->qc_cmd = Q_GETOQUOTA;
-                        else
-                                GOTO(out_quotactl, rc = -EINVAL);
-
-                        if (sbi->ll_mdc_exp->exp_obd == obd) {
-                                rc = obd_quotactl(sbi->ll_mdc_exp, oqctl);
-                        } else {
-                                int i;
-                                struct obd_export *exp;
-                                struct lov_obd *lov = &sbi->ll_osc_exp->
-                                                            exp_obd->u.lov;
-
-                                for (i = 0; i < lov->desc.ld_tgt_count; i++) {
-                                        if (!lov->lov_tgts[i] ||
-                                            !lov->lov_tgts[i]->ltd_active)
-                                                continue;
-                                        exp = lov->lov_tgts[i]->ltd_exp;
-                                        if (exp->exp_obd == obd) {
-                                                rc = obd_quotactl(exp, oqctl);
-                                                break;
-                                        }
-                                }
-                        }
-
-                        oqctl->qc_cmd = cmd;
-                        QCTL_COPY(qctl, oqctl);
-
-                        if (copy_to_user((void *)arg, qctl, sizeof(*qctl)))
-                                rc = -EFAULT;
-
-                        GOTO(out_quotactl, rc);
-                }
-
-                rc = obd_quotactl(sbi->ll_mdc_exp, oqctl);
-                if (rc && rc != -EBUSY && cmd == Q_QUOTAON) {
-                        oqctl->qc_cmd = Q_QUOTAOFF;
-                        obd_quotactl(sbi->ll_mdc_exp, oqctl);
-                }
-
-                /* If QIF_SPACE is not set, client should collect the
-                 * space usage from OSSs by itself */
-                if (cmd == Q_GETQUOTA &&
-                    !(oqctl->qc_dqblk.dqb_valid & QIF_SPACE) &&
-                    !oqctl->qc_dqblk.dqb_curspace) {
-                        struct obd_quotactl *oqctl_tmp;
-
-                        OBD_ALLOC_PTR(oqctl_tmp);
-                        if (oqctl_tmp == NULL)
-                                GOTO(out_quotactl, rc = -ENOMEM);
-
-                        oqctl_tmp->qc_cmd = Q_GETOQUOTA;
-                        oqctl_tmp->qc_id = oqctl->qc_id;
-                        oqctl_tmp->qc_type = oqctl->qc_type;
-
-                        /* collect space usage from OSTs */
-                        oqctl_tmp->qc_dqblk.dqb_curspace = 0;
-                        rc = obd_quotactl(sbi->ll_osc_exp, oqctl_tmp);
-                        if (!rc || rc == -EREMOTEIO) {
-                                oqctl->qc_dqblk.dqb_curspace =
-                                        oqctl_tmp->qc_dqblk.dqb_curspace;
-                                oqctl->qc_dqblk.dqb_valid |= QIF_SPACE;
-                        }
-
-                        /* collect space & inode usage from MDTs */
-                        oqctl_tmp->qc_dqblk.dqb_curspace = 0;
-                        oqctl_tmp->qc_dqblk.dqb_curinodes = 0;
-                        rc = obd_quotactl(sbi->ll_mdc_exp, oqctl_tmp);
-                        if (!rc || rc == -EREMOTEIO) {
-                                oqctl->qc_dqblk.dqb_curspace +=
-                                        oqctl_tmp->qc_dqblk.dqb_curspace;
-                                oqctl->qc_dqblk.dqb_curinodes =
-                                        oqctl_tmp->qc_dqblk.dqb_curinodes;
-                                oqctl->qc_dqblk.dqb_valid |= QIF_INODES;
-                        } else {
-                                oqctl->qc_dqblk.dqb_valid &= ~QIF_SPACE;
-                        }
-
-                        OBD_FREE_PTR(oqctl_tmp);
-                }
-
-                QCTL_COPY(qctl, oqctl);
-
-                if (copy_to_user((void *)arg, qctl, sizeof(*qctl)))
+                if (rc == 0 && cfs_copy_to_user((void *)arg,qctl,sizeof(*qctl)))
                         rc = -EFAULT;
+
         out_quotactl:
                 OBD_FREE_PTR(qctl);
-                OBD_FREE_PTR(oqctl);
                 RETURN(rc);
         }
-        case OBD_IOC_GETNAME_OLD:
         case OBD_IOC_GETNAME: {
-                struct obd_device *obd = class_exp2obd(sbi->ll_osc_exp);
+                struct obd_device *obd = class_exp2obd(sbi->ll_dt_exp);
                 if (!obd)
                         RETURN(-EFAULT);
-                if (copy_to_user((void *)arg, obd->obd_name,
-                                strlen(obd->obd_name) + 1))
+                if (cfs_copy_to_user((void *)arg, obd->obd_name,
+                                     strlen(obd->obd_name) + 1))
                         RETURN (-EFAULT);
                 RETURN(0);
         }
-        case LL_IOC_PATH2FID: {
-                if (copy_to_user((void *)arg, ll_inode_lu_fid(inode),
-                                 sizeof(struct lu_fid)))
+        case LL_IOC_FLUSHCTX:
+                RETURN(ll_flush_ctx(inode));
+#ifdef CONFIG_FS_POSIX_ACL
+        case LL_IOC_RMTACL: {
+            if (sbi->ll_flags & LL_SBI_RMT_CLIENT &&
+                inode == inode->i_sb->s_root->d_inode) {
+                struct ll_file_data *fd = LUSTRE_FPRIVATE(file);
+
+                LASSERT(fd != NULL);
+                rc = rct_add(&sbi->ll_rct, cfs_curproc_pid(), arg);
+                if (!rc)
+                        fd->fd_flags |= LL_FILE_RMTACL;
+                RETURN(rc);
+            } else
+                RETURN(0);
+        }
+#endif
+        case LL_IOC_GETOBDCOUNT: {
+                int count, vallen;
+                struct obd_export *exp;
+
+                if (cfs_copy_from_user(&count, (int *)arg, sizeof(int)))
+                        RETURN(-EFAULT);
+
+                /* get ost count when count is zero, get mdt count otherwise */
+                exp = count ? sbi->ll_md_exp : sbi->ll_dt_exp;
+                vallen = sizeof(count);
+                rc = obd_get_info(exp, sizeof(KEY_TGT_COUNT), KEY_TGT_COUNT,
+                                  &vallen, &count, NULL);
+                if (rc) {
+                        CERROR("get target count failed: %d\n", rc);
+                        RETURN(rc);
+                }
+
+                if (cfs_copy_to_user((int *)arg, &count, sizeof(int)))
                         RETURN(-EFAULT);
 
                 RETURN(0);
         }
-        case LL_IOC_GET_CONNECT_FLAGS: {
-                if (copy_to_user((void *)arg,
-                                 &sbi->ll_mdc_exp->exp_connect_flags,
-                                 sizeof(__u64)))
+        case LL_IOC_PATH2FID:
+                if (cfs_copy_to_user((void *)arg, ll_inode2fid(inode),
+                                     sizeof(struct lu_fid)))
                         RETURN(-EFAULT);
                 RETURN(0);
+        case LL_IOC_GET_CONNECT_FLAGS: {
+                RETURN(obd_iocontrol(cmd, sbi->ll_md_exp, 0, NULL, (void*)arg));
         }
+        case OBD_IOC_CHANGELOG_SEND:
+        case OBD_IOC_CHANGELOG_CLEAR:
+                rc = copy_and_ioctl(cmd, sbi->ll_md_exp, (void *)arg,
+                                    sizeof(struct ioc_changelog));
+                RETURN(rc);
+        case OBD_IOC_FID2PATH:
+                RETURN(ll_fid2path(ll_i2mdexp(inode), (void *)arg));
+        case LL_IOC_HSM_CT_START:
+                rc = copy_and_ioctl(cmd, sbi->ll_md_exp, (void *)arg,
+                                    sizeof(struct lustre_kernelcomm));
+                RETURN(rc);
+
         default:
-                RETURN(obd_iocontrol(cmd, sbi->ll_osc_exp,0,NULL,(void *)arg));
+                RETURN(obd_iocontrol(cmd, sbi->ll_dt_exp,0,NULL,(void *)arg));
         }
 }
 
@@ -1720,10 +1538,7 @@ static loff_t ll_dir_seek(struct file *file, loff_t offset, int origin)
         loff_t ret = -EINVAL;
         ENTRY;
 
-        if (!(sbi->ll_mdc_exp->exp_connect_flags & OBD_CONNECT_FID))
-                return default_llseek(file, offset, origin);
-
-        mutex_lock(&inode->i_mutex);
+        cfs_mutex_lock(&inode->i_mutex);
         switch (origin) {
                 case SEEK_SET:
                         break;
@@ -1761,16 +1576,27 @@ static loff_t ll_dir_seek(struct file *file, loff_t offset, int origin)
         GOTO(out, ret);
 
 out:
-        mutex_unlock(&inode->i_mutex);
+        cfs_mutex_unlock(&inode->i_mutex);
         return ret;
 }
 
+int ll_dir_open(struct inode *inode, struct file *file)
+{
+        ENTRY;
+        RETURN(ll_file_open(inode, file));
+}
+
+int ll_dir_release(struct inode *inode, struct file *file)
+{
+        ENTRY;
+        RETURN(ll_file_release(inode, file));
+}
+
 struct file_operations ll_dir_operations = {
-        .open     = ll_file_open,
         .llseek   = ll_dir_seek,
-        .release  = ll_file_release,
+        .open     = ll_dir_open,
+        .release  = ll_dir_release,
         .read     = generic_read_dir,
         .readdir  = ll_readdir,
-        .ioctl    = ll_dir_ioctl,
-        .fsync    = ll_fsync
+        .ioctl    = ll_dir_ioctl
 };

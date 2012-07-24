@@ -1,6 +1,6 @@
 #!/bin/bash
-# requirement:
-#	add uml1 uml2 uml3 in your /etc/hosts
+# -*- mode: Bash; tab-width: 4; indent-tabs-mode: t; -*-
+# vim:autoindent:shiftwidth=4:tabstop=4:
 
 # FIXME - there is no reason to use all of these different
 #   return codes, espcially when most of them are mapped to something
@@ -11,8 +11,9 @@ set -e
 
 ONLY=${ONLY:-"$*"}
 
-# bug number for skipped test:      13369
-ALWAYS_EXCEPT=" $CONF_SANITY_EXCEPT 34a"
+# bug number for skipped test:
+#               15977
+ALWAYS_EXCEPT="$CONF_SANITY_EXCEPT"
 # UPDATE THE COMMENT ABOVE WITH BUG NUMBERS WHEN CHANGING ALWAYS_EXCEPT!
 
 if [ "$FAILURE_MODE" = "HARD" ]; then
@@ -24,22 +25,29 @@ fi
 SRCDIR=`dirname $0`
 PATH=$PWD/$SRCDIR:$SRCDIR:$SRCDIR/../utils:$PATH
 
+PTLDEBUG=${PTLDEBUG:--1}
 SAVE_PWD=$PWD
 LUSTRE=${LUSTRE:-`dirname $0`/..}
 RLUSTRE=${RLUSTRE:-$LUSTRE}
-HOSTNAME=`hostname`
 
 . $LUSTRE/tests/test-framework.sh
 init_test_env $@
-init_logging
+
+# use small MDS + OST size to speed formatting time
+# do not use too small MDSSIZE/OSTSIZE, which affect the default jouranl size
+MDSSIZE=200000
+OSTSIZE=200000
+. ${CONFIG:=$LUSTRE/tests/cfg/$NAME.sh}
+
+if ! combined_mgs_mds; then
+    # bug number for skipped test:    23954
+    ALWAYS_EXCEPT="$ALWAYS_EXCEPT       24b"
+fi
+
 # STORED_MDSSIZE is used in test_18
 if [ -n "$MDSSIZE" ]; then
     STORED_MDSSIZE=$MDSSIZE
 fi
-# use small MDS + OST size to speed formatting time
-MDSSIZE=40000
-OSTSIZE=40000
-. ${CONFIG:=$LUSTRE/tests/cfg/$NAME.sh}
 
 # pass "-E lazy_itable_init" to mke2fs to speed up the formatting time
 for facet in MGS MDS OST; do
@@ -51,15 +59,14 @@ for facet in MGS MDS OST; do
     fi
 done
 
+init_logging
+
+#
 require_dsh_mds || exit 0
 require_dsh_ost || exit 0
+#
+[ "$SLOW" = "no" ] && EXCEPT_SLOW="30a 31 45"
 
-if ! combined_mgs_mds; then
-    # bug number for skipped test:    23954
-    ALWAYS_EXCEPT="$ALWAYS_EXCEPT       24b"
-fi
-
-[ "$SLOW" = "no" ] && EXCEPT_SLOW="30 31 45"
 
 assert_DIR
 
@@ -83,7 +90,7 @@ writeconf() {
 	# we need ldiskfs
 	load_modules
 	# if writeconf fails anywhere, we reformat everything
-	writeconf1 mds $MDSDEV || return 0
+	writeconf1 mds `mdsdevname 1` || return 0
 	writeconf1 ost1 `ostdevname 1` || return 0
 	writeconf1 ost2 `ostdevname 2` || return 0
 }
@@ -93,7 +100,7 @@ gen_config() {
 	# and stop to generate the startup logs.
 	start_mds
 	start_ost
-	wait_osc_import_state mds ost FULL
+        wait_osc_import_state mds ost FULL
 	stop_ost
 	stop_mds
 }
@@ -112,14 +119,12 @@ start_mgs () {
 }
 
 start_mds() {
-	echo "start mds service on `facet_active_host mds`"
-	start mds $MDSDEV $MDS_MOUNT_OPTS $@ || return 94
-}
-
-stop_mgs() {
-	echo "stop mgs service on `facet_active_host mgs`"
-	# These tests all use non-failover stop
-	stop mgs -f  || return 97
+	local facet=$SINGLEMDS
+	# we can not use MDSDEV1 here because SINGLEMDS could be set not to mds1 only
+	local num=$(echo $facet | tr -d "mds")
+	local dev=$(mdsdevname $num)
+	echo "start mds service on `facet_active_host $facet`"
+	start $facet ${dev} $MDS_MOUNT_OPTS $@ || return 94
 }
 
 start_mgsmds() {
@@ -130,9 +135,15 @@ start_mgsmds() {
 }
 
 stop_mds() {
-	echo "stop mds service on `facet_active_host mds`"
+	echo "stop mds service on `facet_active_host $SINGLEMDS`"
 	# These tests all use non-failover stop
-	stop mds -f  || return 97
+	stop $SINGLEMDS -f  || return 97
+}
+
+stop_mgs() {
+       echo "stop mgs service on `facet_active_host mgs`"
+       # These tests all use non-failover stop
+       stop mgs -f  || return 97
 }
 
 start_ost() {
@@ -155,16 +166,6 @@ stop_ost2() {
 	echo "stop ost2 service on `facet_active_host ost2`"
 	# These tests all use non-failover stop
 	stop ost2 -f  || return 93
-}
-
-start_client() {
-	echo "start client on `facet_active_host client`"
-	start client || return 99
-}
-
-stop_client() {
-	echo "stop client on `facet_active_host client`"
-	stop client || return 100
 }
 
 mount_client() {
@@ -199,7 +200,7 @@ setup() {
 	start_mds || error "MDT start failed"
 	start_ost || error "OST start failed"
 	mount_client $MOUNT || error "client start failed"
-	df $MOUNT
+	client_up || error "client_up failed"
 }
 
 setup_noconfig() {
@@ -213,19 +214,19 @@ setup_noconfig() {
 }
 
 unload_modules_conf () {
-        if combined_mgs_mds || ! local_mode; then
-                unload_modules || return 1
-        fi
+	if combined_mgs_mds || ! local_mode; then
+		unload_modules || return 1
+	fi
 }
 
 cleanup_nocli() {
-	stop_mds || return 201
 	stop_ost || return 202
+	stop_mds || return 201
 	unload_modules_conf || return 203
 }
 
 cleanup() {
- 	umount_client $MOUNT || return 200
+	umount_client $MOUNT || return 200
 	cleanup_nocli || return $?
 }
 
@@ -258,6 +259,8 @@ if [ "$ONLY" == "cleanup" ]; then
 	exit
 fi
 
+init_gss
+
 #create single point mountpoint
 
 reformat_and_config
@@ -270,10 +273,10 @@ test_0() {
 run_test 0 "single mount setup"
 
 test_1() {
+	start_mds || error "MDT start failed"
 	start_ost
 	echo "start ost second time..."
 	start_ost && error "2nd OST start should fail"
-	start_mds || error "MDT start failed"
 	mount_client $MOUNT || error "client start failed"
 	check_mount || return 42
 	cleanup || return $?
@@ -281,10 +284,10 @@ test_1() {
 run_test 1 "start up ost twice (should return errors)"
 
 test_2() {
-	start_ost
 	start_mds
 	echo "start mds second time.."
 	start_mds && error "2nd MDT start should fail"
+	start_ost
 	mount_client $MOUNT
 	check_mount || return 43
 	cleanup || return $?
@@ -324,7 +327,7 @@ test_5a() {	# was test_5
 	# cleanup may return an error from the failed
 	# disconnects; for now I'll consider this successful
 	# if all the modules have unloaded.
- 	umount -d $MOUNT &
+	umount -d $MOUNT &
 	UMOUNT_PID=$!
 	sleep 6
 	echo "killing umount"
@@ -355,7 +358,7 @@ test_5a() {	# was test_5
 	while [ "$WAIT" -ne "$MAX_WAIT" ]; do
 		sleep $sleep
 		grep -q $MOUNT" " /etc/mtab || break
-        	echo "Waiting /etc/mtab updated ... "
+		echo "Waiting /etc/mtab updated ... "
 		WAIT=$(( WAIT + sleep))
 	done
 	[ "$WAIT" -eq "$MAX_WAIT" ] && error "/etc/mtab is not updated in $WAIT secs"
@@ -399,8 +402,8 @@ test_5c() {
 		error false "unexpected entry in mtab before mount" && return 10
 
 	local rc=0
-	start_ost
 	start_mds
+	start_ost
 	[ -d $MOUNT ] || mkdir -p $MOUNT
 	local oldfs="${FSNAME}"
 	FSNAME="wrong.${FSNAME}"
@@ -435,8 +438,8 @@ test_5e() {
 		error false "unexpected entry in mtab before mount" && return 10
 
 	local rc=0
-	start_ost
 	start_mds
+	start_ost
 
 #define OBD_FAIL_PTLRPC_DELAY_SEND       0x506
 	do_facet client "lctl set_param fail_loc=0x80000506"
@@ -521,14 +524,10 @@ test_9() {
 	do_facet ost1 lctl set_param subsystem_debug=\'mds ost\' || return 1
 
         CHECK_PTLDEBUG="`do_facet ost1 lctl get_param -n debug`"
-        # interop 1.8 <-> 2.0: "trace inode warning error emerg console"
-        local lustre_version=$(get_lustre_version ost1)
-        echo ost1 running $lustre_version
-        if [ "$CHECK_PTLDEBUG" ] && [ "$CHECK_PTLDEBUG" = "trace inode" ]; then
-            echo "lnet.debug success"
-        elif [[ $lustre_version != 1.8* ]] && \
-                [ "$CHECK_PTLDEBUG" = "trace inode warning error emerg console" ]; then
-            echo "lnet.debug success"
+        if [ "$CHECK_PTLDEBUG" ] && { \
+	   [ "$CHECK_PTLDEBUG" = "trace inode warning error emerg console" ] ||
+	   [ "$CHECK_PTLDEBUG" = "trace inode" ]; }; then
+           echo "lnet.debug success"
         else
            echo "lnet.debug: want 'trace inode', have '$CHECK_PTLDEBUG'"
            return 1
@@ -559,48 +558,11 @@ is_blkdev () {
         return $rc
 }
 
-test_16() {
-        setup
-        # Skip this test if MDS is 2.0+, see bug 22944.
-        if [[ "$(get_mds_version_major)" != "1" ]]; then
-                skip "not running on 2.0 server"
-                cleanup
-                return 0
-        fi
-
-        check_mount || return 41
-        cleanup || return $?
-
-        local TMPMTPT="${TMP}/conf16"
-        local files="{OBJECTS,PENDING,LOGS}"
-
-        is_blkdev mds $MDSDEV || LOOPOPT="-o loop"
-
-        log "change the mode of $MDSDEV/$files to 555"
-        do_facet mds "mkdir -p $TMPMTPT &&
-                      mount $LOOPOPT -t $FSTYPE $MDSDEV $TMPMTPT &&
-                      chmod 555 $TMPMTPT/$files &&
-                      umount $TMPMTPT" || return $?
-
-        log "mount Lustre to change the mode of $files, then umount Lustre"
-        setup
-        check_mount || return 41
-        cleanup || return $?
-
-        log "read the mode of $files and check if they has been changed properly"
-        local file
-        for file in ${files//[\{\},]/ }; do
-            expected=`do_facet mds "$DEBUGFS -R 'stat $file' $MDSDEV 2> /dev/null" | \
-                       grep 'Mode: ' | sed -e "s/.*Mode: *//" -e "s/ *Flags:.*//"`
-
-            if [ "$expected" = "0777" ]; then
-                log "Success:Lustre change the mode of $file correctly"
-            else
-                error "Lustre does not change mode of $file properly"
-            fi
-        done
-}
-run_test 16 "verify that lustre will correct the mode of OBJECTS/LOGS/PENDING"
+#
+# Test 16 was to "verify that lustre will correct the mode of OBJECTS".
+# But with new MDS stack we don't care about the mode of local objects
+# anymore, so this test is removed. See bug 22944 for more details.
+#
 
 test_17() {
         setup
@@ -627,6 +589,8 @@ run_test 17 "Verify failed mds_postsetup won't fail assertion (2936) (should ret
 test_18() {
         [ "$FSTYPE" != "ldiskfs" ] && skip "not needed for FSTYPE=$FSTYPE" && return
 
+        local MDSDEV=$(mdsdevname ${SINGLEMDS//mds/})
+
         local MIN=2000000
 
         local OK=
@@ -640,13 +604,13 @@ test_18() {
                 log "use STORED_MDSSIZE=$STORED_MDSSIZE"
 
         # check if the block device is large enough
-        [ -z "$OK" ] && $(is_blkdev mds $MDSDEV $MIN) && OK=1 &&
+        [ -z "$OK" ] && $(is_blkdev $SINGLEMDS $MDSDEV $MIN) && OK=1 &&
                 myMDSSIZE=$MIN && log "use device $MDSDEV with MIN=$MIN"
 
         # check if a loopback device has enough space for fs metadata (5%)
 
         if [ -z "$OK" ]; then
-                local SPACE=$(do_facet mds "[ -f $MDSDEV -o ! -e $MDSDEV ] && df -P \\\$(dirname $MDSDEV)" |
+                local SPACE=$(do_facet $SINGLEMDS "[ -f $MDSDEV -o ! -e $MDSDEV ] && df -P \\\$(dirname $MDSDEV)" |
                         awk '($1 != "Filesystem") {print $4}')
                 ! [ -z "$SPACE" ]  &&  [ $SPACE -gt $((MIN / 20)) ] && \
                         OK=1 && myMDSSIZE=$MIN && \
@@ -673,7 +637,7 @@ test_18() {
         check_mount || return 41
 
         echo "check journal size..."
-        local FOUNDSIZE=$(do_facet mds "$DEBUGFS -c -R 'stat <8>' $MDSDEV" | awk '/Size: / { print $NF; exit;}')
+        local FOUNDSIZE=$(do_facet $SINGLEMDS "$DEBUGFS -c -R 'stat <8>' $MDSDEV" | awk '/Size: / { print $NF; exit;}')
         if [ $FOUNDSIZE -gt $((32 * 1024 * 1024)) ]; then
                 log "Success: mkfs creates large journals. Size: $((FOUNDSIZE >> 20))M"
         else
@@ -701,8 +665,8 @@ run_test 19b "start/stop OSTs without MDS"
 
 test_20() {
 	# first format the ost/mdt
-	start_ost
 	start_mds
+	start_ost
 	mount_client $MOUNT
 	check_mount || return 43
 	rm -f $DIR/$tfile
@@ -723,7 +687,7 @@ run_test 20 "remount ro,rw mounts work and doesn't break /etc/mtab"
 test_21a() {
         start_mds
 	start_ost
-	wait_osc_import_state mds ost FULL
+        wait_osc_import_state mds ost FULL
 	stop_ost
 	stop_mds
 }
@@ -732,7 +696,7 @@ run_test 21a "start mds before ost, stop ost first"
 test_21b() {
         start_ost
 	start_mds
-	wait_osc_import_state mds ost FULL
+        wait_osc_import_state mds ost FULL
 	stop_mds
 	stop_ost
 }
@@ -742,8 +706,7 @@ test_21c() {
         start_ost
 	start_mds
 	start_ost2
-	wait_osc_import_state mds ost2 FULL
-
+        wait_osc_import_state mds ost2 FULL
 	stop_ost
 	stop_ost2
 	stop_mds
@@ -753,32 +716,35 @@ test_21c() {
 run_test 21c "start mds between two osts, stop mds last"
 
 test_21d() {
-	if combined_mgs_mds ; then
-		skip "need separate mgs device" && return 0
-	fi
-	stopall
+        if combined_mgs_mds ; then
+                skip "need separate mgs device" && return 0
+        fi
+        stopall
 
-	reformat
+        reformat
 
-	start_mgs
-	start_ost
-	start_ost2
-	start_mds
+        start_mgs
+        start_ost
+        start_ost2
+        start_mds
+        wait_osc_import_state mds ost2 FULL
 
-	stop_ost
-	stop_ost2
-	stop_mds
-	writeconf
+        stop_ost
+        stop_ost2
+        stop_mds
+        stop_mgs
+        #writeconf to remove all ost2 traces for subsequent tests
+        writeconf
 }
 run_test 21d "start mgs then ost and then mds"
-
 
 test_22() {
 	start_mds
 
 	echo Client mount with ost in logs, but none running
 	start_ost
-	wait_osc_import_state mds ost FULL
+	# wait until mds connected to ost and open client connection
+        wait_osc_import_state mds ost FULL
 	stop_ost
 	mount_client $MOUNT
 	# check_mount will block trying to contact ost
@@ -789,6 +755,14 @@ test_22() {
 
 	echo Client mount with a running ost
 	start_ost
+	if $GSS; then
+		# if gss enabled, wait full time to let connection from
+		# mds to ost be established, due to the mismatch between
+		# initial connect timeout and gss context negotiation timeout.
+		# This perhaps could be remove after AT landed.
+		echo "sleep $((TIMEOUT + TIMEOUT + TIMEOUT))s"
+		sleep $((TIMEOUT + TIMEOUT + TIMEOUT))
+	fi
 	mount_client $MOUNT
 	check_mount || return 41
 	pass
@@ -798,15 +772,15 @@ test_22() {
 run_test 22 "start a client before osts (should return errs)"
 
 test_23a() {	# was test_23
-        setup
-        # fail mds
-	stop mds
+	setup
+	# fail mds
+	stop $SINGLEMDS
 	# force down client so that recovering mds waits for reconnect
 	local running=$(grep -c $MOUNT /proc/mounts) || true
-    	if [ $running -ne 0 ]; then
-        	echo "Stopping client $MOUNT (opts: -f)"
-        	umount -f $MOUNT
-    	fi
+	if [ $running -ne 0 ]; then
+		echo "Stopping client $MOUNT (opts: -f)"
+		umount -f $MOUNT
+	fi
 
 	# enter recovery on mds
 	start_mds
@@ -818,10 +792,12 @@ test_23a() {	# was test_23
 	echo mount pid is ${MOUNT_PID}, mount.lustre pid is ${MOUNT_LUSTRE_PID}
 	ps --ppid $MOUNT_PID
 	ps --ppid $MOUNT_LUSTRE_PID
-	# FIXME why o why can't I kill these? Manual "ctrl-c" works...
-	kill -TERM $MOUNT_LUSTRE_PID
 	echo "waiting for mount to finish"
 	ps -ef | grep mount
+	# "ctrl-c" sends SIGINT but it usually (in script) does not work on child process
+	# SIGTERM works but it does not spread to offspring processses
+	kill -s TERM $MOUNT_PID
+	kill -s TERM $MOUNT_LUSTRE_PID
 	# we can not wait $MOUNT_PID because it is not a child of this shell
 	local PID1
 	local PID2
@@ -830,18 +806,17 @@ test_23a() {	# was test_23
 	local sleep=1
 	while [ "$WAIT" -lt "$MAX_WAIT" ]; do
 		sleep $sleep
-		ps -ef | grep mount
 		PID1=$(ps -ef | awk '{print $2}' | grep -w $MOUNT_PID)
 		PID2=$(ps -ef | awk '{print $2}' | grep -w $MOUNT_LUSTRE_PID)
 		echo PID1=$PID1
 		echo PID2=$PID2
 		[ -z "$PID1" -a -z "$PID2" ] && break
+		echo "waiting for mount to finish ... "
 		WAIT=$(( WAIT + sleep))
-		echo "waited $WAIT seconds for mount to finish ... "
 	done
 	if [ "$WAIT" -eq "$MAX_WAIT" ]; then
-		error "MOUNT_PID $MOUNT_PID and \
-		MOUNT__LUSTRE_PID $MOUNT__LUSTRE_PID still not killed in $WAIT secs"
+		error "MOUNT_PID $MOUNT_PID and "\
+		"MOUNT_LUSTRE_PID $MOUNT_LUSTRE_PID still not killed in $WAIT secs"
 		ps -ef | grep mount
 	fi
 	stop_mds || error
@@ -853,8 +828,8 @@ umount_client $MOUNT
 cleanup_nocli
 
 test_23b() {    # was test_23
-	start_ost
 	start_mds
+	start_ost
 	# Simulate -EINTR during mount OBD_FAIL_LDLM_CLOSE_THREAD
 	lctl set_param fail_loc=0x80000313
 	mount_client $MOUNT
@@ -876,13 +851,15 @@ cleanup_24a() {
 }
 
 test_24a() {
+	local MDSDEV=$(mdsdevname ${SINGLEMDS//mds/})
+
 	if [ -z "$fs2ost_DEV" -o -z "$fs2mds_DEV" ]; then
-		is_blkdev mds $MDSDEV && \
+		is_blkdev $SINGLEMDS $MDSDEV && \
 		skip_env "mixed loopback and real device not working" && return
 	fi
 
 	[ -n "$ost1_HOST" ] && fs2ost_HOST=$ost1_HOST
-	
+
 	local fs2mdsdev=${fs2mds_DEV:-${MDSDEV}_2}
 	local fs2ostdev=${fs2ost_DEV:-$(ostdevname 1)_2}
 
@@ -904,6 +881,7 @@ test_24a() {
 	sleep 10
 	[ -e $MOUNT2/$tfile ] && error "File bleed" && return 7
 	# 2 should work
+	sleep 5
 	cp /etc/passwd $MOUNT2/b || return 3
 	rm $MOUNT2/b || return 4
 	# 2 is actually mounted
@@ -912,22 +890,23 @@ test_24a() {
 	facet_failover fs2mds
 	facet_failover fs2ost
 	df
- 	umount_client $MOUNT
+	umount_client $MOUNT
 	# the MDS must remain up until last MDT
 	stop_mds
-
-	local mdt_obdname=$(do_facet mds "lctl get_param -n devices" | \
-        awk '/ mdt / { print $4 }' | head -1)
-	[ -z "$mdt_obdname" ] && error "No MDT" && return 8
-	
+	MDS=$(do_facet $SINGLEMDS "lctl get_param -n devices" | awk '($3 ~ "mdt" && $4 ~ "MDT") { print $4 }' | head -1)
+	[ -z "$MDS" ] && error "No MDT" && return 8
 	cleanup_24a
 	cleanup_nocli || return 6
 }
 run_test 24a "Multiple MDTs on a single node"
 
 test_24b() {
+	local MDSDEV=$(mdsdevname ${SINGLEMDS//mds/})
+
 	if [ -z "$fs2mds_DEV" ]; then
-		is_blkdev mds $MDSDEV && \
+		local dev=${SINGLEMDS}_dev
+		local MDSDEV=${!dev}
+		is_blkdev $SINGLEMDS $MDSDEV && \
 		skip_env "mixed loopback and real device not working" && return
 	fi
 
@@ -952,9 +931,9 @@ run_test 25 "Verify modules are referenced"
 test_26() {
     load_modules
     # we need modules before mount for sysctl, so make sure...
-    do_facet mds "lsmod | grep -q lustre || modprobe lustre"
+    do_facet $SINGLEMDS "lsmod | grep -q lustre || modprobe lustre"
 #define OBD_FAIL_MDS_FS_SETUP            0x135
-    do_facet mds "lctl set_param fail_loc=0x80000135"
+    do_facet $SINGLEMDS "lctl set_param fail_loc=0x80000135"
     start_mds && echo MDS started && return 1
     lctl get_param -n devices
     DEVS=$(lctl get_param -n devices | egrep -v MG | wc -l)
@@ -975,9 +954,9 @@ set_and_check() {
 	    FINAL=$(($ORIG + 5))
 	fi
 	echo "Setting $PARAM from $ORIG to $FINAL"
-	do_facet mds "$LCTL conf_param $PARAM=$FINAL" || error conf_param failed
+	do_facet $SINGLEMDS "$LCTL conf_param $PARAM='$FINAL'" || error conf_param failed
 
-	wait_update $(facet_host $myfacet) "$TEST" $FINAL || error check failed!
+	wait_update $(facet_host $myfacet) "$TEST" "$FINAL" || error check failed!
 }
 
 test_27a() {
@@ -991,17 +970,13 @@ test_27a() {
 run_test 27a "Reacquire MGS lock if OST started first"
 
 test_27b() {
+	# FIXME. ~grev
         setup
+        local device=$(do_facet $SINGLEMDS "lctl get_param -n devices" | awk '($3 ~ "mdt" && $4 ~ "MDT") { print $4 }')
 
-	# interop 1.8 <-> 2.0:
-	# 1.8: group_acquire_expire, 2.0: identity_acquire_expire
-	local acquire_expire=$(do_facet mds lctl get_param md*.$FSNAME-MDT0000.*acquire_expire | \
-		cut -d= -f1 | cut -d. -f3)
-	facet_failover mds
-	set_and_check mds "lctl get_param -n md*.$FSNAME-MDT0000.$acquire_expire" \
-		"$FSNAME-MDT0000.mdt.$acquire_expire" || return 3
-	set_and_check client "lctl get_param -n mdc.$FSNAME-MDT0000-mdc-*.max_rpcs_in_flight" \
-		"$FSNAME-MDT0000.mdc.max_rpcs_in_flight" || return 4
+	facet_failover $SINGLEMDS
+	set_and_check $SINGLEMDS "lctl get_param -n mdt.$device.identity_acquire_expire" "$device.mdt.identity_acquire_expire" || return 3
+	set_and_check client "lctl get_param -n mdc.$device-mdc-*.max_rpcs_in_flight" "$device.mdc.max_rpcs_in_flight" || return 4
 	check_mount
 	cleanup
 }
@@ -1016,7 +991,7 @@ test_28() {
 	set_and_check client "$TEST" "$PARAM" $FINAL || return 3
 	FINAL=$(($FINAL + 1))
 	set_and_check client "$TEST" "$PARAM" $FINAL || return 4
- 	umount_client $MOUNT || return 200
+	umount_client $MOUNT || return 200
 	mount_client $MOUNT
 	RESULT=$($TEST)
 	if [ $RESULT -ne $FINAL ]; then
@@ -1037,10 +1012,10 @@ test_29() {
 	sleep 10
 
 	local PARAM="$FSNAME-OST0001.osc.active"
-	local PROC_ACT="osc.$FSNAME-OST0001-osc-*.active"
-	local PROC_UUID="osc.$FSNAME-OST0001-osc-*.ost_server_uuid"
+        local PROC_ACT="osc.$FSNAME-OST0001-osc-[^M]*.active"
+        local PROC_UUID="osc.$FSNAME-OST0001-osc-[^M]*.ost_server_uuid"
 
-	ACTV=$(lctl get_param -n $PROC_ACT)
+        ACTV=$(lctl get_param -n $PROC_ACT)
 	DEAC=$((1 - $ACTV))
 	set_and_check client "lctl get_param -n $PROC_ACT" "$PARAM" $DEAC || return 2
         # also check ost_server_uuid status
@@ -1053,12 +1028,14 @@ test_29() {
 	fi
 
 	# check MDT too
-	local MPROC="osc.$(get_mdtosc_proc_path $FSNAME-OST0001).active"
+	local mdtosc=$(get_mdtosc_proc_path $SINGLEMDS $FSNAME-OST0001)
+	mdtosc=${mdtosc/-MDT*/-MDT\*}
+	local MPROC="osc.$mdtosc.active"
 	local MAX=30
 	local WAIT=0
 	while [ 1 ]; do
 	    sleep 5
-	    RESULT=`do_facet mds " lctl get_param -n $MPROC"`
+	    RESULT=`do_facet $SINGLEMDS " lctl get_param -n $MPROC"`
 	    [ ${PIPESTATUS[0]} = 0 ] || error "Can't read $MPROC"
 	    if [ $RESULT -eq $DEAC ]; then
 		echo "MDT deactivated also after $WAIT sec (got $RESULT)"
@@ -1076,7 +1053,7 @@ test_29() {
 	[ -n "$ENABLE_QUOTA" ] && { $LFS quotacheck -ug $MOUNT || error "quotacheck has failed" ; }
 
         # test new client starts deactivated
- 	umount_client $MOUNT || return 200
+	umount_client $MOUNT || return 200
 	mount_client $MOUNT
 	RESULT=$(lctl get_param -n $PROC_UUID | grep DEACTIV | grep NEW)
 	if [ -z "$RESULT" ]; then
@@ -1092,7 +1069,7 @@ test_29() {
 	# make sure it reactivates
 	set_and_check client "lctl get_param -n $PROC_ACT" "$PARAM" $ACTV || return 6
 
- 	umount_client $MOUNT
+	umount_client $MOUNT
 	stop_ost2
 	cleanup_nocli
 	#writeconf to remove all ost2 traces for subsequent tests
@@ -1111,7 +1088,7 @@ test_30a() {
 	    set_and_check client "$TEST" "$FSNAME.llite.max_read_ahead_whole_mb" $i || return 3
 	done
 	# make sure client restart still works
- 	umount_client $MOUNT
+	umount_client $MOUNT
 	mount_client $MOUNT || return 4
 	[ "$($TEST)" -ne "$i" ] && error "Param didn't stick across restart $($TEST) != $i"
 	pass
@@ -1167,7 +1144,7 @@ test_31() { # bug 10734
         mount -t lustre 4.3.2.1@tcp:/lustre $MOUNT || true
 	cleanup
 }
-run_test 31 "Connect to non-existent node (returns errors, should not crash)"
+run_test 31 "Connect to non-existent node (shouldn't crash)"
 
 # Use these start32/stop32 fn instead of t-f start/stop fn,
 # for local devices, to skip global facet vars init
@@ -1188,7 +1165,7 @@ start32 () {
 
 	echo "Starting local ${facet}: $@ $device ${MOUNT%/*}/${facet}"
 	mount -t lustre $@ ${device} ${MOUNT%/*}/${facet}
-	RC=$?
+	local RC=$?
 	if [ $RC -ne 0 ]; then
 		echo "mount -t lustre $@ ${device} ${MOUNT%/*}/${facet}"
 		echo "Start of ${device} of local ${facet} failed ${RC}"
@@ -1198,7 +1175,7 @@ start32 () {
 }
 
 cleanup_nocli32 () {
-	stop32 mds -f
+	stop32 mds1 -f
 	stop32 ost1 -f
 	wait_exit_ST client
 }
@@ -1214,37 +1191,35 @@ cleanup_32() {
 }
 
 test_32a() {
-	# this test is totally useless on a client-only system
 	client_only && skip "client only testing" && return 0
 	[ "$NETTYPE" = "tcp" ] || { skip "NETTYPE != tcp" && return 0; }
 	[ -z "$TUNEFS" ] && skip_env "No tunefs" && return 0
 
-	local DISK1_6=$LUSTRE/tests/disk1_6.tar.bz2
-	[ ! -r $DISK1_6 ] && skip_env "Cant find $DISK1_6, skipping" && return
-
+	local DISK1_8=$LUSTRE/tests/disk1_8.tar.bz2
+	[ ! -r $DISK1_8 ] && skip_env "Cannot find $DISK1_8" && return 0
 	local tmpdir=$TMP/conf32a
 	mkdir -p $tmpdir
+	tar xjvf $DISK1_8 -C $tmpdir || \
+		{ skip_env "Cannot untar $DISK1_8" && return 0; }
 
-	tar xjvf $DISK1_6 -C $tmpdir ||
-		{ skip_env "Cant untar $DISK1_6, skipping" && return ; }
 	load_modules
-	lctl set_param debug=$PTLDEBUG
+	$LCTL set_param debug=$PTLDEBUG
 
 	$TUNEFS $tmpdir/mds || error "tunefs failed"
 
 	combined_mgs_mds || stop mgs
 
 	# nids are wrong, so client wont work, but server should start
-	start32 mds $tmpdir/mds "-o loop,exclude=lustre-OST0000" && \
+	start32 mds1 $tmpdir/mds "-o loop,exclude=lustre-OST0000" && \
 		trap cleanup_32 EXIT INT || return 3
 
-	local UUID=$(lctl get_param -n mds.lustre-MDT0000.uuid)
+	local UUID=$($LCTL get_param -n mdt.lustre-MDT0000.uuid)
 	echo MDS uuid $UUID
 	[ "$UUID" == "lustre-MDT0000_UUID" ] || error "UUID is wrong: $UUID"
 
-	$TUNEFS --mgsnode=`hostname` $tmpdir/ost1 || error "tunefs failed"
+	$TUNEFS --mgsnode=$HOSTNAME $tmpdir/ost1 || error "tunefs failed"
 	start32 ost1 $tmpdir/ost1 "-o loop" || return 5
-	UUID=$(lctl get_param -n obdfilter.lustre-OST0000.uuid)
+	UUID=$($LCTL get_param -n obdfilter.lustre-OST0000.uuid)
 	echo OST uuid $UUID
 	[ "$UUID" == "lustre-OST0000_UUID" ] || error "UUID is wrong: $UUID"
 
@@ -1254,9 +1229,15 @@ test_32a() {
 	$LCTL conf_param lustre-OST0000.osc.max_dirty_mb=15 || return 7
 	$LCTL conf_param lustre-OST0000.failover.node=$NID || return 8
 	echo "ok."
+
 	echo "MDC changes should succeed:"
 	$LCTL conf_param lustre-MDT0000.mdc.max_rpcs_in_flight=9 || return 9
 	$LCTL conf_param lustre-MDT0000.failover.node=$NID || return 10
+	echo "ok."
+
+	echo "LOV changes should succeed:"
+	$LCTL pool_new lustre.interop || return 11
+	$LCTL conf_param lustre-MDT0000.lov.stripesize=4M || return 12
 	echo "ok."
 
 	cleanup_32
@@ -1267,123 +1248,114 @@ test_32a() {
 
 	combined_mgs_mds || stop mgs
 
-	start32 mds $tmpdir/mds "-o loop,exclude=lustre-OST0000" && \
+	start32 mds1 $tmpdir/mds "-o loop,exclude=lustre-OST0000" && \
 		trap cleanup_32 EXIT INT || return 12
 
 	cleanup_32
 
 	rm -rf $tmpdir || true	# true is only for TMP on NFS
 }
-run_test 32a "Upgrade from 1.6 (not live)"
+run_test 32a "Upgrade from 1.8 (not live)"
 
 test_32b() {
-	# this test is totally useless on a client-only system
 	client_only && skip "client only testing" && return 0
 	[ "$NETTYPE" = "tcp" ] || { skip "NETTYPE != tcp" && return 0; }
 	[ -z "$TUNEFS" ] && skip_env "No tunefs" && return
 
-	local DISK1_6=$LUSTRE/tests/disk1_6.tar.bz2
-	[ ! -r $DISK1_6 ] && skip_env "Cant find $DISK1_6, skipping" && return
-
+	local DISK1_8=$LUSTRE/tests/disk1_8.tar.bz2
+	[ ! -r $DISK1_8 ] && skip_env "Cannot find $DISK1_8" && return 0
 	local tmpdir=$TMP/conf32b
-        mkdir -p $tmpdir
-
-        tar xjvf $DISK1_6 -C $tmpdir ||
-                { skip_env "Cant untar $DISK1_6, skipping" && return ; }
+	mkdir -p $tmpdir
+	tar xjvf $DISK1_8 -C $tmpdir || \
+		{ skip_env "Cannot untar $DISK1_8" && return ; }
 
 	load_modules
-	lctl set_param debug=$PTLDEBUG
+	$LCTL set_param debug="config"
+	local NEWNAME=lustre
 
-	# Ugrade process in according to comment 2 bug 20246
 	# writeconf will cause servers to register with their current nids
-	$TUNEFS --mdt --writeconf --erase-param \
-		--param="mdt.group_upcall=/usr/sbin/l_getgroups" $tmpdir/mds || \
-		error "tunefs mds failed"
-
+	$TUNEFS --writeconf --fsname=$NEWNAME $tmpdir/mds || error "tunefs failed"
 	combined_mgs_mds || stop mgs
 
-	start32 mds $tmpdir/mds "-o loop,abort_recov" && \
+	start32 mds1 $tmpdir/mds "-o loop" && \
 		trap cleanup_32 EXIT INT || return 3
 
-	stop32 mds
-	start32 mds "-o loop" $tmpdir/mds || return 4
-	local UUID=$(lctl get_param -n mds.lustre-MDT0000.uuid)
+	local UUID=$($LCTL get_param -n mdt.${NEWNAME}-MDT0000.uuid)
 	echo MDS uuid $UUID
-	[ "$UUID" == "lustre-MDT0000_UUID" ] || error "UUID is wrong: $UUID"
+	[ "$UUID" == "${NEWNAME}-MDT0000_UUID" ] || error "UUID is wrong: $UUID"
 
-	$TUNEFS --ost --writeconf  --erase-param --mgsnode=`hostname`@$NETTYPE $tmpdir/ost1 || \
-		error "tunefs ost failed"
-	start32 ost1 $tmpdir/ost1 "-o loop,abort_recov" || return 5
-
-	UUID=$(lctl get_param -n obdfilter.lustre-OST0000.uuid)
+	$TUNEFS --mgsnode=$HOSTNAME --writeconf --fsname=$NEWNAME $tmpdir/ost1 ||\
+	    error "tunefs failed"
+	start32 ost1 $tmpdir/ost1 "-o loop" || return 5
+	UUID=$($LCTL get_param -n obdfilter.${NEWNAME}-OST0000.uuid)
 	echo OST uuid $UUID
-	[ "$UUID" == "lustre-OST0000_UUID" ] || error "UUID is wrong: $UUID"
+	[ "$UUID" == "${NEWNAME}-OST0000_UUID" ] || error "UUID is wrong: $UUID"
 
 	local NID=$($LCTL list_nids | head -1)
 
 	echo "OSC changes should succeed:"
-	$LCTL conf_param lustre-OST0000.osc.max_dirty_mb=15 || error "OSC conf_param failed"
-	$LCTL conf_param lustre-OST0000.failover.node=$NID || error "add failover nid=$NID failed"
+	$LCTL conf_param ${NEWNAME}-OST0000.osc.max_dirty_mb=15 || return 7
+	$LCTL conf_param ${NEWNAME}-OST0000.failover.node=$NID || return 8
 	echo "ok."
+
 	echo "MDC changes should succeed:"
-	$LCTL conf_param lustre-MDT0000.mdc.max_rpcs_in_flight=9 || return 9
+	$LCTL conf_param ${NEWNAME}-MDT0000.mdc.max_rpcs_in_flight=9 || return 9
+	$LCTL conf_param ${NEWNAME}-MDT0000.failover.node=$NID || return 10
+	echo "ok."
+
+	echo "LOV changes should succeed:"
+	$LCTL pool_new ${NEWNAME}.interop || return 11
+	$LCTL conf_param ${NEWNAME}-MDT0000.lov.stripesize=4M || return 12
 	echo "ok."
 
 	# MDT and OST should have registered with new nids, so we should have
 	# a fully-functioning client
 	echo "Check client and old fs contents"
 
-	local device=`h2$NETTYPE $HOSTNAME`:/lustre
+	local device=`h2$NETTYPE $HOSTNAME`:/$NEWNAME
 	echo "Starting local client: $HOSTNAME: $device $MOUNT"
 	mount -t lustre $device $MOUNT || return 1
 
-	local old=$(lctl get_param -n mdc.*.max_rpcs_in_flight)
+	local old=$($LCTL get_param -n mdc.*.max_rpcs_in_flight)
 	local new=$((old + 5))
-	lctl conf_param lustre-MDT0000.mdc.max_rpcs_in_flight=$new
-	wait_update $HOSTNAME "lctl get_param -n mdc.*.max_rpcs_in_flight" $new || return 11
+	$LCTL conf_param ${NEWNAME}-MDT0000.mdc.max_rpcs_in_flight=$new
+	wait_update $HOSTNAME "$LCTL get_param -n mdc.*.max_rpcs_in_flight" $new || return 11
 
-	[ "$(cksum $MOUNT/passwd | cut -d' ' -f 1,2)" == "2940530074 2837" ] || return 12
+	[ "$(cksum $MOUNT/passwd | cut -d' ' -f 1,2)" == "94306271 1478" ] || return 12
 	echo "ok."
 
 	cleanup_32
 
 	rm -rf $tmpdir || true  # true is only for TMP on NFS
 }
-run_test 32b "Upgrade from 1.6 with writeconf"
+run_test 32b "Upgrade from 1.8 with writeconf"
 
 test_33a() { # bug 12333, was test_33
         local rc=0
         local FSNAME2=test-123
+        local MDSDEV=$(mdsdevname ${SINGLEMDS//mds/})
+
         [ -n "$ost1_HOST" ] && fs2ost_HOST=$ost1_HOST
 
         if [ -z "$fs2ost_DEV" -o -z "$fs2mds_DEV" ]; then
-                is_blkdev mds $MDSDEV && \
+                local dev=${SINGLEMDS}_dev
+                local MDSDEV=${!dev}
+                is_blkdev $SINGLEMDS $MDSDEV && \
                 skip_env "mixed loopback and real device not working" && return
-        fi
-
-        # interop 1.8 <-> 2.0
-        local mkfs_opts
-        local major=$(get_mds_version_major)
-        local minor=$(get_mds_version_minor)
-        if [ $major -le 1 -a $minor -le 8 ]; then
-                mkfs_opts=""
-        else
-                mkfs_opts="--mkfsoptions='-J size=8'" # bug 17931
         fi
 
         combined_mgs_mds || mkfs_opts="$mkfs_opts --nomgs"
 
         local fs2mdsdev=${fs2mds_DEV:-${MDSDEV}_2}
         local fs2ostdev=${fs2ost_DEV:-$(ostdevname 1)_2}
-        add fs2mds $MDS_MKFS_OPTS --fsname=${FSNAME2} $mkfs_opts --reformat $fs2mdsdev || exit 10
+        add fs2mds $MDS_MKFS_OPTS --mkfsoptions='\"-J size=8\"' --fsname=${FSNAME2} --reformat $fs2mdsdev || exit 10
         add fs2ost $OST_MKFS_OPTS --fsname=${FSNAME2} --index=8191 --mgsnode=$MGSNID --reformat $fs2ostdev || exit 10
 
         start fs2mds $fs2mdsdev $MDS_MOUNT_OPTS && trap cleanup_24a EXIT INT
         start fs2ost $fs2ostdev $OST_MOUNT_OPTS
-        do_facet mds "$LCTL conf_param $FSNAME2.sys.timeout=200" || rc=1
+        do_facet $SINGLEMDS "$LCTL conf_param $FSNAME2.sys.timeout=200" || rc=1
         mkdir -p $MOUNT2
         mount -t lustre $MGSNID:/${FSNAME2} $MOUNT2 || rc=2
-        cp /etc/hosts $MOUNT2/. || rc=3
         echo "ok."
 
         cp /etc/hosts $MOUNT2/ || rc=3
@@ -1398,7 +1370,7 @@ test_33a() { # bug 12333, was test_33
 }
 run_test 33a "Mount ost with a large index number"
 
-test_33b() {	# was test_33a
+test_33b() {	# was test_34
         setup
 
         do_facet client dd if=/dev/zero of=$MOUNT/24 bs=1024k count=1
@@ -1431,7 +1403,7 @@ test_34b() {
 	touch $DIR/$tfile || return 1
 	stop_mds --force || return 2
 
- 	manual_umount_client --force
+	manual_umount_client --force
 	rc=$?
 	if [ $rc -ne 0 ]; then
 		error "mtab after failed umount - rc $rc"
@@ -1447,7 +1419,7 @@ test_34c() {
 	touch $DIR/$tfile || return 1
 	stop_ost --force || return 2
 
- 	manual_umount_client --force
+	manual_umount_client --force
 	rc=$?
 	if [ $rc -ne 0 ]; then
 		error "mtab after failed umount - rc $rc"
@@ -1461,12 +1433,13 @@ run_test 34c "force umount with failed ost should be normal"
 test_35a() { # bug 12459
 	setup
 
-	debugsave
+	DBG_SAVE="`lctl get_param -n debug`"
 	lctl set_param debug="ha"
 
 	log "Set up a fake failnode for the MDS"
 	FAKENID="127.0.0.2"
-	do_facet mds $LCTL conf_param ${FSNAME}-MDT0000.failover.node=$FAKENID || return 4
+	local device=$(do_facet $SINGLEMDS "lctl get_param -n devices" | awk '($3 ~ "mdt" && $4 ~ "MDT") { print $4 }' | head -1)
+	do_facet $SINGLEMDS $LCTL conf_param ${device}.failover.node=$FAKENID || return 4
 
 	log "Wait for RECONNECT_INTERVAL seconds (10s)"
 	sleep 10
@@ -1484,13 +1457,13 @@ test_35a() { # bug 12459
 	log "Wait for df ($DFPID) ... "
 	wait $DFPID
 	log "done"
-	debugrestore
+	lctl set_param debug="$DBG_SAVE"
 
 	# retrieve from the log the first server that the client tried to
 	# contact after the connection loss
 	$LCTL dk $TMP/lustre-log-$TESTNAME.log
 	NEXTCONN=`awk "/${MSG}/ {start = 1;}
-		       /import_select_connection.*${FSNAME}-MDT0000-mdc.* using connection/ {
+		       /import_select_connection.*$device-mdc.* using connection/ {
 				if (start) {
 					if (\\\$NF ~ /$FAKENID/)
 						print \\\$NF;
@@ -1518,7 +1491,9 @@ test_35b() { # bug 18674
 
 	log "Set up a fake failnode for the MDS"
 	FAKENID="127.0.0.2"
-	do_facet mds $LCTL conf_param ${FSNAME}-MDT0000.failover.node=$FAKENID || \
+	local device=$(do_facet $SINGLEMDS "$LCTL get_param -n devices" | \
+			awk '($3 ~ "mdt" && $4 ~ "MDT") { print $4 }' | head -1)
+	do_facet $SINGLEMDS "$LCTL conf_param ${device}.failover.node=$FAKENID" || \
 		return 1
 
 	local at_max_saved=0
@@ -1532,7 +1507,7 @@ test_35b() { # bug 18674
 
 	log "Injecting EBUSY on MDS"
 	# Setting OBD_FAIL_MDS_RESEND=0x136
-	do_facet mds "$LCTL set_param fail_loc=0x80000136" || return 2
+	do_facet $SINGLEMDS "$LCTL set_param fail_loc=0x80000136" || return 2
 
 	$LCTL set_param mdc.${FSNAME}*.stats=clear
 
@@ -1541,7 +1516,7 @@ test_35b() { # bug 18674
 	stat $MOUNT/$tdir/$tfile
 
 	log "Stop injecting EBUSY on MDS"
-	do_facet mds "$LCTL set_param fail_loc=0" || return 3
+	do_facet $SINGLEMDS "$LCTL set_param fail_loc=0" || return 3
 	rm -f $MOUNT/$tdir/$tfile
 
 	log "done"
@@ -1571,13 +1546,14 @@ test_35b() { # bug 18674
 		log "ERROR: The client tried to reconnect to the failover server while the primary was busy" && \
 		return 5
 
+	# LU-290
 	# When OBD_FAIL_MDS_RESEND is hit, we sleep for 2 * obd_timeout
-        # Reconnects are supposed to be rate limited to one every 5s
+	# Reconnects are supposed to be rate limited to one every 5s
 	[ $CONNCNT -gt $((2 * $TIMEOUT / 5 + 1)) ] && \
 		log "ERROR: Too many reconnects $CONNCNT" && \
 		return 6
 
-        cleanup
+	cleanup
 	# remove nid settings
 	writeconf
 }
@@ -1586,17 +1562,18 @@ run_test 35b "Continue reconnection retries, if the active server is busy"
 test_36() { # 12743
         [ $OSTCOUNT -lt 2 ] && skip_env "skipping test for single OST" && return
 
-	[ "$ost_HOST" = "`hostname`" -o "$ost1_HOST" = "`hostname`" ] || \
+        [ "$ost_HOST" = "`hostname`" -o "$ost1_HOST" = "`hostname`" ] || \
 		{ skip "remote OST" && return 0; }
 
         local rc=0
         local FSNAME2=test1234
         local fs3ost_HOST=$ost_HOST
+        local MDSDEV=$(mdsdevname ${SINGLEMDS//mds/})
 
         [ -n "$ost1_HOST" ] && fs2ost_HOST=$ost1_HOST && fs3ost_HOST=$ost1_HOST
 
         if [ -z "$fs2ost_DEV" -o -z "$fs2mds_DEV" -o -z "$fs3ost_DEV" ]; then
-		is_blkdev mds $MDSDEV && \
+		is_blkdev $SINGLEMDS $MDSDEV && \
 		skip_env "mixed loopback and real device not working" && return
         fi
 
@@ -1657,25 +1634,25 @@ test_36() { # 12743
 run_test 36 "df report consistency on OSTs with different block size"
 
 test_37() {
-	local mntpt=$(facet_mntpt mds)
-	local mdsdev=$MDSDEV
+	local mntpt=$(facet_mntpt $SINGLEMDS)
+	local mdsdev=$(mdsdevname ${SINGLEMDS//mds/})
 	local mdsdev_sym="$TMP/sym_mdt.img"
 
 	echo "MDS :     $mdsdev"
 	echo "SYMLINK : $mdsdev_sym"
-	do_facet mds rm -f $mdsdev_sym
+	do_facet $SINGLEMDS rm -f $mdsdev_sym
 
-	do_facet mds ln -s $mdsdev $mdsdev_sym
+	do_facet $SINGLEMDS ln -s $mdsdev $mdsdev_sym
 
 	echo "mount symlink device - $mdsdev_sym"
 
 	local rc=0
-	mount_op=$(do_facet mds mount -v -t lustre $MDS_MOUNT_OPTS  $mdsdev_sym $mntpt 2>&1 )
+	mount_op=$(do_facet $SINGLEMDS mount -v -t lustre $MDS_MOUNT_OPTS  $mdsdev_sym $mntpt 2>&1 )
 	rc=${PIPESTATUS[0]}
 
 	echo mount_op=$mount_op
 
-	do_facet mds "umount -d $mntpt && rm -f $mdsdev_sym"
+	do_facet $SINGLEMDS "umount -d $mntpt && rm -f $mdsdev_sym"
 
 	if $(echo $mount_op | grep -q "unable to set tunable"); then
 		error "set tunables failed for symlink device"
@@ -1702,10 +1679,12 @@ test_38() { # bug 14222
 	stop_mds
 	log "rename lov_objid file on MDS"
 	rm -f $TMP/lov_objid.orig
-	do_facet mds "$DEBUGFS -c -R \\\"dump lov_objid $TMP/lov_objid.orig\\\" $MDSDEV"
-	do_facet mds "$DEBUGFS -w -R \\\"rm lov_objid\\\" $MDSDEV"
 
-	do_facet mds "od -Ax -td8 $TMP/lov_objid.orig"
+	local MDSDEV=$(mdsdevname ${SINGLEMDS//mds/})
+	do_facet $SINGLEMDS "$DEBUGFS -c -R \\\"dump lov_objid $TMP/lov_objid.orig\\\" $MDSDEV"
+	do_facet $SINGLEMDS "$DEBUGFS -w -R \\\"rm lov_objid\\\" $MDSDEV"
+
+	do_facet $SINGLEMDS "od -Ax -td8 $TMP/lov_objid.orig"
 	# check create in mds_lov_connect
 	start_mds
 	mount_client $MOUNT
@@ -1713,18 +1692,17 @@ test_38() { # bug 14222
 		[ $V ] && log "verifying $DIR/$tdir/$f"
 		diff -q $f $DIR/$tdir/$f || ERROR=y
 	done
-	do_facet mds "$DEBUGFS -c -R \\\"dump lov_objid $TMP/lov_objid.new\\\"  $MDSDEV"
-	do_facet mds "od -Ax -td8 $TMP/lov_objid.new"
+	do_facet $SINGLEMDS "$DEBUGFS -c -R \\\"dump lov_objid $TMP/lov_objid.new\\\"  $MDSDEV"
+	do_facet $SINGLEMDS "od -Ax -td8 $TMP/lov_objid.new"
 	[ "$ERROR" = "y" ] && error "old and new files are different after connect" || true
-
 
 	# check it's updates in sync
 	umount_client $MOUNT
 	stop_mds
 
-	do_facet mds dd if=/dev/zero of=$TMP/lov_objid.clear bs=4096 count=1
-	do_facet mds "$DEBUGFS -w -R \\\"rm lov_objid\\\" $MDSDEV"
-	do_facet mds "$DEBUGFS -w -R \\\"write $TMP/lov_objid.clear lov_objid\\\" $MDSDEV "
+	do_facet $SINGLEMDS dd if=/dev/zero of=$TMP/lov_objid.clear bs=4096 count=1
+	do_facet $SINGLEMDS "$DEBUGFS -w -R \\\"rm lov_objid\\\" $MDSDEV"
+	do_facet $SINGLEMDS "$DEBUGFS -w -R \\\"write $TMP/lov_objid.clear lov_objid\\\" $MDSDEV "
 
 	start_mds
 	mount_client $MOUNT
@@ -1732,8 +1710,8 @@ test_38() { # bug 14222
 		[ $V ] && log "verifying $DIR/$tdir/$f"
 		diff -q $f $DIR/$tdir/$f || ERROR=y
 	done
-        do_facet mds "$DEBUGFS -c -R \\\"dump lov_objid $TMP/lov_objid.new1\\\" $MDSDEV"
-	do_facet mds "od -Ax -td8 $TMP/lov_objid.new1"
+	do_facet $SINGLEMDS "$DEBUGFS -c -R \\\"dump lov_objid $TMP/lov_objid.new1\\\" $MDSDEV"
+	do_facet $SINGLEMDS "od -Ax -td8 $TMP/lov_objid.new1"
 	umount_client $MOUNT
 	stop_mds
 	[ "$ERROR" = "y" ] && error "old and new files are different after sync" || true
@@ -1743,7 +1721,7 @@ test_38() { # bug 14222
 }
 run_test 38 "MDS recreates missing lov_objid file from OST data"
 
-test_39() { #bug 14413
+test_39() {
         PTLDEBUG=+malloc
         setup
         cleanup
@@ -1755,17 +1733,21 @@ run_test 39 "leak_finder recognizes both LUSTRE and LNET malloc messages"
 test_40() { # bug 15759
 	start_ost
 	#define OBD_FAIL_TGT_TOOMANY_THREADS     0x706
-	do_facet mds "lctl set_param fail_loc=0x80000706"
+	do_facet $SINGLEMDS "$LCTL set_param fail_loc=0x80000706"
 	start_mds
 	cleanup
 }
 run_test 40 "race during service thread startup"
 
-test_41() { #bug 14134
+test_41a() { #bug 14134
+        echo $MDS_MOUNT_OPTS | grep "loop" && skip " loop devices does not work with nosvc option" && return
+
         local rc
-        start mds $MDSDEV $MDS_MOUNT_OPTS -o nosvc -n
+        local MDSDEV=$(mdsdevname ${SINGLEMDS//mds/})
+
+        start $SINGLEMDS $MDSDEV $MDS_MOUNT_OPTS -o nosvc -n
         start ost1 `ostdevname 1` $OST_MOUNT_OPTS
-        start mds $MDSDEV $MDS_MOUNT_OPTS -o nomgs,force
+        start $SINGLEMDS $MDSDEV $MDS_MOUNT_OPTS -o nomgs,force
         mkdir -p $MOUNT
         mount_client $MOUNT || return 1
         sleep 5
@@ -1775,17 +1757,42 @@ test_41() { #bug 14134
 
         umount_client $MOUNT
         stop ost1 -f || return 201
-        stop mds -f || return 202
-        stop mds -f || return 203
+        stop_mds -f || return 202
+        stop_mds -f || return 203
         unload_modules_conf || return 204
         return $rc
 }
-run_test 41 "mount mds with --nosvc and --nomgs"
+run_test 41a "mount mds with --nosvc and --nomgs"
+
+test_41b() {
+        echo $MDS_MOUNT_OPTS | grep "loop" && skip " loop devices does not work with nosvc option" && return
+
+        stopall
+        reformat
+        local MDSDEV=$(mdsdevname ${SINGLEMDS//mds/})
+
+        start $SINGLEMDS $MDSDEV $MDS_MOUNT_OPTS -o nosvc -n
+        start_ost
+        start $SINGLEMDS $MDSDEV $MDS_MOUNT_OPTS -o nomgs,force
+        mkdir -p $MOUNT
+        mount_client $MOUNT || return 1
+        sleep 5
+
+        echo "blah blah" > $MOUNT/$tfile
+        cat $MOUNT/$tfile || return 200
+
+        umount_client $MOUNT
+        stop_ost || return 201
+        stop_mds -f || return 202
+        stop_mds -f || return 203
+
+}
+run_test 41b "mount mds with --nosvc and --nomgs on first mount"
 
 test_42() { #bug 14693
         setup
         check_mount || return 2
-        do_facet client lctl conf_param lustre.llite.some_wrong_param=10
+        do_facet mgs $LCTL conf_param lustre.llite.some_wrong_param=10
         umount_client $MOUNT
         mount_client $MOUNT || return 1
         cleanup
@@ -1793,51 +1800,116 @@ test_42() { #bug 14693
 }
 run_test 42 "invalid config param should not prevent client from mounting"
 
-test_43() { #bug 15993
-        setup
-        VERSION_1_8=$(do_facet mds $LCTL get_param version | grep ^lustre.*1\.[78])
-        if [ -z "$VERSION_1_8" ]; then
-                skip "skipping test for non 1.8 MDS"
-                cleanup
-                return 0
-        fi
+test_43() {
+    [ $UID -ne 0 -o $RUNAS_ID -eq 0 ] && skip_env "run as root"
+    setup
+    chmod ugo+x $DIR || error "chmod 0 failed"
+    set_and_check mds                                        \
+        "lctl get_param -n mdt.$FSNAME-MDT0000.root_squash"  \
+        "$FSNAME.mdt.root_squash"                            \
+        "0:0"
+    set_and_check mds                                        \
+       "lctl get_param -n mdt.$FSNAME-MDT0000.nosquash_nids" \
+       "$FSNAME.mdt.nosquash_nids"                           \
+       "NONE"
 
-        check_mount || return 2
-        testfile=$DIR/$tfile
-        lma="this-should-be-removed-after-remount-and-accessed"
-        touch $testfile
-        echo "set/get trusted.lma"
-#define OBD_FAIL_MDS_ALLOW_COMMON_EA_SETTING    0x13f
-        do_facet mds "lctl set_param fail_loc=0x13f"
-        lctl set_param fail_loc=0x13f
-        setfattr -n trusted.lma -v $lma $testfile || error "create common EA"
-        do_facet mds "lctl set_param fail_loc=0"
-        lctl set_param fail_loc=0
-        ATTR=$(getfattr -n trusted.lma $testfile 2> /dev/null | grep trusted.lma)
-        [ "$ATTR" = "trusted.lma=\"$lma\"" ] || error "check common EA"
-        umount_client $MOUNT
-        stop_mds
-        sleep 5
-        start_mds
-        mount_client $MOUNT
-        check_mount || return 3
-#define OBD_FAIL_MDS_REMOVE_COMMON_EA    0x13e
-        do_facet mds "lctl set_param fail_loc=0x13e"
-        stat $testfile
-        do_facet mds "lctl set_param fail_loc=0"
-        getfattr -d -m trusted $testfile 2> /dev/null | \
-            grep "trusted.lma" && error "common EA not removed" || true
-        cleanup
-        return 0
+    #
+    # create set of test files
+    #
+    echo "111" > $DIR/$tfile-userfile || error "write 1 failed"
+    chmod go-rw $DIR/$tfile-userfile  || error "chmod 1 failed"
+    chown $RUNAS_ID.$RUNAS_ID $DIR/$tfile-userfile || error "chown failed"
+
+    echo "222" > $DIR/$tfile-rootfile || error "write 2 failed"
+    chmod go-rw $DIR/$tfile-rootfile  || error "chmod 2 faield"
+
+    mkdir $DIR/$tdir-rootdir -p       || error "mkdir failed"
+    chmod go-rwx $DIR/$tdir-rootdir   || error "chmod 3 failed"
+    touch $DIR/$tdir-rootdir/tfile-1  || error "touch failed"
+
+    #
+    # check root_squash:
+    #   set root squash UID:GID to RUNAS_ID
+    #   root should be able to access only files owned by RUNAS_ID
+    #
+    set_and_check mds                                        \
+       "lctl get_param -n mdt.$FSNAME-MDT0000.root_squash"   \
+       "$FSNAME.mdt.root_squash"                             \
+       "$RUNAS_ID:$RUNAS_ID"
+
+    ST=$(stat -c "%n: owner uid %u (%A)" $DIR/$tfile-userfile)
+    dd if=$DIR/$tfile-userfile 1>/dev/null 2>/dev/null || \
+        error "$ST: root read permission is denied"
+    echo "$ST: root read permission is granted - ok"
+
+    echo "444" | \
+    dd conv=notrunc if=$DIR/$tfile-userfile 1>/dev/null 2>/dev/null || \
+        error "$ST: root write permission is denied"
+    echo "$ST: root write permission is granted - ok"
+
+    ST=$(stat -c "%n: owner uid %u (%A)" $DIR/$tfile-rootfile)
+    dd if=$DIR/$tfile-rootfile 1>/dev/null 2>/dev/null && \
+        error "$ST: root read permission is granted"
+    echo "$ST: root read permission is denied - ok"
+
+    echo "555" | \
+    dd conv=notrunc of=$DIR/$tfile-rootfile 1>/dev/null 2>/dev/null && \
+        error "$ST: root write permission is granted"
+    echo "$ST: root write permission is denied - ok"
+
+    ST=$(stat -c "%n: owner uid %u (%A)" $DIR/$tdir-rootdir)
+    rm $DIR/$tdir-rootdir/tfile-1 1>/dev/null 2>/dev/null && \
+        error "$ST: root unlink permission is granted"
+    echo "$ST: root unlink permission is denied - ok"
+
+    touch $DIR/tdir-rootdir/tfile-2 1>/dev/null 2>/dev/null && \
+        error "$ST: root create permission is granted"
+    echo "$ST: root create permission is denied - ok"
+
+    #
+    # check nosquash_nids:
+    #   put client's NID into nosquash_nids list,
+    #   root should be able to access root file after that
+    #
+    local NIDLIST=$(lctl list_nids all | tr '\n' ' ')
+    NIDLIST="2@elan $NIDLIST 192.168.0.[2,10]@tcp"
+    NIDLIST=$(echo $NIDLIST | tr -s ' ' ' ')
+    set_and_check mds                                        \
+       "lctl get_param -n mdt.$FSNAME-MDT0000.nosquash_nids" \
+       "$FSNAME-MDTall.mdt.nosquash_nids"                    \
+       "$NIDLIST"
+
+    ST=$(stat -c "%n: owner uid %u (%A)" $DIR/$tfile-rootfile)
+    dd if=$DIR/$tfile-rootfile 1>/dev/null 2>/dev/null || \
+        error "$ST: root read permission is denied"
+    echo "$ST: root read permission is granted - ok"
+
+    echo "666" | \
+    dd conv=notrunc of=$DIR/$tfile-rootfile 1>/dev/null 2>/dev/null || \
+        error "$ST: root write permission is denied"
+    echo "$ST: root write permission is granted - ok"
+
+    ST=$(stat -c "%n: owner uid %u (%A)" $DIR/$tdir-rootdir)
+    rm $DIR/$tdir-rootdir/tfile-1 || \
+        error "$ST: root unlink permission is denied"
+    echo "$ST: root unlink permission is granted - ok"
+    touch $DIR/$tdir-rootdir/tfile-2 || \
+        error "$ST: root create permission is denied"
+    echo "$ST: root create permission is granted - ok"
+
+    return 0
 }
-run_test 43 "remove common EA if it exists"
+run_test 43 "check root_squash and nosquash_nids"
+
+umount_client $MOUNT
+cleanup_nocli
 
 test_44() { # 16317
         setup
         check_mount || return 2
         UUID=$($LCTL get_param llite.${FSNAME}*.uuid | cut -d= -f2)
         STATS_FOUND=no
-        UUIDS=$(do_facet mds "$LCTL get_param $(get_mds_mdt_device_proc_path).${FSNAME}*.exports.*.uuid")
+        UUIDS=$(do_facet $SINGLEMDS "$LCTL get_param mdt.${FSNAME}*.exports.*.uuid")
         for VAL in $UUIDS; do
                 NID=$(echo $VAL | cut -d= -f1)
                 CLUUID=$(echo $VAL | cut -d= -f2)
@@ -1893,7 +1965,7 @@ test_46a() {
 	start_mds || return 1
 	#first client should see only one ost
 	start_ost || return 2
-	wait_osc_import_state mds ost FULL
+        wait_osc_import_state mds ost FULL
 	#start_client
 	mount_client $MOUNT || return 3
 	trap "cleanup_46a $OSTCOUNT" EXIT ERR
@@ -1908,7 +1980,8 @@ test_46a() {
 	    wait_osc_import_state mds ost$i FULL
 	done
 
-        #second client see all ost's
+
+	#second client see all ost's
 
 	mount_client $MOUNT2 || return 8
 	$LFS setstripe $MOUNT2 -c -1 || return 9
@@ -1938,17 +2011,23 @@ test_47() { #17674
         local lru_size=[]
         local count=0
         for ns in $($LCTL get_param ldlm.namespaces.$FSNAME-*-*-*.lru_size); do
+            if echo $ns | grep "MDT[[:digit:]]*"; then
+                continue
+            fi
             lrs=$(echo $ns | sed 's/.*lru_size=//')
             lru_size[count]=$lrs
             let count=count+1
         done
 
         facet_failover ost1
-        facet_failover mds
+        facet_failover $SINGLEMDS
         client_up || return 3
 
         count=0
         for ns in $($LCTL get_param ldlm.namespaces.$FSNAME-*-*-*.lru_size); do
+            if echo $ns | grep "MDT[[:digit:]]*"; then
+                continue
+            fi
             lrs=$(echo $ns | sed 's/.*lru_size=//')
             if ! test "$lrs" -eq "${lru_size[count]}"; then
                 n=$(echo $ns | sed -e 's/ldlm.namespaces.//' -e 's/.lru_size=.*//')
@@ -2001,6 +2080,7 @@ test_49() { # bug 17710
 	local OLD_OST_MKFS_OPTS=$OST_MKFS_OPTS
 	local LOCAL_TIMEOUT=20
 
+
 	OST_MKFS_OPTS="--ost --fsname=$FSNAME --device-size=$OSTSIZE --mgsnode=$MGSNID --param sys.timeout=$LOCAL_TIMEOUT --param sys.ldlm_timeout=$LOCAL_TIMEOUT $MKFSOPT $OSTOPT"
 
 	reformat
@@ -2008,7 +2088,7 @@ test_49() { # bug 17710
 	check_mount || return 1
 
 	echo "check ldlm_timout..."
-	LDLM_MDS="`do_facet mds lctl get_param -n ldlm_timeout`"
+	LDLM_MDS="`do_facet $SINGLEMDS lctl get_param -n ldlm_timeout`"
 	LDLM_OST1="`do_facet ost1 lctl get_param -n ldlm_timeout`"
 	LDLM_CLIENT="`do_facet client lctl get_param -n ldlm_timeout`"
 
@@ -2030,7 +2110,7 @@ test_49() { # bug 17710
 	setup_noconfig
 	check_mount || return 7
 
-	LDLM_MDS="`do_facet mds lctl get_param -n ldlm_timeout`"
+	LDLM_MDS="`do_facet $SINGLEMDS lctl get_param -n ldlm_timeout`"
 	LDLM_OST1="`do_facet ost1 lctl get_param -n ldlm_timeout`"
 	LDLM_CLIENT="`do_facet client lctl get_param -n ldlm_timeout`"
 
@@ -2091,7 +2171,7 @@ test_50b() {
 
 	# Wait for client to detect down OST
 	stop_ost || error "Unable to stop OST1"
-	wait_osc_import_state mds ost DISCONN
+        wait_osc_import_state mds ost DISCONN
 
 	lazystatfs $MOUNT || error "lazystatfs should don't have returned EIO"
 
@@ -2110,12 +2190,14 @@ test_50c() {
 
 	# Wait for client to detect down OST
 	stop_ost || error "Unable to stop OST1"
-	wait_osc_import_state mds ost DISCONN
+        wait_osc_import_state mds ost DISCONN
 	lazystatfs $MOUNT || error "lazystatfs failed with one down server"
 
- 	umount_client $MOUNT || error "Unable to unmount client"
+	umount_client $MOUNT || error "Unable to unmount client"
 	stop_ost2 || error "Unable to stop OST2"
 	stop_mds || error "Unable to stop MDS"
+	#writeconf to remove all ost2 traces for subsequent tests
+	writeconf
 }
 run_test 50c "lazystatfs one server down =========================="
 
@@ -2133,9 +2215,11 @@ test_50d() {
 	stop_ost || error "Unable to stop OST1"
 	lazystatfs $MOUNT || error "lazystatfs failed with one down server"
 
- 	umount_client $MOUNT || error "Unable to unmount client"
+	umount_client $MOUNT || error "Unable to unmount client"
 	stop_ost2 || error "Unable to stop OST2"
 	stop_mds || error "Unable to stop MDS"
+	#writeconf to remove all ost2 traces for subsequent tests
+	writeconf
 }
 run_test 50d "lazystatfs client/server conn race =========================="
 
@@ -2147,21 +2231,21 @@ test_50e() {
 	start_mds || return 1
 	#first client should see only one ost
 	start_ost || return 2
-	wait_osc_import_state mds ost FULL
+        wait_osc_import_state mds ost FULL
 
 	# Wait for client to detect down OST
 	stop_ost || error "Unable to stop OST1"
-	wait_osc_import_state mds ost DISCONN
+        wait_osc_import_state mds ost DISCONN
 
 	mount_client $MOUNT || error "Unable to mount client"
-	lctl set_param llite.$FSNAME-*.lazystatfs=0
+        lctl set_param llite.$FSNAME-*.lazystatfs=0
 
 	multiop_bg_pause $MOUNT _f
 	RC1=$?
 	pid=$!
 
 	if [ $RC1 -ne 0 ]; then
-		log "lazystatfs multiop failed $RC1"
+		log "multiop failed $RC1"
 	else
 	    kill -USR1 $pid
 	    sleep $(( $TIMEOUT+1 ))
@@ -2180,22 +2264,22 @@ run_test 50e "normal statfs all servers down =========================="
 test_50f() {
 	local RC1
 	local pid
-	CONN_PROC="osc.$FSNAME-OST0001-osc.ost_server_uuid"
+	CONN_PROC="osc.$FSNAME-OST0001-osc-[M]*.ost_server_uuid"
 
 	start_mds || error "Unable to start mds"
 	#first client should see only one ost
 	start_ost || error "Unable to start OST1"
-	wait_osc_import_state mds ost FULL
+        wait_osc_import_state mds ost FULL
 
-	start_ost2 || error "Unable to start OST2"
-	wait_osc_import_state mds ost2 FULL
+        start_ost2 || error "Unable to start OST2"
+        wait_osc_import_state mds ost2 FULL
 
 	# Wait for client to detect down OST
 	stop_ost2 || error "Unable to stop OST2"
-	wait_osc_import_state mds ost2 DISCONN
 
+	wait_osc_import_state mds ost2 DISCONN
 	mount_client $MOUNT || error "Unable to mount client"
-	lctl set_param llite.$FSNAME-*.lazystatfs=0
+        lctl set_param llite.$FSNAME-*.lazystatfs=0
 
 	multiop_bg_pause $MOUNT _f
 	RC1=$?
@@ -2225,8 +2309,8 @@ test_50g() {
 	[ "$OSTCOUNT" -lt "2" ] && skip_env "$OSTCOUNT < 2, skipping" && return
 	setup
 	start_ost2 || error "Unable to start OST2"
-	wait_osc_import_state mds ost2 FULL
-	wait_osc_import_state client ost2 FULL
+        wait_osc_import_state mds ost2 FULL
+        wait_osc_import_state client ost2 FULL
 
 	local PARAM="${FSNAME}-OST0001.osc.active"
 
@@ -2249,37 +2333,303 @@ test_50g() {
 }
 run_test 50g "deactivated OST should not cause panic====================="
 
+test_51() {
+	local LOCAL_TIMEOUT=20
+
+	reformat
+	setup_noconfig
+	check_mount || return 1
+
+	mkdir $MOUNT/d1
+	$LFS setstripe -c -1 $MOUNT/d1
+        #define OBD_FAIL_MDS_REINT_DELAY         0x142
+	do_facet $SINGLEMDS "lctl set_param fail_loc=0x142"
+	touch $MOUNT/d1/f1 &
+	local pid=$!
+	sleep 2
+	start_ost2 || return 2
+	wait $pid
+	stop_ost2 || return 3
+	cleanup
+	#writeconf to remove all ost2 traces for subsequent tests
+	writeconf
+}
+run_test 51 "Verify that mdt_reint handles RMF_MDT_MD correctly when an OST is added"
+
+copy_files_xattrs()
+{
+	local node=$1
+	local dest=$2
+	local xattrs=$3
+	shift 3
+
+	do_node $node mkdir -p $dest
+	[ $? -eq 0 ] || { error "Unable to create directory"; return 1; }
+
+	do_node $node  'tar cf - '$@' | tar xf - -C '$dest';
+			[ \"\${PIPESTATUS[*]}\" = \"0 0\" ] || exit 1'
+	[ $? -eq 0 ] || { error "Unable to tar files"; return 2; }
+
+	do_node $node 'getfattr -d -m "[a-z]*\\." '$@' > '$xattrs
+	[ $? -eq 0 ] || { error "Unable to read xattrs"; return 3; }
+}
+
+diff_files_xattrs()
+{
+	local node=$1
+	local backup=$2
+	local xattrs=$3
+	shift 3
+
+	local backup2=${TMP}/backup2
+
+	do_node $node mkdir -p $backup2
+	[ $? -eq 0 ] || { error "Unable to create directory"; return 1; }
+
+	do_node $node  'tar cf - '$@' | tar xf - -C '$backup2';
+			[ \"\${PIPESTATUS[*]}\" = \"0 0\" ] || exit 1'
+	[ $? -eq 0 ] || { error "Unable to tar files to diff"; return 2; }
+
+	do_node $node "diff -rq $backup $backup2"
+	[ $? -eq 0 ] || { error "contents differ"; return 3; }
+
+	local xattrs2=${TMP}/xattrs2
+	do_node $node 'getfattr -d -m "[a-z]*\\." '$@' > '$xattrs2
+	[ $? -eq 0 ] || { error "Unable to read xattrs to diff"; return 4; }
+
+	do_node $node "diff $xattrs $xattrs2"
+	[ $? -eq 0 ] || { error "xattrs differ"; return 5; }
+
+	do_node $node "rm -rf $backup2 $xattrs2"
+	[ $? -eq 0 ] || { error "Unable to delete temporary files"; return 6; }
+}
+
+test_52() {
+	start_mds
+	[ $? -eq 0 ] || { error "Unable to start MDS"; return 1; }
+	start_ost
+	[ $? -eq 0 ] || { error "Unable to start OST1"; return 2; }
+	mount_client $MOUNT
+	[ $? -eq 0 ] || { error "Unable to mount client"; return 3; }
+
+	local nrfiles=8
+	local ost1mnt=${MOUNT%/*}/ost1
+	local ost1node=$(facet_active_host ost1)
+	local ost1tmp=$TMP/conf52
+
+	mkdir -p $DIR/$tdir
+	[ $? -eq 0 ] || { error "Unable to create tdir"; return 4; }
+	touch $TMP/modified_first
+	[ $? -eq 0 ] || { error "Unable to create temporary file"; return 5; }
+	local mtime=$(stat -c %Y $TMP/modified_first)
+	do_node $ost1node "mkdir -p $ost1tmp && touch -m -d @$mtime $ost1tmp/modified_first"
+
+	[ $? -eq 0 ] || { error "Unable to create temporary file"; return 6; }
+	sleep 1
+
+	$LFS setstripe $DIR/$tdir -c -1 -s 1M
+	[ $? -eq 0 ] || { error "lfs setstripe failed"; return 7; }
+
+	for (( i=0; i < nrfiles; i++ )); do
+		multiop $DIR/$tdir/$tfile-$i Ow1048576w1048576w524288c
+		[ $? -eq 0 ] || { error "multiop failed"; return 8; }
+		echo -n .
+	done
+	echo
+
+	# backup files
+	echo backup files to $TMP/files
+	local files=$(find $DIR/$tdir -type f -newer $TMP/modified_first)
+	copy_files_xattrs `hostname` $TMP/files $TMP/file_xattrs $files
+	[ $? -eq 0 ] || { error "Unable to copy files"; return 9; }
+
+	umount_client $MOUNT
+	[ $? -eq 0 ] || { error "Unable to umount client"; return 10; }
+	stop_ost
+	[ $? -eq 0 ] || { error "Unable to stop ost1"; return 11; }
+
+	echo mount ost1 as ldiskfs
+	do_node $ost1node mount -t $FSTYPE $ost1_dev $ost1mnt $OST_MOUNT_OPTS
+	[ $? -eq 0 ] || { error "Unable to mount ost1 as ldiskfs"; return 12; }
+
+	# backup objects
+	echo backup objects to $ost1tmp/objects
+	local objects=$(do_node $ost1node 'find '$ost1mnt'/O/0 -type f -size +0'\
+			'-newer '$ost1tmp'/modified_first -regex ".*\/[0-9]+"')
+	copy_files_xattrs $ost1node $ost1tmp/objects $ost1tmp/object_xattrs $objects
+	[ $? -eq 0 ] || { error "Unable to copy objects"; return 13; }
+
+	# move objects to lost+found
+	do_node $ost1node 'mv '$objects' '${ost1mnt}'/lost+found'
+	[ $? -eq 0 ] || { error "Unable to move objects"; return 14; }
+
+	# recover objects
+	do_node $ost1node "ll_recover_lost_found_objs -d $ost1mnt/lost+found"
+	[ $? -eq 0 ] || { error "ll_recover_lost_found_objs failed"; return 15; }
+
+	# compare restored objects against saved ones
+	diff_files_xattrs $ost1node $ost1tmp/objects $ost1tmp/object_xattrs $objects
+	[ $? -eq 0 ] || { error "Unable to diff objects"; return 16; }
+
+	do_node $ost1node "umount $ost1_dev"
+	[ $? -eq 0 ] || { error "Unable to umount ost1 as ldiskfs"; return 17; }
+
+	start_ost
+	[ $? -eq 0 ] || { error "Unable to start ost1"; return 18; }
+	mount_client $MOUNT
+	[ $? -eq 0 ] || { error "Unable to mount client"; return 19; }
+
+	# compare files
+	diff_files_xattrs `hostname` $TMP/files $TMP/file_xattrs $files
+	[ $? -eq 0 ] || { error "Unable to diff files"; return 20; }
+
+	rm -rf $TMP/files $TMP/file_xattrs
+	[ $? -eq 0 ] || { error "Unable to delete temporary files"; return 21; }
+	do_node $ost1node "rm -rf $ost1tmp"
+	[ $? -eq 0 ] || { error "Unable to delete temporary files"; return 22; }
+	cleanup
+}
+run_test 52 "check recovering objects from lost+found"
+
+# Checks threads_min/max/started for some service
+#
+# Arguments: service name (OST or MDT), facet (e.g., ost1, $SINGLEMDS), and a
+# parameter pattern prefix like 'ost.*.ost'.
+thread_sanity() {
+        local modname=$1
+        local facet=$2
+        local parampat=$3
+        local opts=$4
+        local tmin
+        local tmin2
+        local tmax
+        local tmax2
+        local tstarted
+        local paramp
+        local msg="Insane $modname thread counts"
+        shift 4
+
+        setup
+        check_mount || return 41
+
+        # We need to expand $parampat, but it may match multiple parameters, so
+        # we'll pick the first one
+        if ! paramp=$(do_facet $facet "lctl get_param -N ${parampat}.threads_min"|head -1); then
+                error "Couldn't expand ${parampat}.threads_min parameter name"
+                return 22
+        fi
+
+        # Remove the .threads_min part
+        paramp=${paramp%.threads_min}
+
+        # Check for sanity in defaults
+        tmin=$(do_facet $facet "lctl get_param -n ${paramp}.threads_min" || echo 0)
+        tmax=$(do_facet $facet "lctl get_param -n ${paramp}.threads_max" || echo 0)
+        tstarted=$(do_facet $facet "lctl get_param -n ${paramp}.threads_started" || echo 0)
+        lassert 23 "$msg (PDSH problems?)" '(($tstarted && $tmin && $tmax))' || return $?
+        lassert 24 "$msg" '(($tstarted >= $tmin && $tstarted <= $tmax ))' || return $?
+
+        # Check that we can change min/max
+        do_facet $facet "lctl set_param ${paramp}.threads_min=$((tmin + 1))"
+        do_facet $facet "lctl set_param ${paramp}.threads_max=$((tmax - 1))"
+        tmin2=$(do_facet $facet "lctl get_param -n ${paramp}.threads_min" || echo 0)
+        tmax2=$(do_facet $facet "lctl get_param -n ${paramp}.threads_max" || echo 0)
+        lassert 25 "$msg" '(($tmin2 == ($tmin + 1) && $tmax2 == ($tmax -1)))' || return $?
+
+        # Check that we can set min/max to the same value
+        tmin=$(do_facet $facet "lctl get_param -n ${paramp}.threads_min" || echo 0)
+        do_facet $facet "lctl set_param ${paramp}.threads_max=$tmin"
+        tmin2=$(do_facet $facet "lctl get_param -n ${paramp}.threads_min" || echo 0)
+        tmax2=$(do_facet $facet "lctl get_param -n ${paramp}.threads_max" || echo 0)
+        lassert 26 "$msg" '(($tmin2 == $tmin && $tmax2 == $tmin))' || return $?
+
+        # Check that we can't set max < min
+        do_facet $facet "lctl set_param ${paramp}.threads_max=$((tmin - 1))"
+        tmin2=$(do_facet $facet "lctl get_param -n ${paramp}.threads_min" || echo 0)
+        tmax2=$(do_facet $facet "lctl get_param -n ${paramp}.threads_max" || echo 0)
+        lassert 27 "$msg" '(($tmin2 <= $tmax2))' || return $?
+
+        # We need to ensure that we get the module options desired; to do this
+        # we set LOAD_MODULES_REMOTE=true and we call setmodopts below.
+        LOAD_MODULES_REMOTE=true
+        cleanup
+        local oldvalue
+        setmodopts -a $modname "$opts" oldvalue
+
+        load_modules
+        setup
+        check_mount || return 41
+
+        # Restore previous setting of MODOPTS_*
+        setmodopts $modname "$oldvalue"
+
+        # Check that $opts took
+        tmin=$(do_facet $facet "lctl get_param -n ${paramp}.threads_min")
+        tmax=$(do_facet $facet "lctl get_param -n ${paramp}.threads_max")
+        tstarted=$(do_facet $facet "lctl get_param -n ${paramp}.threads_started")
+        lassert 28 "$msg" '(($tstarted == $tmin && $tstarted == $tmax ))' || return $?
+        cleanup
+
+        # Workaround a YALA bug where YALA expects that modules will remain
+        # loaded on the servers
+        LOAD_MODULES_REMOTE=false
+        load_modules
+        setup
+        cleanup
+}
+
+test_53a() {
+        thread_sanity OST ost1 'ost.*.ost' 'oss_num_threads=64'
+}
+run_test 53a "check OSS thread count params"
+
+test_53b() {
+        thread_sanity MDT $SINGLEMDS 'mdt.*.*.' 'mdt_num_threads=64'
+}
+run_test 53b "check MDT thread count params"
+
+test_54a() {
+    do_rpc_nodes $(facet_host ost1) run_llverdev $(ostdevname 1) -p
+    [ $? -eq 0 ] || error "llverdev failed!"
+    reformat_and_config
+}
+run_test 54a "test llverdev and partial verify of device"
+
+test_54b() {
+    setup
+    run_llverfs $MOUNT -p
+    [ $? -eq 0 ] || error "llverfs failed!"
+    cleanup
+}
+run_test 54b "test llverfs and partial verify of filesystem"
+
 lov_objid_size()
 {
 	local max_ost_index=$1
-	echo -n $(($max_ost_index * 8 + 8))
+	echo -n $(((max_ost_index + 1) * 8))
 }
 
 test_55() {
+	local mdsdev=$(mdsdevname 1)
+	local ostdev=$(ostdevname 1)
 	local saved_opts=$OST_MKFS_OPTS
 
-	for i in 0 1023 2048
+	for i in 1023 2048
 	do
 		OST_MKFS_OPTS="$saved_opts --index $i"
 		reformat
 
 		setup_noconfig
-		cp /etc/passwd $DIR/1
 		stopall
 
-		setup_noconfig
-		cp /etc/passwd $DIR/2
+		setup
 		sync
-
 		echo checking size of lov_objid for ost index $i
-		local file_size=`do_facet mds \
-		    "$DEBUGFS -R 'stat lov_objid' $MDSDEV 2>/dev/null" | \
-		    grep ^User | awk '{print $6}'`
-		if [ "$file_size" != $(lov_objid_size $i) ]; then
-			error "lov_objid size has to be $(lov_objid_size $i), \
-not $file_size"
+		LOV_OBJID_SIZE=$(do_facet mds1 "$DEBUGFS -R 'stat lov_objid' $mdsdev 2>/dev/null" | grep ^User | awk '{print $6}')
+		if [ "$LOV_OBJID_SIZE" != $(lov_objid_size $i) ]; then
+			error "lov_objid size has to be $(lov_objid_size $i), not $LOV_OBJID_SIZE"
 		else
-			echo ok, lov_objid size is correct: $file_size
+			echo ok, lov_objid size is correct: $LOV_OBJID_SIZE
 		fi
 		stopall
 	done
@@ -2290,20 +2640,17 @@ not $file_size"
 run_test 55 "check lov_objid size"
 
 test_56() {
-	add mds $MDS_MKFS_OPTS --mkfsoptions='\"-J size=8\"' \
-		--reformat $MDSDEV || error "failed to reformat mds"
-	add ost1 $OST_MKFS_OPTS --index=1000 --reformat $(ostdevname 1) || \
-		error "failed to reformat ost1"
-	add ost2 $OST_MKFS_OPTS --index=10000 --reformat $(ostdevname 2) || \
-		error "failed to reformat ost2"
+	add mds1 $MDS_MKFS_OPTS --mkfsoptions='\"-J size=16\"' --reformat $(mdsdevname 1)
+	add ost1 $OST_MKFS_OPTS --index=1000 --reformat $(ostdevname 1)
+	add ost2 $OST_MKFS_OPTS --index=10000 --reformat $(ostdevname 2)
 
-	start_mgsmds
+	start_mds
 	start_ost
 	start_ost2 || error "Unable to start second ost"
 	mount_client $MOUNT || error "Unable to mount client"
-	[ -n "$ENABLE_QUOTA" ] && \
-		{ $LFS quotacheck -ug $MOUNT || error "quotacheck has failed"; }
-
+	echo ok
+	$LFS osts
+	[ -n "$ENABLE_QUOTA" ] && { $LFS quotacheck -ug $MOUNT || error "quotacheck has failed" ; }
 	stopall
 	reformat
 }
@@ -2329,9 +2676,13 @@ test_57b() {
 }
 run_test 57b "initial registration from servicenode should not fail"
 
+count_osts() {
+        do_facet mgs $LCTL get_param mgs.MGS.live.$FSNAME | grep OST | wc -l
+}
+
 test_58() { # bug 22658
         [ "$FSTYPE" != "ldiskfs" ] && skip "not supported for $FSTYPE" && return
-	setup_noconfig
+	setup
 	mkdir -p $DIR/$tdir
 	createmany -o $DIR/$tdir/$tfile-%d 100
 	# make sure that OSTs do not cancel llog cookies before we unmount the MDS
@@ -2350,10 +2701,6 @@ test_58() { # bug 22658
 	reformat
 }
 run_test 58 "missing llog files must not prevent MDT from mounting"
-
-count_osts() {
-	do_facet mgs $LCTL get_param mgs.MGS.live.$FSNAME | grep OST | wc -l
-}
 
 test_59() {
 	start_mgsmds >> /dev/null
@@ -2382,134 +2729,21 @@ test_59() {
 	[ $C4 -eq 2 ] || error "OST2 writeconf should add log"
 	stop_ost2 >> /dev/null
 	cleanup_nocli >> /dev/null
+	#writeconf to remove all ost2 traces for subsequent tests
+	writeconf
 }
 run_test 59 "writeconf mount option"
 
-test_62 () { #LNET routes,ip2nets params
-    $LCTL network down
-    unload_modules
-    local cfg_file=$DIR/lnet_config.test
-    local result=$DIR/res.tmp
-    rm -f $cfg_file
-
-    echo "check missing routes configuration file"
-    load_module libcfs
-    load_module lnet routes="$cfg_file"
-    $LCTL network up 2> $result
-    local RES=`cat $result` # | grep error\ 2`
-    $LCTL network down
-    unload_modules
-    [[ "$RES" != "LNET configure error 22: Invalid argument" ]] &&
-        error "invalid state of LNET: $RES"
-
-    echo "check zero routes configuration file"
-    touch $cfg_file
-    load_module libcfs
-    load_module lnet routes="$cfg_file"
-    $LCTL network up 1> $result
-    RES=`cat $result`
-    $LCTL network down
-    unload_modules
-    [[ "$RES" != "LNET configured" ]] &&
-        error "invalid state of LNET: $RES"
-
-    echo "check invalid config file data"
-    dd if=/dev/urandom of=$cfg_file bs=512 count=1
-    load_module libcfs
-    load_module lnet routes="$cfg_file"
-    $LCTL network up 2> $result
-    RES=`cat $result`
-    $LCTL network down
-    unload_modules
-    [[ "$RES" != "LNET configure error 22: Invalid argument" ]] &&
-        error "invalid state of LNET: $RES"
-
-    echo "check valid config file data"
-    [[ "$NETTYPE" == "tcp" ]] && local ntype=o2ib
-    [[ "$NETTYPE" == "o2ib" ]] && local ntype=tcp
-
-    echo $ntype'0 192.168.0.[1-8]@'$NETTYPE'0' > $cfg_file
-    load_module libcfs
-    load_module lnet routes="$cfg_file"
-    $LCTL network up 1> $result
-    RES=`cat $result`
-    [[ "$RES" != "LNET configured" ]] &&
-        { $LCTL network down; unload_modules;
-          error "invalid state of LNET: $RES"; }
-
-    $LCTL route_list 1>$result
-    RES=`cat $result | grep o2ib | wc -l`
-    $LCTL network down
-    unload_modules
-    [[ "$RES" != "8" ]] &&
-        error "invalid LNET routing table: $RES"
-    rm -f $cfg_file
-
-    echo "check missing ip2nets configuration file"
-    load_module libcfs
-    load_module lnet networks=$'\0' ip2nets="$cfg_file"
-    $LCTL network up 2> $result
-    local RES=`cat $result`
-    $LCTL network down
-    unload_modules
-    [[ "$RES" != "LNET configure error 100: Network is down" ]] &&
-          error "invalid state of LNET: $RES"
-
-    echo "check zero ip2nets configuration file"
-    touch $cfg_file
-    load_module libcfs
-    load_module lnet networks=$'\0' ip2nets="$cfg_file"
-    $LCTL network up 2> $result
-    RES=`cat $result`
-    $LCTL network down
-    unload_modules
-    [[ "$RES" != "LNET configure error 100: Network is down" ]] &&
-        error "invalid state of LNET: $RES"
-
-    echo "check invalid ip2nets config file data"
-    dd if=/dev/urandom of=$cfg_file bs=512 count=1
-    load_module libcfs
-    load_module lnet networks=$'\0' ip2nets="$cfg_file"
-    $LCTL network up 2> $result
-    RES=`cat $result`
-    $LCTL network down
-    unload_modules
-    [[ "$RES" != "LNET configure error 100: Network is down" ]] &&
-        error "invalid state of LNET: $RES"
-
-    echo "check valid ip2nets config file data"
-    echo $NETTYPE'0 *.*.*.*;' > $cfg_file
-    load_module libcfs
-    load_module lnet networks=$'\0' ip2nets="$cfg_file"
-    $LCTL network up 1> $result
-    RES=`cat $result`
-    $LCTL network down
-    unload_modules
-    [[ "$RES" != "LNET configured" ]] &&
-        error "invalid state of LNET: $RES"
-    rm -f $cfg_file
-    rm -f $result
-}
-run_test 62 "check lnet module params (routes,ip2nets) using config file."
-
 test_60() { # LU-471
-	add mds $MDS_MKFS_OPTS --mkfsoptions='\" -E stride=64 \"' --reformat $MDSDEV
+	add mds1 $MDS_MKFS_OPTS --mkfsoptions='\" -E stride=64 -O ^uninit_bg\"' --reformat $(mdsdevname 1)
 
-	dump=$(do_facet mds dumpe2fs -h $MDSDEV)
+	dump=$(do_facet $SINGLEMDS dumpe2fs $(mdsdevname 1))
 	rc=${PIPESTATUS[0]}
-	[ $rc -eq 0 ] || error "dumpe2fs $MDSDEV failed"
+	[ $rc -eq 0 ] || error "dumpe2fs $(mdsdevname 1) failed"
 
-	# MDT default has uninit_bg feature
-	echo $dump | grep uninit_bg > /dev/null || error "uninit_bg is not set"
-	# we set stride extended options
-	echo $dump | grep stride > /dev/null || error "stride is not set"
-
-	add mds $MDS_MKFS_OPTS --mkfsoptions='\" -E stride=64 -O ^uninit_bg\"' --reformat $MDSDEV
-	dump=$(do_facet mds dumpe2fs -h $MDSDEV)
-	rc=${PIPESTATUS[0]}
-	[ $rc -eq 0 ] || error "dumpe2fs $MDSDEV failed"
-
-	# we disabled dir_index feature
+	# MDT default has dirdata feature
+	echo $dump | grep dirdata > /dev/null || error "dirdata is not set"
+	# we disable uninit_bg feature
 	echo $dump | grep uninit_bg > /dev/null && error "uninit_bg is set"
 	# we set stride extended options
 	echo $dump | grep stride > /dev/null || error "stride is not set"
@@ -2520,6 +2754,8 @@ run_test 60 "check mkfs.lustre --mkfsoptions -E -O options setting"
 if ! combined_mgs_mds ; then
 	stop mgs
 fi
+
+cleanup_gss
 
 # restore the ${facet}_MKFS_OPTS variables
 for facet in MGS MDS OST; do

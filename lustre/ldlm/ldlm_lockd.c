@@ -28,6 +28,9 @@
 /*
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011 Whamcloud, Inc.
+ *
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -63,15 +66,15 @@ CFS_MODULE_PARM(ldlm_num_threads, "i", int, 0444,
 
 extern cfs_mem_cache_t *ldlm_resource_slab;
 extern cfs_mem_cache_t *ldlm_lock_slab;
-extern struct lustre_lock ldlm_handle_lock;
-
-static struct semaphore ldlm_ref_sem;
+static cfs_semaphore_t  ldlm_ref_sem;
 static int ldlm_refcount;
 
 struct ldlm_cb_async_args {
         struct ldlm_cb_set_arg *ca_set_arg;
         struct ldlm_lock       *ca_lock;
 };
+
+/* LDLM state */
 
 static struct ldlm_state *ldlm_state;
 
@@ -91,15 +94,15 @@ static inline unsigned int ldlm_get_rq_timeout(void)
 
 #ifdef __KERNEL__
 /* w_l_spinlock protects both waiting_locks_list and expired_lock_thread */
-static spinlock_t waiting_locks_spinlock;   /* BH lock (timer) */
-static struct list_head waiting_locks_list;
+static cfs_spinlock_t waiting_locks_spinlock;   /* BH lock (timer) */
+static cfs_list_t waiting_locks_list;
 static cfs_timer_t waiting_locks_timer;
 
 static struct expired_lock_thread {
         cfs_waitq_t               elt_waitq;
         int                       elt_state;
         int                       elt_dump;
-        struct list_head          elt_expired_locks;
+        cfs_list_t                elt_expired_locks;
 } expired_lock_thread;
 #endif
 
@@ -108,37 +111,37 @@ static struct expired_lock_thread {
 #define ELT_TERMINATE 2
 
 struct ldlm_bl_pool {
-        spinlock_t              blp_lock;
+        cfs_spinlock_t          blp_lock;
 
         /*
          * blp_prio_list is used for callbacks that should be handled
          * as a priority. It is used for LDLM_FL_DISCARD_DATA requests.
          * see bug 13843
          */
-        struct list_head        blp_prio_list;
+        cfs_list_t              blp_prio_list;
 
         /*
          * blp_list is used for all other callbacks which are likely
          * to take longer to process.
          */
-        struct list_head        blp_list;
+        cfs_list_t              blp_list;
 
         cfs_waitq_t             blp_waitq;
-        struct completion       blp_comp;
-        atomic_t                blp_num_threads;
-        atomic_t                blp_busy_threads;
+        cfs_completion_t        blp_comp;
+        cfs_atomic_t            blp_num_threads;
+        cfs_atomic_t            blp_busy_threads;
         int                     blp_min_threads;
         int                     blp_max_threads;
 };
 
 struct ldlm_bl_work_item {
-        struct list_head        blwi_entry;
-        struct ldlm_namespace   *blwi_ns;
+        cfs_list_t              blwi_entry;
+        struct ldlm_namespace  *blwi_ns;
         struct ldlm_lock_desc   blwi_ld;
-        struct ldlm_lock        *blwi_lock;
-        struct list_head        blwi_head;
+        struct ldlm_lock       *blwi_lock;
+        cfs_list_t              blwi_head;
         int                     blwi_count;
-        struct completion       blwi_comp;
+        cfs_completion_t        blwi_comp;
         int                     blwi_mode;
         int                     blwi_mem_pressure;
 };
@@ -148,18 +151,18 @@ struct ldlm_bl_work_item {
 static inline int have_expired_locks(void)
 {
         int need_to_run;
-        ENTRY;
 
-        spin_lock_bh(&waiting_locks_spinlock);
-        need_to_run = !list_empty(&expired_lock_thread.elt_expired_locks);
-        spin_unlock_bh(&waiting_locks_spinlock);
+        ENTRY;
+        cfs_spin_lock_bh(&waiting_locks_spinlock);
+        need_to_run = !cfs_list_empty(&expired_lock_thread.elt_expired_locks);
+        cfs_spin_unlock_bh(&waiting_locks_spinlock);
 
         RETURN(need_to_run);
 }
 
 static int expired_lock_main(void *arg)
 {
-        struct list_head *expired = &expired_lock_thread.elt_expired_locks;
+        cfs_list_t *expired = &expired_lock_thread.elt_expired_locks;
         struct l_wait_info lwi = { 0 };
         int do_dump;
 
@@ -175,9 +178,9 @@ static int expired_lock_main(void *arg)
                              expired_lock_thread.elt_state == ELT_TERMINATE,
                              &lwi);
 
-                spin_lock_bh(&waiting_locks_spinlock);
+                cfs_spin_lock_bh(&waiting_locks_spinlock);
                 if (expired_lock_thread.elt_dump) {
-                        spin_unlock_bh(&waiting_locks_spinlock);
+                        cfs_spin_unlock_bh(&waiting_locks_spinlock);
 
                         /* from waiting_locks_callback, but not in timer */
                         libcfs_debug_dumplog();
@@ -185,25 +188,25 @@ static int expired_lock_main(void *arg)
                                                 "waiting_locks_callback",
                                                 expired_lock_thread.elt_dump);
 
-                        spin_lock_bh(&waiting_locks_spinlock);
+                        cfs_spin_lock_bh(&waiting_locks_spinlock);
                         expired_lock_thread.elt_dump = 0;
                 }
 
                 do_dump = 0;
 
-                while (!list_empty(expired)) {
+                while (!cfs_list_empty(expired)) {
                         struct obd_export *export;
                         struct ldlm_lock *lock;
 
-                        lock = list_entry(expired->next, struct ldlm_lock,
+                        lock = cfs_list_entry(expired->next, struct ldlm_lock,
                                           l_pending_chain);
                         if ((void *)lock < LP_POISON + CFS_PAGE_SIZE &&
                             (void *)lock >= LP_POISON) {
-                                spin_unlock_bh(&waiting_locks_spinlock);
+                                cfs_spin_unlock_bh(&waiting_locks_spinlock);
                                 CERROR("free lock on elt list %p\n", lock);
                                 LBUG();
                         }
-                        list_del_init(&lock->l_pending_chain);
+                        cfs_list_del_init(&lock->l_pending_chain);
                         if ((void *)lock->l_export < LP_POISON + CFS_PAGE_SIZE &&
                             (void *)lock->l_export >= LP_POISON) {
                                 CERROR("lock with free export on elt list %p\n",
@@ -213,22 +216,23 @@ static int expired_lock_main(void *arg)
                                 /* release extra ref grabbed by
                                  * ldlm_add_waiting_lock() or
                                  * ldlm_failed_ast() */
-                                LDLM_LOCK_PUT(lock);
+                                LDLM_LOCK_RELEASE(lock);
                                 continue;
                         }
-                        export = class_export_get(lock->l_export);
-                        spin_unlock_bh(&waiting_locks_spinlock);
-
-                        /* release extra ref grabbed by ldlm_add_waiting_lock()
-                         * or ldlm_failed_ast() */
-                        LDLM_LOCK_PUT(lock);
+                        export = class_export_lock_get(lock->l_export, lock);
+                        cfs_spin_unlock_bh(&waiting_locks_spinlock);
 
                         do_dump++;
                         class_fail_export(export);
-                        class_export_put(export);
-                        spin_lock_bh(&waiting_locks_spinlock);
+                        class_export_lock_put(export, lock);
+
+                        /* release extra ref grabbed by ldlm_add_waiting_lock()
+                         * or ldlm_failed_ast() */
+                        LDLM_LOCK_RELEASE(lock);
+
+                        cfs_spin_lock_bh(&waiting_locks_spinlock);
                 }
-                spin_unlock_bh(&waiting_locks_spinlock);
+                cfs_spin_unlock_bh(&waiting_locks_spinlock);
 
                 if (do_dump && obd_dump_on_eviction) {
                         CERROR("dump the log upon eviction\n");
@@ -244,6 +248,8 @@ static int expired_lock_main(void *arg)
         RETURN(0);
 }
 
+static int ldlm_add_waiting_lock(struct ldlm_lock *lock);
+
 /**
  * Check if there is a request in the export request list
  * which prevents the lock canceling.
@@ -257,15 +263,16 @@ static int ldlm_lock_busy(struct ldlm_lock *lock)
         if (lock->l_export == NULL)
                 return 0;
 
-        spin_lock(&lock->l_export->exp_lock);
-        list_for_each_entry(req, &lock->l_export->exp_queued_rpc, rq_exp_list) {
+        cfs_spin_lock_bh(&lock->l_export->exp_rpc_lock);
+        cfs_list_for_each_entry(req, &lock->l_export->exp_queued_rpc,
+                                rq_exp_list) {
                 if (req->rq_ops->hpreq_lock_match) {
                         match = req->rq_ops->hpreq_lock_match(req, lock);
                         if (match)
                                 break;
                 }
         }
-        spin_unlock(&lock->l_export->exp_lock);
+        cfs_spin_unlock_bh(&lock->l_export->exp_rpc_lock);
         RETURN(match);
 }
 
@@ -274,13 +281,48 @@ static void waiting_locks_callback(unsigned long unused)
 {
         struct ldlm_lock *lock, *last = NULL;
 
-        spin_lock_bh(&waiting_locks_spinlock);
-        while (!list_empty(&waiting_locks_list)) {
-                lock = list_entry(waiting_locks_list.next, struct ldlm_lock,
-                                  l_pending_chain);
-                if (cfs_time_after(lock->l_callback_timeout, cfs_time_current())
-                    || (lock->l_req_mode == LCK_GROUP))
+repeat:
+        cfs_spin_lock_bh(&waiting_locks_spinlock);
+        while (!cfs_list_empty(&waiting_locks_list)) {
+                lock = cfs_list_entry(waiting_locks_list.next, struct ldlm_lock,
+                                      l_pending_chain);
+                if (cfs_time_after(lock->l_callback_timeout,
+                                   cfs_time_current()) ||
+                    (lock->l_req_mode == LCK_GROUP))
                         break;
+
+                if (ptlrpc_check_suspend()) {
+                        /* there is a case when we talk to one mds, holding
+                         * lock from another mds. this way we easily can get
+                         * here, if second mds is being recovered. so, we
+                         * suspend timeouts. bug 6019 */
+
+                        LDLM_ERROR(lock, "recharge timeout: %s@%s nid %s ",
+                                   lock->l_export->exp_client_uuid.uuid,
+                                   lock->l_export->exp_connection->c_remote_uuid.uuid,
+                                   libcfs_nid2str(lock->l_export->exp_connection->c_peer.nid));
+
+                        cfs_list_del_init(&lock->l_pending_chain);
+                        cfs_spin_unlock_bh(&waiting_locks_spinlock);
+                        ldlm_add_waiting_lock(lock);
+                        goto repeat;
+                }
+
+                /* if timeout overlaps the activation time of suspended timeouts
+                 * then extend it to give a chance for client to reconnect */
+                if (cfs_time_before(cfs_time_sub(lock->l_callback_timeout,
+                                                 cfs_time_seconds(obd_timeout)/2),
+                                    ptlrpc_suspend_wakeup_time())) {
+                        LDLM_ERROR(lock, "extend timeout due to recovery: %s@%s nid %s ",
+                                   lock->l_export->exp_client_uuid.uuid,
+                                   lock->l_export->exp_connection->c_remote_uuid.uuid,
+                                   libcfs_nid2str(lock->l_export->exp_connection->c_peer.nid));
+
+                        cfs_list_del_init(&lock->l_pending_chain);
+                        cfs_spin_unlock_bh(&waiting_locks_spinlock);
+                        ldlm_add_waiting_lock(lock);
+                        goto repeat;
+                }
 
                 /* Check if we need to prolong timeout */
                 if (!OBD_FAIL_CHECK(OBD_FAIL_PTLRPC_HPREQ_TIMEOUT) &&
@@ -291,56 +333,39 @@ static void waiting_locks_callback(unsigned long unused)
                                 cont = 0;
 
                         LDLM_LOCK_GET(lock);
-                        spin_unlock_bh(&waiting_locks_spinlock);
+
+                        cfs_spin_unlock_bh(&waiting_locks_spinlock);
                         LDLM_DEBUG(lock, "prolong the busy lock");
                         ldlm_refresh_waiting_lock(lock,
                                                   ldlm_get_enq_timeout(lock));
-                        spin_lock_bh(&waiting_locks_spinlock);
+                        cfs_spin_lock_bh(&waiting_locks_spinlock);
 
                         if (!cont) {
-                                LDLM_LOCK_PUT(lock);
+                                LDLM_LOCK_RELEASE(lock);
                                 break;
                         }
 
-                        LDLM_LOCK_PUT(lock);
+                        LDLM_LOCK_RELEASE(lock);
                         continue;
                 }
-                lock->l_resource->lr_namespace->ns_timeouts++;
+                ldlm_lock_to_ns(lock)->ns_timeouts++;
                 LDLM_ERROR(lock, "lock callback timer expired after %lds: "
                            "evicting client at %s ",
                            cfs_time_current_sec()- lock->l_last_activity,
                            libcfs_nid2str(
                                    lock->l_export->exp_connection->c_peer.nid));
-                if (lock == last) {
-                        LDLM_ERROR(lock, "waiting on lock multiple times");
-                        CERROR("wll %p n/p %p/%p, l_pending %p n/p %p/%p\n",
-                               &waiting_locks_list,
-                               waiting_locks_list.next, waiting_locks_list.prev,
-                               &lock->l_pending_chain,
-                               lock->l_pending_chain.next,
-                               lock->l_pending_chain.prev);
 
-                        CFS_INIT_LIST_HEAD(&waiting_locks_list);    /* HACK */
-                        expired_lock_thread.elt_dump = __LINE__;
-
-                        /* LBUG(); */
-                        CEMERG("would be an LBUG, but isn't (bug 5653)\n");
-                        libcfs_debug_dumpstack(NULL);
-                        /*blocks* libcfs_debug_dumplog(); */
-                        /*blocks* libcfs_run_lbug_upcall(file, func, line); */
-                        break;
-                }
                 last = lock;
 
                 /* no needs to take an extra ref on the lock since it was in
                  * the waiting_locks_list and ldlm_add_waiting_lock()
                  * already grabbed a ref */
-                list_del(&lock->l_pending_chain);
-                list_add(&lock->l_pending_chain,
-                         &expired_lock_thread.elt_expired_locks);
+                cfs_list_del(&lock->l_pending_chain);
+                cfs_list_add(&lock->l_pending_chain,
+                             &expired_lock_thread.elt_expired_locks);
         }
 
-        if (!list_empty(&expired_lock_thread.elt_expired_locks)) {
+        if (!cfs_list_empty(&expired_lock_thread.elt_expired_locks)) {
                 if (obd_dump_on_timeout)
                         expired_lock_thread.elt_dump = __LINE__;
 
@@ -351,14 +376,14 @@ static void waiting_locks_callback(unsigned long unused)
          * Make sure the timer will fire again if we have any locks
          * left.
          */
-        if (!list_empty(&waiting_locks_list)) {
+        if (!cfs_list_empty(&waiting_locks_list)) {
                 cfs_time_t timeout_rounded;
-                lock = list_entry(waiting_locks_list.next, struct ldlm_lock,
-                                  l_pending_chain);
+                lock = cfs_list_entry(waiting_locks_list.next, struct ldlm_lock,
+                                      l_pending_chain);
                 timeout_rounded = (cfs_time_t)round_timeout(lock->l_callback_timeout);
                 cfs_timer_arm(&waiting_locks_timer, timeout_rounded);
         }
-        spin_unlock_bh(&waiting_locks_spinlock);
+        cfs_spin_unlock_bh(&waiting_locks_spinlock);
 }
 
 /*
@@ -376,7 +401,7 @@ static int __ldlm_add_waiting_lock(struct ldlm_lock *lock, int seconds)
         cfs_time_t timeout;
         cfs_time_t timeout_rounded;
 
-        if (!list_empty(&lock->l_pending_chain))
+        if (!cfs_list_empty(&lock->l_pending_chain))
                 return 0;
 
         if (OBD_FAIL_CHECK(OBD_FAIL_PTLRPC_HPREQ_NOTIMEOUT) ||
@@ -396,7 +421,8 @@ static int __ldlm_add_waiting_lock(struct ldlm_lock *lock, int seconds)
         }
         /* if the new lock has a shorter timeout than something earlier on
            the list, we'll wait the longer amount of time; no big deal. */
-        list_add_tail(&lock->l_pending_chain, &waiting_locks_list); /* FIFO */
+        /* FIFO */
+        cfs_list_add_tail(&lock->l_pending_chain, &waiting_locks_list);
         return 1;
 }
 
@@ -407,10 +433,10 @@ static int ldlm_add_waiting_lock(struct ldlm_lock *lock)
 
         LASSERT(!(lock->l_flags & LDLM_FL_CANCEL_ON_BLOCK));
 
-        spin_lock_bh(&waiting_locks_spinlock);
+        cfs_spin_lock_bh(&waiting_locks_spinlock);
         if (lock->l_destroyed) {
                 static cfs_time_t next;
-                spin_unlock_bh(&waiting_locks_spinlock);
+                cfs_spin_unlock_bh(&waiting_locks_spinlock);
                 LDLM_ERROR(lock, "not waiting on destroyed lock (bug 5653)");
                 if (cfs_time_after(cfs_time_current(), next)) {
                         next = cfs_time_shift(14400);
@@ -424,7 +450,7 @@ static int ldlm_add_waiting_lock(struct ldlm_lock *lock)
                 /* grab ref on the lock if it has been added to the
                  * waiting list */
                 LDLM_LOCK_GET(lock);
-        spin_unlock_bh(&waiting_locks_spinlock);
+        cfs_spin_unlock_bh(&waiting_locks_spinlock);
 
         LDLM_DEBUG(lock, "%sadding to wait list(timeout: %d, AT: %s)",
                    ret == 0 ? "not re-" : "", timeout,
@@ -443,9 +469,9 @@ static int ldlm_add_waiting_lock(struct ldlm_lock *lock)
  */
 static int __ldlm_del_waiting_lock(struct ldlm_lock *lock)
 {
-        struct list_head *list_next;
+        cfs_list_t *list_next;
 
-        if (list_empty(&lock->l_pending_chain))
+        if (cfs_list_empty(&lock->l_pending_chain))
                 return 0;
 
         list_next = lock->l_pending_chain.next;
@@ -456,13 +482,13 @@ static int __ldlm_del_waiting_lock(struct ldlm_lock *lock)
                         cfs_timer_disarm(&waiting_locks_timer);
                 } else {
                         struct ldlm_lock *next;
-                        next = list_entry(list_next, struct ldlm_lock,
-                                          l_pending_chain);
+                        next = cfs_list_entry(list_next, struct ldlm_lock,
+                                              l_pending_chain);
                         cfs_timer_arm(&waiting_locks_timer,
                                       round_timeout(next->l_callback_timeout));
                 }
         }
-        list_del_init(&lock->l_pending_chain);
+        cfs_list_del_init(&lock->l_pending_chain);
 
         return 1;
 }
@@ -477,14 +503,15 @@ int ldlm_del_waiting_lock(struct ldlm_lock *lock)
                 return 0;
         }
 
-        spin_lock_bh(&waiting_locks_spinlock);
+        cfs_spin_lock_bh(&waiting_locks_spinlock);
         ret = __ldlm_del_waiting_lock(lock);
-        spin_unlock_bh(&waiting_locks_spinlock);
+        cfs_spin_unlock_bh(&waiting_locks_spinlock);
         if (ret)
                 /* release lock ref if it has indeed been removed
                  * from a list */
-                LDLM_LOCK_PUT(lock);
+                LDLM_LOCK_RELEASE(lock);
 
+        LDLM_DEBUG(lock, "%s", ret == 0 ? "wasn't waiting" : "removed");
         return ret;
 }
 
@@ -501,10 +528,10 @@ int ldlm_refresh_waiting_lock(struct ldlm_lock *lock, int timeout)
                 return 0;
         }
 
-        spin_lock_bh(&waiting_locks_spinlock);
+        cfs_spin_lock_bh(&waiting_locks_spinlock);
 
-        if (list_empty(&lock->l_pending_chain)) {
-                spin_unlock_bh(&waiting_locks_spinlock);
+        if (cfs_list_empty(&lock->l_pending_chain)) {
+                cfs_spin_unlock_bh(&waiting_locks_spinlock);
                 LDLM_DEBUG(lock, "wasn't waiting");
                 return 0;
         }
@@ -513,7 +540,7 @@ int ldlm_refresh_waiting_lock(struct ldlm_lock *lock, int timeout)
          * release/take a lock reference */
         __ldlm_del_waiting_lock(lock);
         __ldlm_add_waiting_lock(lock, timeout);
-        spin_unlock_bh(&waiting_locks_spinlock);
+        cfs_spin_unlock_bh(&waiting_locks_spinlock);
 
         LDLM_DEBUG(lock, "refreshed");
         return 1;
@@ -540,25 +567,23 @@ int ldlm_refresh_waiting_lock(struct ldlm_lock *lock, int timeout)
 static void ldlm_failed_ast(struct ldlm_lock *lock, int rc,
                             const char *ast_type)
 {
-        struct ptlrpc_connection *conn = lock->l_export->exp_connection;
-        char                     *str = libcfs_nid2str(conn->c_peer.nid);
-
         LCONSOLE_ERROR_MSG(0x138, "%s: A client on nid %s was evicted due "
-                             "to a lock %s callback to %s timed out: rc %d\n",
-                             lock->l_export->exp_obd->obd_name, str,
-                             ast_type, obd_export_nid2str(lock->l_export), rc);
+                           "to a lock %s callback time out: rc %d\n",
+                           lock->l_export->exp_obd->obd_name,
+                           obd_export_nid2str(lock->l_export), ast_type, rc);
 
         if (obd_dump_on_timeout)
                 libcfs_debug_dumplog();
 #ifdef __KERNEL__
-        spin_lock_bh(&waiting_locks_spinlock);
+        cfs_spin_lock_bh(&waiting_locks_spinlock);
         if (__ldlm_del_waiting_lock(lock) == 0)
                 /* the lock was not in any list, grab an extra ref before adding
                  * the lock to the expired list */
                 LDLM_LOCK_GET(lock);
-        list_add(&lock->l_pending_chain, &expired_lock_thread.elt_expired_locks);
+        cfs_list_add(&lock->l_pending_chain,
+                     &expired_lock_thread.elt_expired_locks);
         cfs_waitq_signal(&expired_lock_thread.elt_waitq);
-        spin_unlock_bh(&waiting_locks_spinlock);
+        cfs_spin_unlock_bh(&waiting_locks_spinlock);
 #else
         class_fail_export(lock->l_export);
 #endif
@@ -591,19 +616,20 @@ static int ldlm_handle_ast_error(struct ldlm_lock *lock,
         } else if (rc) {
                 if (rc == -EINVAL) {
                         struct ldlm_resource *res = lock->l_resource;
-
                         LDLM_DEBUG(lock, "client (nid %s) returned %d"
-                                   " from %s AST - normal race",
-                                   libcfs_nid2str(peer.nid),
-                                   lustre_msg_get_status(req->rq_repmsg),
-                                   ast_type);
+                               " from %s AST - normal race",
+                               libcfs_nid2str(peer.nid),
+                               req->rq_repmsg ?
+                               lustre_msg_get_status(req->rq_repmsg) : -1,
+                               ast_type);
                         if (res) {
                                 /* update lvbo to return proper attributes.
                                  * see bug 23174 */
                                 ldlm_resource_getref(res);
-                                ldlm_res_lvbo_update(res, NULL, 0, 1);
+                                ldlm_res_lvbo_update(res, NULL, 1);
                                 ldlm_resource_putref(res);
                         }
+
                 } else {
                         LDLM_ERROR(lock, "client (nid %s) returned %d "
                                    "from %s AST", libcfs_nid2str(peer.nid),
@@ -620,7 +646,8 @@ static int ldlm_handle_ast_error(struct ldlm_lock *lock,
         return rc;
 }
 
-static int ldlm_cb_interpret(struct ptlrpc_request *req, void *data, int rc)
+static int ldlm_cb_interpret(const struct lu_env *env,
+                             struct ptlrpc_request *req, void *data, int rc)
 {
         struct ldlm_cb_async_args *ca = data;
         struct ldlm_cb_set_arg *arg = ca->ca_set_arg;
@@ -634,10 +661,10 @@ static int ldlm_cb_interpret(struct ptlrpc_request *req, void *data, int rc)
                                            ? "blocking" : "completion");
         }
 
-        LDLM_LOCK_PUT(lock);
+        LDLM_LOCK_RELEASE(lock);
 
         if (rc == -ERESTART)
-                atomic_set(&arg->restart, 1);
+                cfs_atomic_set(&arg->restart, 1);
 
         RETURN(0);
 }
@@ -656,7 +683,7 @@ static inline int ldlm_bl_and_cp_ast_fini(struct ptlrpc_request *req,
                 if (rc == 0)
                         /* If we cancelled the lock, we need to restart
                          * ldlm_reprocess_queue */
-                        atomic_set(&arg->restart, 1);
+                        cfs_atomic_set(&arg->restart, 1);
         } else {
                 LDLM_LOCK_GET(lock);
                 ptlrpc_set_add_req(arg->set, req);
@@ -679,13 +706,14 @@ static void ldlm_lock_reorder_req(struct ldlm_lock *lock)
                 RETURN_EXIT;
         }
 
-        spin_lock(&lock->l_export->exp_lock);
-        list_for_each_entry(req, &lock->l_export->exp_queued_rpc, rq_exp_list) {
+        cfs_spin_lock_bh(&lock->l_export->exp_rpc_lock);
+        cfs_list_for_each_entry(req, &lock->l_export->exp_queued_rpc,
+                                rq_exp_list) {
                 if (!req->rq_hp && req->rq_ops->hpreq_lock_match &&
                     req->rq_ops->hpreq_lock_match(req, lock))
                         ptlrpc_hpreq_reorder(req);
         }
-        spin_unlock(&lock->l_export->exp_lock);
+        cfs_spin_unlock_bh(&lock->l_export->exp_rpc_lock);
         EXIT;
 }
 
@@ -702,26 +730,28 @@ int ldlm_server_blocking_ast(struct ldlm_lock *lock,
 {
         struct ldlm_cb_async_args *ca;
         struct ldlm_cb_set_arg *arg = data;
-        struct ldlm_request *body;
-        struct ptlrpc_request *req;
-        __u32 size[] = { [MSG_PTLRPC_BODY_OFF] = sizeof(struct ptlrpc_body),
-                       [DLM_LOCKREQ_OFF]     = sizeof(*body) };
-        int instant_cancel = 0, rc;
+        struct ldlm_request    *body;
+        struct ptlrpc_request  *req;
+        int                     instant_cancel = 0;
+        int                     rc = 0;
         ENTRY;
 
-        if (flag == LDLM_CB_CANCELING) {
+        if (flag == LDLM_CB_CANCELING)
                 /* Don't need to do anything here. */
                 RETURN(0);
-        }
 
         LASSERT(lock);
         LASSERT(data != NULL);
+        if (lock->l_export->exp_obd->obd_recovering != 0) {
+                LDLM_ERROR(lock, "BUG 6063: lock collide during recovery");
+                ldlm_lock_dump(D_ERROR, lock, 0);
+        }
 
         ldlm_lock_reorder_req(lock);
 
-        req = ptlrpc_prep_req(lock->l_export->exp_imp_reverse,
-                              LUSTRE_DLM_VERSION, LDLM_BL_CALLBACK, 2, size,
-                              NULL);
+        req = ptlrpc_request_alloc_pack(lock->l_export->exp_imp_reverse,
+                                        &RQF_LDLM_BL_CALLBACK,
+                                        LUSTRE_DLM_VERSION, LDLM_BL_CALLBACK);
         if (req == NULL)
                 RETURN(-ENOMEM);
 
@@ -750,28 +780,17 @@ int ldlm_server_blocking_ast(struct ldlm_lock *lock,
                 RETURN(0);
         }
 
-#if 0
-        if (CURRENT_SECONDS - lock->l_export->exp_last_request_time > 30){
-                unlock_res(lock->l_resource);
-                ptlrpc_req_finished(req);
-                ldlm_failed_ast(lock, -ETIMEDOUT, "Not-attempted blocking");
-                RETURN(-ETIMEDOUT);
-        }
-#endif
-
         if (lock->l_flags & LDLM_FL_CANCEL_ON_BLOCK)
                 instant_cancel = 1;
 
-        body = lustre_msg_buf(req->rq_reqmsg, DLM_LOCKREQ_OFF, sizeof(*body));
+        body = req_capsule_client_get(&req->rq_pill, &RMF_DLM_REQ);
         body->lock_handle[0] = lock->l_remote_handle;
         body->lock_desc = *desc;
         body->lock_flags |= (lock->l_flags & LDLM_AST_FLAGS);
 
         LDLM_DEBUG(lock, "server preparing blocking AST");
 
-        lock->l_last_activity = cfs_time_current_sec();
-
-        ptlrpc_req_set_repsize(req, 1, NULL);
+        ptlrpc_request_set_replen(req);
         if (instant_cancel) {
                 unlock_res(lock->l_resource);
                 ldlm_lock_cancel(lock);
@@ -782,15 +801,14 @@ int ldlm_server_blocking_ast(struct ldlm_lock *lock,
         }
 
         req->rq_send_state = LUSTRE_IMP_FULL;
-        /* ptlrpc_prep_req already set timeout */
+        /* ptlrpc_request_alloc_pack already set timeout */
         if (AT_OFF)
                 req->rq_timeout = ldlm_get_rq_timeout();
 
         if (lock->l_export && lock->l_export->exp_nid_stats &&
-            lock->l_export->exp_nid_stats->nid_ldlm_stats) {
+            lock->l_export->exp_nid_stats->nid_ldlm_stats)
                 lprocfs_counter_incr(lock->l_export->exp_nid_stats->nid_ldlm_stats,
                                      LDLM_BL_CALLBACK - LDLM_FIRST_OPC);
-        }
 
         rc = ldlm_bl_and_cp_ast_fini(req, arg, lock, instant_cancel);
 
@@ -800,13 +818,12 @@ int ldlm_server_blocking_ast(struct ldlm_lock *lock,
 int ldlm_server_completion_ast(struct ldlm_lock *lock, int flags, void *data)
 {
         struct ldlm_cb_set_arg *arg = data;
-        struct ldlm_request *body;
-        struct ptlrpc_request *req;
+        struct ldlm_request    *body;
+        struct ptlrpc_request  *req;
         struct ldlm_cb_async_args *ca;
-        long total_enqueue_wait;
-        __u32 size[3] = { [MSG_PTLRPC_BODY_OFF] = sizeof(struct ptlrpc_body),
-                        [DLM_LOCKREQ_OFF]     = sizeof(*body) };
-        int rc, buffers = 2, instant_cancel = 0;
+        long                    total_enqueue_wait;
+        int                     instant_cancel = 0;
+        int                     rc = 0;
         ENTRY;
 
         LASSERT(lock != NULL);
@@ -815,18 +832,22 @@ int ldlm_server_completion_ast(struct ldlm_lock *lock, int flags, void *data)
         total_enqueue_wait = cfs_time_sub(cfs_time_current_sec(),
                                           lock->l_last_activity);
 
-        lock_res_and_lock(lock);
-        if (lock->l_resource->lr_lvb_len) {
-                size[DLM_REQ_REC_OFF] = lock->l_resource->lr_lvb_len;
-                buffers = 3;
-        }
-        unlock_res_and_lock(lock);
-
-        req = ptlrpc_prep_req(lock->l_export->exp_imp_reverse,
-                              LUSTRE_DLM_VERSION, LDLM_CP_CALLBACK, buffers,
-                              size, NULL);
+        req = ptlrpc_request_alloc(lock->l_export->exp_imp_reverse,
+                                    &RQF_LDLM_CP_CALLBACK);
         if (req == NULL)
                 RETURN(-ENOMEM);
+
+        /* server namespace, doesn't need lock */
+        if (lock->l_resource->lr_lvb_len) {
+                 req_capsule_set_size(&req->rq_pill, &RMF_DLM_LVB, RCL_CLIENT,
+                                      lock->l_resource->lr_lvb_len);
+        }
+
+        rc = ptlrpc_request_pack(req, LUSTRE_DLM_VERSION, LDLM_CP_CALLBACK);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
 
         CLASSERT(sizeof(*ca) <= sizeof(req->rq_async_args));
         ca = ptlrpc_req_async_args(req);
@@ -835,21 +856,18 @@ int ldlm_server_completion_ast(struct ldlm_lock *lock, int flags, void *data)
 
         req->rq_interpret_reply = ldlm_cb_interpret;
         req->rq_no_resend = 1;
+        body = req_capsule_client_get(&req->rq_pill, &RMF_DLM_REQ);
 
-        body = lustre_msg_buf(req->rq_reqmsg, DLM_LOCKREQ_OFF, sizeof(*body));
         body->lock_handle[0] = lock->l_remote_handle;
         body->lock_flags = flags;
         ldlm_lock2desc(lock, &body->lock_desc);
+        if (lock->l_resource->lr_lvb_len) {
+                void *lvb = req_capsule_client_get(&req->rq_pill, &RMF_DLM_LVB);
 
-        if (buffers == 3) {
-                void *lvb;
-
-                lvb = lustre_msg_buf(req->rq_reqmsg, DLM_REQ_REC_OFF,
-                                     lock->l_resource->lr_lvb_len);
-                lock_res_and_lock(lock);
+                lock_res(lock->l_resource);
                 memcpy(lvb, lock->l_resource->lr_lvb_data,
                        lock->l_resource->lr_lvb_len);
-                unlock_res_and_lock(lock);
+                unlock_res(lock->l_resource);
         }
 
         LDLM_DEBUG(lock, "server preparing completion AST (after %lds wait)",
@@ -858,7 +876,7 @@ int ldlm_server_completion_ast(struct ldlm_lock *lock, int flags, void *data)
         /* Server-side enqueue wait time estimate, used in
             __ldlm_add_waiting_lock to set future enqueue timers */
         if (total_enqueue_wait < ldlm_get_enq_timeout(lock))
-                at_measured(&lock->l_resource->lr_namespace->ns_at_estimate,
+                at_measured(ldlm_lock_to_ns_at(lock),
                             total_enqueue_wait);
         else
                 /* bz18618. Don't add lock enqueue time we spend waiting for a
@@ -868,12 +886,12 @@ int ldlm_server_completion_ast(struct ldlm_lock *lock, int flags, void *data)
                 LDLM_DEBUG(lock, "lock completed after %lus; estimate was %ds. "
                        "It is likely that a previous callback timed out.",
                        total_enqueue_wait,
-                       at_get(&lock->l_resource->lr_namespace->ns_at_estimate));
+                       at_get(ldlm_lock_to_ns_at(lock)));
 
-        ptlrpc_req_set_repsize(req, 1, NULL);
+        ptlrpc_request_set_replen(req);
 
         req->rq_send_state = LUSTRE_IMP_FULL;
-        /* ptlrpc_prep_req already set timeout */
+        /* ptlrpc_request_pack already set timeout */
         if (AT_OFF)
                 req->rq_timeout = ldlm_get_rq_timeout();
 
@@ -896,17 +914,16 @@ int ldlm_server_completion_ast(struct ldlm_lock *lock, int flags, void *data)
                         instant_cancel = 1;
                         lock_res_and_lock(lock);
                 } else {
-                        ldlm_add_waiting_lock(lock); /* start the lock-timeout
-                                                         clock */
+                        /* start the lock-timeout clock */
+                        ldlm_add_waiting_lock(lock);
                 }
         }
         unlock_res_and_lock(lock);
 
         if (lock->l_export && lock->l_export->exp_nid_stats &&
-            lock->l_export->exp_nid_stats->nid_ldlm_stats) {
+            lock->l_export->exp_nid_stats->nid_ldlm_stats)
                 lprocfs_counter_incr(lock->l_export->exp_nid_stats->nid_ldlm_stats,
                                      LDLM_CP_CALLBACK - LDLM_FIRST_OPC);
-        }
 
         rc = ldlm_bl_and_cp_ast_fini(req, arg, lock, instant_cancel);
 
@@ -915,51 +932,58 @@ int ldlm_server_completion_ast(struct ldlm_lock *lock, int flags, void *data)
 
 int ldlm_server_glimpse_ast(struct ldlm_lock *lock, void *data)
 {
-        struct ldlm_resource *res = lock->l_resource;
-        struct ldlm_request *body;
+        struct ldlm_resource  *res = lock->l_resource;
+        struct ldlm_request   *body;
         struct ptlrpc_request *req;
-        __u32 size[] = { [MSG_PTLRPC_BODY_OFF] = sizeof(struct ptlrpc_body),
-                       [DLM_LOCKREQ_OFF]     = sizeof(*body) };
-        int rc = 0;
+        int                    rc;
         ENTRY;
 
-        LASSERT(lock != NULL && lock->l_export != NULL);
+        LASSERT(lock != NULL);
 
-        req = ptlrpc_prep_req(lock->l_export->exp_imp_reverse,
-                              LUSTRE_DLM_VERSION, LDLM_GL_CALLBACK, 2, size,
-                              NULL);
+        req = ptlrpc_request_alloc_pack(lock->l_export->exp_imp_reverse,
+                                        &RQF_LDLM_GL_CALLBACK,
+                                        LUSTRE_DLM_VERSION, LDLM_GL_CALLBACK);
+
         if (req == NULL)
                 RETURN(-ENOMEM);
 
-        body = lustre_msg_buf(req->rq_reqmsg, DLM_LOCKREQ_OFF, sizeof(*body));
+        body = req_capsule_client_get(&req->rq_pill, &RMF_DLM_REQ);
         body->lock_handle[0] = lock->l_remote_handle;
         ldlm_lock2desc(lock, &body->lock_desc);
 
-        lock_res_and_lock(lock);
-        size[REPLY_REC_OFF] = lock->l_resource->lr_lvb_len;
-        unlock_res_and_lock(lock);
+        /* server namespace, doesn't need lock */
+        req_capsule_set_size(&req->rq_pill, &RMF_DLM_LVB, RCL_SERVER,
+                             lock->l_resource->lr_lvb_len);
         res = lock->l_resource;
-        ptlrpc_req_set_repsize(req, 2, size);
+        ptlrpc_request_set_replen(req);
+
 
         req->rq_send_state = LUSTRE_IMP_FULL;
-        /* ptlrpc_prep_req already set timeout */
+        /* ptlrpc_request_alloc_pack already set timeout */
         if (AT_OFF)
                 req->rq_timeout = ldlm_get_rq_timeout();
 
         if (lock->l_export && lock->l_export->exp_nid_stats &&
-            lock->l_export->exp_nid_stats->nid_ldlm_stats) {
+            lock->l_export->exp_nid_stats->nid_ldlm_stats)
                 lprocfs_counter_incr(lock->l_export->exp_nid_stats->nid_ldlm_stats,
                                      LDLM_GL_CALLBACK - LDLM_FIRST_OPC);
-        }
 
         rc = ptlrpc_queue_wait(req);
-        if (rc == -ELDLM_NO_LOCK_DATA)
+        /* Update the LVB from disk if the AST failed (this is a legal race)
+         *
+         * - Glimpse callback of local lock just return -ELDLM_NO_LOCK_DATA.
+         * - Glimpse callback of remote lock might return -ELDLM_NO_LOCK_DATA
+         *   when inode is cleared. LU-274
+         */
+        if (rc == -ELDLM_NO_LOCK_DATA) {
                 LDLM_DEBUG(lock, "lost race - client has a lock but no inode");
-        else if (rc != 0)
+                ldlm_res_lvbo_update(res, NULL, 1);
+        } else if (rc != 0) {
                 rc = ldlm_handle_ast_error(lock, req, rc, "glimpse");
-        else
-                rc = ldlm_res_lvbo_update(res, req,
-                                          REPLY_REC_OFF, 1);
+        } else {
+                rc = ldlm_res_lvbo_update(res, req, 1);
+        }
+
         ptlrpc_req_finished(req);
         if (rc == -ERESTART)
                 ldlm_reprocess_all(res);
@@ -967,7 +991,13 @@ int ldlm_server_glimpse_ast(struct ldlm_lock *lock, void *data)
         RETURN(rc);
 }
 
-static void ldlm_svc_get_eopc(struct ldlm_request *dlm_req,
+#ifdef __KERNEL__
+extern unsigned long long lu_time_stamp_get(void);
+#else
+#define lu_time_stamp_get() time(NULL)
+#endif
+
+static void ldlm_svc_get_eopc(const struct ldlm_request *dlm_req,
                        struct lprocfs_stats *srv_stats)
 {
         int lock_type = 0, op = 0;
@@ -998,38 +1028,27 @@ static void ldlm_svc_get_eopc(struct ldlm_request *dlm_req,
         if (op)
                 lprocfs_counter_incr(srv_stats, op);
 
-        return ;
+        return;
 }
 
 /*
  * Main server-side entry point into LDLM. This is called by ptlrpc service
  * threads to carry out client lock enqueueing requests.
  */
-int ldlm_handle_enqueue(struct ptlrpc_request *req,
-                        ldlm_completion_callback completion_callback,
-                        ldlm_blocking_callback blocking_callback,
-                        ldlm_glimpse_callback glimpse_callback)
+int ldlm_handle_enqueue0(struct ldlm_namespace *ns,
+                         struct ptlrpc_request *req,
+                         const struct ldlm_request *dlm_req,
+                         const struct ldlm_callback_suite *cbs)
 {
-        struct obd_device *obddev = req->rq_export->exp_obd;
         struct ldlm_reply *dlm_rep;
-        struct ldlm_request *dlm_req;
-        __u32 size[3] = { [MSG_PTLRPC_BODY_OFF] = sizeof(struct ptlrpc_body),
-                        [DLM_LOCKREPLY_OFF]   = sizeof(*dlm_rep) };
-        int rc = 0;
         __u32 flags;
         ldlm_error_t err = ELDLM_OK;
         struct ldlm_lock *lock = NULL;
         void *cookie = NULL;
+        int rc = 0;
         ENTRY;
 
         LDLM_DEBUG_NOLOCK("server-side enqueue handler START");
-
-        dlm_req = lustre_swab_reqbuf(req, DLM_LOCKREQ_OFF, sizeof(*dlm_req),
-                                     lustre_swab_ldlm_request);
-        if (dlm_req == NULL) {
-                CERROR ("Can't unpack dlm_req\n");
-                GOTO(out, rc = -EFAULT);
-        }
 
         ldlm_request_cancel(req, dlm_req, LDLM_ENQUEUE_CANCEL_OFF);
         flags = dlm_req->lock_flags;
@@ -1041,33 +1060,35 @@ int ldlm_handle_enqueue(struct ptlrpc_request *req,
                                   req->rq_rqbd->rqbd_service->srv_stats);
 
         if (req->rq_export && req->rq_export->exp_nid_stats &&
-            req->rq_export->exp_nid_stats->nid_ldlm_stats) {
+            req->rq_export->exp_nid_stats->nid_ldlm_stats)
                 lprocfs_counter_incr(req->rq_export->exp_nid_stats->nid_ldlm_stats,
                                      LDLM_ENQUEUE - LDLM_FIRST_OPC);
-        }
 
-        if (dlm_req->lock_desc.l_resource.lr_type < LDLM_MIN_TYPE ||
-            dlm_req->lock_desc.l_resource.lr_type >= LDLM_MAX_TYPE) {
+        if (unlikely(dlm_req->lock_desc.l_resource.lr_type < LDLM_MIN_TYPE ||
+                     dlm_req->lock_desc.l_resource.lr_type >= LDLM_MAX_TYPE)) {
                 DEBUG_REQ(D_ERROR, req, "invalid lock request type %d",
                           dlm_req->lock_desc.l_resource.lr_type);
                 GOTO(out, rc = -EFAULT);
         }
 
-        if (dlm_req->lock_desc.l_req_mode <= LCK_MINMODE ||
-            dlm_req->lock_desc.l_req_mode >= LCK_MAXMODE ||
-            dlm_req->lock_desc.l_req_mode & (dlm_req->lock_desc.l_req_mode-1)) {
+        if (unlikely(dlm_req->lock_desc.l_req_mode <= LCK_MINMODE ||
+                     dlm_req->lock_desc.l_req_mode >= LCK_MAXMODE ||
+                     dlm_req->lock_desc.l_req_mode &
+                     (dlm_req->lock_desc.l_req_mode-1))) {
                 DEBUG_REQ(D_ERROR, req, "invalid lock request mode %d",
                           dlm_req->lock_desc.l_req_mode);
                 GOTO(out, rc = -EFAULT);
         }
 
         if (req->rq_export->exp_connect_flags & OBD_CONNECT_IBITS) {
-                if (dlm_req->lock_desc.l_resource.lr_type == LDLM_PLAIN) {
+                if (unlikely(dlm_req->lock_desc.l_resource.lr_type ==
+                             LDLM_PLAIN)) {
                         DEBUG_REQ(D_ERROR, req,
                                   "PLAIN lock request from IBITS client?");
                         GOTO(out, rc = -EPROTO);
                 }
-        } else if (dlm_req->lock_desc.l_resource.lr_type == LDLM_IBITS) {
+        } else if (unlikely(dlm_req->lock_desc.l_resource.lr_type ==
+                            LDLM_IBITS)) {
                 DEBUG_REQ(D_ERROR, req,
                           "IBITS lock request from unaware client?");
                 GOTO(out, rc = -EPROTO);
@@ -1090,10 +1111,10 @@ int ldlm_handle_enqueue(struct ptlrpc_request *req,
         }
 #endif
 
-        if (flags & LDLM_FL_REPLAY) {
+        if (unlikely(flags & LDLM_FL_REPLAY)) {
                 /* Find an existing lock in the per-export lock hash */
-                lock = lustre_hash_lookup(req->rq_export->exp_lock_hash,
-                                          (void *)&dlm_req->lock_handle[0]);
+                lock = cfs_hash_lookup(req->rq_export->exp_lock_hash,
+                                       (void *)&dlm_req->lock_handle[0]);
                 if (lock != NULL) {
                         DEBUG_REQ(D_DLMTRACE, req, "found existing lock cookie "
                                   LPX64, lock->l_handle.h_cookie);
@@ -1102,12 +1123,11 @@ int ldlm_handle_enqueue(struct ptlrpc_request *req,
         }
 
         /* The lock's callback data might be set in the policy function */
-        lock = ldlm_lock_create(obddev->obd_namespace,
-                                dlm_req->lock_desc.l_resource.lr_name,
+        lock = ldlm_lock_create(ns, &dlm_req->lock_desc.l_resource.lr_name,
                                 dlm_req->lock_desc.l_resource.lr_type,
                                 dlm_req->lock_desc.l_req_mode,
-                                blocking_callback, completion_callback,
-                                glimpse_callback, NULL, 0);
+                                cbs, NULL, 0);
+
         if (!lock)
                 GOTO(out, rc = -ENOMEM);
 
@@ -1116,17 +1136,20 @@ int ldlm_handle_enqueue(struct ptlrpc_request *req,
         LDLM_DEBUG(lock, "server-side enqueue handler, new lock created");
 
         OBD_FAIL_TIMEOUT(OBD_FAIL_LDLM_ENQUEUE_BLOCKED, obd_timeout * 2);
-        /* Don't enqueue a lock onto the export if it has already
-         * been evicted.  Cancel it now instead. (bug 3822) */
-        if (req->rq_export->exp_failed) {
-                LDLM_ERROR(lock, "lock on destroyed export %p", req->rq_export);
+        /* Don't enqueue a lock onto the export if it is been disonnected
+         * due to eviction (bug 3822) or server umount (bug 24324).
+         * Cancel it now instead. */
+        if (req->rq_export->exp_disconnected) {
+                LDLM_ERROR(lock, "lock on disconnected export %p",
+                           req->rq_export);
                 GOTO(out, rc = -ENOTCONN);
         }
-        lock->l_export = class_export_get(req->rq_export);
 
+        lock->l_export = class_export_lock_get(req->rq_export, lock);
         if (lock->l_export->exp_lock_hash)
-                lustre_hash_add(lock->l_export->exp_lock_hash,
-                                &lock->l_remote_handle, &lock->l_exp_hash);
+                cfs_hash_add(lock->l_export->exp_lock_hash,
+                             &lock->l_remote_handle,
+                             &lock->l_exp_hash);
 
 existing_lock:
 
@@ -1135,37 +1158,36 @@ existing_lock:
                  * local_lock_enqueue by the policy function. */
                 cookie = req;
         } else {
-                int buffers = 2;
-
-                lock_res_and_lock(lock);
+                /* based on the assumption that lvb size never changes during
+                 * resource life time otherwise it need resource->lr_lock's
+                 * protection */
                 if (lock->l_resource->lr_lvb_len) {
-                        size[DLM_REPLY_REC_OFF] = lock->l_resource->lr_lvb_len;
-                        buffers = 3;
+                        req_capsule_set_size(&req->rq_pill, &RMF_DLM_LVB,
+                                             RCL_SERVER,
+                                             lock->l_resource->lr_lvb_len);
                 }
-                unlock_res_and_lock(lock);
 
                 if (OBD_FAIL_CHECK(OBD_FAIL_LDLM_ENQUEUE_EXTENT_ERR))
                         GOTO(out, rc = -ENOMEM);
 
-                rc = lustre_pack_reply(req, buffers, size, NULL);
+                rc = req_capsule_server_pack(&req->rq_pill);
                 if (rc)
                         GOTO(out, rc);
         }
 
         if (dlm_req->lock_desc.l_resource.lr_type != LDLM_PLAIN)
-                ldlm_convert_policy_to_local(
+                ldlm_convert_policy_to_local(req->rq_export,
                                           dlm_req->lock_desc.l_resource.lr_type,
                                           &dlm_req->lock_desc.l_policy_data,
                                           &lock->l_policy_data);
         if (dlm_req->lock_desc.l_resource.lr_type == LDLM_EXTENT)
                 lock->l_req_extent = lock->l_policy_data.l_extent;
 
-        err = ldlm_lock_enqueue(obddev->obd_namespace, &lock, cookie, (int *)&flags);
+        err = ldlm_lock_enqueue(ns, &lock, cookie, (int *)&flags);
         if (err)
                 GOTO(out, err);
 
-        dlm_rep = lustre_msg_buf(req->rq_repmsg, DLM_LOCKREPLY_OFF,
-                                 sizeof(*dlm_rep));
+        dlm_rep = req_capsule_server_get(&req->rq_pill, &RMF_DLM_REP);
         dlm_rep->lock_flags = flags;
 
         ldlm_lock2desc(lock, &dlm_rep->lock_desc);
@@ -1180,19 +1202,21 @@ existing_lock:
         dlm_rep->lock_flags |= dlm_req->lock_flags & LDLM_INHERIT_FLAGS;
         lock->l_flags |= dlm_req->lock_flags & LDLM_INHERIT_FLAGS;
 
-        /* Don't move a pending lock onto the export if it has already
-         * been evicted.  Cancel it now instead. (bug 5683) */
-        if (req->rq_export->exp_failed ||
-            OBD_FAIL_CHECK(OBD_FAIL_LDLM_ENQUEUE_OLD_EXPORT)) {
+        /* Don't move a pending lock onto the export if it has already been
+         * disconnected due to eviction (bug 5683) or server umount (bug 24324).
+         * Cancel it now instead. */
+        if (unlikely(req->rq_export->exp_disconnected ||
+                     OBD_FAIL_CHECK(OBD_FAIL_LDLM_ENQUEUE_OLD_EXPORT))) {
                 LDLM_ERROR(lock, "lock on destroyed export %p", req->rq_export);
                 rc = -ENOTCONN;
         } else if (lock->l_flags & LDLM_FL_AST_SENT) {
                 dlm_rep->lock_flags |= LDLM_FL_AST_SENT;
                 if (lock->l_granted_mode == lock->l_req_mode) {
-                        /* Only cancel lock if it was granted, because it
-                         * would be destroyed immediatelly and would never
-                         * be granted in the future, causing timeouts on client.
-                         * Not granted lock will be cancelled immediatelly after
+                        /*
+                         * Only cancel lock if it was granted, because it would
+                         * be destroyed immediately and would never be granted
+                         * in the future, causing timeouts on client.  Not
+                         * granted lock will be cancelled immediately after
                          * sending completion AST.
                          */
                         if (dlm_rep->lock_flags & LDLM_FL_CANCEL_ON_BLOCK) {
@@ -1208,8 +1232,8 @@ existing_lock:
         if ((dlm_req->lock_desc.l_resource.lr_type == LDLM_PLAIN ||
             dlm_req->lock_desc.l_resource.lr_type == LDLM_IBITS) &&
              req->rq_export->exp_libclient) {
-                if (!(lock->l_flags & LDLM_FL_CANCEL_ON_BLOCK) ||
-                    !(dlm_rep->lock_flags & LDLM_FL_CANCEL_ON_BLOCK)) {
+                if (unlikely(!(lock->l_flags & LDLM_FL_CANCEL_ON_BLOCK) ||
+                             !(dlm_rep->lock_flags & LDLM_FL_CANCEL_ON_BLOCK))){
                         CERROR("Granting sync lock to libclient. "
                                "req fl %d, rep fl %d, lock fl "LPX64"\n",
                                dlm_req->lock_flags, dlm_rep->lock_flags,
@@ -1217,9 +1241,9 @@ existing_lock:
                         LDLM_ERROR(lock, "sync lock");
                         if (dlm_req->lock_flags & LDLM_FL_HAS_INTENT) {
                                 struct ldlm_intent *it;
-                                it = lustre_msg_buf(req->rq_reqmsg,
-                                                    DLM_INTENT_IT_OFF,
-                                                    sizeof(*it));
+
+                                it = req_capsule_client_get(&req->rq_pill,
+                                                            &RMF_LDLM_INTENT);
                                 if (it != NULL) {
                                         CERROR("This is intent %s ("LPU64")\n",
                                                ldlm_it2str(it->opc), it->opc);
@@ -1232,7 +1256,7 @@ existing_lock:
 
         EXIT;
  out:
-        req->rq_status = rc ?: err;  /* return either error - bug 11190 */
+        req->rq_status = rc ?: err; /* return either error - bug 11190 */
         if (!req->rq_packed_final) {
                 err = lustre_pack_reply(req, 1, NULL, NULL);
                 if (rc == 0)
@@ -1245,23 +1269,22 @@ existing_lock:
                 LDLM_DEBUG(lock, "server-side enqueue handler, sending reply"
                            "(err=%d, rc=%d)", err, rc);
 
-                if (rc == 0 && obddev->obd_fail)
-                        rc = -ENOTCONN;
-
                 if (rc == 0) {
-                        lock_res_and_lock(lock);
-                        size[DLM_REPLY_REC_OFF] = lock->l_resource->lr_lvb_len;
-                        if (size[DLM_REPLY_REC_OFF] > 0) {
-                                void *lvb = lustre_msg_buf(req->rq_repmsg,
-                                                       DLM_REPLY_REC_OFF,
-                                                       size[DLM_REPLY_REC_OFF]);
+                        if (lock->l_resource->lr_lvb_len > 0) {
+                                /* MDT path won't handle lr_lvb_data, so
+                                 * lock/unlock better be contained in the
+                                 * if block */
+                                void *lvb;
+
+                                lvb = req_capsule_server_get(&req->rq_pill,
+                                                             &RMF_DLM_LVB);
                                 LASSERTF(lvb != NULL, "req %p, lock %p\n",
                                          req, lock);
-
+                                lock_res(lock->l_resource);
                                 memcpy(lvb, lock->l_resource->lr_lvb_data,
-                                       size[DLM_REPLY_REC_OFF]);
+                                       lock->l_resource->lr_lvb_len);
+                                unlock_res(lock->l_resource);
                         }
-                        unlock_res_and_lock(lock);
                 } else {
                         lock_res_and_lock(lock);
                         ldlm_resource_unlink_lock(lock);
@@ -1272,7 +1295,7 @@ existing_lock:
                 if (!err && dlm_req->lock_desc.l_resource.lr_type != LDLM_FLOCK)
                         ldlm_reprocess_all(lock->l_resource);
 
-                LDLM_LOCK_PUT(lock);
+                LDLM_LOCK_RELEASE(lock);
         }
 
         LDLM_DEBUG_NOLOCK("server-side enqueue handler END (lock %p, rc %d)",
@@ -1281,35 +1304,47 @@ existing_lock:
         return rc;
 }
 
-int ldlm_handle_convert(struct ptlrpc_request *req)
+int ldlm_handle_enqueue(struct ptlrpc_request *req,
+                        ldlm_completion_callback completion_callback,
+                        ldlm_blocking_callback blocking_callback,
+                        ldlm_glimpse_callback glimpse_callback)
 {
         struct ldlm_request *dlm_req;
+        struct ldlm_callback_suite cbs = {
+                .lcs_completion = completion_callback,
+                .lcs_blocking   = blocking_callback,
+                .lcs_glimpse    = glimpse_callback
+        };
+        int rc;
+
+        dlm_req = req_capsule_client_get(&req->rq_pill, &RMF_DLM_REQ);
+        if (dlm_req != NULL) {
+                rc = ldlm_handle_enqueue0(req->rq_export->exp_obd->obd_namespace,
+                                          req, dlm_req, &cbs);
+        } else {
+                rc = -EFAULT;
+        }
+        return rc;
+}
+
+int ldlm_handle_convert0(struct ptlrpc_request *req,
+                         const struct ldlm_request *dlm_req)
+{
         struct ldlm_reply *dlm_rep;
         struct ldlm_lock *lock;
         int rc;
-        __u32 size[2] = { [MSG_PTLRPC_BODY_OFF] = sizeof(struct ptlrpc_body),
-                        [DLM_LOCKREPLY_OFF]   = sizeof(*dlm_rep) };
         ENTRY;
 
-        dlm_req = lustre_swab_reqbuf(req, DLM_LOCKREQ_OFF, sizeof(*dlm_req),
-                                     lustre_swab_ldlm_request);
-        if (dlm_req == NULL) {
-                CERROR ("Can't unpack dlm_req\n");
-                RETURN (-EFAULT);
-        }
-
         if (req->rq_export && req->rq_export->exp_nid_stats &&
-            req->rq_export->exp_nid_stats->nid_ldlm_stats) {
+            req->rq_export->exp_nid_stats->nid_ldlm_stats)
                 lprocfs_counter_incr(req->rq_export->exp_nid_stats->nid_ldlm_stats,
                                      LDLM_CONVERT - LDLM_FIRST_OPC);
-        }
 
-        rc = lustre_pack_reply(req, 2, size, NULL);
+        rc = req_capsule_server_pack(&req->rq_pill);
         if (rc)
                 RETURN(rc);
 
-        dlm_rep = lustre_msg_buf(req->rq_repmsg, DLM_LOCKREPLY_OFF,
-                                 sizeof(*dlm_rep));
+        dlm_rep = req_capsule_server_get(&req->rq_pill, &RMF_DLM_REP);
         dlm_rep->lock_flags = dlm_req->lock_flags;
 
         lock = ldlm_handle2lock(&dlm_req->lock_handle[0]);
@@ -1343,9 +1378,24 @@ int ldlm_handle_convert(struct ptlrpc_request *req)
         RETURN(0);
 }
 
+int ldlm_handle_convert(struct ptlrpc_request *req)
+{
+        int rc;
+        struct ldlm_request *dlm_req;
+
+        dlm_req = req_capsule_client_get(&req->rq_pill, &RMF_DLM_REQ);
+        if (dlm_req != NULL) {
+                rc = ldlm_handle_convert0(req, dlm_req);
+        } else {
+                CERROR ("Can't unpack dlm_req\n");
+                rc = -EFAULT;
+        }
+        return rc;
+}
+
 /* Cancel all the locks whos handles are packed into ldlm_request */
 int ldlm_request_cancel(struct ptlrpc_request *req,
-                        struct ldlm_request *dlm_req, int first)
+                        const struct ldlm_request *dlm_req, int first)
 {
         struct ldlm_resource *res, *pres = NULL;
         struct ldlm_lock *lock;
@@ -1361,6 +1411,9 @@ int ldlm_request_cancel(struct ptlrpc_request *req,
         if (lustre_msg_get_flags(req->rq_reqmsg) & MSG_REPLAY)
                 RETURN(0);
 
+        LDLM_DEBUG_NOLOCK("server-side cancel handler START: %d locks, "
+                          "starting at %d", count, first);
+
         for (i = first; i < count; i++) {
                 lock = ldlm_handle2lock(&dlm_req->lock_handle[i]);
                 if (!lock) {
@@ -1370,16 +1423,19 @@ int ldlm_request_cancel(struct ptlrpc_request *req,
                         continue;
                 }
 
-                done++;
                 res = lock->l_resource;
+                done++;
+
                 if (res != pres) {
                         if (pres != NULL) {
                                 ldlm_reprocess_all(pres);
+                                LDLM_RESOURCE_DELREF(pres);
                                 ldlm_resource_putref(pres);
                         }
                         if (res != NULL) {
                                 ldlm_resource_getref(res);
-                                ldlm_res_lvbo_update(res, NULL, 0, 1);
+                                LDLM_RESOURCE_ADDREF(res);
+                                ldlm_res_lvbo_update(res, NULL, 1);
                         }
                         pres = res;
                 }
@@ -1388,8 +1444,10 @@ int ldlm_request_cancel(struct ptlrpc_request *req,
         }
         if (pres != NULL) {
                 ldlm_reprocess_all(pres);
+                LDLM_RESOURCE_DELREF(pres);
                 ldlm_resource_putref(pres);
         }
+        LDLM_DEBUG_NOLOCK("server-side cancel handler END");
         RETURN(done);
 }
 
@@ -1399,30 +1457,25 @@ int ldlm_handle_cancel(struct ptlrpc_request *req)
         int rc;
         ENTRY;
 
-        dlm_req = lustre_swab_reqbuf(req, DLM_LOCKREQ_OFF, sizeof(*dlm_req),
-                                     lustre_swab_ldlm_request);
+        dlm_req = req_capsule_client_get(&req->rq_pill, &RMF_DLM_REQ);
         if (dlm_req == NULL) {
-                CERROR("bad request buffer for cancel\n");
+                CDEBUG(D_INFO, "bad request buffer for cancel\n");
                 RETURN(-EFAULT);
         }
 
         if (req->rq_export && req->rq_export->exp_nid_stats &&
-            req->rq_export->exp_nid_stats->nid_ldlm_stats) {
+            req->rq_export->exp_nid_stats->nid_ldlm_stats)
                 lprocfs_counter_incr(req->rq_export->exp_nid_stats->nid_ldlm_stats,
                                      LDLM_CANCEL - LDLM_FIRST_OPC);
-        }
 
-        rc = lustre_pack_reply(req, 1, NULL, NULL);
+        rc = req_capsule_server_pack(&req->rq_pill);
         if (rc)
                 RETURN(rc);
 
         if (!ldlm_request_cancel(req, dlm_req, 0))
                 req->rq_status = ESTALE;
 
-        if (ptlrpc_reply(req) != 0)
-                LBUG();
-
-        RETURN(0);
+        RETURN(ptlrpc_reply(req));
 }
 
 void ldlm_handle_bl_callback(struct ldlm_namespace *ns,
@@ -1443,7 +1496,7 @@ void ldlm_handle_bl_callback(struct ldlm_namespace *ns,
         unlock_res_and_lock(lock);
 
         if (do_ast) {
-                CDEBUG(D_DLMTRACE, "Lock %p is already unused, calling callback (%p)\n",
+                CDEBUG(D_DLMTRACE, "Lock %p already unused, calling callback (%p)\n",
                        lock, lock->l_blocking_ast);
                 if (lock->l_blocking_ast != NULL)
                         lock->l_blocking_ast(lock, ld, lock->l_ast_data,
@@ -1453,7 +1506,8 @@ void ldlm_handle_bl_callback(struct ldlm_namespace *ns,
                        lock);
         }
 
-        LDLM_LOCK_PUT(lock);
+        LDLM_DEBUG(lock, "client blocking callback handler END");
+        LDLM_LOCK_RELEASE(lock);
         EXIT;
 }
 
@@ -1470,7 +1524,8 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
         if (OBD_FAIL_CHECK(OBD_FAIL_LDLM_CANCEL_BL_CB_RACE)) {
                 int to = cfs_time_seconds(1);
                 while (to > 0) {
-                        to = schedule_timeout(to);
+                        cfs_schedule_timeout_and_set_state(
+                                CFS_TASK_INTERRUPTIBLE, to);
                         if (lock->l_granted_mode == lock->l_req_mode ||
                             lock->l_destroyed)
                                 break;
@@ -1483,7 +1538,7 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
                 /* bug 11300: the lock has already been granted */
                 unlock_res_and_lock(lock);
                 LDLM_DEBUG(lock, "Double grant race happened");
-                LDLM_LOCK_PUT(lock);
+                LDLM_LOCK_RELEASE(lock);
                 EXIT;
                 return;
         }
@@ -1496,7 +1551,7 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
         }
 
         if (lock->l_resource->lr_type != LDLM_PLAIN) {
-                ldlm_convert_policy_to_local(
+                ldlm_convert_policy_to_local(req->rq_export,
                                           dlm_req->lock_desc.l_resource.lr_type,
                                           &dlm_req->lock_desc.l_policy_data,
                                           &lock->l_policy_data);
@@ -1509,9 +1564,9 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
                    sizeof(lock->l_resource->lr_name)) != 0) {
                 unlock_res_and_lock(lock);
                 if (ldlm_lock_change_resource(ns, lock,
-                                dlm_req->lock_desc.l_resource.lr_name)) {
+                                &dlm_req->lock_desc.l_resource.lr_name) != 0) {
                         LDLM_ERROR(lock, "Failed to allocate resource");
-                        LDLM_LOCK_PUT(lock);
+                        LDLM_LOCK_RELEASE(lock);
                         EXIT;
                         return;
                 }
@@ -1529,13 +1584,13 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
         }
 
         if (lock->l_lvb_len) {
-                void *lvb;
-                lvb = lustre_swab_reqbuf(req, DLM_REQ_REC_OFF, lock->l_lvb_len,
-                                         lock->l_lvb_swabber);
-                if (lvb == NULL) {
+                if (req_capsule_get_size(&req->rq_pill, &RMF_DLM_LVB,
+                                         RCL_CLIENT) < lock->l_lvb_len) {
                         LDLM_ERROR(lock, "completion AST did not contain "
                                    "expected LVB!");
                 } else {
+                        void *lvb = req_capsule_client_get(&req->rq_pill,
+                                                           &RMF_DLM_LVB);
                         memcpy(lock->l_lvb_data, lvb, lock->l_lvb_len);
                 }
         }
@@ -1545,11 +1600,15 @@ static void ldlm_handle_cp_callback(struct ptlrpc_request *req,
 
         LDLM_DEBUG(lock, "callback handler finished, about to run_ast_work");
 
-        ldlm_run_cp_ast_work(&ast_list);
+        /* Let Enqueue to call osc_lock_upcall() and initialize
+         * l_ast_data */
+        OBD_FAIL_TIMEOUT(OBD_FAIL_OSC_CP_ENQ_RACE, 2);
+
+        ldlm_run_ast_work(&ast_list, LDLM_WORK_CP_AST);
 
         LDLM_DEBUG_NOLOCK("client completion callback handler END (lock %p)",
                           lock);
-        LDLM_LOCK_PUT(lock);
+        LDLM_LOCK_RELEASE(lock);
         EXIT;
 }
 
@@ -1587,12 +1646,15 @@ static void ldlm_handle_gl_callback(struct ptlrpc_request *req,
                 return;
         }
         unlock_res_and_lock(lock);
-        LDLM_LOCK_PUT(lock);
+        LDLM_LOCK_RELEASE(lock);
         EXIT;
 }
 
 static int ldlm_callback_reply(struct ptlrpc_request *req, int rc)
 {
+        if (req->rq_no_reply)
+                return 0;
+
         req->rq_status = rc;
         if (!req->rq_packed_final) {
                 rc = lustre_pack_reply(req, 1, NULL, NULL);
@@ -1608,22 +1670,22 @@ static int __ldlm_bl_to_thread(struct ldlm_bl_work_item *blwi, int mode)
         struct ldlm_bl_pool *blp = ldlm_state->ldlm_bl_pool;
         ENTRY;
 
-        spin_lock(&blp->blp_lock);
+        cfs_spin_lock(&blp->blp_lock);
         if (blwi->blwi_lock && blwi->blwi_lock->l_flags & LDLM_FL_DISCARD_DATA) {
                 /* add LDLM_FL_DISCARD_DATA requests to the priority list */
-                list_add_tail(&blwi->blwi_entry, &blp->blp_prio_list);
+                cfs_list_add_tail(&blwi->blwi_entry, &blp->blp_prio_list);
         } else {
                 /* other blocking callbacks are added to the regular list */
-                list_add_tail(&blwi->blwi_entry, &blp->blp_list);
+                cfs_list_add_tail(&blwi->blwi_entry, &blp->blp_list);
         }
-        spin_unlock(&blp->blp_lock);
+        cfs_spin_unlock(&blp->blp_lock);
 
         cfs_waitq_signal(&blp->blp_waitq);
 
         /* can not use blwi->blwi_mode as blwi could be already freed in
            LDLM_ASYNC mode */
         if (mode == LDLM_SYNC)
-                wait_for_completion(&blwi->blwi_comp);
+                cfs_wait_for_completion(&blwi->blwi_comp);
 
         RETURN(0);
 }
@@ -1631,14 +1693,14 @@ static int __ldlm_bl_to_thread(struct ldlm_bl_work_item *blwi, int mode)
 static inline void init_blwi(struct ldlm_bl_work_item *blwi,
                              struct ldlm_namespace *ns,
                              struct ldlm_lock_desc *ld,
-                             struct list_head *cancels, int count,
+                             cfs_list_t *cancels, int count,
                              struct ldlm_lock *lock,
                              int mode)
 {
-        init_completion(&blwi->blwi_comp);
-        INIT_LIST_HEAD(&blwi->blwi_head);
+        cfs_init_completion(&blwi->blwi_comp);
+        CFS_INIT_LIST_HEAD(&blwi->blwi_head);
 
-        if (libcfs_memory_pressure_get())
+        if (cfs_memory_pressure_get())
                 blwi->blwi_mem_pressure = 1;
 
         blwi->blwi_ns = ns;
@@ -1646,8 +1708,8 @@ static inline void init_blwi(struct ldlm_bl_work_item *blwi,
         if (ld != NULL)
                 blwi->blwi_ld = *ld;
         if (count) {
-                list_add(&blwi->blwi_head, cancels);
-                list_del_init(cancels);
+                cfs_list_add(&blwi->blwi_head, cancels);
+                cfs_list_del_init(cancels);
                 blwi->blwi_count = count;
         } else {
                 blwi->blwi_lock = lock;
@@ -1656,7 +1718,7 @@ static inline void init_blwi(struct ldlm_bl_work_item *blwi,
 
 static int ldlm_bl_to_thread(struct ldlm_namespace *ns,
                              struct ldlm_lock_desc *ld, struct ldlm_lock *lock,
-                             struct list_head *cancels, int count, int mode)
+                             cfs_list_t *cancels, int count, int mode)
 {
         ENTRY;
 
@@ -1681,6 +1743,7 @@ static int ldlm_bl_to_thread(struct ldlm_namespace *ns,
                 RETURN(__ldlm_bl_to_thread(blwi, LDLM_ASYNC));
         }
 }
+
 #endif
 
 int ldlm_bl_to_thread_lock(struct ldlm_namespace *ns, struct ldlm_lock_desc *ld,
@@ -1694,7 +1757,7 @@ int ldlm_bl_to_thread_lock(struct ldlm_namespace *ns, struct ldlm_lock_desc *ld,
 }
 
 int ldlm_bl_to_thread_list(struct ldlm_namespace *ns, struct ldlm_lock_desc *ld,
-                           struct list_head *cancels, int count, int mode)
+                           cfs_list_t *cancels, int count, int mode)
 {
 #ifdef __KERNEL__
         RETURN(ldlm_bl_to_thread(ns, ld, NULL, cancels, count, mode));
@@ -1703,6 +1766,64 @@ int ldlm_bl_to_thread_list(struct ldlm_namespace *ns, struct ldlm_lock_desc *ld,
 #endif
 }
 
+/* Setinfo coming from Server (eg MDT) to Client (eg MDC)! */
+static int ldlm_handle_setinfo(struct ptlrpc_request *req)
+{
+        struct obd_device *obd = req->rq_export->exp_obd;
+        char *key;
+        void *val;
+        int keylen, vallen;
+        int rc = -ENOSYS;
+        ENTRY;
+
+        DEBUG_REQ(D_HSM, req, "%s: handle setinfo\n", obd->obd_name);
+
+        req_capsule_set(&req->rq_pill, &RQF_OBD_SET_INFO);
+
+        key = req_capsule_client_get(&req->rq_pill, &RMF_SETINFO_KEY);
+        if (key == NULL) {
+                DEBUG_REQ(D_IOCTL, req, "no set_info key");
+                RETURN(-EFAULT);
+        }
+        keylen = req_capsule_get_size(&req->rq_pill, &RMF_SETINFO_KEY,
+                                      RCL_CLIENT);
+        val = req_capsule_client_get(&req->rq_pill, &RMF_SETINFO_VAL);
+        if (val == NULL) {
+                DEBUG_REQ(D_IOCTL, req, "no set_info val");
+                RETURN(-EFAULT);
+        }
+        vallen = req_capsule_get_size(&req->rq_pill, &RMF_SETINFO_VAL,
+                                      RCL_CLIENT);
+
+        /* We are responsible for swabbing contents of val */
+
+        if (KEY_IS(KEY_HSM_COPYTOOL_SEND))
+                /* Pass it on to mdc (the "export" in this case) */
+                rc = obd_set_info_async(req->rq_export,
+                                        sizeof(KEY_HSM_COPYTOOL_SEND),
+                                        KEY_HSM_COPYTOOL_SEND,
+                                        vallen, val, NULL);
+        else
+                DEBUG_REQ(D_WARNING, req, "ignoring unknown key %s", key);
+
+        return rc;
+}
+
+static inline void ldlm_callback_errmsg(struct ptlrpc_request *req,
+                                        const char *msg, int rc,
+                                        struct lustre_handle *handle)
+{
+        DEBUG_REQ((req->rq_no_reply || rc) ? D_WARNING : D_DLMTRACE, req,
+                  "%s: [nid %s] [rc %d] [lock "LPX64"]",
+                  msg, libcfs_id2str(req->rq_peer), rc,
+                  handle ? handle->cookie : 0);
+        if (req->rq_no_reply)
+                CWARN("No reply was sent, maybe cause bug 21636.\n");
+        else if (rc)
+                CWARN("Send reply failed, maybe cause bug 21636.\n");
+}
+
+/* TODO: handle requests in a similar way as MDT: see mdt_handle_common() */
 static int ldlm_callback_handler(struct ptlrpc_request *req)
 {
         struct ldlm_namespace *ns;
@@ -1716,8 +1837,16 @@ static int ldlm_callback_handler(struct ptlrpc_request *req)
          * incoming request message body, but I am responsible for the
          * message buffers. */
 
+        /* do nothing for sec context finalize */
+        if (lustre_msg_get_opc(req->rq_reqmsg) == SEC_CTX_FINI)
+                RETURN(0);
+
+        req_capsule_init(&req->rq_pill, req, RCL_SERVER);
+
         if (req->rq_export == NULL) {
-                ldlm_callback_reply(req, -ENOTCONN);
+                rc = ldlm_callback_reply(req, -ENOTCONN);
+                ldlm_callback_errmsg(req, "Operate on unconnected server",
+                                     rc, NULL);
                 RETURN(0);
         }
 
@@ -1726,47 +1855,70 @@ static int ldlm_callback_handler(struct ptlrpc_request *req)
 
         switch (lustre_msg_get_opc(req->rq_reqmsg)) {
         case LDLM_BL_CALLBACK:
-                OBD_FAIL_RETURN(OBD_FAIL_LDLM_BL_CALLBACK, 0);
+                if (OBD_FAIL_CHECK(OBD_FAIL_LDLM_BL_CALLBACK))
+                        RETURN(0);
                 break;
         case LDLM_CP_CALLBACK:
-                OBD_FAIL_RETURN(OBD_FAIL_LDLM_CP_CALLBACK, 0);
+                if (OBD_FAIL_CHECK(OBD_FAIL_LDLM_CP_CALLBACK))
+                        RETURN(0);
                 break;
         case LDLM_GL_CALLBACK:
-                OBD_FAIL_RETURN(OBD_FAIL_LDLM_GL_CALLBACK, 0);
+                if (OBD_FAIL_CHECK(OBD_FAIL_LDLM_GL_CALLBACK))
+                        RETURN(0);
                 break;
+        case LDLM_SET_INFO:
+                rc = ldlm_handle_setinfo(req);
+                ldlm_callback_reply(req, rc);
+                RETURN(0);
         case OBD_LOG_CANCEL: /* remove this eventually - for 1.4.0 compat */
-                OBD_FAIL_RETURN(OBD_FAIL_OBD_LOG_CANCEL_NET, 0);
+                CERROR("shouldn't be handling OBD_LOG_CANCEL on DLM thread\n");
+                req_capsule_set(&req->rq_pill, &RQF_LOG_CANCEL);
+                if (OBD_FAIL_CHECK(OBD_FAIL_OBD_LOG_CANCEL_NET))
+                        RETURN(0);
                 rc = llog_origin_handle_cancel(req);
-                OBD_FAIL_RETURN(OBD_FAIL_OBD_LOG_CANCEL_REP, 0);
+                if (OBD_FAIL_CHECK(OBD_FAIL_OBD_LOG_CANCEL_REP))
+                        RETURN(0);
                 ldlm_callback_reply(req, rc);
                 RETURN(0);
         case OBD_QC_CALLBACK:
-                OBD_FAIL_RETURN(OBD_FAIL_OBD_QC_CALLBACK_NET, 0);
+                req_capsule_set(&req->rq_pill, &RQF_QC_CALLBACK);
+                if (OBD_FAIL_CHECK(OBD_FAIL_OBD_QC_CALLBACK_NET))
+                        RETURN(0);
                 rc = target_handle_qc_callback(req);
                 ldlm_callback_reply(req, rc);
                 RETURN(0);
         case QUOTA_DQACQ:
         case QUOTA_DQREL:
                 /* reply in handler */
+                req_capsule_set(&req->rq_pill, &RQF_MDS_QUOTA_DQACQ);
                 rc = target_handle_dqacq_callback(req);
                 RETURN(0);
         case LLOG_ORIGIN_HANDLE_CREATE:
-                OBD_FAIL_RETURN(OBD_FAIL_OBD_LOGD_NET, 0);
+                req_capsule_set(&req->rq_pill, &RQF_LLOG_ORIGIN_HANDLE_CREATE);
+                if (OBD_FAIL_CHECK(OBD_FAIL_OBD_LOGD_NET))
+                        RETURN(0);
                 rc = llog_origin_handle_create(req);
                 ldlm_callback_reply(req, rc);
                 RETURN(0);
         case LLOG_ORIGIN_HANDLE_NEXT_BLOCK:
-                OBD_FAIL_RETURN(OBD_FAIL_OBD_LOGD_NET, 0);
+                req_capsule_set(&req->rq_pill,
+                                &RQF_LLOG_ORIGIN_HANDLE_NEXT_BLOCK);
+                if (OBD_FAIL_CHECK(OBD_FAIL_OBD_LOGD_NET))
+                        RETURN(0);
                 rc = llog_origin_handle_next_block(req);
                 ldlm_callback_reply(req, rc);
                 RETURN(0);
         case LLOG_ORIGIN_HANDLE_READ_HEADER:
-                OBD_FAIL_RETURN(OBD_FAIL_OBD_LOGD_NET, 0);
+                req_capsule_set(&req->rq_pill,
+                                &RQF_LLOG_ORIGIN_HANDLE_READ_HEADER);
+                if (OBD_FAIL_CHECK(OBD_FAIL_OBD_LOGD_NET))
+                        RETURN(0);
                 rc = llog_origin_handle_read_header(req);
                 ldlm_callback_reply(req, rc);
                 RETURN(0);
         case LLOG_ORIGIN_HANDLE_CLOSE:
-                OBD_FAIL_RETURN(OBD_FAIL_OBD_LOGD_NET, 0);
+                if (OBD_FAIL_CHECK(OBD_FAIL_OBD_LOGD_NET))
+                        RETURN(0);
                 rc = llog_origin_handle_close(req);
                 ldlm_callback_reply(req, rc);
                 RETURN(0);
@@ -1780,12 +1932,14 @@ static int ldlm_callback_handler(struct ptlrpc_request *req)
         ns = req->rq_export->exp_obd->obd_namespace;
         LASSERT(ns != NULL);
 
-        dlm_req = lustre_swab_reqbuf(req, DLM_LOCKREQ_OFF, sizeof(*dlm_req),
-                                     lustre_swab_ldlm_request);
+        req_capsule_set(&req->rq_pill, &RQF_LDLM_CALLBACK);
+
+        dlm_req = req_capsule_client_get(&req->rq_pill, &RMF_DLM_REQ);
         if (dlm_req == NULL) {
-                CERROR ("can't unpack dlm_req\n");
-                ldlm_callback_reply(req, -EPROTO);
-                RETURN (0);
+                rc = ldlm_callback_reply(req, -EPROTO);
+                ldlm_callback_errmsg(req, "Operate without parameter", rc,
+                                     NULL);
+                RETURN(0);
         }
 
         /* Force a known safe race, send a cancel to the server for a lock
@@ -1797,11 +1951,13 @@ static int ldlm_callback_handler(struct ptlrpc_request *req)
                         CERROR("ldlm_cli_cancel: %d\n", rc);
         }
 
-        lock = ldlm_handle2lock_ns(ns, &dlm_req->lock_handle[0]);
+        lock = ldlm_handle2lock_long(&dlm_req->lock_handle[0], 0);
         if (!lock) {
                 CDEBUG(D_DLMTRACE, "callback on lock "LPX64" - lock "
                        "disappeared\n", dlm_req->lock_handle[0].cookie);
-                ldlm_callback_reply(req, -EINVAL);
+                rc = ldlm_callback_reply(req, -EINVAL);
+                ldlm_callback_errmsg(req, "Operate with invalid parameter", rc,
+                                     &dlm_req->lock_handle[0]);
                 RETURN(0);
         }
 
@@ -1813,7 +1969,7 @@ static int ldlm_callback_handler(struct ptlrpc_request *req)
         lock_res_and_lock(lock);
         lock->l_flags |= (dlm_req->lock_flags & LDLM_AST_FLAGS);
         if (lustre_msg_get_opc(req->rq_reqmsg) == LDLM_BL_CALLBACK) {
-                /* If somebody cancels lock and cache is already droped,
+                /* If somebody cancels lock and cache is already dropped,
                  * or lock is failed before cp_ast received on client,
                  * we can tell the server we have no lock. Otherwise, we
                  * should send cancel after dropping the cache. */
@@ -1824,8 +1980,10 @@ static int ldlm_callback_handler(struct ptlrpc_request *req)
                                    LPX64" - lock disappeared\n",
                                    dlm_req->lock_handle[0].cookie);
                         unlock_res_and_lock(lock);
-                        LDLM_LOCK_PUT(lock);
-                        ldlm_callback_reply(req, -EINVAL);
+                        LDLM_LOCK_RELEASE(lock);
+                        rc = ldlm_callback_reply(req, -EINVAL);
+                        ldlm_callback_errmsg(req, "Operate on stale lock", rc,
+                                             &dlm_req->lock_handle[0]);
                         RETURN(0);
                 }
                 /* BL_AST locks are not needed in lru.
@@ -1847,18 +2005,25 @@ static int ldlm_callback_handler(struct ptlrpc_request *req)
         switch (lustre_msg_get_opc(req->rq_reqmsg)) {
         case LDLM_BL_CALLBACK:
                 CDEBUG(D_INODE, "blocking ast\n");
-                if (!(lock->l_flags & LDLM_FL_CANCEL_ON_BLOCK))
-                        ldlm_callback_reply(req, 0);
+                req_capsule_extend(&req->rq_pill, &RQF_LDLM_BL_CALLBACK);
+                if (!(lock->l_flags & LDLM_FL_CANCEL_ON_BLOCK)) {
+                        rc = ldlm_callback_reply(req, 0);
+                        if (req->rq_no_reply || rc)
+                                ldlm_callback_errmsg(req, "Normal process", rc,
+                                                     &dlm_req->lock_handle[0]);
+                }
                 if (ldlm_bl_to_thread_lock(ns, &dlm_req->lock_desc, lock))
                         ldlm_handle_bl_callback(ns, &dlm_req->lock_desc, lock);
                 break;
         case LDLM_CP_CALLBACK:
                 CDEBUG(D_INODE, "completion ast\n");
+                req_capsule_extend(&req->rq_pill, &RQF_LDLM_CP_CALLBACK);
                 ldlm_callback_reply(req, 0);
                 ldlm_handle_cp_callback(req, ns, dlm_req, lock);
                 break;
         case LDLM_GL_CALLBACK:
                 CDEBUG(D_INODE, "glimpse ast\n");
+                req_capsule_extend(&req->rq_pill, &RQF_LDLM_GL_CALLBACK);
                 ldlm_handle_gl_callback(req, ns, dlm_req, lock);
                 break;
         default:
@@ -1878,6 +2043,8 @@ static int ldlm_cancel_handler(struct ptlrpc_request *req)
          * incoming request message body, but I am responsible for the
          * message buffers. */
 
+        req_capsule_init(&req->rq_pill, req, RCL_SERVER);
+
         if (req->rq_export == NULL) {
                 struct ldlm_request *dlm_req;
 
@@ -1889,14 +2056,13 @@ static int ldlm_cancel_handler(struct ptlrpc_request *req)
                        lustre_msg_get_handle(req->rq_reqmsg)->cookie);
 
                 if (lustre_msg_get_opc(req->rq_reqmsg) == LDLM_CANCEL) {
-                        dlm_req = lustre_swab_reqbuf(req, DLM_LOCKREQ_OFF,
-                                                     sizeof(*dlm_req),
-                                                     lustre_swab_ldlm_request);
+                        req_capsule_set(&req->rq_pill, &RQF_LDLM_CALLBACK);
+                        dlm_req = req_capsule_client_get(&req->rq_pill,
+                                                         &RMF_DLM_REQ);
                         if (dlm_req != NULL)
                                 ldlm_lock_dump_handle(D_ERROR,
                                                       &dlm_req->lock_handle[0]);
                 }
-
                 ldlm_callback_reply(req, -ENOTCONN);
                 RETURN(0);
         }
@@ -1905,25 +2071,85 @@ static int ldlm_cancel_handler(struct ptlrpc_request *req)
 
         /* XXX FIXME move this back to mds/handler.c, bug 249 */
         case LDLM_CANCEL:
+                req_capsule_set(&req->rq_pill, &RQF_LDLM_CANCEL);
                 CDEBUG(D_INODE, "cancel\n");
-                OBD_FAIL_RETURN(OBD_FAIL_LDLM_CANCEL, 0);
+                if (OBD_FAIL_CHECK(OBD_FAIL_LDLM_CANCEL))
+                        RETURN(0);
                 rc = ldlm_handle_cancel(req);
                 if (rc)
                         break;
                 RETURN(0);
         case OBD_LOG_CANCEL:
-                OBD_FAIL_RETURN(OBD_FAIL_OBD_LOG_CANCEL_NET, 0);
+                req_capsule_set(&req->rq_pill, &RQF_LOG_CANCEL);
+                if (OBD_FAIL_CHECK(OBD_FAIL_OBD_LOG_CANCEL_NET))
+                        RETURN(0);
                 rc = llog_origin_handle_cancel(req);
-                OBD_FAIL_RETURN(OBD_FAIL_OBD_LOG_CANCEL_REP, 0);
+                if (OBD_FAIL_CHECK(OBD_FAIL_OBD_LOG_CANCEL_REP))
+                        RETURN(0);
                 ldlm_callback_reply(req, rc);
                 RETURN(0);
         default:
                 CERROR("invalid opcode %d\n",
                        lustre_msg_get_opc(req->rq_reqmsg));
+                req_capsule_set(&req->rq_pill, &RQF_LDLM_CALLBACK);
                 ldlm_callback_reply(req, -EINVAL);
         }
 
         RETURN(0);
+}
+
+int ldlm_revoke_lock_cb(cfs_hash_t *hs, cfs_hash_bd_t *bd,
+                        cfs_hlist_node_t *hnode, void *data)
+
+{
+        cfs_list_t         *rpc_list = data;
+        struct ldlm_lock   *lock = cfs_hash_object(hs, hnode);
+
+        lock_res_and_lock(lock);
+
+        if (lock->l_req_mode != lock->l_granted_mode) {
+                unlock_res_and_lock(lock);
+                return 0;
+        }
+
+        LASSERT(lock->l_resource);
+        if (lock->l_resource->lr_type != LDLM_IBITS &&
+            lock->l_resource->lr_type != LDLM_PLAIN) {
+                unlock_res_and_lock(lock);
+                return 0;
+        }
+
+        if (lock->l_flags & LDLM_FL_AST_SENT) {
+                unlock_res_and_lock(lock);
+                return 0;
+        }
+
+        LASSERT(lock->l_blocking_ast);
+        LASSERT(!lock->l_blocking_lock);
+
+        lock->l_flags |= LDLM_FL_AST_SENT;
+        if (lock->l_export && lock->l_export->exp_lock_hash &&
+            !cfs_hlist_unhashed(&lock->l_exp_hash))
+                cfs_hash_del(lock->l_export->exp_lock_hash,
+                             &lock->l_remote_handle, &lock->l_exp_hash);
+        cfs_list_add_tail(&lock->l_rk_ast, rpc_list);
+        LDLM_LOCK_GET(lock);
+
+        unlock_res_and_lock(lock);
+        return 0;
+}
+
+void ldlm_revoke_export_locks(struct obd_export *exp)
+{
+        cfs_list_t  rpc_list;
+        ENTRY;
+
+        CFS_INIT_LIST_HEAD(&rpc_list);
+        cfs_hash_for_each_empty(exp->exp_lock_hash,
+                                ldlm_revoke_lock_cb, &rpc_list);
+        ldlm_run_ast_work(&rpc_list, LDLM_WORK_REVOKE_AST);
+
+        EXIT;
 }
 
 #ifdef __KERNEL__
@@ -1932,23 +2158,24 @@ static struct ldlm_bl_work_item *ldlm_bl_get_work(struct ldlm_bl_pool *blp)
         struct ldlm_bl_work_item *blwi = NULL;
         static unsigned int num_bl = 0;
 
-        spin_lock(&blp->blp_lock);
+        cfs_spin_lock(&blp->blp_lock);
         /* process a request from the blp_list at least every blp_num_threads */
-        if (!list_empty(&blp->blp_list) &&
-            (list_empty(&blp->blp_prio_list) || num_bl == 0))
-                blwi = list_entry(blp->blp_list.next,
-                                  struct ldlm_bl_work_item, blwi_entry);
+        if (!cfs_list_empty(&blp->blp_list) &&
+            (cfs_list_empty(&blp->blp_prio_list) || num_bl == 0))
+                blwi = cfs_list_entry(blp->blp_list.next,
+                                      struct ldlm_bl_work_item, blwi_entry);
         else
-                if (!list_empty(&blp->blp_prio_list))
-                        blwi = list_entry(blp->blp_prio_list.next,
-                                          struct ldlm_bl_work_item, blwi_entry);
+                if (!cfs_list_empty(&blp->blp_prio_list))
+                        blwi = cfs_list_entry(blp->blp_prio_list.next,
+                                              struct ldlm_bl_work_item,
+                                              blwi_entry);
 
         if (blwi) {
-                if (++num_bl >= atomic_read(&blp->blp_num_threads))
+                if (++num_bl >= cfs_atomic_read(&blp->blp_num_threads))
                         num_bl = 0;
-                list_del(&blwi->blwi_entry);
+                cfs_list_del(&blwi->blwi_entry);
         }
-        spin_unlock(&blp->blp_lock);
+        cfs_spin_unlock(&blp->blp_lock);
 
         return blwi;
 }
@@ -1957,7 +2184,7 @@ static struct ldlm_bl_work_item *ldlm_bl_get_work(struct ldlm_bl_pool *blp)
 struct ldlm_bl_thread_data {
         char                    bltd_name[CFS_CURPROC_COMM_MAX];
         struct ldlm_bl_pool     *bltd_blp;
-        struct completion       bltd_comp;
+        cfs_completion_t        bltd_comp;
         int                     bltd_num;
 };
 
@@ -1968,14 +2195,14 @@ static int ldlm_bl_thread_start(struct ldlm_bl_pool *blp)
         struct ldlm_bl_thread_data bltd = { .bltd_blp = blp };
         int rc;
 
-        init_completion(&bltd.bltd_comp);
-        rc = cfs_kernel_thread(ldlm_bl_thread_main, &bltd, 0);
+        cfs_init_completion(&bltd.bltd_comp);
+        rc = cfs_create_thread(ldlm_bl_thread_main, &bltd, 0);
         if (rc < 0) {
                 CERROR("cannot start LDLM thread ldlm_bl_%02d: rc %d\n",
-                       atomic_read(&blp->blp_num_threads), rc);
+                       cfs_atomic_read(&blp->blp_num_threads), rc);
                 return rc;
         }
-        wait_for_completion(&bltd.bltd_comp);
+        cfs_wait_for_completion(&bltd.bltd_comp);
 
         return 0;
 }
@@ -1990,14 +2217,15 @@ static int ldlm_bl_thread_main(void *arg)
 
                 blp = bltd->bltd_blp;
 
-                bltd->bltd_num = atomic_inc_return(&blp->blp_num_threads) - 1;
-                atomic_inc(&blp->blp_busy_threads);
+                bltd->bltd_num =
+                        cfs_atomic_inc_return(&blp->blp_num_threads) - 1;
+                cfs_atomic_inc(&blp->blp_busy_threads);
 
                 snprintf(bltd->bltd_name, sizeof(bltd->bltd_name) - 1,
                         "ldlm_bl_%02d", bltd->bltd_num);
                 cfs_daemonize(bltd->bltd_name);
 
-                complete(&bltd->bltd_comp);
+                cfs_complete(&bltd->bltd_comp);
                 /* cannot use bltd after this, it is only on caller's stack */
         }
 
@@ -2010,11 +2238,11 @@ static int ldlm_bl_thread_main(void *arg)
                 if (blwi == NULL) {
                         int busy;
 
-                        atomic_dec(&blp->blp_busy_threads);
+                        cfs_atomic_dec(&blp->blp_busy_threads);
                         l_wait_event_exclusive(blp->blp_waitq,
                                          (blwi = ldlm_bl_get_work(blp)) != NULL,
                                          &lwi);
-                        busy = atomic_inc_return(&blp->blp_busy_threads);
+                        busy = cfs_atomic_inc_return(&blp->blp_busy_threads);
 
                         if (blwi->blwi_ns == NULL)
                                 /* added by ldlm_cleanup() */
@@ -2022,7 +2250,7 @@ static int ldlm_bl_thread_main(void *arg)
 
                         /* Not fatal if racy and have a few too many threads */
                         if (unlikely(busy < blp->blp_max_threads &&
-                            busy >= atomic_read(&blp->blp_num_threads) &&
+                            busy >= cfs_atomic_read(&blp->blp_num_threads) &&
                             !blwi->blwi_mem_pressure))
                                 /* discard the return value, we tried */
                                 ldlm_bl_thread_start(blp);
@@ -2032,92 +2260,141 @@ static int ldlm_bl_thread_main(void *arg)
                                 break;
                 }
                 if (blwi->blwi_mem_pressure)
-                        libcfs_memory_pressure_set();
+                        cfs_memory_pressure_set();
 
                 if (blwi->blwi_count) {
+                        int count;
                         /* The special case when we cancel locks in lru
                          * asynchronously, we pass the list of locks here.
-                         * Thus lock is marked LDLM_FL_CANCELING, and already
-                         * canceled locally. */
-                        ldlm_cli_cancel_list(&blwi->blwi_head,
-                                             blwi->blwi_count, NULL, 0);
+                         * Thus locks are marked LDLM_FL_CANCELING, but NOT
+                         * canceled locally yet. */
+                        count = ldlm_cli_cancel_list_local(&blwi->blwi_head,
+                                                           blwi->blwi_count,
+                                                           LCF_BL_AST);
+                        ldlm_cli_cancel_list(&blwi->blwi_head, count, NULL, 0);
                 } else {
                         ldlm_handle_bl_callback(blwi->blwi_ns, &blwi->blwi_ld,
                                                 blwi->blwi_lock);
                 }
                 if (blwi->blwi_mem_pressure)
-                        libcfs_memory_pressure_clr();
+                        cfs_memory_pressure_clr();
 
                 if (blwi->blwi_mode == LDLM_ASYNC)
                         OBD_FREE(blwi, sizeof(*blwi));
                 else
-                        complete(&blwi->blwi_comp);
+                        cfs_complete(&blwi->blwi_comp);
         }
 
-        atomic_dec(&blp->blp_busy_threads);
-        atomic_dec(&blp->blp_num_threads);
-        complete(&blp->blp_comp);
+        cfs_atomic_dec(&blp->blp_busy_threads);
+        cfs_atomic_dec(&blp->blp_num_threads);
+        cfs_complete(&blp->blp_comp);
         RETURN(0);
 }
 
 #endif
 
+static int ldlm_setup(void);
+static int ldlm_cleanup(void);
+
+int ldlm_get_ref(void)
+{
+        int rc = 0;
+        ENTRY;
+        cfs_mutex_down(&ldlm_ref_sem);
+        if (++ldlm_refcount == 1) {
+                rc = ldlm_setup();
+                if (rc)
+                        ldlm_refcount--;
+        }
+        cfs_mutex_up(&ldlm_ref_sem);
+
+        RETURN(rc);
+}
+
+void ldlm_put_ref(void)
+{
+        ENTRY;
+        cfs_mutex_down(&ldlm_ref_sem);
+        if (ldlm_refcount == 1) {
+                int rc = ldlm_cleanup();
+                if (rc)
+                        CERROR("ldlm_cleanup failed: %d\n", rc);
+                else
+                        ldlm_refcount--;
+        } else {
+                ldlm_refcount--;
+        }
+        cfs_mutex_up(&ldlm_ref_sem);
+
+        EXIT;
+}
+
 /*
  * Export handle<->lock hash operations.
  */
 static unsigned
-ldlm_export_lock_hash(lustre_hash_t *lh, void *key, unsigned mask)
+ldlm_export_lock_hash(cfs_hash_t *hs, const void *key, unsigned mask)
 {
-        return lh_u64_hash(((struct lustre_handle *)key)->cookie, mask);
+        return cfs_hash_u64_hash(((struct lustre_handle *)key)->cookie, mask);
 }
 
 static void *
-ldlm_export_lock_key(struct hlist_node *hnode)
+ldlm_export_lock_key(cfs_hlist_node_t *hnode)
 {
         struct ldlm_lock *lock;
-        ENTRY;
 
-        lock = hlist_entry(hnode, struct ldlm_lock, l_exp_hash);
-        RETURN(&lock->l_remote_handle);
+        lock = cfs_hlist_entry(hnode, struct ldlm_lock, l_exp_hash);
+        return &lock->l_remote_handle;
+}
+
+static void
+ldlm_export_lock_keycpy(cfs_hlist_node_t *hnode, void *key)
+{
+        struct ldlm_lock     *lock;
+
+        lock = cfs_hlist_entry(hnode, struct ldlm_lock, l_exp_hash);
+        lock->l_remote_handle = *(struct lustre_handle *)key;
 }
 
 static int
-ldlm_export_lock_compare(void *key, struct hlist_node *hnode)
+ldlm_export_lock_keycmp(const void *key, cfs_hlist_node_t *hnode)
 {
-        ENTRY;
-        RETURN(lustre_handle_equal(ldlm_export_lock_key(hnode), key));
+        return lustre_handle_equal(ldlm_export_lock_key(hnode), key);
 }
 
 static void *
-ldlm_export_lock_get(struct hlist_node *hnode)
+ldlm_export_lock_object(cfs_hlist_node_t *hnode)
+{
+        return cfs_hlist_entry(hnode, struct ldlm_lock, l_exp_hash);
+}
+
+static void
+ldlm_export_lock_get(cfs_hash_t *hs, cfs_hlist_node_t *hnode)
 {
         struct ldlm_lock *lock;
-        ENTRY;
 
-        lock = hlist_entry(hnode, struct ldlm_lock, l_exp_hash);
+        lock = cfs_hlist_entry(hnode, struct ldlm_lock, l_exp_hash);
         LDLM_LOCK_GET(lock);
-
-        RETURN(lock);
 }
 
-static void *
-ldlm_export_lock_put(struct hlist_node *hnode)
+static void
+ldlm_export_lock_put(cfs_hash_t *hs, cfs_hlist_node_t *hnode)
 {
         struct ldlm_lock *lock;
-        ENTRY;
 
-        lock = hlist_entry(hnode, struct ldlm_lock, l_exp_hash);
-        LDLM_LOCK_PUT(lock);
-
-        RETURN(lock);
+        lock = cfs_hlist_entry(hnode, struct ldlm_lock, l_exp_hash);
+        LDLM_LOCK_RELEASE(lock);
 }
 
-static lustre_hash_ops_t ldlm_export_lock_ops = {
-        .lh_hash    = ldlm_export_lock_hash,
-        .lh_key     = ldlm_export_lock_key,
-        .lh_compare = ldlm_export_lock_compare,
-        .lh_get     = ldlm_export_lock_get,
-        .lh_put     = ldlm_export_lock_put
+static cfs_hash_ops_t ldlm_export_lock_ops = {
+        .hs_hash        = ldlm_export_lock_hash,
+        .hs_key         = ldlm_export_lock_key,
+        .hs_keycmp      = ldlm_export_lock_keycmp,
+        .hs_keycpy      = ldlm_export_lock_keycpy,
+        .hs_object      = ldlm_export_lock_object,
+        .hs_get         = ldlm_export_lock_get,
+        .hs_put         = ldlm_export_lock_put,
+        .hs_put_locked  = ldlm_export_lock_put,
 };
 
 int ldlm_init_export(struct obd_export *exp)
@@ -2125,8 +2402,14 @@ int ldlm_init_export(struct obd_export *exp)
         ENTRY;
 
         exp->exp_lock_hash =
-                lustre_hash_init(obd_uuid2str(&exp->exp_client_uuid),
-                                 7, 16, &ldlm_export_lock_ops, LH_REHASH);
+                cfs_hash_create(obd_uuid2str(&exp->exp_client_uuid),
+                                HASH_EXP_LOCK_CUR_BITS,
+                                HASH_EXP_LOCK_MAX_BITS,
+                                HASH_EXP_LOCK_BKT_BITS, 0,
+                                CFS_HASH_MIN_THETA, CFS_HASH_MAX_THETA,
+                                &ldlm_export_lock_ops,
+                                CFS_HASH_DEFAULT | CFS_HASH_REHASH_KEY |
+                                CFS_HASH_NBLK_CHANGE);
 
         if (!exp->exp_lock_hash)
                 RETURN(-ENOMEM);
@@ -2138,47 +2421,11 @@ EXPORT_SYMBOL(ldlm_init_export);
 void ldlm_destroy_export(struct obd_export *exp)
 {
         ENTRY;
-        lustre_hash_exit(exp->exp_lock_hash);
+        cfs_hash_putref(exp->exp_lock_hash);
         exp->exp_lock_hash = NULL;
         EXIT;
 }
 EXPORT_SYMBOL(ldlm_destroy_export);
-
-static int ldlm_setup(void);
-static int ldlm_cleanup(void);
-
-int ldlm_get_ref(void)
-{
-        int rc = 0;
-        ENTRY;
-        mutex_down(&ldlm_ref_sem);
-        if (++ldlm_refcount == 1) {
-                rc = ldlm_setup();
-                if (rc)
-                        ldlm_refcount--;
-        }
-        mutex_up(&ldlm_ref_sem);
-
-        RETURN(rc);
-}
-
-void ldlm_put_ref(void)
-{
-        ENTRY;
-        mutex_down(&ldlm_ref_sem);
-        if (ldlm_refcount == 1) {
-                int rc = ldlm_cleanup();
-                if (rc)
-                        CERROR("ldlm_cleanup failed: %d\n", rc);
-                else
-                        ldlm_refcount--;
-        } else {
-                ldlm_refcount--;
-        }
-        mutex_up(&ldlm_ref_sem);
-
-        EXIT;
-}
 
 static int ldlm_setup(void)
 {
@@ -2222,7 +2469,8 @@ static int ldlm_setup(void)
                                 ldlm_callback_handler, "ldlm_cbd",
                                 ldlm_svc_proc_dir, NULL,
                                 ldlm_min_threads, ldlm_max_threads,
-                                "ldlm_cb", NULL);
+                                "ldlm_cb",
+                                LCT_MD_THREAD|LCT_DT_THREAD, NULL);
 
         if (!ldlm_state->ldlm_cb_service) {
                 CERROR("failed to start service\n");
@@ -2236,7 +2484,9 @@ static int ldlm_setup(void)
                                 ldlm_cancel_handler, "ldlm_canceld",
                                 ldlm_svc_proc_dir, NULL,
                                 ldlm_min_threads, ldlm_max_threads,
-                                "ldlm_cn", NULL);
+                                "ldlm_cn",
+                                LCT_MD_THREAD|LCT_DT_THREAD|LCT_CL_THREAD,
+                                NULL);
 
         if (!ldlm_state->ldlm_cancel_service) {
                 CERROR("failed to start service\n");
@@ -2248,12 +2498,12 @@ static int ldlm_setup(void)
                 GOTO(out_proc, rc = -ENOMEM);
         ldlm_state->ldlm_bl_pool = blp;
 
-        spin_lock_init(&blp->blp_lock);
+        cfs_spin_lock_init(&blp->blp_lock);
         CFS_INIT_LIST_HEAD(&blp->blp_list);
         CFS_INIT_LIST_HEAD(&blp->blp_prio_list);
         cfs_waitq_init(&blp->blp_waitq);
-        atomic_set(&blp->blp_num_threads, 0);
-        atomic_set(&blp->blp_busy_threads, 0);
+        cfs_atomic_set(&blp->blp_num_threads, 0);
+        cfs_atomic_set(&blp->blp_busy_threads, 0);
         blp->blp_min_threads = ldlm_min_threads;
         blp->blp_max_threads = ldlm_max_threads;
 
@@ -2264,11 +2514,11 @@ static int ldlm_setup(void)
                         GOTO(out_thread, rc);
         }
 
-        rc = ptlrpc_start_threads(NULL, ldlm_state->ldlm_cancel_service);
+        rc = ptlrpc_start_threads(ldlm_state->ldlm_cancel_service);
         if (rc)
                 GOTO(out_thread, rc);
 
-        rc = ptlrpc_start_threads(NULL, ldlm_state->ldlm_cb_service);
+        rc = ptlrpc_start_threads(ldlm_state->ldlm_cb_service);
         if (rc)
                 GOTO(out_thread, rc);
 
@@ -2277,17 +2527,17 @@ static int ldlm_setup(void)
         cfs_waitq_init(&expired_lock_thread.elt_waitq);
 
         CFS_INIT_LIST_HEAD(&waiting_locks_list);
-        spin_lock_init(&waiting_locks_spinlock);
+        cfs_spin_lock_init(&waiting_locks_spinlock);
         cfs_timer_init(&waiting_locks_timer, waiting_locks_callback, 0);
 
-        rc = cfs_kernel_thread(expired_lock_main, NULL, CLONE_VM | CLONE_FILES);
+        rc = cfs_create_thread(expired_lock_main, NULL, CFS_DAEMON_FLAGS);
         if (rc < 0) {
                 CERROR("Cannot start ldlm expired-lock thread: %d\n", rc);
                 GOTO(out_thread, rc);
         }
 
-        wait_event(expired_lock_thread.elt_waitq,
-                   expired_lock_thread.elt_state == ELT_READY);
+        cfs_wait_event(expired_lock_thread.elt_waitq,
+                       expired_lock_thread.elt_state == ELT_READY);
 #endif
 
 #ifdef __KERNEL__
@@ -2295,7 +2545,6 @@ static int ldlm_setup(void)
         if (rc)
                 GOTO(out_thread, rc);
 #endif
-
         RETURN(0);
 
 #ifdef __KERNEL__
@@ -2321,8 +2570,8 @@ static int ldlm_cleanup(void)
 #endif
         ENTRY;
 
-        if (!list_empty(ldlm_namespace_list(LDLM_NAMESPACE_SERVER)) ||
-            !list_empty(ldlm_namespace_list(LDLM_NAMESPACE_CLIENT))) {
+        if (!cfs_list_empty(ldlm_namespace_list(LDLM_NAMESPACE_SERVER)) ||
+            !cfs_list_empty(ldlm_namespace_list(LDLM_NAMESPACE_CLIENT))) {
                 CERROR("ldlm still has namespaces; clean these up first.\n");
                 ldlm_dump_all_namespaces(LDLM_NAMESPACE_SERVER, D_DLMTRACE);
                 ldlm_dump_all_namespaces(LDLM_NAMESPACE_CLIENT, D_DLMTRACE);
@@ -2334,17 +2583,17 @@ static int ldlm_cleanup(void)
 #endif
 
 #ifdef __KERNEL__
-        while (atomic_read(&blp->blp_num_threads) > 0) {
+        while (cfs_atomic_read(&blp->blp_num_threads) > 0) {
                 struct ldlm_bl_work_item blwi = { .blwi_ns = NULL };
 
-                init_completion(&blp->blp_comp);
+                cfs_init_completion(&blp->blp_comp);
 
-                spin_lock(&blp->blp_lock);
-                list_add_tail(&blwi.blwi_entry, &blp->blp_list);
+                cfs_spin_lock(&blp->blp_lock);
+                cfs_list_add_tail(&blwi.blwi_entry, &blp->blp_list);
                 cfs_waitq_signal(&blp->blp_waitq);
-                spin_unlock(&blp->blp_lock);
+                cfs_spin_unlock(&blp->blp_lock);
 
-                wait_for_completion(&blp->blp_comp);
+                cfs_wait_for_completion(&blp->blp_comp);
         }
         OBD_FREE(blp, sizeof(*blp));
 
@@ -2354,8 +2603,8 @@ static int ldlm_cleanup(void)
 
         expired_lock_thread.elt_state = ELT_TERMINATE;
         cfs_waitq_signal(&expired_lock_thread.elt_waitq);
-        wait_event(expired_lock_thread.elt_waitq,
-                   expired_lock_thread.elt_state == ELT_STOPPED);
+        cfs_wait_event(expired_lock_thread.elt_waitq,
+                       expired_lock_thread.elt_state == ELT_STOPPED);
 #else
         ptlrpc_unregister_service(ldlm_state->ldlm_cb_service);
         ptlrpc_unregister_service(ldlm_state->ldlm_cancel_service);
@@ -2369,18 +2618,18 @@ static int ldlm_cleanup(void)
 
 int __init ldlm_init(void)
 {
-        init_mutex(&ldlm_ref_sem);
-        init_mutex(ldlm_namespace_lock(LDLM_NAMESPACE_SERVER));
-        init_mutex(ldlm_namespace_lock(LDLM_NAMESPACE_CLIENT));
+        cfs_init_mutex(&ldlm_ref_sem);
+        cfs_init_mutex(ldlm_namespace_lock(LDLM_NAMESPACE_SERVER));
+        cfs_init_mutex(ldlm_namespace_lock(LDLM_NAMESPACE_CLIENT));
         ldlm_resource_slab = cfs_mem_cache_create("ldlm_resources",
                                                sizeof(struct ldlm_resource), 0,
-                                               SLAB_HWCACHE_ALIGN);
+                                               CFS_SLAB_HWCACHE_ALIGN);
         if (ldlm_resource_slab == NULL)
                 return -ENOMEM;
 
         ldlm_lock_slab = cfs_mem_cache_create("ldlm_locks",
-                                      sizeof(struct ldlm_lock), 0,
-                                      SLAB_HWCACHE_ALIGN | SLAB_DESTROY_BY_RCU);
+                              sizeof(struct ldlm_lock), 0,
+                              CFS_SLAB_HWCACHE_ALIGN | CFS_SLAB_DESTROY_BY_RCU);
         if (ldlm_lock_slab == NULL) {
                 cfs_mem_cache_destroy(ldlm_resource_slab);
                 return -ENOMEM;
@@ -2388,17 +2637,19 @@ int __init ldlm_init(void)
 
         ldlm_interval_slab = cfs_mem_cache_create("interval_node",
                                         sizeof(struct ldlm_interval),
-                                        0, SLAB_HWCACHE_ALIGN);
+                                        0, CFS_SLAB_HWCACHE_ALIGN);
         if (ldlm_interval_slab == NULL) {
                 cfs_mem_cache_destroy(ldlm_resource_slab);
                 cfs_mem_cache_destroy(ldlm_lock_slab);
                 return -ENOMEM;
         }
-
+#if LUSTRE_TRACKS_LOCK_EXP_REFS
+        class_export_dump_hook = ldlm_dump_export_locks;
+#endif
         return 0;
 }
 
-void __exit ldlm_exit(void)
+void ldlm_exit(void)
 {
         int rc;
         if (ldlm_refcount)
@@ -2430,10 +2681,10 @@ EXPORT_SYMBOL(ldlm_lock2handle);
 EXPORT_SYMBOL(__ldlm_handle2lock);
 EXPORT_SYMBOL(ldlm_lock_get);
 EXPORT_SYMBOL(ldlm_lock_put);
-EXPORT_SYMBOL(ldlm_lock_fast_match);
 EXPORT_SYMBOL(ldlm_lock_match);
 EXPORT_SYMBOL(ldlm_lock_cancel);
 EXPORT_SYMBOL(ldlm_lock_addref);
+EXPORT_SYMBOL(ldlm_lock_addref_try);
 EXPORT_SYMBOL(ldlm_lock_decref);
 EXPORT_SYMBOL(ldlm_lock_decref_and_cancel);
 EXPORT_SYMBOL(ldlm_lock_change_resource);
@@ -2441,9 +2692,14 @@ EXPORT_SYMBOL(ldlm_it2str);
 EXPORT_SYMBOL(ldlm_lock_dump);
 EXPORT_SYMBOL(ldlm_lock_dump_handle);
 EXPORT_SYMBOL(ldlm_reprocess_all_ns);
+EXPORT_SYMBOL(ldlm_lock_allow_match_locked);
 EXPORT_SYMBOL(ldlm_lock_allow_match);
+EXPORT_SYMBOL(ldlm_lock_downgrade);
+EXPORT_SYMBOL(ldlm_lock_convert);
 
 /* ldlm_request.c */
+EXPORT_SYMBOL(ldlm_completion_ast_async);
+EXPORT_SYMBOL(ldlm_blocking_ast_nocheck);
 EXPORT_SYMBOL(ldlm_completion_ast);
 EXPORT_SYMBOL(ldlm_blocking_ast);
 EXPORT_SYMBOL(ldlm_glimpse_ast);
@@ -2456,14 +2712,14 @@ EXPORT_SYMBOL(ldlm_cli_enqueue_fini);
 EXPORT_SYMBOL(ldlm_cli_enqueue_local);
 EXPORT_SYMBOL(ldlm_cli_cancel);
 EXPORT_SYMBOL(ldlm_cli_cancel_unused);
+EXPORT_SYMBOL(ldlm_cli_cancel_unused_resource);
 EXPORT_SYMBOL(ldlm_cli_cancel_req);
-EXPORT_SYMBOL(ldlm_cli_join_lru);
 EXPORT_SYMBOL(ldlm_replay_locks);
 EXPORT_SYMBOL(ldlm_resource_foreach);
 EXPORT_SYMBOL(ldlm_namespace_foreach);
-EXPORT_SYMBOL(ldlm_namespace_foreach_res);
 EXPORT_SYMBOL(ldlm_resource_iterate);
 EXPORT_SYMBOL(ldlm_cancel_resource_local);
+EXPORT_SYMBOL(ldlm_cli_cancel_list_local);
 EXPORT_SYMBOL(ldlm_cli_cancel_list);
 
 /* ldlm_lockd.c */
@@ -2471,13 +2727,16 @@ EXPORT_SYMBOL(ldlm_server_blocking_ast);
 EXPORT_SYMBOL(ldlm_server_completion_ast);
 EXPORT_SYMBOL(ldlm_server_glimpse_ast);
 EXPORT_SYMBOL(ldlm_handle_enqueue);
+EXPORT_SYMBOL(ldlm_handle_enqueue0);
 EXPORT_SYMBOL(ldlm_handle_cancel);
 EXPORT_SYMBOL(ldlm_request_cancel);
 EXPORT_SYMBOL(ldlm_handle_convert);
+EXPORT_SYMBOL(ldlm_handle_convert0);
 EXPORT_SYMBOL(ldlm_del_waiting_lock);
 EXPORT_SYMBOL(ldlm_get_ref);
 EXPORT_SYMBOL(ldlm_put_ref);
 EXPORT_SYMBOL(ldlm_refresh_waiting_lock);
+EXPORT_SYMBOL(ldlm_revoke_export_locks);
 
 /* ldlm_resource.c */
 EXPORT_SYMBOL(ldlm_namespace_new);
@@ -2497,9 +2756,9 @@ EXPORT_SYMBOL(client_obd_cleanup);
 EXPORT_SYMBOL(client_connect_import);
 EXPORT_SYMBOL(client_disconnect_export);
 EXPORT_SYMBOL(server_disconnect_export);
-EXPORT_SYMBOL(target_abort_recovery);
-EXPORT_SYMBOL(target_cleanup_recovery);
+EXPORT_SYMBOL(target_stop_recovery_thread);
 EXPORT_SYMBOL(target_handle_connect);
+EXPORT_SYMBOL(target_cleanup_recovery);
 EXPORT_SYMBOL(target_destroy_export);
 EXPORT_SYMBOL(target_cancel_recovery_timer);
 EXPORT_SYMBOL(target_send_reply);
@@ -2507,7 +2766,6 @@ EXPORT_SYMBOL(target_queue_recovery_request);
 EXPORT_SYMBOL(target_handle_ping);
 EXPORT_SYMBOL(target_pack_pool_reply);
 EXPORT_SYMBOL(target_handle_disconnect);
-EXPORT_SYMBOL(target_handle_reply);
 
 /* l_lock.c */
 EXPORT_SYMBOL(lock_res_and_lock);

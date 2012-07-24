@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -64,35 +64,28 @@
 #ifdef HAVE_QUOTA_SUPPORT
 
 static const uint lustre_initqversions[][MAXQUOTAS] = {
-        [LUSTRE_QUOTA_V1] = LUSTRE_INITQVERSIONS_V1,
         [LUSTRE_QUOTA_V2] = LUSTRE_INITQVERSIONS_V2
 };
 
 static const int lustre_dqstrinblk[] = {
-        [LUSTRE_QUOTA_V1] = LUSTRE_DQSTRINBLK,
         [LUSTRE_QUOTA_V2] = LUSTRE_DQSTRINBLK_V2
 };
 
 static const int lustre_disk_dqblk_sz[] = {
-        [LUSTRE_QUOTA_V1] = sizeof(struct lustre_disk_dqblk),
         [LUSTRE_QUOTA_V2] = sizeof(struct lustre_disk_dqblk_v2)
 };
 
 static const union
 {
-        struct lustre_disk_dqblk    r0;
         struct lustre_disk_dqblk_v2 r1;
 } fakedquot[] = {
-        [LUSTRE_QUOTA_V1] = {.r0 = {.dqb_itime = __constant_cpu_to_le64(1LLU)}},
         [LUSTRE_QUOTA_V2] = {.r1 = {.dqb_itime = __constant_cpu_to_le64(1LLU)}}
 };
 
 static const union
 {
-        struct lustre_disk_dqblk    r0;
         struct lustre_disk_dqblk_v2 r1;
 } emptydquot[] = {
-        [LUSTRE_QUOTA_V1] = {.r0 = { 0 }},
         [LUSTRE_QUOTA_V2] = {.r1 = { 0 }}
 };
 
@@ -110,15 +103,8 @@ int check_quota_file(struct file *f, struct inode *inode, int type,
         static const uint quota_magics[] = LUSTRE_INITQMAGICS;
         const uint *quota_versions = lustre_initqversions[version];
 
-        if (!f && !inode) {
-                CERROR("check_quota_file failed!\n");
-                libcfs_debug_dumpstack(NULL);
-                return -EINVAL;
-        }
-
         size = lustre_read_quota(f, inode, type, (char *)&dqhead,
                                  sizeof(struct lustre_disk_dqheader), 0);
-
         if (size != sizeof(struct lustre_disk_dqheader))
                 return -EINVAL;
         if (le32_to_cpu(dqhead.dqh_magic) != quota_magics[type] ||
@@ -127,7 +113,9 @@ int check_quota_file(struct file *f, struct inode *inode, int type,
         return 0;
 }
 
-/* Check whether given file is really lustre admin quotafile */
+/**
+ * Check whether given file is really lustre admin quotafile
+ */
 int lustre_check_quota_file(struct lustre_quota_info *lqi, int type)
 {
         struct file *f = lqi->qi_files[type];
@@ -144,7 +132,7 @@ int lustre_read_quota_file_info(struct file* f, struct lustre_mem_dqinfo* info)
                                  LUSTRE_DQINFOOFF);
 
         if (size != sizeof(struct lustre_disk_dqinfo)) {
-                CERROR("Can't read info structure on device %s.\n",
+                CDEBUG(D_ERROR, "Can't read info structure on device %s.\n",
                        f->f_vfsmnt->mnt_sb->s_id);
                 return -EINVAL;
         }
@@ -157,13 +145,18 @@ int lustre_read_quota_file_info(struct file* f, struct lustre_mem_dqinfo* info)
         return 0;
 }
 
-/* Read information header from quota file */
+/**
+ * Read information header from quota file
+ */
 int lustre_read_quota_info(struct lustre_quota_info *lqi, int type)
 {
-        return lustre_read_quota_file_info(lqi->qi_files[type], &lqi->qi_info[type]);
+        return lustre_read_quota_file_info(lqi->qi_files[type],
+                                           &lqi->qi_info[type]);
 }
 
-/* Write information header to quota file */
+/**
+ * Write information header to quota file
+ */
 int lustre_write_quota_info(struct lustre_quota_info *lqi, int type)
 {
         struct lustre_disk_dqinfo dinfo;
@@ -184,67 +177,47 @@ int lustre_write_quota_info(struct lustre_quota_info *lqi, int type)
                                   LUSTRE_DQINFOOFF);
 
         if (size != sizeof(struct lustre_disk_dqinfo)) {
-                CWARN("Can't write info structure on device %s.\n",
-                      f->f_vfsmnt->mnt_sb->s_id);
+                CDEBUG(D_WARNING, 
+                       "Can't write info structure on device %s.\n",
+                       f->f_vfsmnt->mnt_sb->s_id);
                 return -1;
         }
         return 0;
 }
 
-#define DQ2MQ(v) ((sizeof(v) == sizeof(__u64)) ? \
-                le64_to_cpu(v) : le32_to_cpu(v))
-
-#define MQ2DQ(v,newv) ((sizeof(v) == sizeof(__u64)) ? \
-                (v = cpu_to_le64((__u64)newv)) : (v = cpu_to_le32((__u32)newv)))
-
-#define DQF_GET(var,ver,field) ((ver == LUSTRE_QUOTA_V1)?\
-                DQ2MQ(((struct lustre_disk_dqblk*)(var))->field):\
-                DQ2MQ(((struct lustre_disk_dqblk_v2*)(var))->field))
-
-#define DQF_PUT(var,ver,field,val) ((ver == LUSTRE_QUOTA_V1)?\
-                MQ2DQ(((struct lustre_disk_dqblk*)(var))->field, val):\
-                MQ2DQ(((struct lustre_disk_dqblk_v2*)(var))->field, val))
-
 void disk2memdqb(struct lustre_mem_dqblk *m, void *d,
                  lustre_quota_version_t version)
 {
-        m->dqb_ihardlimit = DQF_GET(d, version, dqb_ihardlimit);
-        m->dqb_isoftlimit = DQF_GET(d, version, dqb_isoftlimit);
-        m->dqb_curinodes = DQF_GET(d, version, dqb_curinodes);
-        m->dqb_itime = DQF_GET(d, version, dqb_itime);
-        m->dqb_bhardlimit = DQF_GET(d, version, dqb_bhardlimit);
-        m->dqb_bsoftlimit = DQF_GET(d, version, dqb_bsoftlimit);
-        m->dqb_curspace = DQF_GET(d, version, dqb_curspace);
-        m->dqb_btime = DQF_GET(d, version, dqb_btime);
-}
+        struct lustre_disk_dqblk_v2 *dqblk = (struct lustre_disk_dqblk_v2 *)d;
 
-static int check_quota_bounds(struct lustre_mem_dqblk *m, 
-                              lustre_quota_version_t version)
-{
-        return (version == LUSTRE_QUOTA_V1  &&
-                m->dqb_ihardlimit <= MAX_UL &&
-                m->dqb_isoftlimit <= MAX_UL &&
-                m->dqb_curinodes <= MAX_UL  &&
-                m->dqb_bhardlimit <= MAX_UL &&
-                m->dqb_bsoftlimit <= MAX_UL) ||
-                version != LUSTRE_QUOTA_V1;
+        LASSERT(version == LUSTRE_QUOTA_V2);
+
+        m->dqb_ihardlimit = le64_to_cpu(dqblk->dqb_ihardlimit);
+        m->dqb_isoftlimit = le64_to_cpu(dqblk->dqb_isoftlimit);
+        m->dqb_curinodes = le64_to_cpu(dqblk->dqb_curinodes);
+        m->dqb_itime = le64_to_cpu(dqblk->dqb_itime);
+        m->dqb_bhardlimit = le64_to_cpu(dqblk->dqb_bhardlimit);
+        m->dqb_bsoftlimit = le64_to_cpu(dqblk->dqb_bsoftlimit);
+        m->dqb_curspace = le64_to_cpu(dqblk->dqb_curspace);
+        m->dqb_btime = le64_to_cpu(dqblk->dqb_btime);
 }
 
 static int mem2diskdqb(void *d, struct lustre_mem_dqblk *m,
                        qid_t id, lustre_quota_version_t version)
 {
-        if (!check_quota_bounds(m, version))
-                return -EINVAL;
+        struct lustre_disk_dqblk_v2 *dqblk = (struct lustre_disk_dqblk_v2 *)d;
 
-        DQF_PUT(d, version, dqb_ihardlimit, m->dqb_ihardlimit);
-        DQF_PUT(d, version, dqb_isoftlimit, m->dqb_isoftlimit);
-        DQF_PUT(d, version, dqb_curinodes, m->dqb_curinodes);
-        DQF_PUT(d, version, dqb_itime, m->dqb_itime);
-        DQF_PUT(d, version, dqb_bhardlimit, m->dqb_bhardlimit);
-        DQF_PUT(d, version, dqb_bsoftlimit, m->dqb_bsoftlimit);
-        DQF_PUT(d, version, dqb_curspace, m->dqb_curspace);
-        DQF_PUT(d, version, dqb_btime, m->dqb_btime);
-        DQF_PUT(d, version, dqb_id, id);
+        LASSERT(version == LUSTRE_QUOTA_V2);
+
+        dqblk->dqb_ihardlimit = cpu_to_le64(m->dqb_ihardlimit);
+        dqblk->dqb_isoftlimit = cpu_to_le64(m->dqb_isoftlimit);
+        dqblk->dqb_curinodes = cpu_to_le64(m->dqb_curinodes);
+        dqblk->dqb_itime = cpu_to_le64(m->dqb_itime);
+        dqblk->dqb_bhardlimit = cpu_to_le64(m->dqb_bhardlimit);
+        dqblk->dqb_bsoftlimit = cpu_to_le64(m->dqb_bsoftlimit);
+        dqblk->dqb_curspace = cpu_to_le64(m->dqb_curspace);
+        dqblk->dqb_btime = cpu_to_le64(m->dqb_btime);
+        dqblk->dqb_id = cpu_to_le32(id);
 
         return 0;
 }
@@ -253,7 +226,8 @@ dqbuf_t getdqbuf(void)
 {
         dqbuf_t buf = kmalloc(LUSTRE_DQBLKSIZE, GFP_NOFS);
         if (!buf)
-                CWARN("VFS: Not enough memory for quota buffers.\n");
+                CDEBUG(D_WARNING, 
+                       "VFS: Not enough memory for quota buffers.\n");
         return buf;
 }
 
@@ -290,10 +264,12 @@ ssize_t write_blk(struct file *filp, uint blk, dqbuf_t buf)
 
 void lustre_mark_info_dirty(struct lustre_mem_dqinfo *info)
 {
-        set_bit(DQF_INFO_DIRTY_B, &info->dqi_flags);
+        cfs_set_bit(DQF_INFO_DIRTY_B, &info->dqi_flags);
 }
 
-/* Remove empty block from list and return it */
+/**
+ * Remove empty block from list and return it
+ */
 int get_free_dqblk(struct file *filp, struct lustre_mem_dqinfo *info)
 {
         dqbuf_t buf = getdqbuf();
@@ -322,7 +298,9 @@ out_buf:
         return ret;
 }
 
-/* Insert empty block to the list */
+/**
+ * Insert empty block to the list
+ */
 int put_free_dqblk(struct file *filp, struct lustre_mem_dqinfo *info,
                    dqbuf_t buf, uint blk)
 {
@@ -341,7 +319,9 @@ int put_free_dqblk(struct file *filp, struct lustre_mem_dqinfo *info,
         return 0;
 }
 
-/* Remove given block from the list of blocks with free entries */
+/**
+ * Remove given block from the list of blocks with free entries
+ */
 int remove_free_dqentry(struct file *filp,
                         struct lustre_mem_dqinfo *info, dqbuf_t buf,
                         uint blk)
@@ -376,17 +356,19 @@ int remove_free_dqentry(struct file *filp,
         }
         freedqbuf(tmpbuf);
         dh->dqdh_next_free = dh->dqdh_prev_free = cpu_to_le32(0);
-        err = write_blk(filp, blk, buf);
-        if (err < 0)      /* No matter whether write succeeds block is out of list */
-                CERROR("VFS: Can't write block (%u) with "
-                       "free entries (rc=%d).\n", blk, err);
+        if (write_blk(filp, blk, buf) < 0)
+                /* No matter whether write succeeds block is out of list */
+                CDEBUG(D_ERROR, 
+                       "VFS: Can't write block (%u) with free entries.\n", blk);
         return 0;
 out_buf:
         freedqbuf(tmpbuf);
         return err;
 }
 
-/* Insert given block to the beginning of list with free entries */
+/**
+ * Insert given block to the beginning of list with free entries
+ */
 int insert_free_dqentry(struct file *filp,
                         struct lustre_mem_dqinfo *info, dqbuf_t buf,
                         uint blk)
@@ -421,7 +403,9 @@ out_buf:
 
 
 
-/* Find space for dquot */
+/**
+ * Find space for dquot
+ */
 static uint find_free_dqentry(struct lustre_dquot *dquot, int *err, 
                               lustre_quota_version_t version)
 {
@@ -463,25 +447,30 @@ static uint find_free_dqentry(struct lustre_dquot *dquot, int *err,
         /* Will block be full */
         if (le16_to_cpu(dh->dqdh_entries) + 1 >= dqstrinblk)
                 if ((*err = remove_free_dqentry(filp, info, buf, blk)) < 0) {
-                        CERROR("VFS: Can't remove block %u"
-                               " from entry free list.\n", blk);
+                        CDEBUG(D_ERROR, 
+                               "VFS: find_free_dqentry(): Can't remove block "
+                               "(%u) from entry free list.\n", blk);
                         goto out_buf;
                 }
         dh->dqdh_entries = cpu_to_le16(le16_to_cpu(dh->dqdh_entries) + 1);
         /* Find free structure in block */
         for (i = 0; i < dqstrinblk &&
              memcmp((char *)&emptydquot[version],
-                    (char*)ddquot + i * dqblk_sz,
-                    dqblk_sz); i++);
+                    (char *)ddquot + i * dqblk_sz, dqblk_sz);
+             i++);
 
         if (i == dqstrinblk) {
-                CERROR("VFS: Data block full but it shouldn't.\n");
+                CDEBUG(D_ERROR, 
+                       "VFS: find_free_dqentry(): Data block full but it "
+                       "shouldn't.\n");
                 *err = -EIO;
                 goto out_buf;
         }
 
         if ((*err = write_blk(filp, blk, buf)) < 0) {
-                CERROR("VFS: Can't write quota data block %u.\n", blk);
+                CDEBUG(D_ERROR,
+                       "VFS: find_free_dqentry(): Can't write quota data "
+                       "block %u.\n", blk);
                 goto out_buf;
         }
         dquot->dq_off =
@@ -495,8 +484,10 @@ out_buf:
         return 0;
 }
 
-/* Insert reference to structure into the trie */
-static int do_insert_tree(struct lustre_dquot *dquot, uint * treeblk, int depth, 
+/**
+ * Insert reference to structure into the trie
+ */
+static int do_insert_tree(struct lustre_dquot *dquot, uint * treeblk, int depth,
                           lustre_quota_version_t version)
 {
         struct lustre_quota_info *lqi = dquot->dq_info;
@@ -530,8 +521,9 @@ static int do_insert_tree(struct lustre_dquot *dquot, uint * treeblk, int depth,
         if (depth == LUSTRE_DQTREEDEPTH - 1) {
 
                 if (newblk) {
-                        CERROR("VFS: Inserting already present quota entry "
-                               "(block %u).\n", 
+                        CDEBUG(D_ERROR, 
+                               "VFS: Inserting already present quota entry "
+                               "(block %u).\n",
                                ref[GETIDINDEX(dquot->dq_id, depth)]);
                         ret = -EIO;
                         goto out_buf;
@@ -550,7 +542,9 @@ out_buf:
         return ret;
 }
 
-/* Wrapper for inserting quota structure into tree */
+/**
+ * Wrapper for inserting quota structure into tree
+ */
 static inline int dq_insert_tree(struct lustre_dquot *dquot, 
                                  lustre_quota_version_t version)
 {
@@ -558,8 +552,9 @@ static inline int dq_insert_tree(struct lustre_dquot *dquot,
         return do_insert_tree(dquot, &tmp, 0, version);
 }
 
-/*
- *  We don't have to be afraid of deadlocks as we never have quotas on quota files...
+/**
+ * We don't have to be afraid of deadlocks as we never have quotas on
+ * quota files...
  */
 static int lustre_write_dquot(struct lustre_dquot *dquot, 
                               lustre_quota_version_t version)
@@ -569,31 +564,32 @@ static int lustre_write_dquot(struct lustre_dquot *dquot,
         loff_t offset;
         ssize_t ret;
         int dqblk_sz = lustre_disk_dqblk_sz[version];
-        char ddquot[sizeof(union lustre_disk_dqblk_un)];
+        struct lustre_disk_dqblk_v2 ddquot;
 
-        ret = mem2diskdqb(ddquot, &dquot->dq_dqb, dquot->dq_id, version);
+        ret = mem2diskdqb(&ddquot, &dquot->dq_dqb, dquot->dq_id, version);
         if (ret < 0)
                 return ret;
 
         if (!dquot->dq_off)
                 if ((ret = dq_insert_tree(dquot, version)) < 0) {
-                        CERROR("VFS: Error %Zd occurred while creating quota.\n",
-                               ret);
+                        CDEBUG(D_ERROR,
+                               "VFS: Error %Zd occurred while creating "
+                               "quota.\n", ret);
                         return ret;
                 }
         filp = dquot->dq_info->qi_files[type];
         offset = dquot->dq_off;
-        /* Argh... We may need to write structure full of zeroes but that would be
-         * treated as an empty place by the rest of the code. Format change would
-         * be definitely cleaner but the problems probably are not worth it */
-        if (!memcmp((char *)&emptydquot[version], ddquot, dqblk_sz))
-                DQF_PUT(ddquot, version, dqb_itime, 1);
+        /* Argh... We may need to write structure full of zeroes but that would
+         * be treated as an empty place by the rest of the code. Format change
+         * would be definitely cleaner but the problems probably are not worth
+         * it */
+        if (!memcmp((char *)&emptydquot[version], (char *)&ddquot, dqblk_sz))
+                ddquot.dqb_itime = cpu_to_le64(1);
 
-        ret = lustre_write_quota(filp, ddquot,
-                                 dqblk_sz, offset);
+        ret = lustre_write_quota(filp, (char *)&ddquot, dqblk_sz, offset);
         if (ret != dqblk_sz) {
-                CWARN("VFS: dquota write failed on dev %s\n",
-                      filp->f_dentry->d_sb->s_id);
+                CDEBUG(D_WARNING, "VFS: dquota write failed on dev %s\n",
+                       filp->f_dentry->d_sb->s_id);
                 if (ret >= 0)
                         ret = -ENOSPC;
         } else
@@ -602,7 +598,9 @@ static int lustre_write_dquot(struct lustre_dquot *dquot,
         return ret;
 }
 
-/* Free dquot entry in data block */
+/**
+ * Free dquot entry in data block
+ */
 static int free_dqentry(struct lustre_dquot *dquot, uint blk, 
                         lustre_quota_version_t version)
 {
@@ -617,13 +615,14 @@ static int free_dqentry(struct lustre_dquot *dquot, uint blk,
         if (!buf)
                 return -ENOMEM;
         if (dquot->dq_off >> LUSTRE_DQBLKSIZE_BITS != blk) {
-                CERROR("VFS: Quota structure has offset to other block (%u) "
-                       "than it should (%u).\n", blk, 
-                       (uint)(dquot->dq_off >> LUSTRE_DQBLKSIZE_BITS));
+                CDEBUG(D_ERROR,
+                       "VFS: Quota structure has offset to other block (%u) "
+                       "than it should (%u).\n",
+                       blk, (uint) (dquot->dq_off >> LUSTRE_DQBLKSIZE_BITS));
                 goto out_buf;
         }
         if ((ret = read_blk(filp, NULL, 0, blk, buf)) < 0) {
-                CERROR("VFS: Can't read quota data block %u\n", blk);
+                CDEBUG(D_ERROR, "VFS: Can't read quota data block %u\n", blk);
                 goto out_buf;
         }
         dh = (struct lustre_disk_dqdbheader *)buf;
@@ -631,8 +630,9 @@ static int free_dqentry(struct lustre_dquot *dquot, uint blk,
         if (!le16_to_cpu(dh->dqdh_entries)) {   /* Block got free? */
                 if ((ret = remove_free_dqentry(filp, info, buf, blk)) < 0 ||
                     (ret = put_free_dqblk(filp, info, buf, blk)) < 0) {
-                        CERROR("VFS: Can't move quota data block (%u) "
-                               "to free list.\n", blk);
+                        CDEBUG(D_ERROR,
+                               "VFS: Can't move quota data block (%u) to free "
+                               "list.\n", blk);
                         goto out_buf;
                 }
         } else {
@@ -642,12 +642,14 @@ static int free_dqentry(struct lustre_dquot *dquot, uint blk,
                         /* Insert will write block itself */
                         if ((ret =
                              insert_free_dqentry(filp, info, buf, blk)) < 0) {
-                                CERROR("VFS: Can't insert quota data block (%u) "
-                                       "to free entry list.\n", blk);
+                                CDEBUG(D_ERROR,
+                                       "VFS: Can't insert quota data block "
+                                       "(%u) to free entry list.\n", blk);
                                 goto out_buf;
                         }
                 } else if ((ret = write_blk(filp, blk, buf)) < 0) {
-                        CERROR("VFS: Can't write quota data block %u\n", blk);
+                        CDEBUG(D_ERROR,
+                               "VFS: Can't write quota data block %u\n", blk);
                         goto out_buf;
                 }
         }
@@ -657,7 +659,9 @@ out_buf:
         return ret;
 }
 
-/* Remove reference to dquot from tree */
+/**
+ * Remove reference to dquot from tree
+ */
 static int remove_tree(struct lustre_dquot *dquot, uint * blk, int depth, 
                        lustre_quota_version_t version)
 {
@@ -691,14 +695,17 @@ static int remove_tree(struct lustre_dquot *dquot, uint * blk, int depth,
                         put_free_dqblk(filp, info, buf, *blk);
                         *blk = 0;
                 } else if ((ret = write_blk(filp, *blk, buf)) < 0)
-                        CERROR("VFS: Can't write quota tree block %u.\n", *blk);
+                        CDEBUG(D_ERROR,
+                               "VFS: Can't write quota tree block %u.\n", *blk);
         }
 out_buf:
         freedqbuf(buf);
         return ret;
 }
 
-/* Delete dquot from tree */
+/**
+ * Delete dquot from tree
+ */
 static int lustre_delete_dquot(struct lustre_dquot *dquot, 
                                 lustre_quota_version_t version)
 {
@@ -709,7 +716,9 @@ static int lustre_delete_dquot(struct lustre_dquot *dquot,
         return remove_tree(dquot, &tmp, 0, version);
 }
 
-/* Find entry in block */
+/**
+ * Find entry in block
+ */
 static loff_t find_block_dqentry(struct lustre_dquot *dquot, uint blk, 
                                  lustre_quota_version_t version)
 {
@@ -717,9 +726,12 @@ static loff_t find_block_dqentry(struct lustre_dquot *dquot, uint blk,
         dqbuf_t buf = getdqbuf();
         loff_t ret = 0;
         int i;
-        char *ddquot = GETENTRIES(buf, version);
+        struct lustre_disk_dqblk_v2 *ddquot =
+                (struct lustre_disk_dqblk_v2 *)GETENTRIES(buf, version);
         int dqblk_sz = lustre_disk_dqblk_sz[version];
         int dqstrinblk = lustre_dqstrinblk[version];
+
+        LASSERT(version == LUSTRE_QUOTA_V2);
 
         if (!buf)
                 return -ENOMEM;
@@ -729,18 +741,18 @@ static loff_t find_block_dqentry(struct lustre_dquot *dquot, uint blk,
         }
         if (dquot->dq_id)
                 for (i = 0; i < dqstrinblk && 
-                     DQF_GET(ddquot+i*dqblk_sz, version, dqb_id) != dquot->dq_id;
+                     le32_to_cpu(ddquot[i].dqb_id) != dquot->dq_id;
                      i++) ;
         else {                  /* ID 0 as a bit more complicated searching... */
                 for (i = 0; i < dqstrinblk; i++)
-                        if (!DQF_GET(ddquot + i*dqblk_sz, version, dqb_id)
+                        if (!le32_to_cpu(ddquot[i].dqb_id)
                             && memcmp((char *)&emptydquot[version],
-                                      ddquot + i*dqblk_sz,
-                                      dqblk_sz))
+                                      (char *)&ddquot[i], dqblk_sz))
                                 break;
         }
         if (i == dqstrinblk) {
-                CERROR("VFS: Quota for id %u referenced but not present.\n",
+                CDEBUG(D_ERROR,
+                       "VFS: Quota for id %u referenced but not present.\n",
                        dquot->dq_id);
                 ret = -EIO;
                 goto out_buf;
@@ -754,8 +766,10 @@ out_buf:
         return ret;
 }
 
-/* Find entry for given id in the tree */
-static loff_t find_tree_dqentry(struct lustre_dquot *dquot, uint blk, int depth, 
+/**
+ * Find entry for given id in the tree
+ */
+static loff_t find_tree_dqentry(struct lustre_dquot *dquot, uint blk, int depth,
                                 lustre_quota_version_t version)
 {
         struct file *filp = dquot->dq_info->qi_files[dquot->dq_type];
@@ -782,13 +796,14 @@ out_buf:
         return ret;
 }
 
-/* Find entry for given id in the tree - wrapper function */
+/**
+ * Find entry for given id in the tree - wrapper function
+ */
 static inline loff_t find_dqentry(struct lustre_dquot *dquot, 
                                   lustre_quota_version_t version)
 {
         return find_tree_dqentry(dquot, LUSTRE_DQTREEOFF, 0, version);
 }
-
 
 int lustre_read_dquot(struct lustre_dquot *dquot)
 {
@@ -800,69 +815,81 @@ int lustre_read_dquot(struct lustre_dquot *dquot)
 
         /* Invalidated quota? */
         if (!dquot->dq_info || !(filp = dquot->dq_info->qi_files[type])) {
-                CERROR("VFS: Quota invalidated while reading!\n");
-                return -EIO;
+                CDEBUG(D_ERROR, "VFS: Quota invalidated while reading!\n");
+                return -ESRCH;
         }
 
         version = dquot->dq_info->qi_version;
+        LASSERT(version == LUSTRE_QUOTA_V2);
         dqblk_sz = lustre_disk_dqblk_sz[version];
 
         offset = find_dqentry(dquot, version);
         if (offset <= 0) {      /* Entry not present? */
                 if (offset < 0)
-                        CERROR("VFS: Can't read quota structure for id %u.\n",
+                        CDEBUG(D_ERROR,
+                               "VFS: Can't read quota structure for id %u.\n",
                                dquot->dq_id);
                 dquot->dq_off = 0;
-                set_bit(DQ_FAKE_B, &dquot->dq_flags);
+                cfs_set_bit(DQ_FAKE_B, &dquot->dq_flags);
                 memset(&dquot->dq_dqb, 0, sizeof(struct lustre_mem_dqblk));
                 ret = offset;
         } else {
-                char ddquot[sizeof(union lustre_disk_dqblk_un)];
+                struct lustre_disk_dqblk_v2 ddquot;
 
                 dquot->dq_off = offset;
-                if ((ret = lustre_read_quota(filp, NULL, type, ddquot,
+                if ((ret = lustre_read_quota(filp, NULL, type, (char *)&ddquot,
                                              dqblk_sz, offset)) != dqblk_sz) {
                         if (ret >= 0)
                                 ret = -EIO;
-                        CERROR("VFS: Error while reading quota structure "
-                               "for id %u.\n", dquot->dq_id);
-                        memset(ddquot, 0, dqblk_sz);
+                        CDEBUG(D_ERROR,
+                               "VFS: Error while reading quota structure for id "
+                               "%u.\n", dquot->dq_id);
+                        memset((char *)&ddquot, 0, dqblk_sz);
                 } else {
                         ret = 0;
                         /* We need to escape back all-zero structure */
                         if (!memcmp((char *)&fakedquot[version],
-                                    ddquot, dqblk_sz))
-                                DQF_PUT(ddquot, version, dqb_itime, 0);
+                                    (char *)&ddquot, dqblk_sz))
+                                ddquot.dqb_itime = cpu_to_le64(0);
                 }
-                disk2memdqb(&dquot->dq_dqb, ddquot, version);
+                disk2memdqb(&dquot->dq_dqb, &ddquot, version);
         }
 
         return ret;
 }
 
-/* Commit changes of dquot to disk - it might also mean deleting it when quota became fake */
+/**
+ * Commit changes of dquot to disk - it might also mean deleting
+ * it when quota became fake.
+ */
 int lustre_commit_dquot(struct lustre_dquot *dquot)
 {
         int rc = 0;
         lustre_quota_version_t version = dquot->dq_info->qi_version;
         void *handle;
         struct inode *inode = dquot->dq_info->qi_files[dquot->dq_type]->f_dentry->d_inode;
+        int delete = 0;
 
         /* always clear the flag so we don't loop on an IO error... */
-        clear_bit(DQ_MOD_B, &dquot->dq_flags);
+        cfs_clear_bit(DQ_MOD_B, &dquot->dq_flags);
 
         /* The block/inode usage in admin quotafile isn't the real usage
          * over all cluster, so keep the fake dquot entry on disk is
          * meaningless, just remove it */
-        if (test_bit(DQ_FAKE_B, &dquot->dq_flags)) {
-                handle = lustre_quota_journal_start(inode, 1);
-                rc = lustre_delete_dquot(dquot, version);
-                lustre_quota_journal_stop(handle);
-        } else {
-                handle = lustre_quota_journal_start(inode, 0);
-                rc = lustre_write_dquot(dquot, version);
-                lustre_quota_journal_stop(handle);
+        if (cfs_test_bit(DQ_FAKE_B, &dquot->dq_flags))
+                delete = 1;
+        handle = lustre_quota_journal_start(inode, delete);
+        if (unlikely(IS_ERR(handle))) {
+                rc = PTR_ERR(handle);
+                CERROR("fail to lustre_quota_journal_start: rc = %d\n", rc);
+                return rc;
         }
+
+        if (delete)
+                rc = lustre_delete_dquot(dquot, version);
+        else
+                rc = lustre_write_dquot(dquot, version);
+        lustre_quota_journal_stop(handle);
 
         if (rc < 0)
                 return rc;
@@ -873,7 +900,8 @@ int lustre_commit_dquot(struct lustre_dquot *dquot)
         return rc;
 }
 
-int lustre_init_quota_header(struct lustre_quota_info *lqi, int type, int fakemagics)
+int lustre_init_quota_header(struct lustre_quota_info *lqi, int type,
+                             int fakemagics)
 {
         static const uint quota_magics[] = LUSTRE_INITQMAGICS;
         static const uint fake_magics[] = LUSTRE_BADQMAGICS;
@@ -891,15 +919,17 @@ int lustre_init_quota_header(struct lustre_quota_info *lqi, int type, int fakema
                                   sizeof(struct lustre_disk_dqheader), 0);
 
         if (size != sizeof(struct lustre_disk_dqheader)) {
-                CERROR("error writing quotafile header (rc:%d)\n", rc);
+                CDEBUG(D_ERROR, "error writing quoafile header (rc:%d)\n", rc);
                 rc = size;
         }
 
         return rc;
 }
 
-/* We need to export this function to initialize quotafile, because we haven't
- * user level check utility */
+/**
+ * We need to export this function to initialize quotafile, because we haven't
+ * user level check utility
+ */
 int lustre_init_quota_info_generic(struct lustre_quota_info *lqi, int type,
                                    int fakemagics)
 {
@@ -925,7 +955,7 @@ int lustre_init_quota_info(struct lustre_quota_info *lqi, int type)
 }
 
 static int walk_block_dqentry(struct file *filp, struct inode *inode, int type,
-                              uint blk, struct list_head *list)
+                              uint blk, cfs_list_t *list)
 {
         dqbuf_t buf = getdqbuf();
         loff_t ret = 0;
@@ -933,7 +963,7 @@ static int walk_block_dqentry(struct file *filp, struct inode *inode, int type,
             (struct lustre_disk_dqdbheader *)buf;
         struct dqblk *blk_item;
         struct dqblk *pos;
-        struct list_head *tmp;
+        cfs_list_t *tmp;
 
         if (!buf)
                 return -ENOMEM;
@@ -946,12 +976,12 @@ static int walk_block_dqentry(struct file *filp, struct inode *inode, int type,
         if (!le32_to_cpu(dqhead->dqdh_entries))
                 goto out_buf;
 
-        if (list_empty(list)) {
+        if (cfs_list_empty(list)) {
                 tmp = list;
                 goto done;
         }
 
-        list_for_each_entry(pos, list, link) {
+        cfs_list_for_each_entry(pos, list, link) {
                 if (blk == pos->blk)    /* we got this blk already */
                         goto out_buf;
                 if (blk > pos->blk)
@@ -966,9 +996,9 @@ done:
                 goto out_buf;
         }
         blk_item->blk = blk;
-        INIT_LIST_HEAD(&blk_item->link);
+        CFS_INIT_LIST_HEAD(&blk_item->link);
 
-        list_add_tail(&blk_item->link, tmp);
+        cfs_list_add_tail(&blk_item->link, tmp);
 
 out_buf:
         freedqbuf(buf);
@@ -976,7 +1006,7 @@ out_buf:
 }
 
 int walk_tree_dqentry(struct file *filp, struct inode *inode, int type, 
-                      uint blk, int depth, struct list_head *list)
+                      uint blk, int depth, cfs_list_t *list)
 {
         dqbuf_t buf = getdqbuf();
         loff_t ret = 0;
@@ -1007,14 +1037,16 @@ out_buf:
         return ret;
 }
 
-/* Walk through the quota file (v2 format) to get all ids with quota limit */
+/**
+ * Walk through the quota file (v2 format) to get all ids with quota limit
+ */
 int lustre_get_qids(struct file *fp, struct inode *inode, int type,
-                    struct list_head *list)
+                    cfs_list_t *list)
 {
-        struct list_head blk_list;
+        cfs_list_t blk_list;
         struct dqblk *blk_item, *tmp;
         dqbuf_t buf = NULL;
-        char *ddquot;
+        struct lustre_disk_dqblk_v2 *ddquot;
         int rc;
         lustre_quota_version_t version;
 
@@ -1022,35 +1054,33 @@ int lustre_get_qids(struct file *fp, struct inode *inode, int type,
 
         LASSERT(ergo(fp == NULL, inode != NULL));
 
-        if (check_quota_file(fp, inode, type, LUSTRE_QUOTA_V1) == 0)
-                version = LUSTRE_QUOTA_V1;
-        else if (check_quota_file(fp, inode, type, LUSTRE_QUOTA_V2) == 0)
+        if (check_quota_file(fp, inode, type, LUSTRE_QUOTA_V2) == 0)
                 version = LUSTRE_QUOTA_V2;
         else {
-                CERROR("unknown quota file format!\n");
+                CDEBUG(D_ERROR, "unknown quota file format!\n");
                 RETURN(-EINVAL);
         }
 
-        if (!list_empty(list)) {
-                CERROR("not empty list\n");
+        if (!cfs_list_empty(list)) {
+                CDEBUG(D_ERROR, "not empty list\n");
                 RETURN(-EINVAL);
         }
 
-        INIT_LIST_HEAD(&blk_list);
+        CFS_INIT_LIST_HEAD(&blk_list);
         rc = walk_tree_dqentry(fp, inode, type, LUSTRE_DQTREEOFF, 0, &blk_list);
         if (rc) {
-                CERROR("walk through quota file failed!(%d)\n", rc);
+                CDEBUG(D_ERROR, "walk through quota file failed!(%d)\n", rc);
                 GOTO(out_free, rc);
         }
-        if (list_empty(&blk_list))
+        if (cfs_list_empty(&blk_list))
                 RETURN(0);
 
         buf = getdqbuf();
         if (!buf)
                 RETURN(-ENOMEM);
-        ddquot = GETENTRIES(buf, version);
+        ddquot = (struct lustre_disk_dqblk_v2 *)GETENTRIES(buf, version);
 
-        list_for_each_entry(blk_item, &blk_list, link) {
+        cfs_list_for_each_entry(blk_item, &blk_list, link) {
                 loff_t ret = 0;
                 int i, dqblk_sz = lustre_disk_dqblk_sz[version];
 
@@ -1065,27 +1095,27 @@ int lustre_get_qids(struct file *fp, struct inode *inode, int type,
                         struct dquot_id *dqid;
                         /* skip empty entry */
                         if (!memcmp((char *)&emptydquot[version],
-                                    ddquot + i*dqblk_sz, dqblk_sz))
+                                    (char *)&ddquot[i], dqblk_sz))
                                 continue;
 
                         OBD_ALLOC_GFP(dqid, sizeof(*dqid), GFP_NOFS);
                         if (!dqid)
                                 GOTO(out_free, rc = -ENOMEM);
 
-                        dqid->di_id = DQF_GET(ddquot + i * dqblk_sz,
-                                              version, dqb_id);
-                        dqid->di_flag = DQF_GET(ddquot + i * dqblk_sz, version,
-                                                dqb_ihardlimit) ? QI_SET : 0;
-                        dqid->di_flag |= DQF_GET(ddquot + i * dqblk_sz, version,
-                                                 dqb_bhardlimit) ? QB_SET : 0;
-                        INIT_LIST_HEAD(&dqid->di_link);
-                        list_add(&dqid->di_link, list);
+                        dqid->di_id    = le32_to_cpu(ddquot[i].dqb_id);
+                        dqid->di_flag  = le64_to_cpu(ddquot[i].dqb_ihardlimit) ?
+                                         QI_SET : 0;
+                        dqid->di_flag |= le64_to_cpu(ddquot[i].dqb_bhardlimit) ?
+                                         QB_SET : 0;
+
+                        CFS_INIT_LIST_HEAD(&dqid->di_link);
+                        cfs_list_add(&dqid->di_link, list);
                 }
         }
 
 out_free:
-        list_for_each_entry_safe(blk_item, tmp, &blk_list, link) {
-                list_del_init(&blk_item->link);
+        cfs_list_for_each_entry_safe(blk_item, tmp, &blk_list, link) {
+                cfs_list_del_init(&blk_item->link);
                 kfree(blk_item);
         }
         if (buf)

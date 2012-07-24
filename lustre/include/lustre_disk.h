@@ -26,8 +26,11 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011 Whamcloud, Inc.
+ *
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -43,17 +46,26 @@
 #ifndef _LUSTRE_DISK_H
 #define _LUSTRE_DISK_H
 
+/** \defgroup disk disk
+ *
+ * @{
+ */
+
+#include <libcfs/libcfs.h>
 #include <lnet/types.h>
 
 /****************** on-disk files *********************/
 
 #define MDT_LOGS_DIR      "LOGS"  /* COMPAT_146 */
 #define MOUNT_CONFIGS_DIR "CONFIGS"
-/* Persistent mount data are stored on the disk in this file. */
-#define MOUNT_DATA_FILE    MOUNT_CONFIGS_DIR"/mountdata"
+#define CONFIGS_FILE      "mountdata"
+/** Persistent mount data are stored on the disk in this file. */
+#define MOUNT_DATA_FILE    MOUNT_CONFIGS_DIR"/"CONFIGS_FILE
 #define LAST_RCVD         "last_rcvd"
 #define LOV_OBJID         "lov_objid"
 #define HEALTH_CHECK      "health_check"
+#define CAPA_KEYS         "capa_keys"
+#define CHANGELOG_USERS   "changelog_users"
 
 
 /****************** persistent mount data *********************/
@@ -61,14 +73,25 @@
 #define LDD_F_SV_TYPE_MDT   0x0001
 #define LDD_F_SV_TYPE_OST   0x0002
 #define LDD_F_SV_TYPE_MGS   0x0004
-#define LDD_F_NEED_INDEX    0x0010 /* need an index assignment */
-#define LDD_F_VIRGIN        0x0020 /* never registered */
-#define LDD_F_UPDATE        0x0040 /* update config for this server */
-#define LDD_F_REWRITE_LDD   0x0080 /* rewrite the LDD */
-#define LDD_F_WRITECONF     0x0100 /* regenerate all logs for this fs */
-#define LDD_F_UPGRADE14     0x0200 /* COMPAT_14 */
-#define LDD_F_PARAM         0x0400 /* process as lctl conf_param */
-#define LDD_F_NO_PRIMNODE   0x1000 /* all nodes are specified as servicenodes */
+#define LDD_F_SV_ALL        0x0008
+/** need an index assignment */
+#define LDD_F_NEED_INDEX    0x0010
+/** never registered */
+#define LDD_F_VIRGIN        0x0020
+/** update the config logs for this server */
+#define LDD_F_UPDATE        0x0040
+/** rewrite the LDD */
+#define LDD_F_REWRITE_LDD   0x0080
+/** regenerate config logs for this fs or server */
+#define LDD_F_WRITECONF     0x0100
+/** COMPAT_14 */
+#define LDD_F_UPGRADE14     0x0200
+/** process as lctl conf_param */
+#define LDD_F_PARAM         0x0400
+/** backend fs make use of IAM directory format. */
+#define LDD_F_IAM_DIR       0x0800
+/** all nodes are specified as service nodes */
+#define LDD_F_NO_PRIMNODE   0x1000
 
 enum ldd_mount_type {
         LDD_MT_EXT3 = 0,
@@ -86,7 +109,7 @@ static inline char *mt_str(enum ldd_mount_type mt)
                 "ldiskfs",
                 "smfs",
                 "reiserfs",
-                "ldiskfs2",
+                "ldiskfs2"
         };
         return mount_type_string[mt];
 }
@@ -108,7 +131,8 @@ struct lustre_disk_data {
         __u32      ldd_svindex;         /* server index (0001), must match
                                            svname */
         __u32      ldd_mount_type;      /* target fs type LDD_MT_* */
-        char       ldd_fsname[64];      /* filesystem this server is part of */
+        char       ldd_fsname[64];      /* filesystem this server is part of,
+                                           MTI_NAME_MAXLEN */
         char       ldd_svname[64];      /* this server's name (lustre-mdt0001)*/
         __u8       ldd_uuid[40];        /* server UUID (COMPAT_146) */
 
@@ -128,9 +152,10 @@ static inline int server_make_name(__u32 flags, __u16 index, char *fs,
                                    char *name)
 {
         if (flags & (LDD_F_SV_TYPE_MDT | LDD_F_SV_TYPE_OST)) {
-                sprintf(name, "%.8s-%s%04x", fs,
-                        (flags & LDD_F_SV_TYPE_MDT) ? "MDT" : "OST",
-                        index);
+                if (!(flags & LDD_F_SV_ALL))
+                        sprintf(name, "%.8s-%s%04x", fs,
+                                (flags & LDD_F_SV_TYPE_MDT) ? "MDT" : "OST",
+                                index);
         } else if (flags & LDD_F_SV_TYPE_MGS) {
                 sprintf(name, "MGS");
         } else {
@@ -161,6 +186,7 @@ struct lustre_mount_data {
         int        lmd_recovery_time_hard;
         char      *lmd_dev;           /* device name */
         char      *lmd_profile;       /* client only */
+        char      *lmd_mgssec;        /* sptlrpc flavor to mgs */
         char      *lmd_opts;          /* lustre mount options (as opposed to
                                          _device_ mount options) */
         __u32     *lmd_exclude;       /* array of OSTs to ignore */
@@ -180,6 +206,12 @@ struct lustre_mount_data {
 
 /****************** last_rcvd file *********************/
 
+/** version recovery epoch */
+#define LR_EPOCH_BITS   32
+#define lr_epoch(a) ((a) >> LR_EPOCH_BITS)
+#define LR_EXPIRE_INTERVALS 16 /**< number of intervals to track transno */
+#define ENOENT_VERSION 1 /** 'virtual' version of non-existent object */
+
 #define LR_SERVER_SIZE   512
 #define LR_CLIENT_START 8192
 #define LR_CLIENT_SIZE   128
@@ -193,29 +225,40 @@ struct lustre_mount_data {
  * If we need more than 131072 clients (order-2 allocation on x86) then this
  * should become an array of single-page pointers that are allocated on demand.
  */
-#define LR_MAX_CLIENTS max(128 * 1024UL, CFS_PAGE_SIZE * 8)
-/* version recovery */
-#define LR_EPOCH_BITS   32
-#define lr_epoch(a) ((a) >> LR_EPOCH_BITS)
+#if (128 * 1024UL) > (CFS_PAGE_SIZE * 8)
+#define LR_MAX_CLIENTS (128 * 1024UL)
+#else
+#define LR_MAX_CLIENTS (CFS_PAGE_SIZE * 8)
+#endif
 
-/* COMPAT_146 */
-#define OBD_COMPAT_OST          0x00000002 /* this is an OST (temporary) */
-#define OBD_COMPAT_MDT          0x00000004 /* this is an MDT (temporary) */
-/* end COMPAT_146 */
-/* interop flag to show server 20 was used */
+/** COMPAT_146: this is an OST (temporary) */
+#define OBD_COMPAT_OST          0x00000002
+/** COMPAT_146: this is an MDT (temporary) */
+#define OBD_COMPAT_MDT          0x00000004
+/** 2.0 server, interop flag to show server version is changed */
 #define OBD_COMPAT_20           0x00000008
 
-#define OBD_ROCOMPAT_LOVOBJID   0x00000001 /* MDS handles LOV_OBJID file */
-#define OBD_ROCOMPAT_CROW       0x00000002 /* OST will CROW create objects */
+/** MDS handles LOV_OBJID file */
+#define OBD_ROCOMPAT_LOVOBJID   0x00000001
 
-#define OBD_INCOMPAT_GROUPS     0x00000001 /* OST handles group subdirs */
-#define OBD_INCOMPAT_OST        0x00000002 /* this is an OST */
-#define OBD_INCOMPAT_MDT        0x00000004 /* this is an MDT */
-#define OBD_INCOMPAT_COMMON_LR  0x00000008 /* common last_rvcd format */
-#define OBD_INCOMPAT_FID        0x00000010 /* FID is enabled */
-#define OBD_INCOMPAT_SOM        0x00000020 /* Size-On-MDS is enabled */
+/** OST handles group subdirs */
+#define OBD_INCOMPAT_GROUPS     0x00000001
+/** this is an OST */
+#define OBD_INCOMPAT_OST        0x00000002
+/** this is an MDT */
+#define OBD_INCOMPAT_MDT        0x00000004
+/** common last_rvcd format */
+#define OBD_INCOMPAT_COMMON_LR  0x00000008
+/** FID is enabled */
+#define OBD_INCOMPAT_FID        0x00000010
+/** Size-on-MDS is enabled */
+#define OBD_INCOMPAT_SOM        0x00000020
+/** filesystem using iam format to store directory entries */
+#define OBD_INCOMPAT_IAM_DIR    0x00000040
+/** LMA attribute contains per-inode incompatible flags */
+#define OBD_INCOMPAT_LMA        0x00000080
 
-#define LR_EXPIRE_INTERVALS 16 /**< number of intervals to track transno */
+
 /* Data stored per server at the head of the last_rcvd file.  In le32 order.
    This should be common to filter_internal.h, lustre_mds.h */
 struct lr_server_data {
@@ -269,7 +312,7 @@ static inline void check_lcd(char *obd_name, int index,
                              struct lsd_client_data *lcd)
 {
         int length = sizeof(lcd->lcd_uuid);
-        if (strnlen((const char *)lcd->lcd_uuid, length) == length) {
+        if (strnlen((char*)lcd->lcd_uuid, length) == length) {
                 lcd->lcd_uuid[length - 1] = '\0';
 
                 LCONSOLE_ERROR("the client UUID (%s) on %s for exports"
@@ -278,16 +321,116 @@ static inline void check_lcd(char *obd_name, int index,
         }
 }
 
-static inline __u64 lsd_last_transno(struct lsd_client_data *lcd)
+/* last_rcvd handling */
+static inline void lsd_le_to_cpu(struct lr_server_data *buf,
+                                 struct lr_server_data *lsd)
 {
-        return le64_to_cpu(lcd->lcd_last_transno) >
-               le64_to_cpu(lcd->lcd_last_close_transno) ?
-               le64_to_cpu(lcd->lcd_last_transno) :
-               le64_to_cpu(lcd->lcd_last_close_transno);
+        int i;
+        memcpy(lsd->lsd_uuid, buf->lsd_uuid, sizeof (lsd->lsd_uuid));
+        lsd->lsd_last_transno     = le64_to_cpu(buf->lsd_last_transno);
+        lsd->lsd_compat14         = le64_to_cpu(buf->lsd_compat14);
+        lsd->lsd_mount_count      = le64_to_cpu(buf->lsd_mount_count);
+        lsd->lsd_feature_compat   = le32_to_cpu(buf->lsd_feature_compat);
+        lsd->lsd_feature_rocompat = le32_to_cpu(buf->lsd_feature_rocompat);
+        lsd->lsd_feature_incompat = le32_to_cpu(buf->lsd_feature_incompat);
+        lsd->lsd_server_size      = le32_to_cpu(buf->lsd_server_size);
+        lsd->lsd_client_start     = le32_to_cpu(buf->lsd_client_start);
+        lsd->lsd_client_size      = le16_to_cpu(buf->lsd_client_size);
+        lsd->lsd_subdir_count     = le16_to_cpu(buf->lsd_subdir_count);
+        lsd->lsd_catalog_oid      = le64_to_cpu(buf->lsd_catalog_oid);
+        lsd->lsd_catalog_ogen     = le32_to_cpu(buf->lsd_catalog_ogen);
+        memcpy(lsd->lsd_peeruuid, buf->lsd_peeruuid, sizeof(lsd->lsd_peeruuid));
+        lsd->lsd_ost_index        = le32_to_cpu(buf->lsd_ost_index);
+        lsd->lsd_mdt_index        = le32_to_cpu(buf->lsd_mdt_index);
+        lsd->lsd_start_epoch      = le32_to_cpu(buf->lsd_start_epoch);
+        for (i = 0; i < LR_EXPIRE_INTERVALS; i++)
+                lsd->lsd_trans_table[i] = le64_to_cpu(buf->lsd_trans_table[i]);
+        lsd->lsd_trans_table_time = le32_to_cpu(buf->lsd_trans_table_time);
+        lsd->lsd_expire_intervals = le32_to_cpu(buf->lsd_expire_intervals);
 }
 
-#ifdef __KERNEL__
+static inline void lsd_cpu_to_le(struct lr_server_data *lsd,
+                                 struct lr_server_data *buf)
+{
+        int i;
+        memcpy(buf->lsd_uuid, lsd->lsd_uuid, sizeof (buf->lsd_uuid));
+        buf->lsd_last_transno     = cpu_to_le64(lsd->lsd_last_transno);
+        buf->lsd_compat14         = cpu_to_le64(lsd->lsd_compat14);
+        buf->lsd_mount_count      = cpu_to_le64(lsd->lsd_mount_count);
+        buf->lsd_feature_compat   = cpu_to_le32(lsd->lsd_feature_compat);
+        buf->lsd_feature_rocompat = cpu_to_le32(lsd->lsd_feature_rocompat);
+        buf->lsd_feature_incompat = cpu_to_le32(lsd->lsd_feature_incompat);
+        buf->lsd_server_size      = cpu_to_le32(lsd->lsd_server_size);
+        buf->lsd_client_start     = cpu_to_le32(lsd->lsd_client_start);
+        buf->lsd_client_size      = cpu_to_le16(lsd->lsd_client_size);
+        buf->lsd_subdir_count     = cpu_to_le16(lsd->lsd_subdir_count);
+        buf->lsd_catalog_oid      = cpu_to_le64(lsd->lsd_catalog_oid);
+        buf->lsd_catalog_ogen     = cpu_to_le32(lsd->lsd_catalog_ogen);
+        memcpy(buf->lsd_peeruuid, lsd->lsd_peeruuid, sizeof(buf->lsd_peeruuid));
+        buf->lsd_ost_index        = cpu_to_le32(lsd->lsd_ost_index);
+        buf->lsd_mdt_index        = cpu_to_le32(lsd->lsd_mdt_index);
+        buf->lsd_start_epoch      = cpu_to_le32(lsd->lsd_start_epoch);
+        for (i = 0; i < LR_EXPIRE_INTERVALS; i++)
+                buf->lsd_trans_table[i] = cpu_to_le64(lsd->lsd_trans_table[i]);
+        buf->lsd_trans_table_time = cpu_to_le32(lsd->lsd_trans_table_time);
+        buf->lsd_expire_intervals = cpu_to_le32(lsd->lsd_expire_intervals);
+}
+
+static inline void lcd_le_to_cpu(struct lsd_client_data *buf,
+                                 struct lsd_client_data *lcd)
+{
+        memcpy(lcd->lcd_uuid, buf->lcd_uuid, sizeof (lcd->lcd_uuid));
+        lcd->lcd_last_transno       = le64_to_cpu(buf->lcd_last_transno);
+        lcd->lcd_last_xid           = le64_to_cpu(buf->lcd_last_xid);
+        lcd->lcd_last_result        = le32_to_cpu(buf->lcd_last_result);
+        lcd->lcd_last_data          = le32_to_cpu(buf->lcd_last_data);
+        lcd->lcd_last_close_transno = le64_to_cpu(buf->lcd_last_close_transno);
+        lcd->lcd_last_close_xid     = le64_to_cpu(buf->lcd_last_close_xid);
+        lcd->lcd_last_close_result  = le32_to_cpu(buf->lcd_last_close_result);
+        lcd->lcd_last_close_data    = le32_to_cpu(buf->lcd_last_close_data);
+        lcd->lcd_pre_versions[0]    = le64_to_cpu(buf->lcd_pre_versions[0]);
+        lcd->lcd_pre_versions[1]    = le64_to_cpu(buf->lcd_pre_versions[1]);
+        lcd->lcd_pre_versions[2]    = le64_to_cpu(buf->lcd_pre_versions[2]);
+        lcd->lcd_pre_versions[3]    = le64_to_cpu(buf->lcd_pre_versions[3]);
+        lcd->lcd_last_epoch         = le32_to_cpu(buf->lcd_last_epoch);
+        lcd->lcd_first_epoch        = le32_to_cpu(buf->lcd_first_epoch);
+}
+
+static inline void lcd_cpu_to_le(struct lsd_client_data *lcd,
+                                 struct lsd_client_data *buf)
+{
+        memcpy(buf->lcd_uuid, lcd->lcd_uuid, sizeof (lcd->lcd_uuid));
+        buf->lcd_last_transno       = cpu_to_le64(lcd->lcd_last_transno);
+        buf->lcd_last_xid           = cpu_to_le64(lcd->lcd_last_xid);
+        buf->lcd_last_result        = cpu_to_le32(lcd->lcd_last_result);
+        buf->lcd_last_data          = cpu_to_le32(lcd->lcd_last_data);
+        buf->lcd_last_close_transno = cpu_to_le64(lcd->lcd_last_close_transno);
+        buf->lcd_last_close_xid     = cpu_to_le64(lcd->lcd_last_close_xid);
+        buf->lcd_last_close_result  = cpu_to_le32(lcd->lcd_last_close_result);
+        buf->lcd_last_close_data    = cpu_to_le32(lcd->lcd_last_close_data);
+        buf->lcd_pre_versions[0]    = cpu_to_le64(lcd->lcd_pre_versions[0]);
+        buf->lcd_pre_versions[1]    = cpu_to_le64(lcd->lcd_pre_versions[1]);
+        buf->lcd_pre_versions[2]    = cpu_to_le64(lcd->lcd_pre_versions[2]);
+        buf->lcd_pre_versions[3]    = cpu_to_le64(lcd->lcd_pre_versions[3]);
+        buf->lcd_last_epoch         = cpu_to_le32(lcd->lcd_last_epoch);
+        buf->lcd_first_epoch        = cpu_to_le32(lcd->lcd_first_epoch);
+}
+
+static inline __u64 lcd_last_transno(struct lsd_client_data *lcd)
+{
+        return (lcd->lcd_last_transno > lcd->lcd_last_close_transno ?
+                lcd->lcd_last_transno : lcd->lcd_last_close_transno);
+}
+
+static inline __u64 lcd_last_xid(struct lsd_client_data *lcd)
+{
+        return (lcd->lcd_last_xid > lcd->lcd_last_close_xid ?
+                lcd->lcd_last_xid : lcd->lcd_last_close_xid);
+}
+
 /****************** superblock additional info *********************/
+#ifdef __KERNEL__
+
 struct ll_sb_info;
 
 struct lustre_sb_info {
@@ -297,7 +440,7 @@ struct lustre_sb_info {
         struct lustre_disk_data  *lsi_ldd;     /* mount info on-disk */
         struct ll_sb_info        *lsi_llsbi;   /* add'l client sbi info */
         struct vfsmount          *lsi_srv_mnt; /* the one server mount */
-        atomic_t                  lsi_mounts;  /* references to the srv_mnt */
+        cfs_atomic_t              lsi_mounts;  /* references to the srv_mnt */
         struct backing_dev_info   lsi_bdi;     /* each client mountpoint needs own backing_dev_info */
 };
 
@@ -306,8 +449,9 @@ struct lustre_sb_info {
 #define LSI_UMOUNT_FAILOVER              0x00000020
 #define LSI_BDI_INITIALIZED              0x00000040
 
-#define    s2lsi(sb)        ((struct lustre_sb_info *)((sb)->s_fs_info))
-#define    s2lsi_nocast(sb) ((sb)->s_fs_info)
+#define     s2lsi(sb)        ((struct lustre_sb_info *)((sb)->s_fs_info))
+#define     s2lsi_nocast(sb) ((sb)->s_fs_info)
+
 #define     get_profile_name(sb)   (s2lsi(sb)->lsi_lmd->lmd_profile)
 
 #endif /* __KERNEL__ */
@@ -315,30 +459,28 @@ struct lustre_sb_info {
 /****************** mount lookup info *********************/
 
 struct lustre_mount_info {
-        char               *lmi_name;
-        struct super_block *lmi_sb;
-        struct vfsmount    *lmi_mnt;
-        struct list_head    lmi_list_chain;
+        char                 *lmi_name;
+        struct super_block   *lmi_sb;
+        struct vfsmount      *lmi_mnt;
+        cfs_list_t            lmi_list_chain;
 };
 
 /****************** prototypes *********************/
 
 #ifdef __KERNEL__
-#include <obd_class.h>
 
 /* obd_mount.c */
-void lustre_register_client_fill_super(int (*cfs)(struct super_block *sb));
+void lustre_register_client_fill_super(int (*cfs)(struct super_block *sb,
+                                                  struct vfsmount *mnt));
 void lustre_register_kill_super_cb(void (*cfs)(struct super_block *sb));
 
 
 int lustre_common_put_super(struct super_block *sb);
-int lustre_process_log(struct super_block *sb, char *logname,
-                     struct config_llog_instance *cfg);
-int lustre_end_log(struct super_block *sb, char *logname,
-                       struct config_llog_instance *cfg);
-struct lustre_mount_info *server_find_mount_locked(char *name);
-struct lustre_mount_info *server_get_mount(char *name);
-int server_put_mount(char *name, struct vfsmount *mnt);
+struct lustre_mount_info *server_find_mount_locked(const char *name);
+struct lustre_mount_info *server_get_mount(const char *name);
+struct lustre_mount_info *server_get_mount_2(const char *name);
+int server_put_mount(const char *name, struct vfsmount *mnt);
+int server_put_mount_2(const char *name, struct vfsmount *mnt);
 int server_register_target(struct super_block *sb);
 struct mgs_target_info;
 int server_mti_print(char *title, struct mgs_target_info *mti);
@@ -347,5 +489,7 @@ int server_mti_print(char *title, struct mgs_target_info *mti);
 int mgc_fsname2resid(char *fsname, struct ldlm_res_id *res_id);
 
 #endif
+
+/** @} disk */
 
 #endif // _LUSTRE_DISK_H

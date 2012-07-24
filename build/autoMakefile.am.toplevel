@@ -50,7 +50,7 @@ doxygen-%: build/doxyfile.%
 if MODULES
 sources: all-sources
 
-all-sources: $(EXTRA_SOURCES)
+all-sources: $(MODULE_SYMVERS_DEPS)
 	for dir in $(SOURCES_SUBDIRS) ; do \
 		$(MAKE) sources -C $$dir || exit $$? ; \
 	done
@@ -95,21 +95,13 @@ dist-hook:
 
 EXTRA_DIST = @PACKAGE_TARNAME@.spec					\
 	build/Makefile build/autoMakefile.am.toplevel build/lbuild*	\
-	build/linux-merge-config.awk build/linux-merge-modules.awk	\
-	build/linux-rhconfig.h build/lmake build/Rules.in		\
-	build/lustre-kernel-2.4.spec.in build/suse-functions.sh		\
-	build/suse-post.sh build/suse-postun.sh				\
-	build/suse-trigger-script.sh.in build/README.kernel-source	\
-	build/sles8-post.sh build/sles8-postun.sh build/sles8-pre.sh	\
-	build/sles8-update_INITRD_MODULES.sh				\
-	build/sles8-update_rcfile_setting.sh build/update_oldconfig	\
+	build/Rules.in 							\
+	build/update_oldconfig						\
 	build/autoconf/lustre-build-linux.m4				\
 	build/autoconf/lustre-build-darwin.m4				\
 	build/autoconf/lustre-build.m4 build/rdac_spec                  \
 	build/mptlinux.spec.patch build/patches                         \
-	build/funcs.sh build/find_linux_rpms build/exit_traps.sh        \
-	build/extract_patches build/checkpatch.pl build/commit-msg	\
-	build/prepare-commit-msg build/commit.* build/test-commit-msg.sh
+	build/funcs.sh build/find_linux_rpms build/exit_traps.sh
 
 rpms-real: @PACKAGE_TARNAME@.spec dist Makefile
 	CONFIGURE_ARGS=$$(echo $$(eval echo $(ac_configure_args)) | sed -re 's/--(en|dis)able-tests//'); \
@@ -169,10 +161,6 @@ debs:
 	if [ "$$lversion" != "$$cversion" ]; then \
 		echo -e "1i\nlustre ($$lversion-1) unstable; urgency=low\n\n  * Automated changelog entry update\n\n -- Brian J. Murrell <brian@interlinx.bc.ca>  $$(date -R)\n\n.\nwq" | ed debian/changelog; \
 	fi; \
-	if [ -d .git ]; then \
-		build/extract_patches .; \
-	fi
-	cat debian/patches/* | sed -ne '/^diff --git/h' -e '/^deleted file/{G;s/^.* b\/\(.*\)/\1/p;}' | xargs rm -f; \
 	rm -rf debs
 	dpkg-buildpackage -I.git -I\*.out[0-9]\* -I\*.swp || { \
 		rc=$${PIPESTATUS[0]}; \

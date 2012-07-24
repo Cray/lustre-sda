@@ -100,8 +100,6 @@ cat <<EOF
     os_distribution: $TEST_DISTRO
     lustre_version: $LUSTRE_VERSION
     lustre_build: $LUSTRE_BUILD
-    lustre_branch: $LUSTRE_BRANCH
-    lustre_revision: $LUSTRE_REVISION
     kernel_version: $(uname -r)
 EOF
 }
@@ -130,9 +128,10 @@ EOF
 
 yml_entities() {
     local host
-
-    host=$(short_hostname $(facet_active_host mds))
-    yml_entity "MDS 1" $host >> $logdir/node.$host.yml
+    for num in $(seq $MDSCOUNT); do
+        host=$(short_hostname $(facet_active_host mds$num))
+        yml_entity "MDS $num" $host >> $logdir/node.$host.yml
+    done
 
     for num in $(seq $OSTCOUNT); do
         host=$(short_hostname $(facet_active_host ost$num))

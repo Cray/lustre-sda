@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -44,12 +44,12 @@ static int config_on_load = 0;
 CFS_MODULE_PARM(config_on_load, "i", int, 0444,
                 "configure network at module load");
 
-static struct semaphore lnet_config_mutex;
+static cfs_semaphore_t lnet_config_mutex;
 
 int
 lnet_configure (void *arg)
 {
-        /* 'arg' only there so I can be passed to cfs_kernel_thread() */
+        /* 'arg' only there so I can be passed to cfs_create_thread() */
         int    rc = 0;
 
         LNET_MUTEX_DOWN(&lnet_config_mutex);
@@ -119,7 +119,7 @@ init_lnet(void)
         int                  rc;
         ENTRY;
 
-        init_mutex(&lnet_config_mutex);
+        cfs_init_mutex(&lnet_config_mutex);
 
         rc = LNetInit();
         if (rc != 0) {
@@ -133,7 +133,7 @@ init_lnet(void)
         if (config_on_load) {
                 /* Have to schedule a separate thread to avoid deadlocking
                  * in modload */
-                (void) cfs_kernel_thread(lnet_configure, NULL, 0);
+                (void) cfs_create_thread(lnet_configure, NULL, 0);
         }
 
         RETURN(0);

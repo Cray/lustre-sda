@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -51,7 +51,6 @@ static inline int lov_mds_md_size(int stripes, int lmm_magic)
                 return sizeof(struct lov_mds_md_v1) +
                         stripes * sizeof(struct lov_ost_data_v1);
 }
-
 
 #define IOC_LOV_TYPE                   'g'
 #define IOC_LOV_MIN_NR                 50

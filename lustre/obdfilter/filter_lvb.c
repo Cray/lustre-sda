@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -88,14 +88,15 @@ static int filter_lvbo_init(struct ldlm_resource *res)
         res->lr_lvb_data = lvb;
         res->lr_lvb_len = sizeof(*lvb);
 
-        obd = res->lr_namespace->ns_lvbp;
+        obd = ldlm_res_to_ns(res)->ns_lvbp;
         LASSERT(obd != NULL);
 
-        CDEBUG(D_INODE, "%s: filter_lvbo_init(o_gr="LPU64", o_id="
+        CDEBUG(D_INODE, "%s: filter_lvbo_init(o_seq="LPU64", o_id="
                LPU64")\n", obd->obd_name, res->lr_name.name[1],
                res->lr_name.name[0]);
 
-        dentry = filter_fid2dentry(obd, NULL, 0, res->lr_name.name[0]);
+        dentry = filter_fid2dentry(obd, NULL, res->lr_name.name[1],
+                                              res->lr_name.name[0]);
         if (IS_ERR(dentry)) {
                 rc = PTR_ERR(dentry);
                 CERROR("%s: bad object "LPU64"/"LPU64": rc %d\n", obd->obd_name,
@@ -109,8 +110,8 @@ static int filter_lvbo_init(struct ldlm_resource *res)
 
         inode_init_lvb(dentry->d_inode, lvb);
 
-        CDEBUG(D_DLMTRACE, "res: "LPU64" initial lvb size: "LPU64", "
-               "mtime: "LPU64", blocks: "LPU64"\n",
+        CDEBUG(D_DLMTRACE, "res: "LPX64" initial lvb size: "LPX64", "
+               "mtime: "LPX64", blocks: "LPX64"\n",
                res->lr_name.name[0], lvb->lvb_size,
                lvb->lvb_mtime, lvb->lvb_blocks);
 
@@ -128,23 +129,24 @@ out_dentry:
 
 /* This will be called in two ways:
  *
- *   m != NULL : called by the DLM itself after a glimpse callback
- *   m == NULL : called by the filter after a disk write
+ *   r != NULL : called by the DLM itself after a glimpse callback
+ *   r == NULL : called by the filter after a disk write
  *
  *   If 'increase_only' is true, don't allow values to move backwards.
  */
-static int filter_lvbo_update(struct ldlm_resource *res, struct ptlrpc_request *r,
-                              int buf_idx, int increase_only)
+static int filter_lvbo_update(struct ldlm_resource *res,
+                              struct ptlrpc_request *r, int increase_only)
 {
         int rc = 0;
         struct ost_lvb *lvb;
         struct obd_device *obd;
         struct inode *inode;
+        struct inode *tmpinode = NULL;
         ENTRY;
 
         LASSERT(res);
 
-        down(&res->lr_lvb_sem);
+        lock_res(res);
         lvb = res->lr_lvb_data;
         if (lvb == NULL) {
                 CERROR("No lvb when running lvbo_update!\n");
@@ -156,8 +158,8 @@ static int filter_lvbo_update(struct ldlm_resource *res, struct ptlrpc_request *
                 struct ost_lvb *new;
 
                 /* XXX update always from reply buffer */
-                new = lustre_swab_repbuf(r, buf_idx, sizeof(*new),
-                                         lustre_swab_ost_lvb);
+                new = req_capsule_server_get(&r->rq_pill, &RMF_DLM_LVB);
+
                 if (new == NULL) {
                         CERROR("lustre_swab_buf failed\n");
                         goto disk_update;
@@ -186,24 +188,42 @@ static int filter_lvbo_update(struct ldlm_resource *res, struct ptlrpc_request *
                                lvb->lvb_ctime, new->lvb_ctime);
                         lvb->lvb_ctime = new->lvb_ctime;
                 }
+                if (new->lvb_blocks > lvb->lvb_blocks || !increase_only) {
+                        CDEBUG(D_DLMTRACE, "res: "LPU64" updating lvb blocks: "
+                               LPU64" -> "LPU64"\n", res->lr_name.name[0],
+                               lvb->lvb_blocks, new->lvb_blocks);
+                        lvb->lvb_blocks = new->lvb_blocks;
+                }
         }
 
  disk_update:
         /* Update the LVB from the disk inode */
-        obd = res->lr_namespace->ns_lvbp;
+        obd = ldlm_res_to_ns(res)->ns_lvbp;
         LASSERT(obd);
 
         inode = res->lr_lvb_inode;
-        /* filter_fid2dentry could fail */
-        if (unlikely(!inode)) {
+        /* filter_fid2dentry could fail, esp. in OBD_FAIL_OST_ENOENT test case */
+        if (unlikely(inode == NULL)) {
                 struct dentry *dentry;
 
-                dentry = filter_fid2dentry(obd, NULL, 0, res->lr_name.name[0]);
+                unlock_res(res);
+
+                dentry = filter_fid2dentry(obd, NULL, res->lr_name.name[1],
+                                           res->lr_name.name[0]);
                 if (IS_ERR(dentry))
-                        GOTO(out, rc = PTR_ERR(dentry));
+                        RETURN(PTR_ERR(dentry));
+
                 if (dentry->d_inode)
-                        inode = res->lr_lvb_inode = igrab(dentry->d_inode);
+                        tmpinode = igrab(dentry->d_inode);
                 f_dput(dentry);
+                /* tmpinode could be NULL, but it does not matter if other
+                 * have set res->lr_lvb_inode */
+                lock_res(res);
+                if (res->lr_lvb_inode == NULL) {
+                        res->lr_lvb_inode = tmpinode;
+                        tmpinode = NULL;
+                }
+                inode = res->lr_lvb_inode;
         }
 
         if (!inode || !inode->i_nlink)
@@ -234,15 +254,17 @@ static int filter_lvbo_update(struct ldlm_resource *res, struct ptlrpc_request *
                        lvb->lvb_ctime, LTIME_S(inode->i_ctime));
                 lvb->lvb_ctime = LTIME_S(inode->i_ctime);
         }
-        if (lvb->lvb_blocks != inode->i_blocks) {
+        if (inode->i_blocks > lvb->lvb_blocks || !increase_only) {
                 CDEBUG(D_DLMTRACE,"res: "LPU64" updating lvb blocks from disk: "
-                       LPU64" -> "LPU64"\n", res->lr_name.name[0],
-                       lvb->lvb_blocks, (__u64)inode->i_blocks);
+                       LPU64" -> %llu\n", res->lr_name.name[0],
+                       lvb->lvb_blocks, (unsigned long long)inode->i_blocks);
                 lvb->lvb_blocks = inode->i_blocks;
         }
 
 out:
-        up(&res->lr_lvb_sem);
+        unlock_res(res);
+        if (tmpinode)
+                iput(tmpinode);
         return rc;
 }
 

@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -51,8 +51,7 @@
 
 # ifdef HAVE_RCU
 #  include <linux/rcupdate.h> /* for rcu_head{} */
-# else
-struct rcu_head { };
+typedef struct rcu_head cfs_rcu_head_t;
 # endif
 
 #endif /* ifdef __KERNEL__ */

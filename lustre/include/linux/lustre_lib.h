@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2001, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -73,22 +73,6 @@
 #define LUSTRE_FATAL_SIGS (sigmask(SIGKILL) | sigmask(SIGINT) |                \
                            sigmask(SIGTERM) | sigmask(SIGQUIT) |               \
                            sigmask(SIGALRM))
-
-#ifdef __KERNEL__
-static inline sigset_t l_w_e_set_sigs(int sigs)
-{
-        sigset_t old;
-        unsigned long irqflags;
-
-        SIGNAL_MASK_LOCK(current, irqflags);
-        old = current->blocked;
-        siginitsetinv(&current->blocked, sigs);
-        RECALC_SIGPENDING;
-        SIGNAL_MASK_UNLOCK(current, irqflags);
-
-        return old;
-}
-#endif
 
 #ifdef __KERNEL__
 /* initialize ost_lvb according to inode */

@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -67,6 +67,18 @@ lnet_selftest_fini (void)
                         LBUG();
         }
         return;
+}
+
+
+void
+lnet_selftest_structure_assertion(void)
+{
+        CLASSERT(sizeof(srpc_msg_t) == 160);
+        CLASSERT(sizeof(srpc_test_reqst_t) == 70);
+        CLASSERT(offsetof(srpc_msg_t, msg_body.tes_reqst.tsr_concur) == 72);
+        CLASSERT(offsetof(srpc_msg_t, msg_body.tes_reqst.tsr_ndest) == 78);
+        CLASSERT(sizeof(srpc_stat_reply_t) == 136);
+        CLASSERT(sizeof(srpc_stat_reqst_t) == 28);
 }
 
 int

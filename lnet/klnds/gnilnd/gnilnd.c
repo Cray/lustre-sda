@@ -313,11 +313,22 @@ kgnilnd_find_or_create_conn_locked(kgn_peer_t *peer) {
         if (peer->gnp_connecting)
                 return NULL;
 
-       /* if the peer was previously connecting, check if we should
-        * trigger another connection attempt yet. */ 
-       if (time_before(jiffies, peer->gnp_reconnect_time)) {
+        /* if the peer was previously connecting, check if we should
+         * trigger another connection attempt yet. */ 
+        if (time_before(jiffies, peer->gnp_reconnect_time)) {
                 return NULL;
         }
+
+        /* This check prevents us from creating a new connection to a peer while we are 
+         * still in the process of closing an existing connection to the peer.
+         */
+        list_for_each_entry(conn, &peer->gnp_conns, gnc_list) {
+                if (conn->gnc_ephandle != NULL) {
+                        CDEBUG(D_NET, "Not connecting non-null ephandle found peer 0x%p->%s\n", peer,
+                                libcfs_nid2str(peer->gnp_nid)); 
+                        return NULL;
+                }
+        } 
 
         CDEBUG(D_NET, "starting connect to %s\n",
                 libcfs_nid2str(peer->gnp_nid));
@@ -735,37 +746,18 @@ kgnilnd_complete_closed_conn(kgn_conn_t *conn)
         write_lock(&kgnilnd_data.kgn_peer_conn_lock);
 
         conn->gnc_state = GNILND_CONN_DONE;
+        
+        /* Decrement counter if we are marked by del_conn_or_peers for closing
+         */
+        if (conn->gnc_needs_closing)
+                kgnilnd_admin_decref(kgnilnd_data.kgn_npending_conns);
 
-        /* remove from peer's list of valid connections */
-        list_del_init(&conn->gnc_list);
-
-        /* this is a bit tricky... if this conn was added to the peer purgatory during 
-         * kgnilnd_close_conn_locked but by the time it has gone through kgnilnd_scheduler
-         * and into this function, we could have received a real CLOSE msg or we could 
-         * have a new connection to that peer. In the former case, we just set
-         * close_recvd, but in the later we'll actually call kgnilnd_detach_purgatory_locked
-         * which will release this conn back to us for cleanup. 
-         * The tricky bit is ensuring we release the purgatory on this conn - in the real
-         * RX CLOSE case, gnc_peer->gnp_purgatory still points to us and 
-         * kgnilnd_detach_purgatory_locked will do the right thing. However, in the 
-         * finish_connect case we've already detached the purgatory but still need to add it
-         * to the list for kgnilnd_release_purgatory_list. The wrinkle is that the peer
-         * might have a _NEW_ conn already in purgatory, so we need to only detach
-         * the purgatory conn if it is us - otherwise we just add ourself to the list
-         * and call release.
-         * N.B - we have a ref on this conn from the scheduler and we are 
-         * holding the write_lock on kgn_peer_conn_lock and it protects gnp_purgatory from
-         * changing */
-        if (conn->gnc_in_purgatory && (!kgnilnd_check_purgatory_conn(conn))) {
-                if (conn->gnc_peer->gnp_purgatory == conn) {
-                        kgnilnd_detach_purgatory_locked(conn->gnc_peer, &souls); 
-                } else {
-                        list_add_tail(&conn->gnc_list, &souls);
-                }
+        /* Remove from peer's list of valid connections if its not in purgatory */
+        if (!conn->gnc_in_purgatory) {
+                list_del_init(&conn->gnc_list);
         }
 
-        /* The above detach_purgatory_locked could unlink as well, so be safe 
-         * NB - only unlinking if we set pending in del_peer_locked from admin or 
+        /* NB - only unlinking if we set pending in del_peer_locked from admin or 
          * shutdown */
         if (kgnilnd_peer_active(conn->gnc_peer) && 
             conn->gnc_peer->gnp_pending_unlink &&
@@ -780,9 +772,14 @@ kgnilnd_complete_closed_conn(kgn_conn_t *conn)
                             conn->gnc_error == -ECONNRESET ? conn->gnc_peer_error
                                                            : conn->gnc_error);
 
-        kgnilnd_release_purgatory_list(&souls);
+        /* Remove peer ref that was added at the top of this function. This would be removed 
+         *  when we detach from purgatory but if we arent in purgatory we need to remove it here.
+         */
 
-        kgnilnd_peer_decref(conn->gnc_peer);
+        if (!conn->gnc_in_purgatory) {
+                kgnilnd_peer_decref(conn->gnc_peer);
+        }
+
         EXIT;
 }
 
@@ -965,10 +962,6 @@ kgnilnd_destroy_peer (kgn_peer_t *peer)
 {
         CDEBUG(D_NET, "peer %s %p deleted\n", 
                libcfs_nid2str(peer->gnp_nid), peer);
-
-        LASSERTF(peer->gnp_purgatory == NULL,
-                 "peer 0x%p->%s purgatory 0x%p\n",
-                 peer, libcfs_nid2str(peer->gnp_nid), peer->gnp_purgatory);
         LASSERTF(atomic_read(&peer->gnp_refcount) == 0,
                  "peer 0x%p->%s refs %d\n",
                  peer, libcfs_nid2str(peer->gnp_nid), 
@@ -995,6 +988,7 @@ kgnilnd_destroy_peer (kgn_peer_t *peer)
          * they are destroyed, so we can be assured that _all_ state to do
          * with this peer has been cleaned up when its refcount drops to
          * zero. */
+
         atomic_dec(&kgnilnd_data.kgn_npeers);
         kgnilnd_net_decref(peer->gnp_net);
 
@@ -1034,61 +1028,54 @@ kgnilnd_add_purgatory_locked(kgn_conn_t *conn, kgn_peer_t *peer)
         mbox->mbx_add_purgatory = jiffies;
         kgnilnd_release_mbox(conn, 1); 
 
-        LASSERTF(peer->gnp_purgatory == NULL, 
-                "peer %s (%p) failed to release purgatory on conn %p "
-                "before adding new hold on conn %p\n",
-                libcfs_nid2str(peer->gnp_nid), peer,
-                peer->gnp_purgatory, conn);
-
         LASSERTF(list_empty(&conn->gnc_mdd_list), 
                 "conn 0x%p->%s with active purgatory hold MDD %d\n",
                 conn, libcfs_nid2str(peer->gnp_nid),
                 kgnilnd_count_list(&conn->gnc_mdd_list));
 
-        peer->gnp_purgatory = conn;
-
         EXIT;
 }
 
-/* need write_lock on kgn_peer_conn_lock */
+/* Instead of detaching everything from purgatory here we just mark the conn as needing 
+ * detach, when the reaper checks the conn the next time it will detach it.
+ * Calling function requires write_lock held on kgn_peer_conn_lock
+ */
+void 
+kgnilnd_mark_for_detach_purgatory_all_locked(kgn_peer_t *peer) {
+        kgn_conn_t       *conn;
+
+        list_for_each_entry(conn, &peer->gnp_conns, gnc_list) {
+                if (conn->gnc_in_purgatory && !conn->gnc_needs_detach) {
+                        conn->gnc_needs_detach = 1;
+                        kgnilnd_admin_addref(kgnilnd_data.kgn_npending_detach);
+                }
+        }
+}
+
+/* Calling function needs a write_lock held on kgn_peer_conn_lock */
 void
-kgnilnd_detach_purgatory_locked(kgn_peer_t *peer, struct list_head *conn_list)
+kgnilnd_detach_purgatory_locked(kgn_conn_t * conn, struct list_head *conn_list)
 {
         kgn_mbox_info_t *mbox = NULL;
 
-        /* if needed, add the peer purgatory data to the list passed in */
-        if (peer->gnp_purgatory != NULL) {
-                kgn_conn_t      *conn = peer->gnp_purgatory;
-
+        /* if needed, add the conn purgatory data to the list passed in */
+        if (conn->gnc_in_purgatory) {
                 CDEBUG(D_NET, "peer %p->%s purg_conn %p@%s mdd_list #tx %d\n", 
-                        peer, libcfs_nid2str(peer->gnp_nid),
+                        conn->gnc_peer, libcfs_nid2str(conn->gnc_peer->gnp_nid),
                         conn, kgnilnd_conn_state2str(conn),
                         kgnilnd_count_list(&conn->gnc_mdd_list));
 
-                /* clear it to indicate it is free, free like the wind! */
-                peer->gnp_purgatory = NULL;
-
                 mbox = &conn->gnc_fma_blk->gnm_mbox_info[conn->gnc_mbox_id];
                 mbox->mbx_detach_of_purgatory = jiffies;
+
                 /* conn->gnc_list is the entry point on peer->gnp_conns, so detaching it 
-                 * here removes it from the list of 'valid' peer connections. Since we'll 
-                 * either leave it detached with gnc_state < GNILND_CONN_DONE, we know the 
-                 * scheduler thread 'owns' it (kgnilnd_schedule_conn() from 
-                 * kgnilnd_close_conn_locked()) and it will be cleaned up in 
-                 * kgnilnd_scheduler(). Otherwise, we put the state onto a list of conns to 
-                 * call kgnilnd_release_purgatory_locked() and as such the caller of 
-                 * kgnilnd_detach_purgatory_locked() now owns that conn.
+                 * here removes it from the list of 'valid' peer connections.
+                 * We put the current conn onto a list of conns to call kgnilnd_release_purgatory_locked() 
+                 * and as such the caller of kgnilnd_detach_purgatory_locked() now owns that conn, since its not
+                 * on the peer's conn_list anymore.
+                 */
 
-                 * There was actually a problem in _not_ clearing gnc_list there (conn #1), 
-                 * as if the new conn (#2) being worked in kgnilnd_finish_connect() also 
-                 * pukes, it would try to be added to the purgatory list. This could happen 
-                 * before conn #1 with gnc_state < GNILND_CONN_DONE had gone through 
-                 * kgnilnd_scheduler() and kgnilnd_complete_closed_conn() and detached conn 
-                 * #1 there. At that point, the checks in kgnilnd_add_purgatory_locked 
-                 * would barf, as we would be adding conn #2 with a peer that has 
-                 * gnp_purgatory != NULL as conn #1 is still there. */
-
-                kgnilnd_peer_decref(peer);
+                kgnilnd_peer_decref(conn->gnc_peer);
                 list_del_init(&conn->gnc_list);
 
                 /* NB - only unlinking if we set pending in del_peer_locked from admin or 
@@ -1098,35 +1085,15 @@ kgnilnd_detach_purgatory_locked(kgn_peer_t *peer, struct list_head *conn_list)
                     kgnilnd_can_unlink_peer_locked(conn->gnc_peer)) {
                         kgnilnd_unlink_peer_locked(conn->gnc_peer);
                 }
+                /* The reaper will not call detach unless the conn is fully through kgnilnd_complete_closed_conn.
+                 * If the conn is not in a DONE state somehow we are attempting to detach even though 
+                 * the conn has not been fully cleaned up. If we detach while the conn is still closing 
+                 * we will end up with an orphaned connection that has valid ep_handle, that is not on a 
+                 * peer. 
+                 */
 
-                /* we could catch a conn before we are actually done closing it
-                 * since this is equivalent to seeing a CLOSE from the remote peer
-                 * use that flag to let others know they can stop the purgatory
-                 * hold. Things like kgnilnd_tx_done -> kgnilnd_unmap_buffer will try
-                 * to add TX to the purgatory list and they can just drop them
-                 * if we've already set up a new connection */
-
-                /* oh, except for during stack reset - always do as asked */
-                if ((conn->gnc_state < GNILND_CONN_DONE) &&
-                    (!kgnilnd_data.kgn_in_reset)) {
-                        CDEBUG(D_NET, "purg_conn %p@%s marked CLOSE_EARLY state\n",
+                LASSERTF(conn->gnc_state == GNILND_CONN_DONE, "Conn in invalid state  %p@%s \n",
                                 conn, kgnilnd_conn_state2str(conn));
-                        conn->gnc_close_recvd = GNILND_CLOSE_EARLY;
-                
-                        /* we return after detaching - effectively releasing the
-                         * connection back to the ownership of the scheduler
-                         * thread */
-                        LASSERTF(conn->gnc_scheduled != GNILND_CONN_IDLE,
-                                 "dangling conn %p@%s sched %d\n",
-                                 conn, kgnilnd_conn_state2str(conn), 
-                                 conn->gnc_scheduled);
-
-                        /* No need to worry about TX on this conn for purgatory
-                         * Once we mark the conn as closed, no new TX would be added
-                         * to the conn tx purgatory list because we unlink it from 
-                         * the gnc_hashlist */
-                        return;
-                }
 
                 /* move from peer to the delayed release list */
                 list_add_tail(&conn->gnc_list, conn_list);
@@ -1147,6 +1114,15 @@ kgnilnd_release_purgatory_list(struct list_head *conn_list)
                 conn->gnc_in_purgatory = 0;
 
                 list_del_init(&conn->gnc_list);
+
+                /* gnc_needs_detach is set in kgnilnd_del_conn_or_peer. It is used to keep track
+                 * of conns that have been marked for detach by kgnilnd_del_conn_or_peer.
+                 * The function uses kgn_npending_detach to verify the conn has 
+                 * actually been detached.
+                 */
+
+                if (conn->gnc_needs_detach)
+                        kgnilnd_admin_decref(kgnilnd_data.kgn_npending_detach);
                 
                 /* if this guy is really dead (we are doing release from reaper),
                  * make sure we tell LNet - if this is from other context,
@@ -1170,7 +1146,8 @@ kgnilnd_release_purgatory_list(struct list_head *conn_list)
                         list_del_init(&gmp->gmp_list);
                         LIBCFS_FREE(gmp, sizeof(*gmp));
                 } 
-
+                /* lose peer ref from complete_closed_conn*/
+                kgnilnd_peer_decref(conn->gnc_peer);
                 /* lose conn ref for purgatory */
                 kgnilnd_conn_decref(conn);
         }
@@ -1240,18 +1217,12 @@ kgnilnd_unlink_peer_locked (kgn_peer_t *peer)
         LASSERTF(kgnilnd_peer_active(peer),
                 "peer 0x%p->%s\n", 
                  peer, libcfs_nid2str(peer->gnp_nid));
-        LASSERTF(peer->gnp_purgatory == NULL, 
-                "peer 0x%p->%s failed to release purgatory on "
-                "conn %p before removing from peer table.\n",
-                peer, libcfs_nid2str(peer->gnp_nid),
-                peer->gnp_purgatory);
-
         CDEBUG(D_NET, "unlinking peer 0x%p->%s\n",
                 peer, libcfs_nid2str(peer->gnp_nid));
 
         list_del_init(&peer->gnp_list);
         kgnilnd_data.kgn_peer_version++;
-                        
+        kgnilnd_admin_decref(kgnilnd_data.kgn_npending_unlink);                        
         /* lose peerlist's ref */
         kgnilnd_peer_decref(peer);
 }
@@ -1476,11 +1447,15 @@ kgnilnd_del_conn_or_peer (kgn_net_t *net, lnet_nid_t nid, int command,
                                 break;
                         case GNILND_DEL_PEER:
                                 peer->gnp_pending_unlink = 1;
-                                kgnilnd_detach_purgatory_locked(peer, &souls);
+                                kgnilnd_admin_addref(kgnilnd_data.kgn_npending_unlink);
+                                kgnilnd_mark_for_detach_purgatory_all_locked(peer);
                                 kgnilnd_del_peer_locked(peer, error);
                                 break;
                         case GNILND_CLEAR_PURGATORY:
-                                kgnilnd_detach_purgatory_locked(peer, &souls);
+                                /* Mark everything ready for detach reaper will cleanup 
+                                 * once we release the kgn_peer_conn_lock
+                                 */
+                                kgnilnd_mark_for_detach_purgatory_all_locked(peer);
                                 peer->gnp_last_errno = -EISCONN;
                                 /* clear reconnect so he can reconnect soon */
                                 peer->gnp_reconnect_time = 0;
@@ -1502,6 +1477,34 @@ kgnilnd_del_conn_or_peer (kgn_net_t *net, lnet_nid_t nid, int command,
 
         /* nuke peer TX */
         kgnilnd_txlist_done(&zombies, error);
+
+        /* This function does not return until the commands it initiated have completed, 
+         * since they have to work there way through the other threads. In the case of shutdown 
+         * threads are not woken up until after this call is initiated so we cannot wait, we just 
+         * need to return. The same applies for stack reset we shouldnt wait as the reset thread
+         * handles closing.
+         */
+
+        CFS_RACE(CFS_FAIL_GNI_RACE_RESET);
+
+        if (error == -ENOTRECOVERABLE || error == -ESHUTDOWN) {
+                return rc;
+        }
+
+        i = 4;
+        while (atomic_read(&kgnilnd_data.kgn_npending_conns)   || 
+               atomic_read(&kgnilnd_data.kgn_npending_detach)  || 
+               atomic_read(&kgnilnd_data.kgn_npending_unlink))
+        {
+                
+                cfs_pause(cfs_time_seconds(1));
+                i++;
+                
+                CDEBUG(((i & (-i)) == i) ? D_WARNING: D_NET, "Waiting on %d peers %d closes %d detaches\n",
+                                atomic_read(&kgnilnd_data.kgn_npending_unlink),
+                                atomic_read(&kgnilnd_data.kgn_npending_conns),
+                                atomic_read(&kgnilnd_data.kgn_npending_detach));
+        }
 
         return rc;
 }
@@ -1590,6 +1593,14 @@ kgnilnd_close_peer_conns_locked (kgn_peer_t *peer, int why)
                         continue;
 
                 count++;
+                /* we mark gnc_needs closing and increment kgn_npending_conns so that 
+                 * kgnilnd_del_conn_or_peer can wait on the other threads closing
+                 * and cleaning up the connection.
+                 */
+                if (!conn->gnc_needs_closing) {
+                        conn->gnc_needs_closing = 1;
+                        kgnilnd_admin_addref(kgnilnd_data.kgn_npending_conns);
+                }
                 kgnilnd_close_conn_locked(conn, why);
         }
         return count;
@@ -2096,7 +2107,9 @@ int kgnilnd_base_startup (void)
 
         init_MUTEX(&kgnilnd_data.kgn_quiesce_sem);
         atomic_set(&kgnilnd_data.kgn_nquiesce, 0);
-
+        atomic_set(&kgnilnd_data.kgn_npending_conns, 0);
+        atomic_set(&kgnilnd_data.kgn_npending_unlink, 0);
+        atomic_set(&kgnilnd_data.kgn_npending_detach, 0);
         /* OK to call kgnilnd_api_shutdown() to cleanup now */
         kgnilnd_data.kgn_init = GNILND_INIT_DATA;
         PORTAL_MODULE_USE;

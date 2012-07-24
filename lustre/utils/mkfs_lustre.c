@@ -26,8 +26,11 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011 Whamcloud, Inc.
+ *
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -65,9 +68,9 @@
 #include <ctype.h>
 
 #ifdef __linux__
-/* kp30.h is not really needed here, but on SLES10/PPC, fs.h includes idr.h
+/* libcfs.h is not really needed here, but on SLES10/PPC, fs.h includes idr.h
  * which requires BITS_PER_LONG to be defined */
-#include <libcfs/kp30.h>
+#include <libcfs/libcfs.h>
 #ifndef BLKGETSIZE64
 #include <linux/fs.h> /* for BLKGETSIZE64 */
 #endif
@@ -88,7 +91,6 @@
 #define INDEX_UNASSIGNED 0xFFFF
 #define MO_IS_LOOP     0x01
 #define MO_FORCEFORMAT 0x02
-#define min(x,y) ((x)<(y) ? (x) : (y))
 
 /* used to describe the options to format the lustre disk, not persistent */
 struct mkfs_opts {
@@ -106,6 +108,7 @@ char *progname;
 int verbose = 1;
 static int print_only = 0;
 static int failover = 0;
+static int upgrade_to_18 = 0;
 
 void usage(FILE *out)
 {
@@ -131,12 +134,14 @@ void usage(FILE *out)
                 "\t\t--index=#N : target index (i.e. ost index within lov)\n"
                 "\t\t--comment=<user comment>: arbitrary string (%d bytes)\n"
                 "\t\t--mountfsoptions=<opts> : permanent mount options\n"
+                "\t\t--network=<net>[,<...>] : restrict OST/MDT to network(s)\n"
 #ifndef TUNEFS
                 "\t\t--backfstype=<fstype> : backing fs type (ext3, ldiskfs)\n"
                 "\t\t--device-size=#N(KB) : device size for loop devices\n"
                 "\t\t--mkfsoptions=<opts> : format options\n"
                 "\t\t--reformat: overwrite an existing disk\n"
                 "\t\t--stripe-count-hint=#N : for optimizing MDT inode size\n"
+                "\t\t--iam-dir: use IAM directory format, not ext3 compatible\n"
 #else
                 "\t\t--erase-params : erase all old parameter settings\n"
                 "\t\t--nomgs: turn off MGS service on this MDT\n"
@@ -171,6 +176,47 @@ char *strscpy(char *dst, char *src, int buflen) {
         return strscat(dst, src, buflen);
 }
 
+inline unsigned int
+dev_major (unsigned long long int __dev)
+{
+        return ((__dev >> 8) & 0xfff) | ((unsigned int) (__dev >> 32) & ~0xfff);
+}
+
+inline unsigned int
+dev_minor (unsigned long long int __dev)
+{
+        return (__dev & 0xff) | ((unsigned int) (__dev >> 12) & ~0xff);
+}
+
+int get_os_version()
+{
+        static int version = 0;
+
+        if (!version) {
+                int fd;
+                char release[4] = "";
+
+                fd = open("/proc/sys/kernel/osrelease", O_RDONLY);
+                if (fd < 0) {
+                        fprintf(stderr, "%s: Warning: Can't resolve kernel "
+                                "version, assuming 2.6\n", progname);
+                } else {
+                        if (read(fd, release, 4) < 0) {
+                                fprintf(stderr, "reading from /proc/sys/kernel"
+                                        "/osrelease: %s\n", strerror(errno));
+                                close(fd);
+                                exit(-1);
+                        }
+                        close(fd);
+                }
+                if (strncmp(release, "2.4.", 4) == 0)
+                        version = 24;
+                else
+                        version = 26;
+        }
+        return version;
+}
+
 static int check_mtab_entry(char *spec)
 {
         FILE *fp;
@@ -201,7 +247,7 @@ int loop_setup(struct mkfs_opts *mop)
 {
         char loop_base[20];
         char l_device[64];
-        int i,ret = 0;
+        int i, ret = 0;
 
         /* Figure out the loop device names */
         if (!access("/dev/loop0", F_OK | R_OK)) {
@@ -398,7 +444,7 @@ static int file_in_dev(char *file_name, char *dev_name)
                 debugfs_cmd[i] = 0;
                 fprintf(stderr, "%s", debugfs_cmd);
                 if (strstr(debugfs_cmd, "unsupported feature")) {
-                        disp_old_e2fsprogs_msg("an unknown", 0);
+                          disp_old_e2fsprogs_msg("an unknown", 0);
                 }
                 pclose(fp);
                 return -1;
@@ -517,11 +563,12 @@ static void enable_default_ext4_features(struct mkfs_opts *mop, char *anchor,
 {
         if (IS_OST(&mop->mo_ldd)) {
                 append_unique(anchor, user_spec ? "," : " -O ",
-                              "extents", NULL, maxbuflen);
+                              "extents", NULL, sizeof(mop->mo_mkfsopts));
                 append_unique(anchor, ",", "uninit_bg", NULL, maxbuflen);
         } else if (IS_MDT(&mop->mo_ldd)) {
                 append_unique(anchor, user_spec ? "," : " -O ",
-                              "uninit_bg", NULL, maxbuflen);
+                              "dirdata", NULL, maxbuflen);
+                append_unique(anchor, ",", "uninit_bg", NULL, maxbuflen);
         } else {
                 append_unique(anchor, user_spec ? "," : " -O ",
                               "uninit_bg", NULL, maxbuflen);
@@ -549,14 +596,14 @@ static void enable_default_ext4_features(struct mkfs_opts *mop, char *anchor,
         if (is_e2fsprogs_feature_supp("-O huge_file") == 0)
                 append_unique(anchor, ",", "huge_file", NULL, maxbuflen);
 
-        /* Enable large block addresses if the LUN is over 2^32 blocks */
+        /* Enable large block addresses if the LUN is over 2^32 blocks. */
         if (mop->mo_device_sz / (L_BLOCK_SIZE >> 10) >= 0x100002000ULL &&
-            is_e2fsprogs_feature_supp("-O 64bit") == 0)
+                    is_e2fsprogs_feature_supp("-O 64bit") == 0)
                 append_unique(anchor, ",", "64bit", NULL, maxbuflen);
 
         /* Cluster inode/block bitmaps and inode table for more efficient IO.
-         * Align the flex groups on a 1MB boundary for better performance.
-         * This -O feature needs to go last, since it adds an extra option. */
+         * Align the flex groups on a 1MB boundary for better performance. */
+        /* This -O feature needs to go last, since it adds the "-G" option. */
         if (is_e2fsprogs_feature_supp("-O flex_bg") == 0) {
                 char tmp_buf[64];
 
@@ -568,7 +615,7 @@ static void enable_default_ext4_features(struct mkfs_opts *mop, char *anchor,
                         strscat(anchor, tmp_buf, maxbuflen);
                 }
         }
-
+        /* Don't add any more "-O" options here, see last comment above */
 #endif
 }
 
@@ -638,7 +685,7 @@ int make_lustre_backfs(struct mkfs_opts *mop)
         if (mop->mo_device_sz != 0) {
                 if (mop->mo_device_sz < 8096){
                         fprintf(stderr, "%s: size of filesystem must be larger "
-                                "than 8MB, but is set to %lluKB\n",
+                                "than 8MB, but is set to %lldKB\n",
                                 progname, (long long)mop->mo_device_sz);
                         return EINVAL;
                 }
@@ -661,6 +708,9 @@ int make_lustre_backfs(struct mkfs_opts *mop)
                         long journal_sz = 0, max_sz;
                         if (device_sz > 1024 * 1024) /* 1GB */
                                 journal_sz = (device_sz / 102400) * 4;
+                        /* cap journal size at 1GB */
+                        if (journal_sz > 1024L)
+                                journal_sz = 1024L;
                         /* man mkfs.ext3 */
                         max_sz = (102400 * L_BLOCK_SIZE) >> 20; /* 400MB */
                         if (journal_sz > max_sz)
@@ -724,21 +774,20 @@ int make_lustre_backfs(struct mkfs_opts *mop)
                          * this, but it is impossible to know in advance. */
                         if (IS_OST(&mop->mo_ldd)) {
                                 /* OST > 16TB assume average file size 1MB */
-                                if (device_sz >= (16ULL << 30))
+                                if (device_sz > (16ULL << 30))
                                         bytes_per_inode = 1024 * 1024;
                                 /* OST > 4TB assume average file size 512kB */
-                                else if (device_sz >= (4ULL << 30))
+                                else if (device_sz > (4ULL << 30))
                                         bytes_per_inode = 512 * 1024;
                                 /* OST > 1TB assume average file size 256kB */
-                                else if (device_sz >= (1ULL << 30))
+                                else if (device_sz > (1ULL << 30))
                                         bytes_per_inode = 256 * 1024;
-                                /* OST > 100GB assume average file size 64kB,
+                                /* OST > 10GB assume average file size 64kB,
                                  * plus a bit so that inodes will fit into a
                                  * 256x flex_bg without overflowing */
-                                else if (device_sz >= (10ULL << 20))
+                                else if (device_sz > (10ULL << 20))
                                         bytes_per_inode = 69905;
                         }
-
 
                         if (bytes_per_inode > 0) {
                                 sprintf(buf, " -i %ld", bytes_per_inode);
@@ -795,8 +844,8 @@ int make_lustre_backfs(struct mkfs_opts *mop)
                  * descriptor blocks, but leave one block for the superblock.
                  * Only useful for filesystems with < 2^32 blocks due to resize
                  * limitations. */
-                if (IS_OST(&mop->mo_ldd) && device_sz > 100 * 1024 &&
-                    block_count <= 0xffffffffULL) {
+                if (IS_OST(&mop->mo_ldd) && mop->mo_device_sz > 100 * 1024 &&
+                    mop->mo_device_sz * 1024 / L_BLOCK_SIZE <= 0xffffffffULL) {
                         unsigned group_blocks = L_BLOCK_SIZE * 8;
                         unsigned desc_per_block = L_BLOCK_SIZE / 32;
                         unsigned resize_blks;
@@ -872,7 +921,7 @@ void print_ldd(char *str, struct lustre_disk_data *ldd)
         printf("Lustre FS:  %s\n", ldd->ldd_fsname);
         printf("Mount type: %s\n", MT_STR(ldd));
         printf("Flags:      %#x\n", ldd->ldd_flags);
-        printf("              (%s%s%s%s%s%s%s%s%s)\n",
+        printf("              (%s%s%s%s%s%s%s%s%s%s)\n",
                IS_MDT(ldd) ? "MDT ":"",
                IS_OST(ldd) ? "OST ":"",
                IS_MGS(ldd) ? "MGS ":"",
@@ -880,6 +929,7 @@ void print_ldd(char *str, struct lustre_disk_data *ldd)
                ldd->ldd_flags & LDD_F_VIRGIN     ? "first_time ":"",
                ldd->ldd_flags & LDD_F_UPDATE     ? "update ":"",
                ldd->ldd_flags & LDD_F_WRITECONF  ? "writeconf ":"",
+               ldd->ldd_flags & LDD_F_IAM_DIR  ? "IAM_dir_format ":"",
                ldd->ldd_flags & LDD_F_NO_PRIMNODE? "no_primnode ":"",
                ldd->ldd_flags & LDD_F_UPGRADE14  ? "upgrade1.4 ":"");
         printf("Persistent mount opts: %s\n", ldd->ldd_mount_opts);
@@ -887,6 +937,67 @@ void print_ldd(char *str, struct lustre_disk_data *ldd)
         if (ldd->ldd_userdata[0])
                 printf("Comment: %s\n", ldd->ldd_userdata);
         printf("\n");
+}
+
+static int touch_file(char *filename)
+{
+        int fd;
+
+        if (filename == NULL) {
+                return 1;
+        }
+
+        fd = open(filename, O_CREAT | O_TRUNC, 0600);
+        if (fd < 0) {
+                return 1;
+        } else {
+                close(fd);
+                return 0;
+        }
+}
+
+/* keep it less than LL_FID_NAMELEN */
+#define DUMMY_FILE_NAME_LEN             25
+#define EXT3_DIRENT_SIZE                DUMMY_FILE_NAME_LEN
+
+/* Need to add these many entries to this directory to make HTREE dir. */
+#define MIN_ENTRIES_REQ_FOR_HTREE       ((L_BLOCK_SIZE / EXT3_DIRENT_SIZE))
+
+static int add_dummy_files(char *dir)
+{
+        char fpname[PATH_MAX];
+        int i;
+        int rc;
+
+        for (i = 0; i < MIN_ENTRIES_REQ_FOR_HTREE; i++) {
+                snprintf(fpname, PATH_MAX, "%s/%0*d", dir,
+                         DUMMY_FILE_NAME_LEN, i);
+
+                rc = touch_file(fpname);
+                if (rc && rc != -EEXIST) {
+                        fprintf(stderr,
+                                "%s: Can't create dummy file %s: %s\n",
+                                progname, fpname , strerror(errno));
+                        return rc;
+                }
+        }
+        return 0;
+}
+
+static int __l_mkdir(char * filepnm, int mode , struct mkfs_opts *mop)
+{
+        int ret;
+
+        ret = mkdir(filepnm, mode);
+        if (ret && ret != -EEXIST)
+                return ret;
+
+        /* IAM mode supports ext3 directories of HTREE type only. So add dummy
+         * entries to new directory to create htree type of container for
+         * this directory. */
+        if (mop->mo_ldd.ldd_flags & LDD_F_IAM_DIR)
+                return add_dummy_files(filepnm);
+        return 0;
 }
 
 /* Write the server config files */
@@ -925,9 +1036,9 @@ int write_local_files(struct mkfs_opts *mop)
 
         /* Set up initial directories */
         sprintf(filepnm, "%s/%s", mntpt, MOUNT_CONFIGS_DIR);
-        ret = mkdir(filepnm, 0777);
+        ret = __l_mkdir(filepnm, 0777, mop);
         if ((ret != 0) && (errno != EEXIST)) {
-                fprintf(stderr, "%s: Can't make configs dir %s: %s\n",
+                fprintf(stderr, "%s: Can't make configs dir %s (%s)\n",
                         progname, filepnm, strerror(errno));
                 goto out_umnt;
         } else if (errno == EEXIST) {
@@ -946,12 +1057,11 @@ int write_local_files(struct mkfs_opts *mop)
         }
         num = fwrite(&mop->mo_ldd, sizeof(mop->mo_ldd), 1, filep);
         if (num < 1 && ferror(filep)) {
-                fprintf(stderr, "%s: Unable to write to file %s: %s\n",
+                fprintf(stderr, "%s: Unable to write to file (%s): %s\n",
                         progname, filepnm, strerror(errno));
                 goto out_umnt;
         }
         fclose(filep);
-
         /* COMPAT_146 */
 #ifdef TUNEFS
         /* Check for upgrade */
@@ -1012,7 +1122,6 @@ int write_local_files(struct mkfs_opts *mop)
         }
 #endif
         /* end COMPAT_146 */
-
 
 out_umnt:
         umount(mntpt);
@@ -1192,45 +1301,14 @@ static inline void badopt(const char *opt, char *type)
         usage(stderr);
 }
 
-static int clean_param(char *buf, char *key)
-{
-        char *sub, *next;
-
-        if (!buf)
-                return 1;
-        if ((sub = strstr(buf, key)) != NULL) {
-                if ((next = strchr(sub, ' ')) != NULL) {
-                        next++;
-                        memmove(sub, next, strlen(next) + 1);
-                } else {
-                        *sub = '\0';
-                }
-        }
-        return 0;
-}
-
-static int add_param(char *buf, char *key, char *val, int unique)
+static int add_param(char *buf, char *key, char *val)
 {
         int end = sizeof(((struct lustre_disk_data *)0)->ldd_params);
-        int start;
+        int start = strlen(buf);
         int keylen = 0;
-        char *ptr;
 
         if (key)
                 keylen = strlen(key);
-        if (unique) {
-                if (key) {
-                        clean_param(buf, key);
-                } else {
-                        if ((ptr = strchr(val, '=')) == NULL)
-                                return 1;
-                        *ptr = '\0';
-                        clean_param(buf, val);
-                        *ptr = '=';
-                }
-        }
-
-        start = strlen(buf);
         if (start + 1 + keylen + strlen(val) >= end) {
                 fprintf(stderr, "%s: params are too long-\n%s %s%s\n",
                         progname, buf, key ? key : "", val);
@@ -1252,10 +1330,9 @@ static char *convert_hostnames(char *s1)
 
         converted = malloc(left);
         if (converted == NULL) {
-                fprintf(stderr, "out of memory: needed %d bytes\n",
-                        MAXNIDSTR);
                 return NULL;
         }
+
         end = s1 + strlen(s1);
         c = converted;
         while ((left > 0) && (s1 < end)) {
@@ -1293,6 +1370,7 @@ int parse_opts(int argc, char *const argv[], struct mkfs_opts *mop,
                char **mountopts)
 {
         static struct option long_opt[] = {
+                {"iam-dir", 0, 0, 'a'},
                 {"backfstype", 1, 0, 'b'},
                 {"stripe-count-hint", 1, 0, 'c'},
                 {"comment", 1, 0, 'u'},
@@ -1321,18 +1399,23 @@ int parse_opts(int argc, char *const argv[], struct mkfs_opts *mop,
                 {"servicenode", 1, 0, 's'},
                 {"verbose", 0, 0, 'v'},
                 {"writeconf", 0, 0, 'w'},
+                {"upgrade_to_18", 0, 0, 'U'},
+                {"network", 1, 0, 't'},
                 {0, 0, 0, 0}
         };
-        char *optstring = "b:c:C:d:ef:Ghi:k:L:m:MnNo:Op:Pqrsu:vw";
+        char *optstring = "b:c:C:d:ef:Ghi:k:L:m:MnNo:Op:Pqrs:t:Uu:vw";
         int opt;
         int rc, longidx;
-        int upcall = 0;
-        const size_t prefix_len = sizeof(PARAM_MDT_UPCALL) - 1;
         int failnode_set = 0, servicenode_set = 0;
 
         while ((opt = getopt_long(argc, argv, optstring, long_opt, &longidx)) !=
                EOF) {
                 switch (opt) {
+                case 'a': {
+                        if (IS_MDT(&mop->mo_ldd))
+                                mop->mo_ldd.ldd_flags |= LDD_F_IAM_DIR;
+                        break;
+                }
                 case 'b': {
                         int i = 0;
                         while (i < LDD_MT_LAST) {
@@ -1386,7 +1469,7 @@ int parse_opts(int argc, char *const argv[], struct mkfs_opts *mop,
                         if (!nids)
                                 return 1;
                         rc = add_param(mop->mo_ldd.ldd_params, PARAM_FAILNODE,
-                                       nids, 0);
+                                       nids);
                         free(nids);
                         if (rc)
                                 return rc;
@@ -1456,7 +1539,7 @@ int parse_opts(int argc, char *const argv[], struct mkfs_opts *mop,
                         if (!nids)
                                 return 1;
                         rc = add_param(mop->mo_ldd.ldd_params, PARAM_MGSNODE,
-                                       nids, 0);
+                                       nids);
                         free(nids);
                         if (rc)
                                 return rc;
@@ -1479,19 +1562,7 @@ int parse_opts(int argc, char *const argv[], struct mkfs_opts *mop,
                         mop->mo_ldd.ldd_flags |= LDD_F_SV_TYPE_OST;
                         break;
                 case 'p':
-                        /* Test if the param is valid for mdt.group_upcall */
-                        if (!strncmp(optarg, PARAM_MDT_UPCALL, prefix_len)) {
-                                upcall++;
-                                if (strcmp(optarg + prefix_len, "NONE") &&
-                                    access(optarg + prefix_len, R_OK | X_OK))
-                                        fprintf(stderr, "WARNING: group upcall "
-                                                "parameter not executable: %s\n"
-                                                "NOTE: you can change the path "
-                                                "to the group upcall through "
-                                                "tunefs.lustre(8)\n", optarg +
-                                                prefix_len);
-                        }
-                        rc = add_param(mop->mo_ldd.ldd_params, NULL, optarg, 0);
+                        rc = add_param(mop->mo_ldd.ldd_params, NULL, optarg);
                         if (rc)
                                 return rc;
                         /* Must update the mgs logs */
@@ -1503,6 +1574,22 @@ int parse_opts(int argc, char *const argv[], struct mkfs_opts *mop,
                 case 'r':
                         mop->mo_flags |= MO_FORCEFORMAT;
                         break;
+                case 't':
+                        if (!IS_MDT(&mop->mo_ldd) && !IS_OST(&mop->mo_ldd)) {
+                                badopt(long_opt[longidx].name, "MDT,OST");
+                                return 1;
+                        }
+
+                        if (!optarg)
+                                return 1;
+
+                        rc = add_param(mop->mo_ldd.ldd_params,
+                                       PARAM_NETWORK, optarg);
+                        if (rc != 0)
+                                return rc;
+                        /* Must update the mgs logs */
+                        mop->mo_ldd.ldd_flags |= LDD_F_UPDATE;
+                        break;
                 case 'u':
                         strscpy(mop->mo_ldd.ldd_userdata, optarg,
                                 sizeof(mop->mo_ldd.ldd_userdata));
@@ -1512,6 +1599,9 @@ int parse_opts(int argc, char *const argv[], struct mkfs_opts *mop,
                         break;
                 case 'w':
                         mop->mo_ldd.ldd_flags |= LDD_F_WRITECONF;
+                        break;
+                case 'U':
+                        upgrade_to_18 = 1;
                         break;
                 default:
                         if (opt != '?') {
@@ -1532,22 +1622,6 @@ int parse_opts(int argc, char *const argv[], struct mkfs_opts *mop,
         /* single argument: <device> */
         if (argc == 2)
                 ++print_only;
-
-#ifndef TUNEFS
-        if (mop->mo_ldd.ldd_flags & LDD_F_SV_TYPE_MDT && 0 == upcall) {
-                if (access("/usr/sbin/l_getgroups", R_OK | X_OK)) {
-                        fprintf(stderr, "WARNING: MDS group upcall is not set, "
-                                "using 'NONE'\n");
-                } else {
-                        rc = add_param(mop->mo_ldd.ldd_params, PARAM_MDT_UPCALL,
-                                       "/usr/sbin/l_getgroups", 1);
-                        if (rc)
-                                return rc;
-                        /* Must update the mgs logs */
-                        mop->mo_ldd.ldd_flags |= LDD_F_UPDATE;
-                }
-        }
-#endif
 
         return 0;
 }
@@ -1629,7 +1703,7 @@ int main(int argc, char *const argv[])
         char *mountopts = NULL;
         char always_mountopts[512] = "";
         char default_mountopts[512] = "";
-        int  ret = 0;
+        int ret = 0;
 
         if ((progname = strrchr(argv[0], '/')) != NULL)
                 progname++;
@@ -1710,7 +1784,16 @@ int main(int argc, char *const argv[])
                 ret = EINVAL;
                 goto out;
         }
-
+#if 0
+        /*
+         * Comment out these 2 checks temporarily, since for multi-MDSes
+         * in single node only 1 mds node could have mgs service
+         */
+        if (IS_MDT(ldd) && !IS_MGS(ldd) && (mop.mo_mgs_failnodes == 0)) {
+                verrprint("No management node specified, adding MGS to this "
+                          "MDT\n");
+                ldd->ldd_flags |= LDD_F_SV_TYPE_MGS;
+        }
         if (!IS_MGS(ldd) && (mop.mo_mgs_failnodes == 0)) {
                 fatal();
                 if (IS_MDT(ldd))
@@ -1720,6 +1803,7 @@ int main(int argc, char *const argv[])
                 ret = EINVAL;
                 goto out;
         }
+#endif
 
         /* These are the permanent mount options (always included) */
         switch (ldd->ldd_mount_type) {
@@ -1729,7 +1813,7 @@ int main(int argc, char *const argv[])
                 strscat(default_mountopts, ",errors=remount-ro",
                         sizeof(default_mountopts));
                 if (IS_MDT(ldd) || IS_MGS(ldd))
-                        strscat(always_mountopts, ",iopen_nopriv,user_xattr",
+                        strscat(always_mountopts, ",user_xattr",
                                 sizeof(always_mountopts));
                 /* NB: Files created while extents are enabled can only be read
                  * if mounted using the ext4 or ldiskfs filesystem type. */
@@ -1750,7 +1834,6 @@ int main(int argc, char *const argv[])
         }
 
         if (mountopts) {
-                trim_mountfsoptions(mountopts);
                 trim_mountfsoptions(mountopts);
                 (void)check_mountfsoptions(mountopts, default_mountopts, 1);
                 if (check_mountfsoptions(mountopts, always_mountopts, 0)) {

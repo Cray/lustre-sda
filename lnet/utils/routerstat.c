@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -128,13 +128,13 @@ do_stat (int fd)
    }
    
    if (last == 0.0) {
-	   printf ("M %lu(%lu) E %lu S %lu/%llu R %lu/%llu F %lu/%llu D %lu/%llu\n", 
+	   printf ("M %lu(%lu) E %lu S %llu/%lu R %llu/%lu F %llu/%lu D %llu/%lu\n",
 		   new_counter.msgs_alloc, new_counter.msgs_max,
-		   new_counter.errors, 
-		   new_counter.send_count, new_counter.send_length,
-		   new_counter.recv_count, new_counter.recv_length,
-		   new_counter.route_count, new_counter.route_length, 
-		   new_counter.drop_count, new_counter.drop_length);
+		   new_counter.errors,
+		   new_counter.send_length, new_counter.send_count,
+		   new_counter.recv_length, new_counter.recv_count,
+		   new_counter.route_length, new_counter.route_count,
+		   new_counter.drop_length, new_counter.drop_count);
    } else {
 	   t = now - last;
 

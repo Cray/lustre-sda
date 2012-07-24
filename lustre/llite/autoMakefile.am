@@ -25,7 +25,7 @@
 #
 
 #
-# Copyright  2008 Sun Microsystems, Inc. All rights reserved
+# Copyright (c) 2001, 2010, Oracle and/or its affiliates. All rights reserved.
 # Use is subject to license terms.
 #
 
@@ -35,7 +35,12 @@
 #
 
 if MODULES
-modulefs_DATA = lustre$(KMODEXT) llite_lloop$(KMODEXT)
+if LLITE_LLOOP
+  LLOOP_MOD = llite_lloop$(KMODEXT)
+else
+  LLOOP_MOD =
+endif
+modulefs_DATA = lustre$(KMODEXT) $(LLOOP_MOD)
 endif
 
 MOSTLYCLEANFILES := @MOSTLYCLEANFILES@ 

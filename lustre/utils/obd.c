@@ -48,10 +48,10 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
-#include <sys/param.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <signal.h>
+#include <ctype.h>
 #include <glob.h>
 
 #include "obdctl.h"
@@ -65,18 +65,12 @@
 #include <sys/time.h>
 #include <errno.h>
 #include <string.h>
-#include <ctype.h>
-#include <lustre/liblustreapi.h>
-
-#ifdef HAVE_ASM_PAGE_H
-#include <asm/page.h>           /* needed for PAGE_SIZE - rread */
-#endif
 
 #include <obd_class.h>
 #include <lnet/lnetctl.h>
-#include "parser.h"
-#include "platform.h"
+#include <libcfs/libcfsutil.h>
 #include <stdio.h>
+#include <lustre/liblustreapi.h>
 
 #define MAX_STRING_SIZE 128
 #define DEVICES_LIST "/proc/fs/lustre/devices"
@@ -113,7 +107,6 @@ const int nthreads = 1;
 
 static int cur_device = -1;
 
-
 #define MAX_STRIPES     170
 struct lov_oinfo lov_oinfos[MAX_STRIPES];
 
@@ -122,7 +115,7 @@ struct lsm_buffer {
         struct lov_oinfo *ptrs[MAX_STRIPES];
 } lsm_buffer;
 
-static int l2_ioctl(int dev_id, unsigned int opc, void *buf)
+static int l2_ioctl(int dev_id, int opc, void *buf)
 {
         return l_ioctl(dev_id, opc, buf);
 }
@@ -202,9 +195,6 @@ out:
         if (rc) {
                 if (errno == ENOSYS)
                         fprintf(stderr, "Make sure cfg_device is set first.\n");
-                if (errno == EINVAL)
-                        fprintf(stderr, "cfg_device should be of the form "
-                                "'lustre-MDT0000'\n");
         }
         return rc;
 }
@@ -217,7 +207,7 @@ char *obdo_print(struct obdo *obd)
                 "\nctime: "LPU64"\nsize: "LPU64"\nblocks: "LPU64
                 "\nblksize: %u\nmode: %o\nuid: %d\ngid: %d\nflags: %x\n"
                 "misc: %x\nnlink: %d,\nvalid "LPX64"\n",
-                obd->o_id, obd->o_gr, obd->o_atime, obd->o_mtime, obd->o_ctime,
+                obd->o_id, obd->o_seq, obd->o_atime, obd->o_mtime, obd->o_ctime,
                 obd->o_size, obd->o_blocks, obd->o_blksize, obd->o_mode,
                 obd->o_uid, obd->o_gid, obd->o_flags, obd->o_misc,
                 obd->o_nlink, obd->o_valid);
@@ -920,9 +910,8 @@ int jt_get_version(int argc, char **argv)
         if (rc)
                 fprintf(stderr, "error: %s: %s\n", jt_cmdname(argv[0]),
                         strerror(-rc));
-        else {
+        else
                 printf("Lustre version: %s\n", version);
-        }
 
         printf("lctl   version: %s\n", BUILD_VERSION);
         return rc;
@@ -994,8 +983,9 @@ int jt_obd_list_ioctl(int argc, char **argv)
         for (index = 0;; index++) {
                 memset(buf, 0, sizeof(rawbuf));
                 data->ioc_version = OBD_IOCTL_VERSION;
-                data->ioc_inllen1 = sizeof(rawbuf) - size_round(sizeof(*data));
-                data->ioc_inlbuf1 = buf + size_round(sizeof(*data));
+                data->ioc_inllen1 =
+                        sizeof(rawbuf) - cfs_size_round(sizeof(*data));
+                data->ioc_inlbuf1 = buf + cfs_size_round(sizeof(*data));
                 data->ioc_len = obd_ioctl_packlen(data);
                 data->ioc_count = index;
 
@@ -1092,9 +1082,9 @@ int jt_obd_create(int argc, char **argv)
                         return CMD_HELP;
         }
 
-        if (argc < 5)
+        if (argc < 5) {
                 reset_lsmb (&lsm_buffer);       /* will set default */
-        else {
+        } else {
                 rc = parse_lsm (&lsm_buffer, argv[4]);
                 if (rc != 0) {
                         fprintf(stderr, "error: %s: invalid lsm '%s'\n",
@@ -1638,7 +1628,7 @@ int jt_obd_test_brw(int argc, char **argv)
                         obj_idx = (thread - 1)/nthr_per_obj;
                         objid += obj_idx;
                         stride *= nthr_per_obj;
-                        if (thread == 1)
+                        if ((thread - 1) % nthr_per_obj == 0)
                                 shared_data->offsets[obj_idx] = stride + thr_offset;
                         thr_offset += ((thread - 1) % nthr_per_obj) * len;
                 } else {
@@ -1651,7 +1641,7 @@ int jt_obd_test_brw(int argc, char **argv)
                         l_cond_broadcast(&shared_data->cond);
                 else
                         l_cond_wait(&shared_data->cond,
-                                          &shared_data->mutex);
+                                    &shared_data->mutex);
 
                 shmem_unlock ();
         }
@@ -1815,7 +1805,7 @@ repeat:
                         rc = -EINVAL;
                         goto out;
                 }
-                if (desc.ld_default_stripe_count == (__u16)-1)
+                if (desc.ld_default_stripe_count == (__u32)-1)
                         printf("default_stripe_count: %d\n", -1);
                 else
                         printf("default_stripe_count: %u\n",
@@ -2044,7 +2034,6 @@ int jt_cfg_dump_log(int argc, char **argv)
         char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
         int rc;
 
-
         if (argc != 2)
                 return CMD_HELP;
 
@@ -2079,7 +2068,7 @@ int jt_llog_catlist(int argc, char **argv)
 
         memset(&data, 0x00, sizeof(data));
         data.ioc_dev = cur_device;
-        data.ioc_inllen1 = sizeof(rawbuf) - size_round(sizeof(data));
+        data.ioc_inllen1 = sizeof(rawbuf) - cfs_size_round(sizeof(data));
         memset(buf, 0, sizeof(rawbuf));
         rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
         if (rc) {
@@ -2110,8 +2099,8 @@ int jt_llog_info(int argc, char **argv)
         data.ioc_dev = cur_device;
         data.ioc_inllen1 = strlen(argv[1]) + 1;
         data.ioc_inlbuf1 = argv[1];
-        data.ioc_inllen2 = sizeof(rawbuf) - size_round(sizeof(data)) -
-                size_round(data.ioc_inllen1);
+        data.ioc_inllen2 = sizeof(rawbuf) - cfs_size_round(sizeof(data)) -
+                cfs_size_round(data.ioc_inllen1);
         memset(buf, 0, sizeof(rawbuf));
         rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
         if (rc) {
@@ -2155,10 +2144,10 @@ int jt_llog_print(int argc, char **argv)
                 data.ioc_inllen3 = strlen(to) + 1;
                 data.ioc_inlbuf3 = to;
         }
-        data.ioc_inllen4 = sizeof(rawbuf) - size_round(sizeof(data)) -
-                size_round(data.ioc_inllen1) -
-                size_round(data.ioc_inllen2) -
-                size_round(data.ioc_inllen3);
+        data.ioc_inllen4 = sizeof(rawbuf) - cfs_size_round(sizeof(data)) -
+                cfs_size_round(data.ioc_inllen1) -
+                cfs_size_round(data.ioc_inllen2) -
+                cfs_size_round(data.ioc_inllen3);
         memset(buf, 0, sizeof(rawbuf));
         rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
         if (rc) {
@@ -2237,10 +2226,10 @@ int jt_llog_check(int argc, char **argv)
                 data.ioc_inllen3 = strlen(to) + 1;
                 data.ioc_inlbuf3 = to;
         }
-        data.ioc_inllen4 = sizeof(rawbuf) - size_round(sizeof(data)) -
-                size_round(data.ioc_inllen1) -
-                size_round(data.ioc_inllen2) -
-                size_round(data.ioc_inllen3);
+        data.ioc_inllen4 = sizeof(rawbuf) - cfs_size_round(sizeof(data)) -
+                cfs_size_round(data.ioc_inllen1) -
+                cfs_size_round(data.ioc_inllen2) -
+                cfs_size_round(data.ioc_inllen3);
         memset(buf, 0, sizeof(rawbuf));
         rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
         if (rc) {
@@ -2330,14 +2319,15 @@ static int jt_blockdev_find_module(const char *module)
 {
         FILE *fp;
         int found = 0;
-        char modname[256];
+        char buf[1024];
 
         fp = fopen("/proc/modules", "r");
         if (fp == NULL)
                 return -1;
 
-        while (fscanf(fp, "%s %*s %*s %*s %*s %*s", modname) == 1) {
-                if (strcmp(module, modname) == 0) {
+        while (fgets(buf, 1024, fp) != NULL) {
+                *strchr(buf, ' ') = 0;
+                if (strcmp(module, buf) == 0) {
                         found = 1;
                         break;
                 }
@@ -2465,7 +2455,7 @@ int jt_blockdev_info(int argc, char **argv)
 {
         char *filename;
         int rc, fd;
-        __u64  ino;
+        struct lu_fid fid;
 
         if (argc != 2)
                 return CMD_HELP;
@@ -2478,17 +2468,17 @@ int jt_blockdev_info(int argc, char **argv)
                 return CMD_HELP;
         }
 
-        rc = ioctl(fd, LL_IOC_LLOOP_INFO, &ino);
+        rc = ioctl(fd, LL_IOC_LLOOP_INFO, &fid);
         if (rc < 0) {
                 rc = errno;
                 fprintf(stderr, "error: %s\n", strerror(errno));
                 goto out;
         }
         fprintf(stdout, "lloop device info: ");
-        if (ino == 0ULL)
+        if (fid_is_zero(&fid))
                 fprintf(stdout, "Not attached\n");
         else
-                fprintf(stdout, "attached to inode "LPU64"\n", ino);
+                fprintf(stdout, "attached to inode "DFID"\n", PFID(&fid));
 out:
         close(fd);
         return -rc;
@@ -3051,11 +3041,10 @@ out:
 
 int jt_get_obj_version(int argc, char **argv)
 {
-        struct ll_fid fid;
+        struct lu_fid fid;
         struct obd_ioctl_data data;
         __u64 version;
         char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf, *fidstr;
-        struct lu_fid f;
         int rc;
 
         if (argc != 2)
@@ -3064,14 +3053,12 @@ int jt_get_obj_version(int argc, char **argv)
         fidstr = argv[1];
         while (*fidstr == '[')
                 fidstr++;
-        sscanf(fidstr, SFID, RFID(&f));
-        /*
-         * fid_is_sane is not suitable here.  We rely on
-         * mds_fid2locked_dentry to report on insane FIDs.
-         */
-        fid.id = f.f_seq;
-        fid.generation = f.f_oid;
-        fid.f_type = f.f_ver;
+        sscanf(fidstr, SFID, RFID(&fid));
+        if (!fid_is_sane(&fid)) {
+                fprintf(stderr, "bad FID format [%s], should be "DFID"\n",
+                        fidstr, (__u64)1, 2, 0);
+                return -EINVAL;
+        }
 
         memset(&data, 0, sizeof data);
         data.ioc_dev = cur_device;
@@ -3088,7 +3075,7 @@ int jt_get_obj_version(int argc, char **argv)
                 return rc;
         }
 
-        rc = l_ioctl(OBD_DEV_ID, OBD_IOC_GET_OBJ_VERSION, buf);
+        rc = l2_ioctl(OBD_DEV_ID, OBD_IOC_GET_OBJ_VERSION, buf);
         if (rc == -1) {
                 fprintf(stderr, "error: %s: ioctl: %s\n",
                         jt_cmdname(argv[0]), strerror(errno));
@@ -3127,5 +3114,111 @@ void  llapi_ping_target(char *obd_type, char *obd_name,
         } else {
                 printf("%s: active\n", obd_name);
         }
-
 }
+
+int jt_changelog_register(int argc, char **argv)
+{
+        char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
+        struct obd_ioctl_data data;
+        char devname[30];
+        int rc;
+
+        if (argc > 2)
+                return CMD_HELP;
+        else if (argc == 2 && strcmp(argv[1], "-n") != 0)
+                return CMD_HELP;
+        if (cur_device < 0)
+                return CMD_HELP;
+
+        memset(&data, 0x00, sizeof(data));
+        data.ioc_dev = cur_device;
+        memset(buf, 0, sizeof(rawbuf));
+        rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
+        if (rc) {
+                fprintf(stderr, "error: %s: invalid ioctl\n",
+                        jt_cmdname(argv[0]));
+               return rc;
+        }
+
+        rc = l2_ioctl(OBD_DEV_ID, OBD_IOC_CHANGELOG_REG, buf);
+        if (rc < 0) {
+                fprintf(stderr, "error: %s: %s\n", jt_cmdname(argv[0]),
+                        strerror(rc = errno));
+                return rc;
+        }
+        obd_ioctl_unpack(&data, buf, sizeof(rawbuf));
+
+        if (data.ioc_u32_1 == 0) {
+                fprintf(stderr, "received invalid userid!\n");
+                return EPROTO;
+        }
+
+        if (lcfg_get_devname() != NULL)
+                strcpy(devname, lcfg_get_devname());
+        else
+                sprintf(devname, "dev %d", cur_device);
+
+        if (argc == 2)
+                /* -n means bare name */
+                printf(CHANGELOG_USER_PREFIX"%u\n", data.ioc_u32_1);
+        else
+                printf("%s: Registered changelog userid '"CHANGELOG_USER_PREFIX
+                       "%u'\n", devname, data.ioc_u32_1);
+        return 0;
+}
+
+int jt_changelog_deregister(int argc, char **argv)
+{
+        char rawbuf[MAX_IOC_BUFLEN], *buf = rawbuf;
+        struct obd_ioctl_data data;
+        char devname[30];
+        int id, rc;
+
+        if (argc != 2 || cur_device < 0)
+                return CMD_HELP;
+
+        id = strtol(argv[1] + strlen(CHANGELOG_USER_PREFIX), NULL, 10);
+        if ((id == 0) || (strncmp(argv[1], CHANGELOG_USER_PREFIX,
+                                  strlen(CHANGELOG_USER_PREFIX)) != 0)) {
+                fprintf(stderr, "expecting id of the form '"
+                        CHANGELOG_USER_PREFIX"<num>'; got '%s'\n", argv[1]);
+                return CMD_HELP;
+        }
+
+        memset(&data, 0x00, sizeof(data));
+        data.ioc_dev = cur_device;
+        data.ioc_u32_1 = id;
+        memset(buf, 0, sizeof(rawbuf));
+        rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
+        if (rc) {
+                fprintf(stderr, "error: %s: invalid ioctl\n",
+                        jt_cmdname(argv[0]));
+                return rc;
+        }
+
+        rc = l2_ioctl(OBD_DEV_ID, OBD_IOC_CHANGELOG_DEREG, buf);
+        if (rc < 0) {
+                fprintf(stderr, "error: %s: %s\n", jt_cmdname(argv[0]),
+                        strerror(rc = errno));
+                return rc;
+        }
+        obd_ioctl_unpack(&data, buf, sizeof(rawbuf));
+
+        if (data.ioc_u32_1 != id) {
+                fprintf(stderr, "No changelog user '%s'.  Blocking user"
+                        " is '"CHANGELOG_USER_PREFIX"%d'.\n", argv[1],
+                        data.ioc_u32_1);
+                return ENOENT;
+        }
+
+        if (lcfg_get_devname() != NULL)
+                strcpy(devname, lcfg_get_devname());
+        else
+                sprintf(devname, "dev %d", cur_device);
+
+        printf("%s: Deregistered changelog user '"CHANGELOG_USER_PREFIX"%d'\n",
+               devname, data.ioc_u32_1);
+        return 0;
+}
+
+

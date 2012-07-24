@@ -40,6 +40,5 @@ endif # MODULES
 
 install-data-hook: $(install_data_hook)
 
-EXTRA_DIST := Info.plist
-
 MOSTLYCLEANFILES = @MOSTLYCLEANFILES@ lnet
+EXTRA_DIST = $(lnet-objs:%.o=%.c) Info.plist

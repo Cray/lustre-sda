@@ -28,6 +28,9 @@
 /*
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011 Whamcloud, Inc.
+ *
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -45,12 +48,33 @@
 #define DEBUG_SUBSYSTEM S_LLITE
 
 #include <obd_support.h>
+#include <lustre_fid.h>
 #include <lustre_lite.h>
 #include <lustre_dlm.h>
-#include <linux/lustre_version.h>
+#include <lustre_ver.h>
+#include <lustre_mdc.h>
 #include "llite_internal.h"
 
-/* methods */
+/*
+ * Check if we have something mounted at the named dchild.
+ * In such a case there would always be dentry present.
+ */
+static int ll_d_mountpoint(struct dentry *dparent, struct dentry *dchild,
+                           struct qstr *name)
+{
+        int mounted = 0;
+
+        if (unlikely(dchild)) {
+                mounted = d_mountpoint(dchild);
+        } else if (dparent) {
+                dchild = d_lookup(dparent, name);
+                if (dchild) {
+                        mounted = d_mountpoint(dchild);
+                        dput(dchild);
+                }
+        }
+        return mounted;
+}
 
 int ll_unlock(__u32 mode, struct lustre_handle *lockh)
 {
@@ -61,133 +85,79 @@ int ll_unlock(__u32 mode, struct lustre_handle *lockh)
         RETURN(0);
 }
 
-/**
- * Flatten 128-bit FID values into a 64-bit value for use as an inode number.
- * For non-IGIF FIDs this starts just over 2^32, and continues without
- * conflict until 2^64, at which point we wrap the high 32 bits of the SEQ
- * into the range where there may not be many OID values in use, to minimize
- * the risk of conflict.
- *
- * Suppose LUSTRE_SEQ_MAX_WIDTH is less than (2^24), which is currently true,
- * the time between re-used inode numbers is very long - 2^40 SEQ numbers,
- * or about 2^40 client mounts, if clients create less than 2^24 files/mount. */
-static inline __u64 fid_flatten(const struct lu_fid *fid)
-{
-        __u64 ino;
-        __u64 seq;
-
-        if (fid_is_igif(fid)) {
-                ino = lu_igif_ino(fid);
-                RETURN(ino);
-        }
-
-        seq = fid_seq(fid);
-
-        ino = (seq << 24) + ((seq >> 24) & 0xffffff0000ULL) + fid_oid(fid);
-
-        RETURN(ino ? ino : fid_oid(fid));
-}
-
-/**
- * map fid to 32 bit value for ino on 32bit systems. */
-static inline __u32 fid_flatten32(const struct lu_fid *fid)
-{
-        __u32 ino;
-        __u64 seq;
-
-        if (fid_is_igif(fid)) {
-                ino = lu_igif_ino(fid);
-                RETURN(ino);
-        }
-
-        seq = fid_seq(fid) - FID_SEQ_START;
-
-        /* Map the high bits of the OID into higher bits of the inode number so
-         * that inodes generated at about the same time have a reduced chance
-         * of collisions. This will give a period of 2^12 = 1024 unique clients
-         * (from SEQ) and up to min(LUSTRE_SEQ_MAX_WIDTH, 2^20) = 128k objects
-         * (from OID), or up to 128M inodes without collisions for new files. */
-        ino = ((seq & 0x000fffffULL) << 12) + ((seq >> 8) & 0xfffff000) +
-               (seq >> (64 - (40-8)) & 0xffffff00) +
-               (fid_oid(fid) & 0xff000fff) + ((fid_oid(fid) & 0x00fff000) << 8);
-
-        RETURN(ino ? ino : fid_oid(fid));
-}
-
-/**
- * build inode number from passed @fid */
-__u64 ll_fid_build_ino(const struct ll_fid *fid, int api32)
-{
-        if (BITS_PER_LONG == 32 || api32)
-                RETURN(fid_flatten32((struct lu_fid *)fid));
-        else
-                RETURN(fid_flatten((struct lu_fid *)fid));
-}
-
-__u32 ll_fid_build_gen(struct ll_sb_info *sbi, struct ll_fid *fid)
-{
-        __u32 gen = 0;
-        ENTRY;
-
-        if (fid_is_igif((struct lu_fid*)fid)) {
-                gen = lu_igif_gen((struct lu_fid*)fid);
-        }
-        RETURN(gen);
-}
 
 /* called from iget5_locked->find_inode() under inode_lock spinlock */
-static int fid_test_inode(struct inode *inode, void *opaque)
+static int ll_test_inode(struct inode *inode, void *opaque)
 {
+        struct ll_inode_info *lli = ll_i2info(inode);
         struct lustre_md     *md = opaque;
-        struct lu_fid        *fid = (struct lu_fid*)&md->body->fid1;
 
         if (unlikely(!(md->body->valid & OBD_MD_FLID))) {
                 CERROR("MDS body missing FID\n");
                 return 0;
         }
 
-        return fid_seq(ll_inode_lu_fid(inode)) == fid_seq(fid) &&
-               fid_oid(ll_inode_lu_fid(inode)) == fid_oid(fid);
+        if (!lu_fid_eq(&lli->lli_fid, &md->body->fid1))
+                return 0;
+
+        return 1;
 }
 
-static int fid_set_inode(struct inode *inode, void *opaque)
+static int ll_set_inode(struct inode *inode, void *opaque)
 {
-        struct lustre_md     *md  = opaque;
+        struct ll_inode_info *lli = ll_i2info(inode);
+        struct mdt_body *body = ((struct lustre_md *)opaque)->body;
 
-        *ll_inode_lu_fid(inode) = *((struct lu_fid*)&md->body->fid1);
+        if (unlikely(!(body->valid & OBD_MD_FLID))) {
+                CERROR("MDS body missing FID\n");
+                return -EINVAL;
+        }
+
+        lli->lli_fid = body->fid1;
         return 0;
 }
 
+
+/*
+ * Get an inode by inode number (already instantiated by the intent lookup).
+ * Returns inode or NULL
+ */
 struct inode *ll_iget(struct super_block *sb, ino_t hash,
-                          struct lustre_md *md)
+                      struct lustre_md *md)
 {
         struct inode         *inode;
         ENTRY;
 
         LASSERT(hash != 0);
-        inode = iget5_locked(sb, hash, fid_test_inode, fid_set_inode, md);
+        inode = iget5_locked(sb, hash, ll_test_inode, ll_set_inode, md);
 
         if (inode) {
                 if (inode->i_state & I_NEW) {
-                        ll_read_inode2(inode, md);
-                        unlock_new_inode(inode);
-                } else {
-                        if (!(inode->i_state & (I_FREEING | I_CLEAR)))
-                                ll_update_inode(inode, md);
-                }
-                CDEBUG(D_VFSTRACE, "got inode: %lu/%u(%p) for "DFID"\n",
-                       inode->i_ino, inode->i_generation, inode,
-                       PFID(ll_inode_lu_fid(inode)));
-        }
+                        int rc;
 
+                        ll_read_inode2(inode, md);
+                        rc = cl_inode_init(inode, md);
+                        if (rc != 0) {
+                                md->lsm = NULL;
+                                make_bad_inode(inode);
+                                unlock_new_inode(inode);
+                                iput(inode);
+                                inode = ERR_PTR(rc);
+                        } else
+                                unlock_new_inode(inode);
+                } else if (!(inode->i_state & (I_FREEING | I_CLEAR)))
+                                ll_update_inode(inode, md);
+                CDEBUG(D_VFSTRACE, "got inode: %p for "DFID"\n",
+                       inode, PFID(&md->body->fid1));
+        }
         RETURN(inode);
 }
 
 static void ll_drop_negative_dentry(struct inode *dir)
-{ 
+{
         struct dentry *dentry, *tmp_alias, *tmp_subdir;
 
-        spin_lock(&ll_lookup_lock);
+        cfs_spin_lock(&ll_lookup_lock);
         spin_lock(&dcache_lock);
 restart:
         list_for_each_entry_safe(dentry, tmp_alias,
@@ -208,11 +178,12 @@ restart:
                 }
         }
         spin_unlock(&dcache_lock);
-        spin_unlock(&ll_lookup_lock);
+        cfs_spin_unlock(&ll_lookup_lock);
 }
 
-int ll_mdc_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
-                        void *data, int flag)
+
+int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
+                       void *data, int flag)
 {
         int rc;
         struct lustre_handle lockh;
@@ -228,19 +199,15 @@ int ll_mdc_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
                 }
                 break;
         case LDLM_CB_CANCELING: {
-                struct inode *inode = ll_inode_from_resource(lock);
+                struct inode *inode = ll_inode_from_lock(lock);
+                struct ll_inode_info *lli;
                 __u64 bits = lock->l_policy_data.l_inodebits.bits;
                 struct lu_fid *fid;
                 ldlm_mode_t mode = lock->l_req_mode;
 
-                /* Inode is set to lock->l_resource->lr_lvb_inode for mdc - bug 24555 */
-                LASSERT(lock->l_ast_data == NULL);
-
                 /* Invalidate all dentries associated with this inode */
                 if (inode == NULL)
                         break;
-
-                fid = ll_inode_lu_fid(inode);;
 
                 LASSERT(lock->l_flags & LDLM_FL_CANCELING);
                 /* For OPEN locks we differentiate between lock modes - CR, CW. PR - bug 22891 */
@@ -254,9 +221,12 @@ int ll_mdc_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
                     ll_have_md_lock(inode, MDS_INODELOCK_OPEN, mode))
                         bits &= ~MDS_INODELOCK_OPEN;
 
-                if (!fid_res_name_eq(fid, &lock->l_resource->lr_name)) {
-                        LDLM_ERROR(lock, "data mismatch with ino %lu/%u (%p)",
-                                   inode->i_ino, inode->i_generation, inode);
+                fid = ll_inode2fid(inode);
+                if (lock->l_resource->lr_name.name[0] != fid_seq(fid) ||
+                    lock->l_resource->lr_name.name[1] != fid_oid(fid) ||
+                    lock->l_resource->lr_name.name[2] != fid_ver(fid)) {
+                        LDLM_ERROR(lock, "data mismatch with object "
+                                   DFID" (%p)", PFID(fid), inode);
                 }
 
                 if (bits & MDS_INODELOCK_OPEN) {
@@ -267,8 +237,6 @@ int ll_mdc_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
                                 break;
                         case LCK_PR:
                                 flags = FMODE_EXEC;
-                                if (!FMODE_EXEC)
-                                        CERROR("open PR lock without FMODE_EXEC\n");
                                 break;
                         case LCK_CR:
                                 flags = FMODE_READ;
@@ -278,12 +246,12 @@ int ll_mdc_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
                                        "%d, inode %ld\n", lock->l_req_mode,
                                        inode->i_ino);
                         }
-                        ll_mdc_real_close(inode, flags);
+                        ll_md_real_close(inode, flags);
                 }
 
+                lli = ll_i2info(inode);
                 if (bits & MDS_INODELOCK_UPDATE)
-                        clear_bit(LLI_F_HAVE_MDS_SIZE_LOCK,
-                                  &(ll_i2info(inode)->lli_flags));
+                        lli->lli_flags &= ~LLIF_MDS_SIZE_LOCK;
 
                 if (S_ISDIR(inode->i_mode) &&
                      (bits & MDS_INODELOCK_UPDATE)) {
@@ -291,7 +259,6 @@ int ll_mdc_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
                                inode->i_ino);
                         truncate_inode_pages(inode->i_mapping, 0);
                         ll_drop_negative_dentry(inode);
-                        inode->i_version++; /* XXX: remove with inode version*/
                 }
 
                 if (inode->i_sb->s_root &&
@@ -308,16 +275,12 @@ int ll_mdc_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
         RETURN(0);
 }
 
-int ll_mdc_cancel_unused(struct lustre_handle *conn, struct inode *inode,
-                         int flags, void *opaque)
+__u32 ll_i2suppgid(struct inode *i)
 {
-        struct ldlm_res_id res_id;
-        struct obd_device *obddev = class_conn2obd(conn);
-        ENTRY;
-
-        fid_build_reg_res_name(ll_inode_lu_fid(inode), &res_id);
-        RETURN(ldlm_cli_cancel_unused(obddev->obd_namespace, &res_id, flags,
-                                      opaque));
+        if (cfs_curproc_is_in_groups(i->i_gid))
+                return (__u32)i->i_gid;
+        else
+                return (__u32)(-1);
 }
 
 /* Pack the required supplementary groups into the supplied groups array.
@@ -326,25 +289,21 @@ int ll_mdc_cancel_unused(struct lustre_handle *conn, struct inode *inode,
  * array in case it might be useful.  Not needed if doing an MDS-side upcall. */
 void ll_i2gids(__u32 *suppgids, struct inode *i1, struct inode *i2)
 {
+#if 0
         int i;
+#endif
 
         LASSERT(i1 != NULL);
         LASSERT(suppgids != NULL);
 
-        if (in_group_p(i1->i_gid))
-                suppgids[0] = i1->i_gid;
-        else
-                suppgids[0] = -1;
+        suppgids[0] = ll_i2suppgid(i1);
 
-        if (i2) {
-                if (in_group_p(i2->i_gid))
-                        suppgids[1] = i2->i_gid;
+        if (i2)
+                suppgids[1] = ll_i2suppgid(i2);
                 else
                         suppgids[1] = -1;
-        } else {
-                suppgids[1] = -1;
-        }
 
+#if 0
         for (i = 0; i < current_ngroups; i++) {
                 if (suppgids[0] == -1) {
                         if (current_groups[i] != suppgids[1])
@@ -358,31 +317,7 @@ void ll_i2gids(__u32 *suppgids, struct inode *i1, struct inode *i2)
                 }
                 break;
         }
-}
-
-int ll_prepare_mdc_op_data(struct mdc_op_data *op_data, struct inode *i1,
-                            struct inode *i2, const char *name, int namelen,
-                            int mode, void *data)
-{
-        LASSERT(i1);
-
-        if (namelen > ll_i2sbi(i1)->ll_namelen)
-                return -ENAMETOOLONG;
-        ll_i2gids(op_data->suppgids, i1, i2);
-        ll_inode2fid(&op_data->fid1, i1);
-
-        if (i2)
-                ll_inode2fid(&op_data->fid2, i2);
-        else
-                memset(&op_data->fid2, 0, sizeof(op_data->fid2));
-
-        op_data->name = name;
-        op_data->namelen = namelen;
-        op_data->create_mode = mode;
-        op_data->mod_time = CURRENT_SECONDS;
-        op_data->data = data;
-
-        return 0;
+#endif
 }
 
 static void ll_d_add(struct dentry *de, struct inode *inode)
@@ -422,7 +357,7 @@ static struct dentry *ll_find_alias(struct inode *inode, struct dentry *de)
         struct dentry *dentry;
         struct dentry *last_discon = NULL;
 
-        spin_lock(&ll_lookup_lock);
+        cfs_spin_lock(&ll_lookup_lock);
         spin_lock(&dcache_lock);
         list_for_each(tmp, &inode->i_dentry) {
                 dentry = list_entry(tmp, struct dentry, d_alias);
@@ -434,7 +369,7 @@ static struct dentry *ll_find_alias(struct inode *inode, struct dentry *de)
                 }
 
                 if (dentry->d_flags & DCACHE_DISCONNECTED) {
-                        /* LASSERT(last_discon == NULL); see bug 20055 */
+                        /* LASSERT(last_discon == NULL); LU-405, bz 20055 */
                         last_discon = dentry;
                         continue;
                 }
@@ -453,11 +388,13 @@ static struct dentry *ll_find_alias(struct inode *inode, struct dentry *de)
                         continue;
 
                 dget_locked(dentry);
+                lock_dentry(dentry);
+                __d_drop(dentry);
+                unlock_dentry(dentry);
                 ll_dops_init(dentry, 0, 1);
-                if (d_unhashed(dentry))
-                        d_rehash_cond(dentry, 0); /* avoid taking dcache_lock inside */
+                d_rehash_cond(dentry, 0); /* avoid taking dcache_lock inside */
                 spin_unlock(&dcache_lock);
-                spin_unlock(&ll_lookup_lock);
+                cfs_spin_unlock(&ll_lookup_lock);
                 iput(inode);
                 CDEBUG(D_DENTRY, "alias dentry %.*s (%p) parent %p inode %p "
                        "refc %d\n", de->d_name.len, de->d_name.name, de,
@@ -470,27 +407,30 @@ static struct dentry *ll_find_alias(struct inode *inode, struct dentry *de)
                         "refc %d\n", last_discon, last_discon->d_inode,
                         atomic_read(&last_discon->d_count));
                 dget_locked(last_discon);
+                lock_dentry(last_discon);
                 last_discon->d_flags |= DCACHE_LUSTRE_INVALID;
+                unlock_dentry(last_discon);
                 spin_unlock(&dcache_lock);
-                spin_unlock(&ll_lookup_lock);
+                cfs_spin_unlock(&ll_lookup_lock);
                 ll_dops_init(last_discon, 1, 1);
                 d_rehash(de);
                 d_move(last_discon, de);
                 iput(inode);
                 return last_discon;
         }
-
+        lock_dentry(de);
         de->d_flags |= DCACHE_LUSTRE_INVALID;
+        unlock_dentry(de);
         ll_d_add(de, inode);
 
         spin_unlock(&dcache_lock);
-        spin_unlock(&ll_lookup_lock);
+        cfs_spin_unlock(&ll_lookup_lock);
 
         return de;
 }
 
-int lookup_it_finish(struct ptlrpc_request *request, int offset,
-                     struct lookup_intent *it, void *data)
+int ll_lookup_it_finish(struct ptlrpc_request *request,
+                        struct lookup_intent *it, void *data)
 {
         struct it_cb_data *icbd = data;
         struct dentry **de = icbd->icbd_childp;
@@ -506,14 +446,14 @@ int lookup_it_finish(struct ptlrpc_request *request, int offset,
                 struct dentry *save = *de;
                 __u32 bits;
 
-                rc = ll_prep_inode(sbi->ll_osc_exp, &inode, request, offset,
-                                   (*de)->d_sb);
+                rc = ll_prep_inode(&inode, request, (*de)->d_sb);
                 if (rc)
                         RETURN(rc);
 
                 CDEBUG(D_DLMTRACE, "setting l_data to inode %p (%lu/%u)\n",
                        inode, inode->i_ino, inode->i_generation);
-                mdc_set_lock_data(&it->d.lustre.it_lock_handle, inode, &bits);
+                md_set_lock_data(sbi->ll_md_exp,
+                                 &it->d.lustre.it_lock_handle, inode, &bits);
 
                 /* We used to query real size from OSTs here, but actually
                    this is not needed. For stat() calls size would be updated
@@ -521,26 +461,21 @@ int lookup_it_finish(struct ptlrpc_request *request, int offset,
                    2.4 and
                    vfs_getattr_it->ll_getattr()->ll_inode_revalidate_it() in 2.6
                    Everybody else who needs correct file size would call
-                   ll_glimpse_size or some equivalent themselves anyway.
+                   cl_glimpse_size or some equivalent themselves anyway.
                    Also see bug 7198. */
-
                 ll_dops_init(*de, 1, 1);
                 *de = ll_find_alias(inode, *de);
                 if (*de != save) {
                         struct ll_dentry_data *lld = ll_d2d(*de);
 
                         /* just make sure the ll_dentry_data is ready */
-                        if (unlikely(lld == NULL)) {
-                                ll_set_dd(*de);
-                                lld = ll_d2d(*de);
-                                if (likely(lld != NULL))
-                                        lld->lld_sa_generation = 0;
-                        }
+                        if (unlikely(lld == NULL))
+                                ll_dops_init(*de, 1, 1);
                 }
                 /* we have lookup look - unhide dentry */
                 if (bits & MDS_INODELOCK_LOOKUP) {
                         lock_dentry(*de);
-                        (*de)->d_flags &= ~(DCACHE_LUSTRE_INVALID);
+                        (*de)->d_flags &= ~DCACHE_LUSTRE_INVALID;
                         unlock_dentry(*de);
                 }
         } else {
@@ -550,7 +485,7 @@ int lookup_it_finish(struct ptlrpc_request *request, int offset,
                    might get picked up later when UPDATE lock will appear */
                 if (ll_have_md_lock(parent, MDS_INODELOCK_UPDATE, LCK_MINMODE)) {
                         spin_lock(&dcache_lock);
-                        ll_d_add(*de, inode);
+                        ll_d_add(*de, NULL);
                         spin_unlock(&dcache_lock);
                 } else {
                         /* negative lookup - and don't have update lock to
@@ -576,13 +511,17 @@ int lookup_it_finish(struct ptlrpc_request *request, int offset,
 static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
                                    struct lookup_intent *it, int lookup_flags)
 {
-        struct dentry *save = dentry, *retval;
-        struct mdc_op_data op_data = { { 0 } };
-        struct it_cb_data icbd;
-        struct ptlrpc_request *req = NULL;
         struct lookup_intent lookup_it = { .it_op = IT_LOOKUP };
+        struct dentry *save = dentry, *retval;
+        struct ptlrpc_request *req = NULL;
+        struct md_op_data *op_data;
+        struct it_cb_data icbd;
+        __u32 opc;
         int rc, first = 0;
         ENTRY;
+
+        if (dentry->d_name.len > ll_i2sbi(parent)->ll_namelen)
+                RETURN(ERR_PTR(-ENAMETOOLONG));
 
         CDEBUG(D_VFSTRACE, "VFS Op:name=%.*s,dir=%lu/%u(%p),intent=%s\n",
                dentry->d_name.len, dentry->d_name.name, parent->i_ino,
@@ -597,7 +536,8 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
          * not valid, revalidate it here. */
         if (parent->i_sb->s_root && (parent->i_sb->s_root->d_inode == parent) &&
             (it->it_op & (IT_OPEN | IT_CREAT))) {
-                rc = ll_inode_revalidate_it(parent->i_sb->s_root, it);
+                rc = ll_inode_revalidate_it(parent->i_sb->s_root, it,
+                                            MDS_INODELOCK_LOOKUP);
                 if (rc)
                         RETURN(ERR_PTR(rc));
         }
@@ -611,23 +551,30 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
                 }
         }
 
-        icbd.icbd_parent = parent;
         icbd.icbd_childp = &dentry;
+        icbd.icbd_parent = parent;
 
-        rc = ll_prepare_mdc_op_data(&op_data, parent, NULL, dentry->d_name.name,
-                                    dentry->d_name.len, lookup_flags, NULL);
-        if (rc)
-                RETURN(ERR_PTR(rc));
+        if (it->it_op & IT_CREAT ||
+            (it->it_op & IT_OPEN && it->it_create_mode & O_CREAT))
+                opc = LUSTRE_OPC_CREATE;
+        else
+                opc = LUSTRE_OPC_ANY;
 
-        it->it_create_mode &= ~current->fs->umask;
+        op_data = ll_prep_md_op_data(NULL, parent, NULL, dentry->d_name.name,
+                                     dentry->d_name.len, lookup_flags, opc,
+                                     NULL);
+        if (IS_ERR(op_data))
+                RETURN((void *)op_data);
 
-        rc = mdc_intent_lock(ll_i2mdcexp(parent), &op_data, NULL, 0, it,
-                             lookup_flags, &req, ll_mdc_blocking_ast, 0);
+        it->it_create_mode &= ~cfs_curproc_umask();
 
+        rc = md_intent_lock(ll_i2mdexp(parent), op_data, NULL, 0, it,
+                            lookup_flags, &req, ll_md_blocking_ast, 0);
+        ll_finish_md_op_data(op_data);
         if (rc < 0)
                 GOTO(out, retval = ERR_PTR(rc));
 
-        rc = lookup_it_finish(req, DLM_REPLY_REC_OFF, it, &icbd);
+        rc = ll_lookup_it_finish(req, it, &icbd);
         if (rc != 0) {
                 ll_intent_release(it);
                 GOTO(out, retval = ERR_PTR(rc));
@@ -653,21 +600,6 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
         return retval;
 }
 
-#ifdef HAVE_VFS_INTENT_PATCHES
-static struct dentry *ll_lookup_nd(struct inode *parent, struct dentry *dentry,
-                                   struct nameidata *nd)
-{
-        struct dentry *de;
-        ENTRY;
-
-        if (nd && nd->flags & LOOKUP_LAST && !(nd->flags & LOOKUP_LINK_NOTLAST))
-                de = ll_lookup_it(parent, dentry, &nd->intent, nd->flags);
-        else
-                de = ll_lookup_it(parent, dentry, NULL, 0);
-
-        RETURN(de);
-}
-#else
 struct lookup_intent *ll_convert_intent(struct open_intent *oit,
                                         int lookup_flags)
 {
@@ -714,7 +646,6 @@ static struct dentry *ll_lookup_nd(struct inode *parent, struct dentry *dentry,
                         if (IS_ERR(nd->intent.open.file))
                                 RETURN((struct dentry *)nd->intent.open.file);
 #endif
-
                 if (ll_d2d(dentry) && ll_d2d(dentry)->lld_it) {
                         it = ll_d2d(dentry)->lld_it;
                         ll_d2d(dentry)->lld_it = NULL;
@@ -790,7 +721,6 @@ static struct dentry *ll_lookup_nd(struct inode *parent, struct dentry *dentry,
 
         RETURN(de);
 }
-#endif
 
 /* We depend on "mode" being set with the proper file type/umask by now */
 static struct inode *ll_create_node(struct inode *dir, const char *name,
@@ -809,8 +739,7 @@ static struct inode *ll_create_node(struct inode *dir, const char *name,
         LASSERT(it_disposition(it, DISP_ENQ_CREATE_REF));
         request = it->d.lustre.it_data;
         it_clear_disposition(it, DISP_ENQ_CREATE_REF);
-        rc = ll_prep_inode(sbi->ll_osc_exp, &inode, request, DLM_REPLY_REC_OFF,
-                           dir->i_sb);
+        rc = ll_prep_inode(&inode, request, dir->i_sb);
         if (rc)
                 GOTO(out, inode = ERR_PTR(rc));
 
@@ -821,7 +750,8 @@ static struct inode *ll_create_node(struct inode *dir, const char *name,
          * stuff it in the lock. */
         CDEBUG(D_DLMTRACE, "setting l_ast_data to inode %p (%lu/%u)\n",
                inode, inode->i_ino, inode->i_generation);
-        mdc_set_lock_data(&it->d.lustre.it_lock_handle, inode, NULL);
+        md_set_lock_data(sbi->ll_md_exp,
+                         &it->d.lustre.it_lock_handle, inode, NULL);
         EXIT;
  out:
         ptlrpc_req_finished(request);
@@ -846,7 +776,6 @@ static int ll_create_it(struct inode *dir, struct dentry *dentry, int mode,
                         struct lookup_intent *it)
 {
         struct inode *inode;
-        struct ptlrpc_request *request = it->d.lustre.it_data;
         int rc = 0;
         ENTRY;
 
@@ -858,13 +787,10 @@ static int ll_create_it(struct inode *dir, struct dentry *dentry, int mode,
         if (rc)
                 RETURN(rc);
 
-        mdc_store_inode_generation(request, DLM_INTENT_REC_OFF,
-                                   DLM_REPLY_REC_OFF);
         inode = ll_create_node(dir, dentry->d_name.name, dentry->d_name.len,
                                NULL, 0, mode, 0, it);
-        if (IS_ERR(inode)) {
+        if (IS_ERR(inode))
                 RETURN(PTR_ERR(inode));
-        }
 
         d_instantiate(dentry, inode);
         /* Negative dentry may be unhashed if parent does not have UPDATE lock,
@@ -877,13 +803,13 @@ static int ll_create_it(struct inode *dir, struct dentry *dentry, int mode,
         RETURN(0);
 }
 
-static void ll_update_times(struct ptlrpc_request *request, int offset,
+static void ll_update_times(struct ptlrpc_request *request,
                             struct inode *inode)
 {
-        struct mds_body *body = lustre_msg_buf(request->rq_repmsg, offset,
-                                               sizeof(*body));
-        LASSERT(body);
+        struct mdt_body *body = req_capsule_server_get(&request->rq_pill,
+                                                       &RMF_MDT_BODY);
 
+        LASSERT(body);
         if (body->valid & OBD_MD_FLMTIME &&
             body->mtime > LTIME_S(inode->i_mtime)) {
                 CDEBUG(D_INODE, "setting ino %lu mtime from %lu to "LPU64"\n",
@@ -896,49 +822,48 @@ static void ll_update_times(struct ptlrpc_request *request, int offset,
 }
 
 static int ll_new_node(struct inode *dir, struct qstr *name,
-                       const char *tgt, int mode,
-                       int rdev, struct dentry *dchild)
+                       const char *tgt, int mode, int rdev,
+                       struct dentry *dchild, __u32 opc)
 {
         struct ptlrpc_request *request = NULL;
+        struct md_op_data *op_data;
         struct inode *inode = NULL;
         struct ll_sb_info *sbi = ll_i2sbi(dir);
-        struct mdc_op_data op_data = { { 0 } };
         int tgt_len = 0;
         int err;
 
         ENTRY;
         if (unlikely(tgt != NULL))
-                tgt_len = strlen(tgt)+1;
+                tgt_len = strlen(tgt) + 1;
 
-        err = ll_prepare_mdc_op_data(&op_data, dir, NULL, name->name,
-                                     name->len, 0, NULL);
+        op_data = ll_prep_md_op_data(NULL, dir, NULL, name->name,
+                                     name->len, 0, opc, NULL);
+        if (IS_ERR(op_data))
+                GOTO(err_exit, err = PTR_ERR(op_data));
+
+        err = md_create(sbi->ll_md_exp, op_data, tgt, tgt_len, mode,
+                        cfs_curproc_fsuid(), cfs_curproc_fsgid(),
+                        cfs_curproc_cap_pack(), rdev, &request);
+        ll_finish_md_op_data(op_data);
         if (err)
                 GOTO(err_exit, err);
 
-        err = mdc_create(sbi->ll_mdc_exp, &op_data, tgt, tgt_len,
-                         mode, cfs_curproc_fsuid(), cfs_curproc_fsgid(),
-                         cfs_curproc_cap_pack(), rdev, &request);
-        if (err)
-                GOTO(err_exit, err);
-
-        ll_update_times(request, REPLY_REC_OFF, dir);
+        ll_update_times(request, dir);
 
         if (dchild) {
-                err = ll_prep_inode(sbi->ll_osc_exp, &inode, request,
-                                    REPLY_REC_OFF, dchild->d_sb);
+                err = ll_prep_inode(&inode, request, dchild->d_sb);
                 if (err)
                      GOTO(err_exit, err);
 
                 d_drop(dchild);
                 d_instantiate(dchild, inode);
-                EXIT;
         }
+        EXIT;
 err_exit:
         ptlrpc_req_finished(request);
 
         return err;
 }
-
 
 static int ll_mknod_generic(struct inode *dir, struct qstr *name, int mode,
                             unsigned rdev, struct dentry *dchild)
@@ -950,7 +875,7 @@ static int ll_mknod_generic(struct inode *dir, struct qstr *name, int mode,
                name->len, name->name, dir->i_ino, dir->i_generation, dir,
                mode, rdev);
 
-        mode &= ~current->fs->umask;
+        mode &= ~cfs_curproc_umask();
 
         switch (mode & S_IFMT) {
         case 0:
@@ -960,7 +885,8 @@ static int ll_mknod_generic(struct inode *dir, struct qstr *name, int mode,
         case S_IFBLK:
         case S_IFIFO:
         case S_IFSOCK:
-                err = ll_new_node(dir, name, NULL, mode, rdev, dchild);
+                err = ll_new_node(dir, name, NULL, mode, rdev, dchild,
+                                  LUSTRE_OPC_MKNOD);
                 break;
         case S_IFDIR:
                 err = -EPERM;
@@ -971,8 +897,8 @@ static int ll_mknod_generic(struct inode *dir, struct qstr *name, int mode,
         RETURN(err);
 }
 
-#ifndef HAVE_VFS_INTENT_PATCHES
-static int ll_create_nd(struct inode *dir, struct dentry *dentry, int mode, struct nameidata *nd)
+static int ll_create_nd(struct inode *dir, struct dentry *dentry,
+                        int mode, struct nameidata *nd)
 {
         struct lookup_intent *it = ll_d2d(dentry)->lld_it;
         int rc;
@@ -1004,17 +930,6 @@ out:
 
         return rc;
 }
-#else
-static int ll_create_nd(struct inode *dir, struct dentry *dentry, int mode, struct nameidata *nd)
-{
-
-        if (!nd || !nd->intent.d.lustre.it_disposition)
-                /* No saved request? Just mknod the file */
-                return ll_mknod_generic(dir, &dentry->d_name, mode, 0, dentry);
-
-        return ll_create_it(dir, dentry, mode, &nd->intent);
-}
-#endif
 
 static int ll_symlink_generic(struct inode *dir, struct qstr *name,
                               const char *tgt, struct dentry *dchild)
@@ -1027,17 +942,17 @@ static int ll_symlink_generic(struct inode *dir, struct qstr *name,
                dir, 3000, tgt);
 
         err = ll_new_node(dir, name, (char *)tgt, S_IFLNK | S_IRWXUGO,
-                          0, dchild);
+                          0, dchild, LUSTRE_OPC_SYMLINK);
         RETURN(err);
 }
 
 static int ll_link_generic(struct inode *src,  struct inode *dir,
                            struct qstr *name, struct dentry *dchild)
 {
-        struct ptlrpc_request *request = NULL;
-        struct mdc_op_data op_data = { { 0 } };
-        int err;
         struct ll_sb_info *sbi = ll_i2sbi(dir);
+        struct ptlrpc_request *request = NULL;
+        struct md_op_data *op_data;
+        int err;
 
         ENTRY;
         CDEBUG(D_VFSTRACE,
@@ -1045,37 +960,37 @@ static int ll_link_generic(struct inode *src,  struct inode *dir,
                src->i_ino, src->i_generation, src, dir->i_ino,
                dir->i_generation, dir, name->len, name->name);
 
-        err = ll_prepare_mdc_op_data(&op_data, src, dir, name->name,
-                                     name->len, 0, NULL);
+        op_data = ll_prep_md_op_data(NULL, src, dir, name->name, name->len,
+                                     0, LUSTRE_OPC_ANY, NULL);
+        if (IS_ERR(op_data))
+                RETURN(PTR_ERR(op_data));
+
+        err = md_link(sbi->ll_md_exp, op_data, &request);
+        ll_finish_md_op_data(op_data);
         if (err)
                 GOTO(out, err);
-        err = mdc_link(sbi->ll_mdc_exp, &op_data, &request);
-        if (err)
-               GOTO(out, err);
-
-        if (dchild) {
+        if (dchild)
                 d_drop(dchild);
-        }
-        ll_update_times(request, REPLY_REC_OFF, dir);
 
+        ll_update_times(request, dir);
         EXIT;
 out:
         ptlrpc_req_finished(request);
         RETURN(err);
 }
 
-static int ll_mkdir_generic(struct inode *dir, struct qstr *name, int mode,
-                            struct dentry *dchild)
+static int ll_mkdir_generic(struct inode *dir, struct qstr *name,
+                            int mode, struct dentry *dchild)
 
 {
         int err;
-
         ENTRY;
+
         CDEBUG(D_VFSTRACE, "VFS Op:name=%.*s,dir=%lu/%u(%p)\n",
                name->len, name->name, dir->i_ino, dir->i_generation, dir);
 
-        mode = (mode & (S_IRWXUGO|S_ISVTX) & ~current->fs->umask) | S_IFDIR;
-        err = ll_new_node(dir, name, NULL, mode, 0, dchild);
+        mode = (mode & (S_IRWXUGO|S_ISVTX) & ~cfs_curproc_umask()) | S_IFDIR;
+        err = ll_new_node(dir, name, NULL, mode, 0, dchild, LUSTRE_OPC_MKDIR);
 
         RETURN(err);
 }
@@ -1083,72 +998,60 @@ static int ll_mkdir_generic(struct inode *dir, struct qstr *name, int mode,
 /* Try to find the child dentry by its name.
    If found, put the result fid into @fid. */
 static void ll_get_child_fid(struct inode * dir, struct qstr *name,
-                             struct ll_fid *fid)
+                             struct lu_fid *fid)
 {
         struct dentry *parent, *child;
-        
+
         parent = list_entry(dir->i_dentry.next, struct dentry, d_alias);
         child = d_lookup(parent, name);
         if (child) {
                 if (child->d_inode)
-                        ll_inode2fid(fid, child->d_inode);
+                        *fid = *ll_inode2fid(child->d_inode);
                 dput(child);
         }
 }
 
 static int ll_rmdir_generic(struct inode *dir, struct dentry *dparent,
-                            struct qstr *name)
+                            struct dentry *dchild, struct qstr *name)
 {
         struct ptlrpc_request *request = NULL;
-        struct mdc_op_data op_data = { { 0 } };
-        struct dentry *dentry;
+        struct md_op_data *op_data;
         int rc;
         ENTRY;
+
         CDEBUG(D_VFSTRACE, "VFS Op:name=%.*s,dir=%lu/%u(%p)\n",
                name->len, name->name, dir->i_ino, dir->i_generation, dir);
 
-        /* Check if we have something mounted at the dir we are going to delete
-         * In such a case there would always be dentry present. */
-        if (dparent) {
-                dentry = d_lookup(dparent, name);
-                if (dentry) {
-                        int mounted = d_mountpoint(dentry);
-                        dput(dentry);
-                        if (mounted)
-                                GOTO(out, rc = -EBUSY);
-                }
-        }
+        if (unlikely(ll_d_mountpoint(dparent, dchild, name)))
+                RETURN(-EBUSY);
 
-        rc = ll_prepare_mdc_op_data(&op_data, dir, NULL, name->name,
-                                    name->len, S_IFDIR, NULL);
-        if (rc)
-                GOTO(out, rc);
-        
-        ll_get_child_fid(dir, name, &op_data.fid3);
-        rc = mdc_unlink(ll_i2sbi(dir)->ll_mdc_exp, &op_data, &request);
-        if (rc)
-                GOTO(out, rc);
-        ll_update_times(request, REPLY_REC_OFF, dir);
+        op_data = ll_prep_md_op_data(NULL, dir, NULL, name->name, name->len,
+                                     S_IFDIR, LUSTRE_OPC_ANY, NULL);
+        if (IS_ERR(op_data))
+                RETURN(PTR_ERR(op_data));
 
-        EXIT;
-out:
+        ll_get_child_fid(dir, name, &op_data->op_fid3);
+        rc = md_unlink(ll_i2sbi(dir)->ll_md_exp, op_data, &request);
+        ll_finish_md_op_data(op_data);
+        if (rc == 0)
+                ll_update_times(request, dir);
         ptlrpc_req_finished(request);
-        return(rc);
+        RETURN(rc);
 }
 
 int ll_objects_destroy(struct ptlrpc_request *request, struct inode *dir)
 {
-        struct mds_body *body;
+        struct mdt_body *body;
         struct lov_mds_md *eadata;
         struct lov_stripe_md *lsm = NULL;
         struct obd_trans_info oti = { 0 };
         struct obdo *oa;
+        struct obd_capa *oc = NULL;
         int rc;
         ENTRY;
 
         /* req is swabbed so this is safe */
-        body = lustre_msg_buf(request->rq_repmsg, REPLY_REC_OFF, sizeof(*body));
-
+        body = req_capsule_server_get(&request->rq_pill, &RMF_MDT_BODY);
         if (!(body->valid & OBD_MD_FLEASIZE))
                 RETURN(0);
 
@@ -1161,53 +1064,53 @@ int ll_objects_destroy(struct ptlrpc_request *request, struct inode *dir)
          * to this file. Use this EA to unlink the objects on the OST.
          * It's opaque so we don't swab here; we leave it to obd_unpackmd() to
          * check it is complete and sensible. */
-        eadata = lustre_swab_repbuf(request, REPLY_REC_OFF + 1,
-                                    body->eadatasize, NULL);
+        eadata = req_capsule_server_sized_get(&request->rq_pill, &RMF_MDT_MD,
+                                              body->eadatasize);
         LASSERT(eadata != NULL);
-        if (eadata == NULL) {
-                CERROR("Can't unpack MDS EA data\n");
-                GOTO(out, rc = -EPROTO);
-        }
 
-        rc = obd_unpackmd(ll_i2obdexp(dir), &lsm, eadata, body->eadatasize);
+        rc = obd_unpackmd(ll_i2dtexp(dir), &lsm, eadata, body->eadatasize);
         if (rc < 0) {
                 CERROR("obd_unpackmd: %d\n", rc);
                 GOTO(out, rc);
         }
         LASSERT(rc >= sizeof(*lsm));
 
-        rc = obd_checkmd(ll_i2obdexp(dir), ll_i2mdcexp(dir), lsm);
-        if (rc)
-                GOTO(out_free_memmd, rc);
-
         OBDO_ALLOC(oa);
         if (oa == NULL)
                 GOTO(out_free_memmd, rc = -ENOMEM);
 
         oa->o_id = lsm->lsm_object_id;
-        oa->o_gr = lsm->lsm_object_gr;
+        oa->o_seq = lsm->lsm_object_seq;
         oa->o_mode = body->mode & S_IFMT;
-        oa->o_valid = OBD_MD_FLID | OBD_MD_FLGROUP | OBD_MD_FLTYPE;
+        oa->o_valid = OBD_MD_FLID | OBD_MD_FLTYPE | OBD_MD_FLGROUP;
 
         if (body->valid & OBD_MD_FLCOOKIE) {
                 oa->o_valid |= OBD_MD_FLCOOKIE;
                 oti.oti_logcookies =
-                        lustre_msg_buf(request->rq_repmsg, REPLY_REC_OFF + 2,
-                                       sizeof(struct llog_cookie) *
-                                       lsm->lsm_stripe_count);
+                        req_capsule_server_sized_get(&request->rq_pill,
+                                                     &RMF_LOGCOOKIES,
+                                                   sizeof(struct llog_cookie) *
+                                                     lsm->lsm_stripe_count);
                 if (oti.oti_logcookies == NULL) {
                         oa->o_valid &= ~OBD_MD_FLCOOKIE;
                         body->valid &= ~OBD_MD_FLCOOKIE;
                 }
         }
 
-        rc = obd_destroy(ll_i2obdexp(dir), oa, lsm, &oti, ll_i2mdcexp(dir));
+        if (body->valid & OBD_MD_FLOSSCAPA) {
+                rc = md_unpack_capa(ll_i2mdexp(dir), request, &RMF_CAPA2, &oc);
+                if (rc)
+                        GOTO(out_free_memmd, rc);
+        }
+
+        rc = obd_destroy(ll_i2dtexp(dir), oa, lsm, &oti, ll_i2mdexp(dir), oc);
+        capa_put(oc);
         OBDO_FREE(oa);
         if (rc)
-                CERROR("obd destroy objid "LPX64"@"LPX64" error %d\n",
-                       lsm->lsm_object_id, lsm->lsm_object_gr, rc);
+                CERROR("obd destroy objid "LPX64" error %d\n",
+                       lsm->lsm_object_id, rc);
  out_free_memmd:
-        obd_free_memmd(ll_i2obdexp(dir), &lsm);
+        obd_free_memmd(ll_i2dtexp(dir), &lsm);
  out:
         return rc;
 }
@@ -1216,107 +1119,82 @@ int ll_objects_destroy(struct ptlrpc_request *request, struct inode *dir)
  * Instead, ll_ddelete() and ll_d_iput() will update it based upon if there
  * is any lock existing. They will recycle dentries and inodes based upon locks
  * too. b=20433 */
-static int ll_unlink_generic(struct inode * dir, struct qstr *name)
+static int ll_unlink_generic(struct inode *dir, struct dentry *dparent,
+                             struct dentry *dchild, struct qstr *name)
 {
         struct ptlrpc_request *request = NULL;
-        struct mdc_op_data op_data = { { 0 } };
+        struct md_op_data *op_data;
         int rc;
         ENTRY;
-
         CDEBUG(D_VFSTRACE, "VFS Op:name=%.*s,dir=%lu/%u(%p)\n",
                name->len, name->name, dir->i_ino, dir->i_generation, dir);
 
-        rc = ll_prepare_mdc_op_data(&op_data, dir, NULL, name->name,
-                                    name->len, 0, NULL);
+        /*
+         * XXX: unlink bind mountpoint maybe call to here,
+         * just check it as vfs_unlink does.
+         */
+        if (unlikely(ll_d_mountpoint(dparent, dchild, name)))
+                RETURN(-EBUSY);
+
+        op_data = ll_prep_md_op_data(NULL, dir, NULL, name->name,
+                                     name->len, 0, LUSTRE_OPC_ANY, NULL);
+        if (IS_ERR(op_data))
+                RETURN(PTR_ERR(op_data));
+
+        ll_get_child_fid(dir, name, &op_data->op_fid3);
+        rc = md_unlink(ll_i2sbi(dir)->ll_md_exp, op_data, &request);
+        ll_finish_md_op_data(op_data);
         if (rc)
                 GOTO(out, rc);
 
-        ll_get_child_fid(dir, name, &op_data.fid3);
-        rc = mdc_unlink(ll_i2sbi(dir)->ll_mdc_exp, &op_data, &request);
-        if (rc)
-                GOTO(out, rc);
-
-        ll_update_times(request, REPLY_REC_OFF, dir);
+        ll_update_times(request, dir);
 
         rc = ll_objects_destroy(request, dir);
-        if (rc)
-                GOTO(out, rc);
-        EXIT;
  out:
         ptlrpc_req_finished(request);
-        return(rc);
+        RETURN(rc);
 }
 
-static int ll_rename_generic(struct inode *src, struct qstr *src_name,
-                             struct inode *tgt, struct qstr *tgt_name)
+static int ll_rename_generic(struct inode *src, struct dentry *src_dparent,
+                             struct dentry *src_dchild, struct qstr *src_name,
+                             struct inode *tgt, struct dentry *tgt_dparent,
+                             struct dentry *tgt_dchild, struct qstr *tgt_name)
 {
         struct ptlrpc_request *request = NULL;
         struct ll_sb_info *sbi = ll_i2sbi(src);
-        struct mdc_op_data op_data = { { 0 } };
+        struct md_op_data *op_data;
         int err;
-
         ENTRY;
         CDEBUG(D_VFSTRACE,"VFS Op:oldname=%.*s,src_dir=%lu/%u(%p),newname=%.*s,"
                "tgt_dir=%lu/%u(%p)\n", src_name->len, src_name->name,
                src->i_ino, src->i_generation, src, tgt_name->len,
                tgt_name->name, tgt->i_ino, tgt->i_generation, tgt);
 
-        err = ll_prepare_mdc_op_data(&op_data, src, tgt, NULL, 0, 0, NULL);
-        if (err)
-                GOTO(out, err);
-        
-        ll_get_child_fid(src, src_name, &op_data.fid3);
-        ll_get_child_fid(tgt, tgt_name, &op_data.fid4);
-        err = mdc_rename(sbi->ll_mdc_exp, &op_data,
-                         src_name->name, src_name->len,
-                         tgt_name->name, tgt_name->len, &request);
-        if (err)
-                GOTO(out, err);
-        ll_update_times(request, REPLY_REC_OFF, src);
-        ll_update_times(request, REPLY_REC_OFF, tgt);
-        err = ll_objects_destroy(request, src);
-        if (err)
-                GOTO(out, err);
+        if (unlikely(ll_d_mountpoint(src_dparent, src_dchild, src_name) ||
+            ll_d_mountpoint(tgt_dparent, tgt_dchild, tgt_name)))
+                RETURN(-EBUSY);
 
-        EXIT;
-out:
+        op_data = ll_prep_md_op_data(NULL, src, tgt, NULL, 0, 0,
+                                     LUSTRE_OPC_ANY, NULL);
+        if (IS_ERR(op_data))
+                RETURN(PTR_ERR(op_data));
+
+        ll_get_child_fid(src, src_name, &op_data->op_fid3);
+        ll_get_child_fid(tgt, tgt_name, &op_data->op_fid4);
+        err = md_rename(sbi->ll_md_exp, op_data,
+                        src_name->name, src_name->len,
+                        tgt_name->name, tgt_name->len, &request);
+        ll_finish_md_op_data(op_data);
+        if (!err) {
+                ll_update_times(request, src);
+                ll_update_times(request, tgt);
+                err = ll_objects_destroy(request, src);
+        }
+
         ptlrpc_req_finished(request);
 
-        return(err);
+        RETURN(err);
 }
-
-#ifdef HAVE_VFS_INTENT_PATCHES
-static int ll_mknod_raw(struct nameidata *nd, int mode, dev_t rdev)
-{
-        return ll_mknod_generic(nd->dentry->d_inode, &nd->last, mode,rdev,NULL);
-}
-static int ll_rename_raw(struct nameidata *srcnd, struct nameidata *tgtnd)
-{
-        return ll_rename_generic(srcnd->dentry->d_inode, &srcnd->last,
-                                 tgtnd->dentry->d_inode, &tgtnd->last);
-}
-static int ll_link_raw(struct nameidata *srcnd, struct nameidata *tgtnd)
-{
-        return ll_link_generic(srcnd->dentry->d_inode, tgtnd->dentry->d_inode,
-                               &tgtnd->last, NULL);
-}
-static int ll_symlink_raw(struct nameidata *nd, const char *tgt)
-{
-        return ll_symlink_generic(nd->dentry->d_inode, &nd->last, tgt, NULL);
-}
-static int ll_rmdir_raw(struct nameidata *nd)
-{
-        return ll_rmdir_generic(nd->dentry->d_inode, nd->dentry, &nd->last);
-}
-static int ll_mkdir_raw(struct nameidata *nd, int mode)
-{
-        return ll_mkdir_generic(nd->dentry->d_inode, &nd->last, mode, NULL);
-}
-static int ll_unlink_raw(struct nameidata *nd)
-{
-        return ll_unlink_generic(nd->dentry->d_inode, &nd->last);
-}
-#endif
 
 static int ll_mknod(struct inode *dir, struct dentry *dchild, int mode,
                     ll_dev_t rdev)
@@ -1327,7 +1205,7 @@ static int ll_mknod(struct inode *dir, struct dentry *dchild, int mode,
 
 static int ll_unlink(struct inode * dir, struct dentry *dentry)
 {
-        return ll_unlink_generic(dir, &dentry->d_name);
+        return ll_unlink_generic(dir, NULL, dentry, &dentry->d_name);
 }
 static int ll_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 {
@@ -1335,7 +1213,7 @@ static int ll_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 }
 static int ll_rmdir(struct inode *dir, struct dentry *dentry)
 {
-        return ll_rmdir_generic(dir, NULL, &dentry->d_name);
+        return ll_rmdir_generic(dir, NULL, dentry, &dentry->d_name);
 }
 static int ll_symlink(struct inode *dir, struct dentry *dentry,
                       const char *oldname)
@@ -1345,15 +1223,17 @@ static int ll_symlink(struct inode *dir, struct dentry *dentry,
 static int ll_link(struct dentry *old_dentry, struct inode *dir,
                    struct dentry *new_dentry)
 {
-        return ll_link_generic(old_dentry->d_inode, dir,
-                               &new_dentry->d_name, new_dentry);
+        return ll_link_generic(old_dentry->d_inode, dir, &new_dentry->d_name,
+                               new_dentry);
 }
 static int ll_rename(struct inode *old_dir, struct dentry *old_dentry,
                      struct inode *new_dir, struct dentry *new_dentry)
 {
         int err;
-        err = ll_rename_generic(old_dir, &old_dentry->d_name, new_dir,
-                                &new_dentry->d_name);
+        err = ll_rename_generic(old_dir, NULL,
+                                 old_dentry, &old_dentry->d_name,
+                                 new_dir, NULL, new_dentry,
+                                 &new_dentry->d_name);
         if (!err) {
 #ifndef HAVE_FS_RENAME_DOES_D_MOVE
                 if (!S_ISDIR(old_dentry->d_inode->i_mode))
@@ -1364,17 +1244,6 @@ static int ll_rename(struct inode *old_dir, struct dentry *old_dentry,
 }
 
 struct inode_operations ll_dir_inode_operations = {
-#ifdef HAVE_VFS_INTENT_PATCHES
-        .link_raw           = ll_link_raw,
-        .unlink_raw         = ll_unlink_raw,
-        .symlink_raw        = ll_symlink_raw,
-        .mkdir_raw          = ll_mkdir_raw,
-        .rmdir_raw          = ll_rmdir_raw,
-        .mknod_raw          = ll_mknod_raw,
-        .rename_raw         = ll_rename_raw,
-        .setattr            = ll_setattr,
-        .setattr_raw        = ll_setattr_raw,
-#endif
         .mknod              = ll_mknod,
         .lookup             = ll_lookup_nd,
         .create             = ll_create_nd,
@@ -1395,9 +1264,6 @@ struct inode_operations ll_dir_inode_operations = {
 };
 
 struct inode_operations ll_special_inode_operations = {
-#ifdef HAVE_VFS_INTENT_PATCHES
-        .setattr_raw    = ll_setattr_raw,
-#endif
         .setattr        = ll_setattr,
         .getattr        = ll_getattr,
         .permission     = ll_inode_permission,

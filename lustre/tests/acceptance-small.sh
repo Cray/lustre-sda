@@ -11,14 +11,25 @@ export OSKIPPED=0
 DEFAULT_SUITES="runtests sanity sanity-benchmark sanityn lfsck liblustre
                 racer replay-single conf-sanity recovery-small
                 replay-ost-single replay-dual replay-vbr insanity sanity-quota
-                performance-sanity large-scale recovery-mds-scale
-                recovery-double-scale recovery-random-scale parallel-scale
-                metadata-updates ost-pools lnet-selftest mmp obdfilter-survey
-                sgpdd-survey"
+                sanity-sec sanity-gss performance-sanity large-scale
+                recovery-mds-scale recovery-double-scale recovery-random-scale
+                parallel-scale lustre_rsync-test metadata-updates ost-pools
+                lnet-selftest mmp obdfilter-survey sgpdd-survey"
 
 if [[ -n $@ ]]; then
     ACC_SM_ONLY="${ACC_SM_ONLY} $@"
 fi
+
+[ "$SIZE" ] || SIZE=$((RAMKB * 2))
+[ "$RSIZE" ] || RSIZE=512
+[ "$UID" ] || UID=1000
+[ "$MOUNT" ] || MOUNT=/mnt/lustre
+[ "$MOUNT2" ] || MOUNT2=${MOUNT}2
+[ "$TMP" ] || TMP=/tmp
+[ "$COUNT" ] || COUNT=1000
+[ "$DEBUG_LVL" ] || DEBUG_LVL=0
+[ "$DEBUG_OFF" ] || DEBUG_OFF="eval lctl set_param debug=\"$DEBUG_LVL\""
+[ "$DEBUG_ON" ] || DEBUG_ON="eval lctl set_param debug=0x33f0484"
 
 export TF_FAIL=$TMP/tf.fail
 
@@ -34,9 +45,18 @@ if [ "$ACC_SM_ONLY" ]; then
     done
 fi
 
+STARTTIME=`date +%s`
+
 LUSTRE=${LUSTRE:-$(cd $(dirname $0)/..; echo $PWD)}
 . $LUSTRE/tests/test-framework.sh
 init_test_env
+
+if $GSS; then
+    # liblustre doesn't support GSS
+    export LIBLUSTRE=no
+else
+    export SANITY_GSS="no"
+fi
 
 SETUP=${SETUP:-setupall}
 FORMAT=${FORMAT:-formatall}
@@ -46,7 +66,7 @@ setup_if_needed() {
     nfs_client_mode && return
 
     local MOUNTED=$(mounted_lustre_filesystems)
-    if $(echo $MOUNTED' ' | grep -w -q $MOUNT' '); then
+    if $(echo $MOUNTED | grep -w -q $MOUNT); then
         check_config_clients $MOUNT
         init_facets_vars
         init_param_vars
@@ -58,7 +78,7 @@ setup_if_needed() {
     $SETUP
 
     MOUNTED=$(mounted_lustre_filesystems)
-    if ! $(echo $MOUNTED' ' | grep -w -q $MOUNT' '); then
+    if ! $(echo $MOUNTED | grep -w -q $MOUNT); then
         echo "Lustre is not mounted after setup! SETUP=$SETUP"
         exit 1
     fi
@@ -76,17 +96,17 @@ find_in_path() {
 }
 
 title() {
-    # update titlebar if stdin is attached to an xterm
+    # update titlebar if stdin is attaached to an xterm
     if ${UPDATE_TITLEBAR:-false}; then
         if tty -s; then
-            case $TERM in
-            xterm*)
-                echo -ne "\033]2; acceptance-small: $* \007" >&0
-                ;;
+            case $TERM in 
+                xterm*)
+                    echo -ne "\033]2; acceptance-small: $* \007" >&0
+                    ;;
             esac
         fi
-    fi
-    log "-----============= acceptance-small: "$*" ============----- `date`"
+    fi 
+    log "-----============= acceptance-small: "$*" ============----- $(date)"
 }
 
 run_suite() {
@@ -122,7 +142,7 @@ run_suite() {
         bash $suite_script ${!suite_only}
         rc=$?
         duration=$(($(date +%s) - $start_ts))
-        if [ -f "$TF_FAIL" -o $rc -ne 0 ]; then
+        if [ -f $TF_FAIL -o $rc -ne 0 ]; then
             status="FAIL"
         else
             status="PASS"
@@ -148,7 +168,7 @@ run_suites() {
 export NAME MOUNT START CLEAN
 . $LUSTRE/tests/cfg/$NAME.sh
 
-assert_env mds_HOST MDS_MKFS_OPTS
+assert_env mds_HOST MDS_MKFS_OPTS 
 assert_env ost_HOST OST_MKFS_OPTS OSTCOUNT
 assert_env FSNAME MOUNT MOUNT2
 
@@ -159,8 +179,7 @@ run_suites ${ACC_SM_ONLY:-$DEFAULT_SUITES}
 
 RC=$?
 title FINISHED
-echo "Finished at `date` in ${SECONDS}s"
-echo "Tests ran: $RANTEST"
+echo "Finished at `date` in $((`date +%s` - $STARTTIME))s"
 print_summary
 [ "$MSKIPPED" = 1 ] && log "FAIL: remote MDS tests skipped" && RC=1
 [ "$OSKIPPED" = 1 ] && log "FAIL: remote OST tests skipped" && RC=1

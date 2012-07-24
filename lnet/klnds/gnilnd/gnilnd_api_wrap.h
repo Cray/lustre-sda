@@ -32,7 +32,7 @@ _kgnilnd_api_rc_lbug(const char *rcstr, int rc, struct libcfs_debug_msg_data *da
 do {                                                                          \
         static struct libcfs_debug_msg_data _msg_dbg_data =                   \
         DEBUG_MSG_DATA_INIT(cdls, DEBUG_SUBSYSTEM, file, func, line);         \
-        CHECK_STACK();                                                        \
+        CFS_CHECK_STACK();                                                    \
         /* we don't mask this - it is always at D_ERROR */                    \
         _kgnilnd_api_rc_lbug(kgnilnd_api_rc2str(rc), (rc), &_msg_dbg_data,    \
                              fmt, ##a);                 \

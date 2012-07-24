@@ -57,11 +57,7 @@ static int max_immediate = (2<<10);
 CFS_MODULE_PARM(max_immediate, "i", int, 0644,
                 "immediate/RDMA breakpoint");
 
-#ifdef CONFIG_CRAY_GEMINI
-static int checksum = 3;
-#else
-static int checksum = 0;
-#endif
+static int checksum = GNILND_CHECKSUM_DEFAULT;
 CFS_MODULE_PARM(checksum, "i", int, 0644,
                 "0: None, 1: headers, 2: short msg, 3: all traffic");
 
@@ -137,6 +133,10 @@ static int hardware_timeout = GNILND_HARDWARE_TIMEOUT;
 CFS_MODULE_PARM(hardware_timeout, "i", int, 0444,
                 "maximum time for traffic to get from one node to another");
 
+static int mdd_timeout = GNILND_MDD_TIMEOUT;
+CFS_MODULE_PARM(mdd_timeout, "i", int, 0644,
+                "maximum time (in minutes) for mdd to be held"); 
+
 kgn_tunables_t kgnilnd_tunables = {
         .kgn_min_reconnect_interval = &min_reconnect_interval,
         .kgn_max_reconnect_interval = &max_reconnect_interval,
@@ -163,7 +163,8 @@ kgn_tunables_t kgnilnd_tunables = {
         .kgn_mbox_credits           = &mbox_credits,
         .kgn_sched_threads          = &sched_threads,
         .kgn_net_hash_size          = &net_hash_size,
-        .kgn_hardware_timeout       = &hardware_timeout
+        .kgn_hardware_timeout       = &hardware_timeout,
+        .kgn_mdd_timeout            = &mdd_timeout
 };
 
 #if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM
@@ -366,6 +367,14 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .data     = &hardware_timeout,
                 .maxlen   = sizeof(int),
                 .mode     = 0444,
+                .proc_handler = &proc_dointvec
+        },
+        {
+                .ctl_name = 28,
+                .procname = "mdd_timeout",
+                .data     = &mdd_timeout,
+                .maxlen   = sizeof(int),
+                .mode     = 0644,
                 .proc_handler = &proc_dointvec
         },
         {0}

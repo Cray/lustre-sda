@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -35,7 +35,7 @@
  */
 
 #ifndef _GNU_SOURCE
-#define _GNU_SOURCE     /* for strnlen() in string.h */
+#define _GNU_SOURCE
 #endif
 
 #include <stdio.h>
@@ -207,19 +207,6 @@ system_string (char *cmdline, char *str, int len)
         }
 }
 
-static void check_lnet_cap()
-{
-        CLASSERT(CFS_CAP_CHOWN                  == 0);
-        CLASSERT(CFS_CAP_DAC_OVERRIDE           == 1);
-        CLASSERT(CFS_CAP_DAC_READ_SEARCH        == 2);
-        CLASSERT(CFS_CAP_FOWNER                 == 3);
-        CLASSERT(CFS_CAP_FSETID                 == 4);
-        CLASSERT(CFS_CAP_LINUX_IMMUTABLE        == 9);
-        CLASSERT(CFS_CAP_SYS_ADMIN              == 21);
-        CLASSERT(CFS_CAP_SYS_BOOT               == 23);
-        CLASSERT(CFS_CAP_SYS_RESOURCE           == 24);
-}
-
 int
 main (int argc, char **argv)
 {
@@ -240,7 +227,6 @@ main (int argc, char **argv)
 
         COMMENT ("Constants...");
 
-        CHECK_DEFINE (LNET_PROTO_OPENIB_MAGIC);
         CHECK_DEFINE (LNET_PROTO_RA_MAGIC);
 
         CHECK_DEFINE (LNET_PROTO_TCP_MAGIC);
@@ -256,7 +242,6 @@ main (int argc, char **argv)
         check_lnet_handle_wire ();
         check_lnet_magicversion ();
         check_lnet_hdr ();
-        check_lnet_cap();
 
         printf ("}\n\n");
 

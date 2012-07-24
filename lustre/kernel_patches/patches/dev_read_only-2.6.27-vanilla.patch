@@ -15,18 +15,18 @@ Index: linux-2.6.27.21-0.1/block/blk-core.c
  
  		if (unlikely(test_bit(QUEUE_FLAG_DEAD, &q->queue_flags)))
  			goto end_io;
-+		/* this is cfs's dev_rdonly check */
-+		if (bio_rw(bio) == WRITE &&
-+				dev_check_rdonly(bio->bi_bdev)) {
-+			bio_endio(bio, 0);
-+			break;
-+		}
- 
+
++               /* this is cfs's dev_rdonly check */
++               if (bio_rw(bio) == WRITE && dev_check_rdonly(bio->bi_bdev)) {
++                       bio_endio(bio, bio->bi_size, 0);
++                       break;
++               }
++
  		if (should_fail_request(bio))
  			goto end_io;
 @@ -2189,6 +2197,91 @@
  }
- EXPORT_SYMBOL(kblockd_schedule_work);
+ EXPORT_SYMBOL(kblockd_flush_work);
  
 + /*
 + * Debug code for turning block devices "read-only" (will discard writes
@@ -115,7 +115,7 @@ Index: linux-2.6.27.21-0.1/block/blk-core.c
 +EXPORT_SYMBOL(dev_check_rdonly);
  int __init blk_dev_init(void)
  {
-	BUILD_BUG_ON(__REQ_NR_BITS > 8 *
+ 	kblockd_workqueue = create_workqueue("kblockd");
 Index: linux-2.6.27.21-0.1/fs/block_dev.c
 ===================================================================
 --- linux-2.6.27.21-0.1.orig/fs/block_dev.c	2009-04-23 02:12:56.000000000 -0600

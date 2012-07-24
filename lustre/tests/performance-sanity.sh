@@ -15,13 +15,17 @@ init_logging
 
 [ -x "$MDSRATE" ] || FAIL_ON_ERROR=true error "No mdsrate program. Aborting."
 which mpirun > /dev/null 2>&1 || \
-	FAIL_ON_ERROR=true error "No mpirun program. Aborting."
+	FAIL_ON_ERROR=true error "No mpirun program. Aborting." 
 
 # Skip these tests
-# bug number:  15266 15266
+# bug number:  15266 15266 
 ALWAYS_EXCEPT="1     2    $PERFORMANCE_SANITY_EXCEPT"
 
 build_test_filter
+
+get_mpiuser_id $MPI_USER
+MPI_RUNAS=${MPI_RUNAS:-"runas -u $MPI_USER_UID -g $MPI_USER_GID"}
+$GSS_KRB5 && refresh_krb5_tgt $MPI_USER_UID $MPI_USER_GID $MPI_RUNAS
 
 # single-IOR-rates
 test_1() {
@@ -29,7 +33,7 @@ test_1() {
 }
 run_test 1 "single-client IO perf ====="
 
-# parallel-IOR-rates
+# parallel-IOR-rates 
 test_2() {
     echo "MPI coordinated test of parallel filesystem system calls and library functions"
 }

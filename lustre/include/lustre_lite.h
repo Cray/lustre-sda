@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -36,6 +36,11 @@
 
 #ifndef _LL_H
 #define _LL_H
+
+/** \defgroup lite lite
+ *
+ * @{
+ */
 
 #if defined(__linux__)
 #include <linux/lustre_lite.h>
@@ -60,11 +65,7 @@
 
 #endif
 
-#define LLAP_FROM_COOKIE(c)                                                    \
-        (LASSERT(((struct ll_async_page *)(c))->llap_magic == LLAP_MAGIC),     \
-         (struct ll_async_page *)(c))
-
-// 4*1024*1024
+/* 4UL * 1024 * 1024 */
 #define LL_MAX_BLKSIZE_BITS     (22)
 #define LL_MAX_BLKSIZE          (1UL<<LL_MAX_BLKSIZE_BITS)
 
@@ -128,51 +129,36 @@ struct lustre_client_ocd {
          * mount is connected to. This field is updated by ll_ocd_update()
          * under ->lco_lock.
          */
-        __u64      lco_flags;
-        struct semaphore   lco_lock;
-        struct obd_export *lco_mdc_exp;
-        struct obd_export *lco_osc_exp;
+        __u64              lco_flags;
+        cfs_semaphore_t    lco_lock;
+        struct obd_export *lco_md_exp;
+        struct obd_export *lco_dt_exp;
 };
 
 /*
- * This function is used as an upcall-callback hooked by liblustre and llite
- * clients into obd_notify() listeners chain to handle notifications about
- * change of import connect_flags. See llu_fsswop_mount() and
- * lustre_common_fill_super().
- *
- * Again, it is dumped into this header for the lack of a better place.
+ * Chain of hash overflow pages.
  */
-static inline int ll_ocd_update(struct obd_device *host,
-                                struct obd_device *watched,
-                                enum obd_notify_event ev, void *owner)
+struct ll_dir_chain {
+        /* XXX something. Later */
+};
+
+static inline void ll_dir_chain_init(struct ll_dir_chain *chain)
 {
-        struct lustre_client_ocd *lco;
-        struct client_obd        *cli;
-        __u64 flags;
-        int   result;
-
-        ENTRY;
-        if (!strcmp(watched->obd_type->typ_name, LUSTRE_OSC_NAME)) {
-                cli = &watched->u.cli;
-                lco = owner;
-                flags = cli->cl_import->imp_connect_data.ocd_connect_flags;
-                CDEBUG(D_SUPER, "Changing connect_flags: "LPX64" -> "LPX64"\n",
-                       lco->lco_flags, flags);
-                mutex_down(&lco->lco_lock);
-                lco->lco_flags &= flags;
-                /* for each osc event update ea size */
-                if (lco->lco_osc_exp)
-                        mdc_init_ea_size(lco->lco_mdc_exp, lco->lco_osc_exp);
-                mutex_up(&lco->lco_lock);
-
-                result = 0;
-        } else {
-                CERROR("unexpected notification from %s %s!\n",
-                       watched->obd_type->typ_name,
-                       watched->obd_name);
-                result = -EINVAL;
-        }
-        RETURN(result);
 }
+
+static inline void ll_dir_chain_fini(struct ll_dir_chain *chain)
+{
+}
+
+static inline unsigned long hash_x_index(__u64 hash, int hash64)
+{
+#ifdef __KERNEL__
+        if (BITS_PER_LONG == 32 && hash64)
+                hash >>= 32;
+#endif
+        return ~0UL - hash;
+}
+
+/** @} lite */
 
 #endif

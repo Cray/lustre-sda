@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -51,6 +51,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <libcfs/libcfs.h>
 #include <lustre/lustre_user.h>
 
 typedef struct flag_mapping {
@@ -123,9 +124,8 @@ int main(int argc, char** argv)
                                 printf("flags = %d\n",flags);
 #endif
                                 break;
-                        } else {
+                        } else 
                                 flags = 0;
-                        }
 
                         for (tmp = strtok(cloned_flags, ":|"); tmp;
                              tmp = strtok(NULL, ":|")) {

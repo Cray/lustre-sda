@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -294,6 +294,7 @@ int main(int argc, char **argv)
 	if (liblustre_init_current(argv[0]) ||
 	    init_obdclass() || init_lib_portals() ||
 	    ptlrpc_init() ||
+	    lmv_init() ||
 	    mdc_init() ||
 	    lov_init() ||
 	    osc_init() ||

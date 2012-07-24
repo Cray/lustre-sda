@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -49,9 +49,9 @@ static int ll_readlink_internal(struct inode *inode,
 {
         struct ll_inode_info *lli = ll_i2info(inode);
         struct ll_sb_info *sbi = ll_i2sbi(inode);
-        struct ll_fid fid;
-        struct mds_body *body;
         int rc, symlen = i_size_read(inode) + 1;
+        struct mdt_body *body;
+        struct md_op_data *op_data;
         ENTRY;
 
         *request = NULL;
@@ -62,20 +62,19 @@ static int ll_readlink_internal(struct inode *inode,
                 RETURN(0);
         }
 
-        ll_inode2fid(&fid, inode);
-        rc = mdc_getattr(sbi->ll_mdc_exp, &fid,
-                         OBD_MD_LINKNAME, symlen, request);
+        op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, symlen,
+                                     LUSTRE_OPC_ANY, NULL);
+        op_data->op_valid = OBD_MD_LINKNAME;
+        rc = md_getattr(sbi->ll_md_exp, op_data, request);
+        ll_finish_md_op_data(op_data);
         if (rc) {
                 if (rc != -ENOENT)
                         CERROR("inode %lu: rc = %d\n", inode->i_ino, rc);
                 GOTO (failed, rc);
         }
 
-        body = lustre_msg_buf((*request)->rq_repmsg, REPLY_REC_OFF,
-                              sizeof(*body));
+        body = req_capsule_server_get(&(*request)->rq_pill, &RMF_MDT_BODY);
         LASSERT(body != NULL);
-        LASSERT(lustre_rep_swabbed(*request, REPLY_REC_OFF));
-
         if ((body->valid & OBD_MD_LINKNAME) == 0) {
                 CERROR("OBD_MD_LINKNAME not set on reply\n");
                 GOTO(failed, rc = -EPROTO);
@@ -88,10 +87,9 @@ static int ll_readlink_internal(struct inode *inode,
                 GOTO(failed, rc = -EPROTO);
         }
 
-        *symname = lustre_msg_buf((*request)->rq_repmsg, REPLY_REC_OFF + 1,
-                                  symlen);
+        *symname = req_capsule_server_get(&(*request)->rq_pill, &RMF_MDT_MD);
         if (*symname == NULL ||
-            strnlen (*symname, symlen) != symlen - 1) {
+            strnlen(*symname, symlen) != symlen - 1) {
                 /* not full/NULL terminated */
                 CERROR("inode %lu: symlink not NULL terminated string"
                         "of length %d\n", inode->i_ino, symlen - 1);
@@ -113,7 +111,6 @@ failed:
 static int ll_readlink(struct dentry *dentry, char *buffer, int buflen)
 {
         struct inode *inode = dentry->d_inode;
-        struct ll_inode_info *lli = ll_i2info(inode);
         struct ptlrpc_request *request;
         char *symname;
         int rc;
@@ -121,7 +118,7 @@ static int ll_readlink(struct dentry *dentry, char *buffer, int buflen)
 
         CDEBUG(D_VFSTRACE, "VFS Op\n");
         /* on symlinks lli_open_sem protects lli_symlink_name allocation/data */
-        down(&lli->lli_size_sem);
+        ll_inode_size_lock(inode, 0);
         rc = ll_readlink_internal(inode, &request, &symname);
         if (rc)
                 GOTO(out, rc);
@@ -129,7 +126,7 @@ static int ll_readlink(struct dentry *dentry, char *buffer, int buflen)
         rc = vfs_readlink(dentry, buffer, buflen, symname);
  out:
         ptlrpc_req_finished(request);
-        up(&lli->lli_size_sem);
+        ll_inode_size_unlock(inode, 0);
         RETURN(rc);
 }
 
@@ -139,28 +136,14 @@ static int ll_readlink(struct dentry *dentry, char *buffer, int buflen)
 # define LL_FOLLOW_LINK_RETURN_TYPE int
 #endif
 
-static LL_FOLLOW_LINK_RETURN_TYPE ll_follow_link(struct dentry *dentry, struct nameidata *nd)
+static LL_FOLLOW_LINK_RETURN_TYPE ll_follow_link(struct dentry *dentry,
+                                                 struct nameidata *nd)
 {
         struct inode *inode = dentry->d_inode;
-        struct ll_inode_info *lli = ll_i2info(inode);
-#ifdef HAVE_VFS_INTENT_PATCHES
-        struct lookup_intent *it = ll_nd2it(nd);
-#endif
         struct ptlrpc_request *request = NULL;
         int rc;
         char *symname;
         ENTRY;
-
-#ifdef HAVE_VFS_INTENT_PATCHES
-        if (it != NULL) {
-                int op = it->it_op;
-                int mode = it->it_create_mode;
-
-                ll_intent_release(it);
-                it->it_op = op;
-                it->it_create_mode = mode;
-        }
-#endif
 
         CDEBUG(D_VFSTRACE, "VFS Op\n");
         /* Limit the recursive symlink depth to 5 instead of default
@@ -171,9 +154,9 @@ static LL_FOLLOW_LINK_RETURN_TYPE ll_follow_link(struct dentry *dentry, struct n
         } else if (THREAD_SIZE == 8192 && current->link_count >= 8) {
                 rc = -ELOOP;
         } else {
-                down(&lli->lli_size_sem);
+                ll_inode_size_lock(inode, 0);
                 rc = ll_readlink_internal(inode, &request, &symname);
-                up(&lli->lli_size_sem);
+                ll_inode_size_unlock(inode, 0);
         }
         if (rc) {
                 cfs_path_put(nd); /* Kernel assumes that ->follow_link()
@@ -181,15 +164,12 @@ static LL_FOLLOW_LINK_RETURN_TYPE ll_follow_link(struct dentry *dentry, struct n
                 GOTO(out, rc);
         }
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,8))
-        rc = vfs_follow_link(nd, symname);
-#else
-# ifdef HAVE_COOKIE_FOLLOW_LINK
+#ifdef HAVE_COOKIE_FOLLOW_LINK
         nd_set_link(nd, symname);
         /* @symname may contain a pointer to the request message buffer,
            we delay request releasing until ll_put_link then. */
         RETURN(request);
-# else
+#else
         if (lli->lli_symlink_name == NULL) {
                 /* falling back to recursive follow link if the request
                  * needs to be cleaned up still. */
@@ -198,7 +178,6 @@ static LL_FOLLOW_LINK_RETURN_TYPE ll_follow_link(struct dentry *dentry, struct n
         }
         nd_set_link(nd, symname);
         RETURN(0);
-# endif
 #endif
 out:
         ptlrpc_req_finished(request);
@@ -219,9 +198,6 @@ static void ll_put_link(struct dentry *dentry, struct nameidata *nd, void *cooki
 struct inode_operations ll_fast_symlink_inode_operations = {
         .readlink       = ll_readlink,
         .setattr        = ll_setattr,
-#ifdef HAVE_VFS_INTENT_PATCHES
-        .setattr_raw    = ll_setattr_raw,
-#endif
         .follow_link    = ll_follow_link,
 #ifdef HAVE_COOKIE_FOLLOW_LINK
         .put_link       = ll_put_link,

@@ -46,7 +46,7 @@ static int
 lnet_me_match_portal(lnet_portal_t *ptl, lnet_process_id_t id,
                      __u64 match_bits, __u64 ignore_bits)
 {
-        struct list_head *mhash = NULL;
+        cfs_list_t       *mhash = NULL;
         int               unique;
 
         LASSERT (!(lnet_portal_is_unique(ptl) &&
@@ -96,6 +96,36 @@ lnet_me_match_portal(lnet_portal_t *ptl, lnet_process_id_t id,
         return 0;
 }
 
+/**
+ * Create and attach a match entry to the match list of \a portal. The new
+ * ME is empty, i.e. not associated with a memory descriptor. LNetMDAttach()
+ * can be used to attach a MD to an empty ME.
+ *
+ * \param portal The portal table index where the ME should be attached.
+ * \param match_id Specifies the match criteria for the process ID of
+ * the requester. The constants LNET_PID_ANY and LNET_NID_ANY can be
+ * used to wildcard either of the identifiers in the lnet_process_id_t
+ * structure.
+ * \param match_bits,ignore_bits Specify the match criteria to apply
+ * to the match bits in the incoming request. The ignore bits are used
+ * to mask out insignificant bits in the incoming match bits. The resulting
+ * bits are then compared to the ME's match bits to determine if the
+ * incoming request meets the match criteria.
+ * \param unlink Indicates whether the ME should be unlinked when the memory
+ * descriptor associated with it is unlinked (Note that the check for
+ * unlinking a ME only occurs when the memory descriptor is unlinked.).
+ * Valid values are LNET_RETAIN and LNET_UNLINK.
+ * \param pos Indicates whether the new ME should be prepended or
+ * appended to the match list. Allowed constants: LNET_INS_BEFORE,
+ * LNET_INS_AFTER.
+ * \param handle On successful returns, a handle to the newly created ME
+ * object is saved here. This handle can be used later in LNetMEInsert(),
+ * LNetMEUnlink(), or LNetMDAttach() functions.
+ *
+ * \retval 0       On success.
+ * \retval -EINVAL If \a portal is invalid.
+ * \retval -ENOMEM If new ME object cannot be allocated.
+ */
 int
 LNetMEAttach(unsigned int portal,
              lnet_process_id_t match_id,
@@ -105,13 +135,13 @@ LNetMEAttach(unsigned int portal,
 {
         lnet_me_t        *me;
         lnet_portal_t    *ptl;
-        struct list_head *head;
+        cfs_list_t       *head;
         int               rc;
 
         LASSERT (the_lnet.ln_init);
         LASSERT (the_lnet.ln_refcount > 0);
 
-        if (portal >= the_lnet.ln_nportals)
+        if ((int)portal >= the_lnet.ln_nportals)
                 return -EINVAL;
 
         ptl = &the_lnet.ln_portals[portal];
@@ -133,14 +163,13 @@ LNetMEAttach(unsigned int portal,
         me->me_md = NULL;
 
         lnet_initialise_handle (&me->me_lh, LNET_COOKIE_TYPE_ME);
-
         head = lnet_portal_me_head(portal, match_id, match_bits);
         LASSERT (head != NULL);
 
         if (pos == LNET_INS_AFTER)
-                list_add_tail(&me->me_list, head);
+                cfs_list_add_tail(&me->me_list, head);
         else
-                list_add(&me->me_list, head);
+                cfs_list_add(&me->me_list, head);
 
         lnet_me2handle(handle, me);
 
@@ -149,6 +178,23 @@ LNetMEAttach(unsigned int portal,
         return 0;
 }
 
+/**
+ * Create and a match entry and insert it before or after the ME pointed to by
+ * \a current_meh. The new ME is empty, i.e. not associated with a memory
+ * descriptor. LNetMDAttach() can be used to attach a MD to an empty ME.
+ *
+ * This function is identical to LNetMEAttach() except for the position
+ * where the new ME is inserted.
+ *
+ * \param current_meh A handle for a ME. The new ME will be inserted
+ * immediately before or immediately after this ME.
+ * \param match_id,match_bits,ignore_bits,unlink,pos,handle See the discussion
+ * for LNetMEAttach().
+ *
+ * \retval 0       On success.
+ * \retval -ENOMEM If new ME object cannot be allocated.
+ * \retval -ENOENT If \a current_meh does not point to a valid match entry.
+ */
 int
 LNetMEInsert(lnet_handle_me_t current_meh,
              lnet_process_id_t match_id,
@@ -197,9 +243,9 @@ LNetMEInsert(lnet_handle_me_t current_meh,
         lnet_initialise_handle (&new_me->me_lh, LNET_COOKIE_TYPE_ME);
 
         if (pos == LNET_INS_AFTER)
-                list_add(&new_me->me_list, &current_me->me_list);
+                cfs_list_add(&new_me->me_list, &current_me->me_list);
         else
-                list_add_tail(&new_me->me_list, &current_me->me_list);
+                cfs_list_add_tail(&new_me->me_list, &current_me->me_list);
 
         lnet_me2handle(handle, new_me);
 
@@ -208,6 +254,20 @@ LNetMEInsert(lnet_handle_me_t current_meh,
         return 0;
 }
 
+/**
+ * Unlink a match entry from its match list.
+ *
+ * This operation also releases any resources associated with the ME. If a
+ * memory descriptor is attached to the ME, then it will be unlinked as well
+ * and an unlink event will be generated. It is an error to use the ME handle
+ * after calling LNetMEUnlink().
+ *
+ * \param meh A handle for the ME to be unlinked.
+ *
+ * \retval 0       On success.
+ * \retval -ENOENT If \a meh does not point to a valid ME.
+ * \see LNetMDUnlink() for the discussion on delivering unlink event.
+ */
 int
 LNetMEUnlink(lnet_handle_me_t meh)
 {
@@ -244,7 +304,7 @@ LNetMEUnlink(lnet_handle_me_t meh)
 void
 lnet_me_unlink(lnet_me_t *me)
 {
-        list_del (&me->me_list);
+        cfs_list_del (&me->me_list);
 
         if (me->me_md != NULL) {
                 me->me_md->md_me = NULL;
@@ -267,8 +327,8 @@ lib_me_dump(lnet_me_t *me)
 
         CWARN("\tMD\t= %p\n", me->md);
         CWARN("\tprev\t= %p\n",
-              list_entry(me->me_list.prev, lnet_me_t, me_list));
+              cfs_list_entry(me->me_list.prev, lnet_me_t, me_list));
         CWARN("\tnext\t= %p\n",
-              list_entry(me->me_list.next, lnet_me_t, me_list));
+              cfs_list_entry(me->me_list.next, lnet_me_t, me_list));
 }
 #endif

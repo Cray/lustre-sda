@@ -1,106 +1,25 @@
-2012-05-31 Whamcloud, Inc.
-	* version 3.1.52
-
-See http://wiki.whamcloud.com/display/PUB/Changelog+1.8 for more information.
-
--------------------------------------------------------------------------------
-
-2011-10-31 Whamcloud, Inc.
-	* version 3.1.51
-
-See http://wiki.whamcloud.com/display/PUB/Changelog+1.8 for more information.
-
--------------------------------------------------------------------------------
-
-2011-06-30 Whamcloud, Inc.
-	* version 3.1.50
+TBD  Oracle, Inc.
+        * version 3.3.0
 
 Severity   : enhancement
-Jira       : LU-136
-Description: Add support for 24TB LUN on RHEL5 with ext4-based ldiskfs
-	     The force_over_16tb mount option has now been renamed
-	     force_over_24tb
-
-Severity   : major
-Jira       : LU-206
-Description: fix memory corruption introduced in 1.8.5 in the MMP patch
-
-Severity   : normal
-Jira       : LU-264, LU-268
-Description: Fix 2TB limitation for mmp-block
-
-Severity   : normal
-Jira       : LU-216
-Description: Fix fiemap locking issue in 2.6.32 kernels
-
-Severity   : normal
-Jira       : LU-15
-Description: slow I/O on new files via mballoc
-Details    : Apply upstream patch to avoid loading bitmaps from full groups
+Bugzilla   : 17670
+Description: FID_in_Dirent feature for OSD.
+Details    : Support for storing the FID in the directory entry has
+             been added to ext3 and ext4.
 
 -------------------------------------------------------------------------------
 
-2011-05-12 Oracle, Inc.
-	* version 3.1.5
+2010-07-15  Oracle, Inc.
+        * version 3.2.0
 
-Severity   : normal
-Bugzilla   : 22882
-Description: MMP might sleep negative time
-
--------------------------------------------------------------------------------
-
-2010-10-29 Oracle, Inc.
-	* version 3.1.4
-
-Severity   : normal
-Bugzilla   : 23683
-Description: Bring upstream patch for ldiskfs.
-
-Severity   : normal
-Bugzilla   : 21610
-Description: add support for SLES11 SP1
+Severity   : enhancement
+Bugzilla   : 17670
+Description: FID_in_Dirent feature for OSD.
+Details    : Support for storing the FID in the directory entry has
+             been added to ext3 and ext4.
 
 -------------------------------------------------------------------------------
 
-2010-07-31 Oracle, Inc.
-	* version 3.1.3
-
-Severity   : normal
-Bugzilla   : 18456
-Description: Reduce group prealloc size and skip groups with little free space.
-
-Severity   : normal
-Bugzilla   : 22237
-Description: Fix issue with proc_remove.
-
-Severity   : normal
-Bugzilla   : 22771
-Description: add mount option to disable mb_cache since it can cause slowdown.
-
-Severity   : normal
-Bugzilla   : 23368
-Description: Disable delayed allocation by default for ext4-based ldiskfs on
-	     RHEL5.5
-
-Severity   : normal
-Bugzilla   : 23368
-Description: A mount failure can corrupt the slab. This is a bug in the latest
-	     RHEL5.5 kernel and only ext4-based ldiskfs is impacted.
-
--------------------------------------------------------------------------------
-
-2010-04-30 Oracle, Inc.
-	* version 3.1.2
-
-
--------------------------------------------------------------------------------
-
-2010-01-29  Sun Microsystems, Inc.
-        * version 3.1.1
-	
-
--------------------------------------------------------------------------------
-	
 2009-11-05  Sun Microsystems, Inc.
 	* version 3.1.0
 

@@ -13,6 +13,9 @@ LUSTRE_LIBS = libllite.a \
               $(top_builddir)/lustre/lov/liblov.a \
               $(top_builddir)/lustre/obdecho/libobdecho.a \
               $(top_builddir)/lustre/osc/libosc.a \
+              $(top_builddir)/lustre/fid/libfid.a \
+              $(top_builddir)/lustre/fld/libfld.a \
+              $(top_builddir)/lustre/lmv/liblmv.a \
               $(top_builddir)/lustre/mdc/libmdc.a \
               $(top_builddir)/lustre/mgc/libmgc.a \
               $(top_builddir)/lustre/ptlrpc/libptlrpc.a \
@@ -32,7 +35,8 @@ LND_LIBS +=   $(top_builddir)/lnet/ulnds/ptllnd/libptllnd.a
 endif
 
 LNET_LIBS =   $(top_builddir)/lnet/utils/libuptlctl.a \
-              $(top_builddir)/lnet/lnet/liblnet.a
+              $(top_builddir)/lnet/lnet/liblnet.a \
+              $(top_builddir)/libcfs/libcfs/libcfsutil.a
 
 SYSIO_LIBS =  $(SYSIO)/lib/libsysio.a
 
@@ -55,15 +59,16 @@ install-exec-hook:
 endif
 
 libllite_a_SOURCES = llite_lib.c super.c namei.c rw.c file.c dir.c \
-		     lutil.c lutil.h llite_lib.h
+		     lutil.c lutil.h llite_lib.h llite_cl.c \
+                     ../lclient/lcommon_cl.c ../lclient/glimpse.c ../lclient/lcommon_misc.c
 
 # for make rpms -- need cleanup
 liblustre_a_SOURCES = llite_lib.c super.c namei.c rw.c file.c dir.c \
-		     llite_lib.h
+		     llite_lib.h llite_cl.c
 
 liblustre.a : $(LUSTRE_LIBS) $(LND_LIBS) $(LNET_LIBS) $(SYSIO_LIBS) $(QUOTA_LIBS)
 	sh $(srcdir)/genlib.sh "$(SYSIO)" "$(LIBS)" "$(LND_LIBS)" "$(PTHREAD_LIBS)" "$(QUOTA_LIBS)" "$(CAP_LIBS)" "$(ZLIB)"
 
 EXTRA_DIST = genlib.sh
 
-CLEANFILES := liblsupport.a liblustre.so
+CLEANFILES = liblsupport.a liblustre.so

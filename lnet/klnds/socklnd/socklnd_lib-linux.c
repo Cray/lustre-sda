@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -141,7 +141,7 @@ static cfs_sysctl_table_t ksocknal_ctl_table[] = {
                 .data     = &ksocknal_tunables.ksnd_peertimeout,
                 .maxlen   = sizeof (int),
                 .mode     = 0444,
-                .proc_handler = &proc_dointvec,
+                .proc_handler = &proc_dointvec
                 .strategy = &sysctl_intvec,
         },
         {
@@ -371,8 +371,6 @@ ksocknal_lib_tunables_init ()
                 }
         }
 
-        if (*ksocknal_tunables.ksnd_zc_min_payload < (2 << 10))
-                *ksocknal_tunables.ksnd_zc_min_payload = (2 << 10);
         if (*ksocknal_tunables.ksnd_zc_recv_min_nfrags < 2)
                 *ksocknal_tunables.ksnd_zc_recv_min_nfrags = 2;
         if (*ksocknal_tunables.ksnd_zc_recv_min_nfrags > LNET_MAX_IOV)
@@ -560,7 +558,7 @@ ksocknal_lib_send_iov (ksock_conn_t *conn, ksock_tx_t *tx)
                         nob += scratchiov[i].iov_len;
                 }
 
-                if (!list_empty(&conn->ksnc_tx_queue) ||
+                if (!cfs_list_empty(&conn->ksnc_tx_queue) ||
                     nob < tx->tx_resid)
                         msg.msg_flags |= MSG_MORE;
 
@@ -595,7 +593,7 @@ ksocknal_lib_send_kiov (ksock_conn_t *conn, ksock_tx_t *tx)
                 CDEBUG(D_NET, "page %p + offset %x for %d\n",
                                page, offset, kiov->kiov_len);
 
-                if (!list_empty(&conn->ksnc_tx_queue) ||
+                if (!cfs_list_empty(&conn->ksnc_tx_queue) ||
                     fragsize < tx->tx_resid)
                         msgflg |= MSG_MORE;
 
@@ -635,7 +633,7 @@ ksocknal_lib_send_kiov (ksock_conn_t *conn, ksock_tx_t *tx)
                         nob += scratchiov[i].iov_len = kiov[i].kiov_len;
                 }
 
-                if (!list_empty(&conn->ksnc_tx_queue) ||
+                if (!cfs_list_empty(&conn->ksnc_tx_queue) ||
                     nob < tx->tx_resid)
                         msg.msg_flags |= MSG_MORE;
 
@@ -1088,12 +1086,7 @@ ksocknal_lib_setup_sock (struct socket *sock)
         return (0);
 }
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0))
-struct tcp_opt *sock2tcp_opt(struct sock *sk)
-{
-        return &(sk->tp_pinfo.af_tcp);
-}
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,10))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,10))
 #define sock2tcp_opt(sk) tcp_sk(sk)
 #else
 struct tcp_opt *sock2tcp_opt(struct sock *sk)
@@ -1193,7 +1186,7 @@ ksocknal_write_space (struct sock *sk)
                                       " ready" : " blocked"),
                (conn == NULL) ? "" : (conn->ksnc_tx_scheduled ?
                                       " scheduled" : " idle"),
-               (conn == NULL) ? "" : (list_empty (&conn->ksnc_tx_queue) ?
+               (conn == NULL) ? "" : (cfs_list_empty (&conn->ksnc_tx_queue) ?
                                       " empty" : " queued"));
 
         if (conn == NULL) {             /* raced with ksocknal_terminate_conn */
@@ -1258,7 +1251,7 @@ ksocknal_lib_memory_pressure(ksock_conn_t *conn)
         
         sched = conn->ksnc_scheduler;
         cfs_spin_lock_bh (&sched->kss_lock);
-        
+
         if (!SOCK_TEST_NOSPACE(conn->ksnc_sock) &&
             !conn->ksnc_tx_ready) {
                 /* SOCK_NOSPACE is set when the socket fills
@@ -1271,25 +1264,10 @@ ksocknal_lib_memory_pressure(ksock_conn_t *conn)
                  * after a timeout */
                 rc = -ENOMEM;
         }
-        
+
         cfs_spin_unlock_bh (&sched->kss_lock);
 
         return rc;
-}
-
-__u64
-ksocknal_lib_new_incarnation(void)
-{
-        struct timeval tv;
-
-        /* The incarnation number is the time this module loaded and it
-         * identifies this particular instance of the socknal.  Hopefully
-         * we won't be able to reboot more frequently than 1MHz for the
-         * forseeable future :) */
-
-        do_gettimeofday(&tv);
-
-        return (((__u64)tv.tv_sec) * 1000000) + tv.tv_usec;
 }
 
 int

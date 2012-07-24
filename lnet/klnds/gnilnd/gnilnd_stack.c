@@ -173,6 +173,9 @@ kgnilnd_reset_stack(void)
         __u32            seconds;
         unsigned long    start, end;
         ENTRY;
+        
+        /* Race with del_peer and its atomics */
+        CFS_RACE(CFS_FAIL_GNI_RACE_RESET);
 
         if (kgnilnd_data.kgn_init != GNILND_INIT_ALL) {
                 CERROR("can't reset the stack, gnilnd is not initialized\n");
@@ -272,7 +275,11 @@ kgnilnd_reset_stack(void)
         /* don't let the little weasily purgatory conns hide from us */
         for (i = 0; i < *kgnilnd_tunables.kgn_peer_hash_size; i++) {
                 list_for_each_entry_safe(peer, peerN, &kgnilnd_data.kgn_peers[i], gnp_list) {
-                        kgnilnd_detach_purgatory_locked(peer, &souls);
+                        kgn_conn_t       *conn, *connN;
+
+                        list_for_each_entry_safe(conn, connN, &peer->gnp_conns, gnc_list) {
+                                kgnilnd_detach_purgatory_locked(conn, &souls);
+                        }
                 }
         }
 

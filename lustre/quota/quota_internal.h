@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -53,8 +53,8 @@
 
 #define DQUOT_DEBUG(dquot, fmt, arg...)                                       \
         CDEBUG(D_QUOTA, "refcnt(%u) id(%u) type(%u) off(%llu) flags(%lu) "    \
-               "bhardlimit("LPU64") curspace("LPU64") ihardlimit("LPU64")"    \
-               "curinodes("LPU64"): " fmt, dquot->dq_refcnt,                  \
+               "bhardlimit("LPU64") curspace("LPU64") ihardlimit("LPU64") "   \
+               "curinodes("LPU64"): " fmt, cfs_atomic_read(&dquot->dq_refcnt),\
                dquot->dq_id, dquot->dq_type, dquot->dq_off,  dquot->dq_flags, \
                dquot->dq_dqb.dqb_bhardlimit, dquot->dq_dqb.dqb_curspace,      \
                dquot->dq_dqb.dqb_ihardlimit, dquot->dq_dqb.dqb_curinodes,     \
@@ -87,22 +87,21 @@
 #define LQS_DEBUG(lqs, fmt, arg...)                                           \
         CDEBUG(D_QUOTA, "lqs(%p) id(%u) flag(%lu) type(%c) bunit(%lu) "       \
                "btune(%lu) iunit(%lu) itune(%lu) lqs_bwrite_pending(%lu) "    \
-               "lqs_iwrite_pending(%lu) ino_rec(%lld) blk_rec(%lld)"   \
+               "lqs_iwrite_pending(%lu) ino_rec(%lld) blk_rec(%lld) "         \
                "refcount(%d): "                                               \
                fmt, lqs, lqs->lqs_id, lqs->lqs_flags,                         \
                LQS_IS_GRP(lqs) ? 'g' : 'u',                                   \
                lqs->lqs_bunit_sz, lqs->lqs_btune_sz, lqs->lqs_iunit_sz,       \
                lqs->lqs_itune_sz, lqs->lqs_bwrite_pending,                    \
                lqs->lqs_iwrite_pending, lqs->lqs_ino_rec,                     \
-               lqs->lqs_blk_rec, atomic_read(&lqs->lqs_refcount),             \
-               ## arg);
+               lqs->lqs_blk_rec, cfs_atomic_read(&lqs->lqs_refcount), ## arg);
 
 
 /* quota_context.c */
 void qunit_cache_cleanup(void);
 int qunit_cache_init(void);
 int qctxt_adjust_qunit(struct obd_device *obd, struct lustre_quota_ctxt *qctxt,
-                       uid_t uid, gid_t gid, __u32 isblk, int wait,
+                       const unsigned int id[], __u32 isblk, int wait,
                        struct obd_trans_info *oti);
 int qctxt_wait_pending_dqacq(struct lustre_quota_ctxt *qctxt, unsigned int id,
                              unsigned short type, int isblk);
@@ -115,6 +114,8 @@ int compute_remquota(struct obd_device *obd,
                      int isblk);
 int check_qm(struct lustre_quota_ctxt *qctxt);
 void dqacq_interrupt(struct lustre_quota_ctxt *qctxt);
+int quota_is_on(struct lustre_quota_ctxt *qctxt, struct obd_quotactl *oqctl);
+int quota_is_off(struct lustre_quota_ctxt *qctxt, struct obd_quotactl *oqctl);
 void* quota_barrier(struct lustre_quota_ctxt *qctxt,
                     struct obd_quotactl *oqctl, int isblk);
 void quota_unbarrier(void *handle);
@@ -122,21 +123,19 @@ void quota_unbarrier(void *handle);
 int lustre_dquot_init(void);
 void lustre_dquot_exit(void);
 int dqacq_handler(struct obd_device *obd, struct qunit_data *qdata, int opc);
-int mds_quota_adjust(struct obd_device *obd, unsigned int qcids[],
-                     unsigned int qpids[], int rc, int opc);
-int filter_quota_adjust(struct obd_device *obd, unsigned int qcids[],
-                        unsigned int qpids[], int rc, int opc);
+int mds_quota_adjust(struct obd_device *obd, const unsigned int qcids[],
+                     const unsigned int qpids[], int rc, int opc);
+int filter_quota_adjust(struct obd_device *obd, const unsigned int qcids[],
+                        const unsigned int qpids[], int rc, int opc);
 int init_admin_quotafiles(struct obd_device *obd, struct obd_quotactl *oqctl);
-int mds_quota_get_version(struct obd_device *obd, lustre_quota_version_t *aver,
-                          lustre_quota_version_t *over);
-int mds_quota_set_version(struct obd_device *obd, lustre_quota_version_t aver,
-                          lustre_quota_version_t over);
+int mds_quota_get_version(struct obd_device *obd, lustre_quota_version_t *ver);
 int mds_quota_invalidate(struct obd_device *obd, struct obd_quotactl *oqctl);
 int mds_quota_finvalidate(struct obd_device *obd, struct obd_quotactl *oqctl);
 
 int mds_admin_quota_on(struct obd_device *obd, struct obd_quotactl *oqctl);
 int mds_quota_on(struct obd_device *obd, struct obd_quotactl *oqctl);
 int mds_quota_off(struct obd_device *obd, struct obd_quotactl *oqctl);
+int do_mds_quota_off(struct obd_device *obd, struct obd_quotactl *oqctl);
 int mds_admin_quota_off(struct obd_device *obd, struct obd_quotactl *oqctl);
 int mds_set_dqinfo(struct obd_device *obd, struct obd_quotactl *oqctl);
 int mds_get_dqinfo(struct obd_device *obd, struct obd_quotactl *oqctl);
@@ -147,20 +146,23 @@ int mds_get_obd_quota(struct obd_device *obd, struct obd_quotactl *oqctl);
 int dquot_create_oqaq(struct lustre_quota_ctxt *qctxt, struct lustre_dquot
                       *dquot, __u32 ost_num, __u32 mdt_num, int type,
                       struct quota_adjust_qunit *oqaq);
+int generic_quota_on(struct obd_device *, struct obd_quotactl *, int);
 #endif
 
 /* quota_ctl.c */
-int mds_quota_ctl(struct obd_export *exp, struct obd_quotactl *oqctl);
-int filter_quota_ctl(struct obd_export *exp, struct obd_quotactl *oqctl);
+int mds_quota_ctl(struct obd_device *obd, struct obd_export *exp,
+                  struct obd_quotactl *oqctl);
+int filter_quota_ctl(struct obd_device *unused, struct obd_export *exp,
+                     struct obd_quotactl *oqctl);
 
 /* quota_chk.c */
-int target_quota_check(struct obd_export *exp, struct obd_quotactl *oqctl);
+int target_quota_check(struct obd_device *obd, struct obd_export *exp,
+                       struct obd_quotactl *oqctl);
 
 int quota_adjust_slave_lqs(struct quota_adjust_qunit *oqaq, struct
                           lustre_quota_ctxt *qctxt);
 #ifdef __KERNEL__
-int quota_is_set(struct obd_device *obd, unsigned int uid,
-                 unsigned int gid, int flag);
+int quota_is_set(struct obd_device *obd, const unsigned int id[], int flag);
 struct lustre_qunit_size *quota_search_lqs(unsigned long long lqs_key,
                                            struct lustre_quota_ctxt *qctxt,
                                            int create);
@@ -174,7 +176,8 @@ extern int quote_copy_qdata(struct ptlrpc_request *req, struct qunit_data *qdata
                             int is_req, int is_exp);
 int filter_quota_adjust_qunit(struct obd_export *exp,
                               struct quota_adjust_qunit *oqaq,
-                              struct lustre_quota_ctxt *qctxt);
+                              struct lustre_quota_ctxt *qctxt,
+                              struct ptlrpc_request_set *rqset);
 int lquota_proc_setup(struct obd_device *obd, int is_master);
 int lquota_proc_cleanup(struct lustre_quota_ctxt *qctxt);
 void build_lqs(struct obd_device *obd);
@@ -193,15 +196,25 @@ extern cfs_proc_dir_entry_t *lquota_type_proc_dir;
 #endif
 int client_quota_adjust_qunit(struct obd_export *exp,
                               struct quota_adjust_qunit *oqaq,
-                              struct lustre_quota_ctxt *qctxt);
+                              struct lustre_quota_ctxt *qctxt,
+                              struct ptlrpc_request_set *set);
+
 int lov_quota_adjust_qunit(struct obd_export *exp,
                            struct quota_adjust_qunit *oqaq,
-                           struct lustre_quota_ctxt *qctxt);
-int client_quota_ctl(struct obd_export *exp, struct obd_quotactl *oqctl);
-int lov_quota_ctl(struct obd_export *exp, struct obd_quotactl *oqctl);
-int client_quota_check(struct obd_export *exp, struct obd_quotactl *oqctl);
-int lov_quota_check(struct obd_export *exp, struct obd_quotactl *oqctl);
+                           struct lustre_quota_ctxt *qctxt,
+                           struct ptlrpc_request_set *rqset);
+int client_quota_ctl(struct obd_device *unused, struct obd_export *exp,
+                     struct obd_quotactl *oqctl);
+int lmv_quota_ctl(struct obd_device *unused, struct obd_export *exp,
+                  struct obd_quotactl *oqctl);
+int lov_quota_ctl(struct obd_device *unused, struct obd_export *exp,
+                  struct obd_quotactl *oqctl);
+int client_quota_check(struct obd_device *unused, struct obd_export *exp,
+                       struct obd_quotactl *oqctl);
+int lmv_quota_check(struct obd_device *unused, struct obd_export *exp,
+                    struct obd_quotactl *oqctl);
+int lov_quota_check(struct obd_device *unused, struct obd_export *exp,
+                    struct obd_quotactl *oqctl);
 int client_quota_poll_check(struct obd_export *exp, struct if_quotacheck *qchk);
-int generic_quota_on(struct obd_device *obd, struct obd_quotactl *oqctl,
-                     int global);
+
 #endif

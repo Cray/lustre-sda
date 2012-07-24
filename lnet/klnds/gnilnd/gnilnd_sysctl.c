@@ -3,6 +3,7 @@
  *
  * Copyright (C) 2012 Cray, Inc.
  *   Author: Nic Henke <nic@cray.com>
+ *   Author: James Shimek <jshimek@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
  *
@@ -137,7 +138,7 @@ int LL_PROC_PROTO(proc_trigger_stack_reset)
        while (kgnilnd_data.kgn_needs_reset != 0) {
                i++;
                LCONSOLE((((i) & (-i)) == i) ? D_WARNING : D_NET,
-                               "Waiting forstack reset request to clear\n");
+                               "Waiting for stack reset request to clear\n");
                cfs_pause(cfs_time_seconds(1 * i));
        }
 

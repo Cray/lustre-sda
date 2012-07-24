@@ -44,6 +44,11 @@
 #include <obd.h>
 #include "ptlrpc_internal.h"
 
+/**
+ * Helper function. Sends \a len bytes from \a base at offset \a offset
+ * over \a conn connection to portal \a portal.
+ * Returns 0 on success or error code.
+ */
 static int ptl_send_buf (lnet_handle_md_t *mdh, void *base, int len,
                          lnet_ack_req_t ack, struct ptlrpc_cb_id *cbid,
                          struct ptlrpc_connection *conn, int portal, __u64 xid,
@@ -63,15 +68,14 @@ static int ptl_send_buf (lnet_handle_md_t *mdh, void *base, int len,
         md.user_ptr  = cbid;
         md.eq_handle = ptlrpc_eq_h;
 
-        if (ack == LNET_ACK_REQ &&
-            OBD_FAIL_CHECK(OBD_FAIL_PTLRPC_ACK | OBD_FAIL_ONCE)) {
+        if (unlikely(ack == LNET_ACK_REQ &&
+                     OBD_FAIL_CHECK_ORSET(OBD_FAIL_PTLRPC_ACK, OBD_FAIL_ONCE))){
                 /* don't ask for the ack to simulate failing client */
                 ack = LNET_NOACK_REQ;
-                obd_fail_loc |= OBD_FAIL_ONCE | OBD_FAILED;
         }
 
         rc = LNetMDBind (md, LNET_UNLINK, mdh);
-        if (rc != 0) {
+        if (unlikely(rc != 0)) {
                 CERROR ("LNetMDBind failed: %d\n", rc);
                 LASSERT (rc == -ENOMEM);
                 RETURN (-ENOMEM);
@@ -82,7 +86,7 @@ static int ptl_send_buf (lnet_handle_md_t *mdh, void *base, int len,
 
         rc = LNetPut (conn->c_self, *mdh, ack,
                       conn->c_peer, portal, xid, offset, 0);
-        if (rc != 0) {
+        if (unlikely(rc != 0)) {
                 int rc2;
                 /* We're going to get an UNLINK event when I unlink below,
                  * which will complete just like any other failed send, so
@@ -96,6 +100,10 @@ static int ptl_send_buf (lnet_handle_md_t *mdh, void *base, int len,
         RETURN (0);
 }
 
+/**
+ * Starts bulk transfer for descriptor \a desc
+ * Returns 0 on success or error code.
+ */
 int ptlrpc_start_bulk_transfer(struct ptlrpc_bulk_desc *desc)
 {
         struct ptlrpc_connection *conn = desc->bd_export->exp_connection;
@@ -113,7 +121,6 @@ int ptlrpc_start_bulk_transfer(struct ptlrpc_bulk_desc *desc)
         LASSERT (desc->bd_type == BULK_PUT_SOURCE ||
                  desc->bd_type == BULK_GET_SINK);
         desc->bd_success = 0;
-        desc->bd_sender = LNET_NID_ANY;
 
         md.user_ptr = &desc->bd_cbid;
         md.eq_handle = ptlrpc_eq_h;
@@ -164,14 +171,16 @@ int ptlrpc_start_bulk_transfer(struct ptlrpc_bulk_desc *desc)
         RETURN(0);
 }
 
-/* Server side bulk abort. Idempotent. Not thread-safe (i.e. only
- * serialises with completion callback) */
+/**
+ * Server side bulk abort. Idempotent. Not thread-safe (i.e. only
+ * serialises with completion callback)
+ */
 void ptlrpc_abort_bulk(struct ptlrpc_bulk_desc *desc)
 {
         struct l_wait_info       lwi;
         int                      rc;
 
-        LASSERT(!in_interrupt());               /* might sleep */
+        LASSERT(!cfs_in_interrupt());           /* might sleep */
 
         if (!ptlrpc_server_bulk_active(desc))   /* completed or */
                 return;                         /* never started */
@@ -203,6 +212,10 @@ void ptlrpc_abort_bulk(struct ptlrpc_bulk_desc *desc)
         }
 }
 
+/**
+ * Register bulk for later transfer
+ * Returns 0 on success or error code.
+ */
 int ptlrpc_register_bulk(struct ptlrpc_request *req)
 {
         struct ptlrpc_bulk_desc *desc = req->rq_bulk;
@@ -225,7 +238,6 @@ int ptlrpc_register_bulk(struct ptlrpc_request *req)
                  desc->bd_type == BULK_GET_SOURCE);
 
         desc->bd_success = 0;
-        desc->bd_sender = LNET_NID_ANY;
 
         peer = desc->bd_import->imp_connection->c_peer;
 
@@ -281,8 +293,12 @@ int ptlrpc_register_bulk(struct ptlrpc_request *req)
         RETURN(0);
 }
 
-/* Disconnect a bulk desc from the network. Idempotent. Not
- * thread-safe (i.e. only interlocks with completion callback). */
+/**
+ * Disconnect a bulk desc from the network. Idempotent. Not
+ * thread-safe (i.e. only interlocks with completion callback).
+ * Returns 1 on success or 0 if network unregistration failed for whatever
+ * reason.
+ */
 int ptlrpc_unregister_bulk(struct ptlrpc_request *req, int async)
 {
         struct ptlrpc_bulk_desc *desc = req->rq_bulk;
@@ -291,7 +307,7 @@ int ptlrpc_unregister_bulk(struct ptlrpc_request *req, int async)
         int                      rc;
         ENTRY;
 
-        LASSERT(!in_interrupt());     /* might sleep */
+        LASSERT(!cfs_in_interrupt());     /* might sleep */
 
         /* Let's setup deadline for reply unlink. */
         if (OBD_FAIL_CHECK(OBD_FAIL_PTLRPC_LONG_BULK_UNLINK) &&
@@ -343,51 +359,18 @@ int ptlrpc_unregister_bulk(struct ptlrpc_request *req, int async)
         RETURN(0);
 }
 
-int ptlrpc_send_reply(struct ptlrpc_request *req, int flags)
+static void ptlrpc_at_set_reply(struct ptlrpc_request *req, int flags)
 {
-        struct ptlrpc_service     *svc = req->rq_rqbd->rqbd_service;
-        struct ptlrpc_reply_state *rs = req->rq_reply_state;
-        struct ptlrpc_connection  *conn;
-        int                        service_time;
-        unsigned int               offset = 0;
-        int                        rc;
+        struct ptlrpc_service *svc = req->rq_rqbd->rqbd_service;
+        int service_time = max_t(int, cfs_time_current_sec() -
+                                 req->rq_arrival_time.tv_sec, 1);
 
-        /* We must already have a reply buffer (only ptlrpc_error() may be
-         * called without one).  We must also have a request buffer which
-         * is either the actual (swabbed) incoming request, or a saved copy
-         * if this is a req saved in target_queue_final_reply(). */
-        LASSERT (req->rq_reqmsg != NULL);
-        LASSERT (req->rq_repmsg != NULL);
-        LASSERT (rs != NULL);
-        LASSERT (req->rq_repmsg == rs->rs_msg);
-        LASSERT ((flags & PTLRPC_REPLY_MAYBE_DIFFICULT) || !rs->rs_difficult);
-        LASSERT (rs->rs_cb_id.cbid_fn == reply_out_callback);
-        LASSERT (rs->rs_cb_id.cbid_arg == rs);
-
-        /* There may be no rq_export during failover */
-
-        if (req->rq_export && req->rq_export->exp_obd &&
-            req->rq_export->exp_obd->obd_fail) {
-                /* Failed obd's only send ENODEV */
-                req->rq_type = PTL_RPC_MSG_ERR;
-                req->rq_status = -ENODEV;
-                CDEBUG(D_HA, "sending ENODEV from failed obd %d\n",
-                       req->rq_export->exp_obd->obd_minor);
-        }
-
-        if (req->rq_type != PTL_RPC_MSG_ERR)
-                req->rq_type = PTL_RPC_MSG_REPLY;
-
-        lustre_msg_set_type(req->rq_repmsg, req->rq_type);
-        lustre_msg_set_status(req->rq_repmsg, req->rq_status);
-        lustre_msg_set_opc(req->rq_repmsg, lustre_msg_get_opc(req->rq_reqmsg));
-
-        service_time = max_t(int, cfs_time_current_sec() -
-                             req->rq_arrival_time.tv_sec, 1);
         if (!(flags & PTLRPC_REPLY_EARLY) &&
             (req->rq_type != PTL_RPC_MSG_ERR) &&
+            (req->rq_reqmsg != NULL) &&
             !(lustre_msg_get_flags(req->rq_reqmsg) &
-              (MSG_RESENT | MSG_REPLAY | MSG_LAST_REPLAY))) {
+              (MSG_RESENT | MSG_REPLAY |
+               MSG_REQ_REPLAY_DONE | MSG_LOCK_REPLAY_DONE))) {
                 /* early replies, errors and recovery requests don't count
                  * toward our service time estimate */
                 int oldse = at_measured(&svc->srv_at_estimate, service_time);
@@ -409,63 +392,116 @@ int ptlrpc_send_reply(struct ptlrpc_request *req, int flags)
                 lustre_msg_set_timeout(req->rq_repmsg,
                                        at_get(&svc->srv_at_estimate));
 
-        target_pack_pool_reply(req);
-
-        if (lustre_msghdr_get_flags(req->rq_reqmsg) & MSGHDR_AT_SUPPORT) {
-                /* early replies go to offset 0, regular replies go after that*/
-                if (flags & PTLRPC_REPLY_EARLY) {
-                        offset = 0;
-                        /* Include a checksum on early replies - must be done
-                           after all other lustre_msg_set_* */
-                        lustre_msg_set_cksum(req->rq_repmsg,
-                                         lustre_msg_calc_cksum(req->rq_repmsg));
-                } else {
-                        offset = lustre_msg_early_size(req);
-                }
-        } else {
+        if (req->rq_reqmsg &&
+            !(lustre_msghdr_get_flags(req->rq_reqmsg) & MSGHDR_AT_SUPPORT)) {
                 CDEBUG(D_ADAPTTO, "No early reply support: flags=%#x "
                        "req_flags=%#x magic=%d:%x/%x len=%d\n",
-                      flags, lustre_msg_get_flags(req->rq_reqmsg),
-                      lustre_msg_is_v1(req->rq_reqmsg),
-                      lustre_msg_get_magic(req->rq_reqmsg),
-                      lustre_msg_get_magic(req->rq_repmsg), req->rq_replen);
+                       flags, lustre_msg_get_flags(req->rq_reqmsg),
+                       lustre_msg_is_v1(req->rq_reqmsg),
+                       lustre_msg_get_magic(req->rq_reqmsg),
+                       lustre_msg_get_magic(req->rq_repmsg), req->rq_replen);
         }
+}
+
+/**
+ * Send request reply from request \a req reply buffer.
+ * \a flags defines reply types
+ * Returns 0 on sucess or error code
+ */
+int ptlrpc_send_reply(struct ptlrpc_request *req, int flags)
+{
+        struct ptlrpc_service     *svc = req->rq_rqbd->rqbd_service;
+        struct ptlrpc_reply_state *rs = req->rq_reply_state;
+        struct ptlrpc_connection  *conn;
+        int                        rc;
+
+        /* We must already have a reply buffer (only ptlrpc_error() may be
+         * called without one). The reply generated by sptlrpc layer (e.g.
+         * error notify, etc.) might have NULL rq->reqmsg; Otherwise we must
+         * have a request buffer which is either the actual (swabbed) incoming
+         * request, or a saved copy if this is a req saved in
+         * target_queue_final_reply().
+         */
+        LASSERT (req->rq_no_reply == 0);
+        LASSERT (req->rq_reqbuf != NULL);
+        LASSERT (rs != NULL);
+        LASSERT ((flags & PTLRPC_REPLY_MAYBE_DIFFICULT) || !rs->rs_difficult);
+        LASSERT (req->rq_repmsg != NULL);
+        LASSERT (req->rq_repmsg == rs->rs_msg);
+        LASSERT (rs->rs_cb_id.cbid_fn == reply_out_callback);
+        LASSERT (rs->rs_cb_id.cbid_arg == rs);
+
+        /* There may be no rq_export during failover */
+
+        if (unlikely(req->rq_export && req->rq_export->exp_obd &&
+                     req->rq_export->exp_obd->obd_fail)) {
+                /* Failed obd's only send ENODEV */
+                req->rq_type = PTL_RPC_MSG_ERR;
+                req->rq_status = -ENODEV;
+                CDEBUG(D_HA, "sending ENODEV from failed obd %d\n",
+                       req->rq_export->exp_obd->obd_minor);
+        }
+
+        if (req->rq_type != PTL_RPC_MSG_ERR)
+                req->rq_type = PTL_RPC_MSG_REPLY;
+
+        lustre_msg_set_type(req->rq_repmsg, req->rq_type);
+        lustre_msg_set_status(req->rq_repmsg, req->rq_status);
+        lustre_msg_set_opc(req->rq_repmsg,
+                req->rq_reqmsg ? lustre_msg_get_opc(req->rq_reqmsg) : 0);
+
+        target_pack_pool_reply(req);
+
+        ptlrpc_at_set_reply(req, flags);
 
         if (req->rq_export == NULL || req->rq_export->exp_connection == NULL)
                 conn = ptlrpc_connection_get(req->rq_peer, req->rq_self, NULL);
         else
                 conn = ptlrpc_connection_addref(req->rq_export->exp_connection);
 
-        if (conn == NULL) {
+        if (unlikely(conn == NULL)) {
                 CERROR("not replying on NULL connection\n"); /* bug 9635 */
                 return -ENOTCONN;
         }
-
-        atomic_inc (&svc->srv_outstanding_replies);
         ptlrpc_rs_addref(rs);                   /* +1 ref for the network */
+
+        rc = sptlrpc_svc_wrap_reply(req);
+        if (unlikely(rc))
+                goto out;
+
         req->rq_sent = cfs_time_current_sec();
 
-        rc = ptl_send_buf (&rs->rs_md_h, req->rq_repmsg, req->rq_replen,
-                           rs->rs_difficult ? LNET_ACK_REQ : LNET_NOACK_REQ,
+        rc = ptl_send_buf (&rs->rs_md_h, rs->rs_repbuf, rs->rs_repdata_len,
+                           (rs->rs_difficult && !rs->rs_no_ack) ?
+                           LNET_ACK_REQ : LNET_NOACK_REQ,
                            &rs->rs_cb_id, conn, svc->srv_rep_portal,
-                           req->rq_xid, offset);
-        if (rc != 0) {
-                atomic_dec (&svc->srv_outstanding_replies);
+                           req->rq_xid, req->rq_reply_off);
+out:
+        if (unlikely(rc != 0))
                 ptlrpc_req_drop_rs(req);
-        }
         ptlrpc_connection_put(conn);
         return rc;
 }
 
 int ptlrpc_reply (struct ptlrpc_request *req)
 {
-        return (ptlrpc_send_reply (req, 0));
+        if (req->rq_no_reply)
+                return 0;
+        else
+                return (ptlrpc_send_reply(req, 0));
 }
 
+/**
+ * For request \a req send an error reply back. Create empty
+ * reply buffers if necessary.
+ */
 int ptlrpc_send_error(struct ptlrpc_request *req, int may_be_difficult)
 {
         int rc;
         ENTRY;
+
+        if (req->rq_no_reply)
+                RETURN(0);
 
         if (!req->rq_repmsg) {
                 rc = lustre_pack_reply(req, 1, NULL, NULL);
@@ -473,9 +509,7 @@ int ptlrpc_send_error(struct ptlrpc_request *req, int may_be_difficult)
                         RETURN(rc);
         }
 
-        if (req->rq_status != -ENOSPC && req->rq_status != -EACCES &&
-            req->rq_status != -EPERM)
-                req->rq_type = PTL_RPC_MSG_ERR;
+        req->rq_type = PTL_RPC_MSG_ERR;
 
         rc = ptlrpc_send_reply(req, may_be_difficult);
         RETURN(rc);
@@ -486,6 +520,12 @@ int ptlrpc_error(struct ptlrpc_request *req)
         return ptlrpc_send_error(req, 0);
 }
 
+/**
+ * Send request \a request.
+ * if \a noreply is set, don't expect any reply back and don't set up
+ * reply buffers.
+ * Returns 0 on success or error code.
+ */
 int ptl_send_rpc(struct ptlrpc_request *request, int noreply)
 {
         int rc;
@@ -497,9 +537,11 @@ int ptl_send_rpc(struct ptlrpc_request *request, int noreply)
         struct obd_device *obd = request->rq_import->imp_obd;
         ENTRY;
 
-        OBD_FAIL_RETURN(OBD_FAIL_PTLRPC_DROP_RPC, 0);
+        if (OBD_FAIL_CHECK(OBD_FAIL_PTLRPC_DROP_RPC))
+                RETURN(0);
 
-        LASSERT (request->rq_type == PTL_RPC_MSG_REQUEST);
+        LASSERT(request->rq_type == PTL_RPC_MSG_REQUEST);
+        LASSERT(request->rq_wait_ctx == 0);
 
         /* If this is a re-transmit, we're required to have disengaged
          * cleanly from the previous attempt */
@@ -510,10 +552,7 @@ int ptl_send_rpc(struct ptlrpc_request *request, int noreply)
                 CDEBUG(D_HA, "muting rpc for failed imp obd %s\n",
                        request->rq_import->imp_obd->obd_name);
                 /* this prevents us from waiting in ptlrpc_queue_wait */
-                spin_lock(&request->rq_lock);
                 request->rq_err = 1;
-                spin_unlock(&request->rq_lock);
-
                 request->rq_status = -ENODEV;
                 RETURN(-ENODEV);
         }
@@ -532,8 +571,13 @@ int ptl_send_rpc(struct ptlrpc_request *request, int noreply)
                 lustre_msg_add_flags(request->rq_reqmsg, MSG_RESENT);
 
         if (request->rq_memalloc)
-                mpflag = libcfs_memory_pressure_get_and_set();
+                mpflag = cfs_memory_pressure_get_and_set();
 
+        rc = sptlrpc_cli_wrap_request(request);
+        if (rc)
+                GOTO(out, rc);
+
+        /* bulk register should be done after wrap_request() */
         if (request->rq_bulk != NULL) {
                 rc = ptlrpc_register_bulk (request);
                 if (rc != 0)
@@ -542,18 +586,22 @@ int ptl_send_rpc(struct ptlrpc_request *request, int noreply)
 
         if (!noreply) {
                 LASSERT (request->rq_replen != 0);
-                if (request->rq_repbuf == NULL)
-                        OBD_ALLOC(request->rq_repbuf, request->rq_replen);
                 if (request->rq_repbuf == NULL) {
-                        /* this prevents us from looping in ptlrpc_queue_wait */
-                        spin_lock(&request->rq_lock);
-                        request->rq_err = 1;
-                        spin_unlock(&request->rq_lock);
-
-                        request->rq_status = -ENOMEM;
-                        GOTO(cleanup_bulk, rc = -ENOMEM);
+                        LASSERT(request->rq_repdata == NULL);
+                        LASSERT(request->rq_repmsg == NULL);
+                        rc = sptlrpc_cli_alloc_repbuf(request,
+                                                      request->rq_replen);
+                        if (rc) {
+                                /* this prevents us from looping in
+                                 * ptlrpc_queue_wait */
+                                request->rq_err = 1;
+                                request->rq_status = rc;
+                                GOTO(cleanup_bulk, rc);
+                        }
+                } else {
+                        request->rq_repdata = NULL;
+                        request->rq_repmsg = NULL;
                 }
-                request->rq_repmsg = NULL;
 
                 rc = LNetMEAttach(request->rq_reply_portal,/*XXX FIXME bug 249*/
                                   connection->c_peer, request->rq_xid, 0,
@@ -561,11 +609,11 @@ int ptl_send_rpc(struct ptlrpc_request *request, int noreply)
                 if (rc != 0) {
                         CERROR("LNetMEAttach failed: %d\n", rc);
                         LASSERT (rc == -ENOMEM);
-                        GOTO(cleanup_repmsg, rc = -ENOMEM);
+                        GOTO(cleanup_bulk, rc = -ENOMEM);
                 }
         }
 
-        spin_lock(&request->rq_lock);
+        cfs_spin_lock(&request->rq_lock);
         /* If the MD attach succeeds, there _will_ be a reply_in callback */
         request->rq_receiving_reply = !noreply;
         /* We are responsible for unlinking the reply buffer */
@@ -577,39 +625,38 @@ int ptl_send_rpc(struct ptlrpc_request *request, int noreply)
         request->rq_net_err = 0;
         request->rq_resend = 0;
         request->rq_restart = 0;
-        request->rq_rep_swab_mask = 0;
         request->rq_reply_truncate = 0;
-        spin_unlock(&request->rq_lock);
+        cfs_spin_unlock(&request->rq_lock);
 
         if (!noreply) {
                 reply_md.start     = request->rq_repbuf;
-                reply_md.length    = request->rq_replen;
+                reply_md.length    = request->rq_repbuf_len;
                 /* Allow multiple early replies */
                 reply_md.threshold = LNET_MD_THRESH_INF;
                 /* Manage remote for early replies */
                 reply_md.options   = PTLRPC_MD_OPTIONS | LNET_MD_OP_PUT |
                         LNET_MD_MANAGE_REMOTE |
-                        LNET_MD_TRUNCATE; /* allow to make EBIG error */
+                        LNET_MD_TRUNCATE; /* allow to make EOVERFLOW error */;
                 reply_md.user_ptr  = &request->rq_reply_cbid;
                 reply_md.eq_handle = ptlrpc_eq_h;
 
                 /* We must see the unlink callback to unset rq_must_unlink,
                    so we can't auto-unlink */
                 rc = LNetMDAttach(reply_me_h, reply_md, LNET_RETAIN,
-                                 &request->rq_reply_md_h);
+                                  &request->rq_reply_md_h);
                 if (rc != 0) {
                         CERROR("LNetMDAttach failed: %d\n", rc);
                         LASSERT (rc == -ENOMEM);
-                        spin_lock(&request->rq_lock);
+                        cfs_spin_lock(&request->rq_lock);
                         /* ...but the MD attach didn't succeed... */
                         request->rq_receiving_reply = 0;
-                        spin_unlock(&request->rq_lock);
+                        cfs_spin_unlock(&request->rq_lock);
                         GOTO(cleanup_me, rc = -ENOMEM);
                 }
 
                 CDEBUG(D_NET, "Setup reply buffer: %u bytes, xid "LPU64
                        ", portal %u\n",
-                       request->rq_replen, request->rq_xid,
+                       request->rq_repbuf_len, request->rq_xid,
                        request->rq_reply_portal);
         }
 
@@ -617,23 +664,23 @@ int ptl_send_rpc(struct ptlrpc_request *request, int noreply)
         ptlrpc_request_addref(request);
         if (obd->obd_svc_stats != NULL)
                 lprocfs_counter_add(obd->obd_svc_stats, PTLRPC_REQACTIVE_CNTR,
-                                atomic_read(&request->rq_import->imp_inflight));
+                        cfs_atomic_read(&request->rq_import->imp_inflight));
 
         OBD_FAIL_TIMEOUT(OBD_FAIL_PTLRPC_DELAY_SEND, request->rq_timeout + 5);
 
+        cfs_gettimeofday(&request->rq_arrival_time);
         request->rq_sent = cfs_time_current_sec();
-        do_gettimeofday(&request->rq_arrival_time);
         /* We give the server rq_timeout secs to process the req, and
            add the network latency for our local timeout. */
         request->rq_deadline = request->rq_sent + request->rq_timeout +
-                    ptlrpc_at_get_net_latency(request);
+                ptlrpc_at_get_net_latency(request);
 
         ptlrpc_pinger_sending_on_import(request->rq_import);
 
         DEBUG_REQ(D_INFO, request, "send flg=%x",
                   lustre_msg_get_flags(request->rq_reqmsg));
         rc = ptl_send_buf(&request->rq_req_md_h,
-                          request->rq_reqmsg, request->rq_reqlen,
+                          request->rq_reqbuf, request->rq_reqdata_len,
                           LNET_NOACK_REQ, &request->rq_req_cbid,
                           connection,
                           request->rq_request_portal,
@@ -654,21 +701,19 @@ int ptl_send_rpc(struct ptlrpc_request *request, int noreply)
         /* UNLINKED callback called synchronously */
         LASSERT(!request->rq_receiving_reply);
 
- cleanup_repmsg:
-        OBD_FREE(request->rq_repbuf, request->rq_replen);
-        request->rq_repbuf = NULL;
-        request->rq_repmsg = NULL; //remove
-
  cleanup_bulk:
         /* We do sync unlink here as there was no real transfer here so
          * the chance to have long unlink to sluggish net is smaller here. */
         ptlrpc_unregister_bulk(request, 0);
  out:
         if (request->rq_memalloc)
-                libcfs_memory_pressure_restore(mpflag);
+                cfs_memory_pressure_restore(mpflag);
         return rc;
 }
 
+/**
+ * Register request buffer descriptor for request receiving.
+ */
 int ptlrpc_register_rqbd(struct ptlrpc_request_buffer_desc *rqbd)
 {
         struct ptlrpc_service   *service = rqbd->rqbd_service;

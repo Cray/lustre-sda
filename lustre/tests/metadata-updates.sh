@@ -72,7 +72,7 @@ do_write () {
     do_nodes $NODES_TO_USE "set $TRACE;
 TESTFILE=$TESTDIR/\\\$(hostname)/$FILE;
 dd if=/dev/zero of=\\\$TESTFILE bs=$FILE_SIZE count=1 2>/dev/null || exit 54;
-echo \\\$(hostname) | dd of=\\\$TESTFILE conv=notrunc 2>/dev/null || exit 55;
+echo \\\$(hostname) | dd of=\\\$TESTFILE conv=notrunc 2>/dev/null || exit 55; 
 md5sum \\\$TESTFILE >> $SUMFILE; " || return ${PIPESTATUS[0]}
     return 0
 }
@@ -91,7 +91,7 @@ do_truncate () {
 
      do_nodes $NODES_TO_USE "set $TRACE;
 TESTFILE=$TESTDIR/\\\$(hostname)/$FILE;
-$TRUNCATE \\\$TESTFILE 0" || return ${PIPESTATUS[0]}
+$TRUNCATE \\\$TESTFILE 0" || return ${PIPESTATUS[0]} 
 
     FILE_SIZE=0
     return 0
@@ -113,7 +113,7 @@ for HOST in ${HOSTS//,/ } ; do
         exit 56;
     fi;
 done " || return ${PIPESTATUS[0]}
-    return 0
+    return 0 
 }
 
 do_chmod () {
@@ -122,7 +122,7 @@ do_chmod () {
     do_nodes $NODES_TO_USE "set $TRACE;
 TESTFILE=$TESTDIR/\\\$(hostname)/$FILE;
 chmod $NEW_MODE \\\$TESTFILE" || return ${PIPESTATUS[0]}
-
+ 
     CURRENT_MODE=$NEW_MODE
     return 0
 }
@@ -156,7 +156,7 @@ for HOST in ${HOSTS//,/ } ; do
     fi;
 done;
 exit \\\$RC" || return ${PIPESTATUS[0]}
-    return 0
+    return 0 
 }
 
 do_fill_dir () {

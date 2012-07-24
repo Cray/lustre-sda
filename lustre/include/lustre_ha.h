@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -36,6 +36,11 @@
 
 #ifndef _LUSTRE_HA_H
 #define _LUSTRE_HA_H
+
+/** \defgroup ha ha
+ *
+ * @{
+ */
 
 struct obd_import;
 struct obd_export;
@@ -53,5 +58,10 @@ void ptlrpc_activate_import(struct obd_import *imp);
 void ptlrpc_deactivate_import(struct obd_import *imp);
 void ptlrpc_invalidate_import(struct obd_import *imp);
 void ptlrpc_fail_import(struct obd_import *imp, __u32 conn_cnt);
+int ptlrpc_check_suspend(void);
+void ptlrpc_activate_timeouts(struct obd_import *imp);
+void ptlrpc_deactivate_timeouts(struct obd_import *imp);
+
+/** @} ha */
 
 #endif

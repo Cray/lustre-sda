@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -41,7 +41,7 @@
 #define __SELFTEST_TIMER_H__
 
 typedef struct {
-        struct list_head  stt_list;
+        cfs_list_t        stt_list;
         cfs_time_t        stt_expires;
         void            (*stt_func) (void *);
         void             *stt_data;

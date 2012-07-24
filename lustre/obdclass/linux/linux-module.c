@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -99,7 +99,7 @@ int obd_ioctl_getdata(char **buf, int *len, void *arg)
         int offset = 0;
         ENTRY;
 
-        err = copy_from_user(&hdr, (void *)arg, sizeof(hdr));
+        err = cfs_copy_from_user(&hdr, (void *)arg, sizeof(hdr));
         if ( err )
                 RETURN(err);
 
@@ -120,9 +120,11 @@ int obd_ioctl_getdata(char **buf, int *len, void *arg)
                 RETURN(-EINVAL);
         }
 
-        /* XXX allocate this more intelligently, using kmalloc when
-         * appropriate */
-        OBD_VMALLOC(*buf, hdr.ioc_len);
+        /* When there are lots of processes calling vmalloc on multi-core
+         * system, the high lock contention will hurt performance badly,
+         * obdfilter-survey is an example, which relies on ioctl. So we'd
+         * better avoid vmalloc on ioctl path. LU-66 */
+        OBD_ALLOC_LARGE(*buf, hdr.ioc_len);
         if (*buf == NULL) {
                 CERROR("Cannot allocate control buffer of len %d\n",
                        hdr.ioc_len);
@@ -131,31 +133,31 @@ int obd_ioctl_getdata(char **buf, int *len, void *arg)
         *len = hdr.ioc_len;
         data = (struct obd_ioctl_data *)*buf;
 
-        err = copy_from_user(*buf, (void *)arg, hdr.ioc_len);
+        err = cfs_copy_from_user(*buf, (void *)arg, hdr.ioc_len);
         if ( err ) {
-                OBD_VFREE(*buf, hdr.ioc_len);
+                OBD_FREE_LARGE(*buf, hdr.ioc_len);
                 RETURN(err);
         }
 
         if (obd_ioctl_is_invalid(data)) {
                 CERROR("ioctl not correctly formatted\n");
-                OBD_VFREE(*buf, hdr.ioc_len);
+                OBD_FREE_LARGE(*buf, hdr.ioc_len);
                 RETURN(-EINVAL);
         }
 
         if (data->ioc_inllen1) {
                 data->ioc_inlbuf1 = &data->ioc_bulk[0];
-                offset += size_round(data->ioc_inllen1);
+                offset += cfs_size_round(data->ioc_inllen1);
         }
 
         if (data->ioc_inllen2) {
                 data->ioc_inlbuf2 = &data->ioc_bulk[0] + offset;
-                offset += size_round(data->ioc_inllen2);
+                offset += cfs_size_round(data->ioc_inllen2);
         }
 
         if (data->ioc_inllen3) {
                 data->ioc_inlbuf3 = &data->ioc_bulk[0] + offset;
-                offset += size_round(data->ioc_inllen3);
+                offset += cfs_size_round(data->ioc_inllen3);
         }
 
         if (data->ioc_inllen4) {
@@ -170,7 +172,7 @@ int obd_ioctl_popdata(void *arg, void *data, int len)
 {
         int err;
 
-        err = copy_to_user(arg, data, len);
+        err = cfs_copy_to_user(arg, data, len);
         if (err)
                 err = -EFAULT;
         return err;
@@ -246,15 +248,9 @@ int obd_proc_read_version(char *page, char **start, off_t off, int count,
                           int *eof, void *data)
 {
         *eof = 1;
-#ifdef HAVE_VFS_INTENT_PATCHES
-        return snprintf(page, count, "lustre: %s\nkernel: %u\nbuild:  %s\n",
-                        LUSTRE_VERSION_STRING, LUSTRE_KERNEL_VERSION,
-                        BUILD_VERSION);
-#else
         return snprintf(page, count, "lustre: %s\nkernel: %s\nbuild:  %s\n",
                         LUSTRE_VERSION_STRING, "patchless_client",
                         BUILD_VERSION);
-#endif
 }
 
 int obd_proc_read_pinger(char *page, char **start, off_t off, int count,
@@ -294,7 +290,7 @@ static int obd_proc_read_health(char *page, char **start, off_t off,
         if (libcfs_catastrophe)
                 rc += snprintf(page + rc, count - rc, "LBUG\n");
 
-        spin_lock(&obd_dev_lock);
+        cfs_spin_lock(&obd_dev_lock);
         for (i = 0; i < class_devno_max(); i++) {
                 struct obd_device *obd;
 
@@ -306,18 +302,18 @@ static int obd_proc_read_health(char *page, char **start, off_t off,
                 if (obd->obd_stopping)
                         continue;
 
-                class_incref(obd);
-                spin_unlock(&obd_dev_lock);
+                class_incref(obd, __FUNCTION__, cfs_current());
+                cfs_spin_unlock(&obd_dev_lock);
 
                 if (obd_health_check(obd)) {
                         rc += snprintf(page + rc, count - rc,
                                        "device %s reported unhealthy\n",
                                        obd->obd_name);
                 }
-                class_decref(obd);
-                spin_lock(&obd_dev_lock);
+                class_decref(obd, __FUNCTION__, cfs_current());
+                cfs_spin_lock(&obd_dev_lock);
         }
-        spin_unlock(&obd_dev_lock);
+        cfs_spin_unlock(&obd_dev_lock);
 
         if (rc == 0)
                 return snprintf(page, count, "healthy\n");
@@ -385,7 +381,7 @@ static int obd_device_list_seq_show(struct seq_file *p, void *v)
         return seq_printf(p, "%3d %s %s %s %s %d\n",
                           (int)index, status, obd->obd_type->typ_name,
                           obd->obd_name, obd->obd_uuid.uuid,
-                          atomic_read(&obd->obd_refcount));
+                          cfs_atomic_read(&obd->obd_refcount));
 }
 
 struct seq_operations obd_device_list_sops = {
@@ -422,25 +418,16 @@ struct file_operations obd_device_list_fops = {
 int class_procfs_init(void)
 {
 #ifdef __KERNEL__
-        struct proc_dir_entry *entry;
+        int rc;
         ENTRY;
 
         obd_sysctl_init();
         proc_lustre_root = lprocfs_register("fs/lustre", NULL,
-                                              lprocfs_base, NULL);
-        if (!proc_lustre_root) {
-                printk(KERN_ERR
-                       "LustreError: error registering /proc/fs/lustre\n");
-                RETURN(-ENOMEM);
-        }
-
-        entry = create_proc_entry("devices", 0444, proc_lustre_root);
-        if (entry == NULL) {
-                CERROR("error registering /proc/fs/lustre/devices\n");
-                lprocfs_remove(&proc_lustre_root);
-                RETURN(-ENOMEM);
-        }
-        entry->proc_fops = &obd_device_list_fops;
+                                            lprocfs_base, NULL);
+        rc = lprocfs_seq_create(proc_lustre_root, "devices", 0444,
+                                &obd_device_list_fops, NULL);
+        if (rc)
+                CERROR("error adding /proc/fs/lustre/devices file\n");
 #else
         ENTRY;
 #endif
@@ -451,8 +438,9 @@ int class_procfs_init(void)
 int class_procfs_clean(void)
 {
         ENTRY;
-        if (proc_lustre_root)
+        if (proc_lustre_root) {
                 lprocfs_remove(&proc_lustre_root);
+        }
         RETURN(0);
 }
 

@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2009 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -36,9 +36,7 @@
  * lustre/utils/ll_decode_filter_fid.c
  *
  * Tool for printing the OST filter_fid structure on the objects
- * in human readable form.  This simplifies mapping of objid to
- * MDS inode numbers, which can be converted to pathnames via
- * debugfs -c -R "ncheck {list of inode numbers}"
+ * in human readable form.
  *
  * Author: Andreas Dilger <adilger@sun.com>
  */
@@ -48,8 +46,8 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/xattr.h>
-#include <lustre/lustre_user.h>
 #include <liblustre.h>
+#include <lustre/lustre_user.h>
 
 int main(int argc, char *argv[])
 {
@@ -70,16 +68,18 @@ int main(int argc, char *argv[])
 				argv[i], strerror(errno));
 			if (rc == 0)
 				rc = size;
-		} else if (size > sizeof(*ff)) {
+                        continue;
+                }
+                if (size > sizeof(*ff))
 			fprintf(stderr, "%s: warning: fid larger than expected "
-					"(%d bytes), recompile?\n",
-					argv[i], size);
-		} else {
-			printf("%s: objid="LPU64" group="LPU64" inode="LPU64" generation=%u stripe=%u\n",
-				argv[i], ff->ff_objid, ff->ff_group,
-				ff->ff_fid.id, ff->ff_fid.generation,
-				ff->ff_fid.f_type);
-		}
+                                "(%d bytes), recompile?\n", argv[i], size);
+
+                printf("%s: objid="LPU64" seq="LPU64" parent="DFID"\n",
+                       argv[i], le64_to_cpu(ff->ff_objid),
+                       le64_to_cpu(ff->ff_seq),
+                       le64_to_cpu(ff->ff_parent.f_seq),
+                       le32_to_cpu(ff->ff_parent.f_oid),
+                       le32_to_cpu(ff->ff_parent.f_ver));
 	}
 
 	return rc;

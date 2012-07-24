@@ -41,7 +41,7 @@
 #ifndef __LNET_ST_H__
 #define __LNET_ST_H__
 
-#include <libcfs/kp30.h>
+#include <libcfs/libcfs.h>
 #include <lnet/lnet.h>
 #include <lnet/lib-types.h>
 
@@ -72,8 +72,7 @@ typedef struct {
         __u64                   ses_stamp;              /* time stamp */
 } lst_sid_t;                                            /*** session id */
 
-#define LST_INVALID_SID         ((const lst_sid_t){.ses_nid   = LNET_NID_ANY,\
-                                                   .ses_stamp = -1})
+extern lst_sid_t LST_INVALID_SID;
 
 typedef struct {
         __u64                   bat_id;                 /* unique id in session */
@@ -121,7 +120,7 @@ typedef struct {
                                                          *** for list_batch command */
 
 typedef struct {
-        struct list_head        rpe_link;               /* link chain */
+        cfs_list_t              rpe_link;               /* link chain */
         lnet_process_id_t       rpe_peer;               /* peer's id */
         struct timeval          rpe_stamp;              /* time stamp of RPC */
         int                     rpe_state;              /* peer's state */
@@ -271,7 +270,7 @@ typedef struct {
         char                   *lstio_dbg_namep;        /* IN: name of group|batch */
         int                     lstio_dbg_count;        /* IN: # of test nodes to debug */
         lnet_process_id_t      *lstio_dbg_idsp;         /* IN: id of test nodes */
-        struct list_head       *lstio_dbg_resultp;      /* OUT: list head of result buffer */
+        cfs_list_t             *lstio_dbg_resultp;      /* OUT: list head of result buffer */
 } lstio_debug_args_t;
 
 typedef struct {
@@ -298,7 +297,7 @@ typedef struct {
         char                   *lstio_grp_namep;        /* IN: group name */
         int                     lstio_grp_count;        /* IN: # of nodes id */
         lnet_process_id_t      *lstio_grp_idsp;         /* IN: array of nodes */
-        struct list_head       *lstio_grp_resultp;      /* OUT: list head of result buffer */
+        cfs_list_t             *lstio_grp_resultp;      /* OUT: list head of result buffer */
 } lstio_group_update_args_t;
 
 typedef struct {
@@ -307,7 +306,7 @@ typedef struct {
         char                   *lstio_grp_namep;        /* IN: group name */
         int                     lstio_grp_count;        /* IN: # of nodes */
         lnet_process_id_t      *lstio_grp_idsp;         /* IN: nodes */
-        struct list_head       *lstio_grp_resultp;      /* OUT: list head of result buffer */
+        cfs_list_t             *lstio_grp_resultp;      /* OUT: list head of result buffer */
 } lstio_group_nodes_args_t;
 
 typedef struct {
@@ -347,7 +346,7 @@ typedef struct {
         int                     lstio_bat_timeout;      /* IN: timeout for the batch */
         int                     lstio_bat_nmlen;        /* IN: name length */
         char                   *lstio_bat_namep;        /* IN: batch name */
-        struct list_head       *lstio_bat_resultp;      /* OUT: list head of result buffer */
+        cfs_list_t             *lstio_bat_resultp;      /* OUT: list head of result buffer */
 } lstio_batch_run_args_t;
 
 typedef struct {
@@ -355,7 +354,7 @@ typedef struct {
         int                     lstio_bat_force;        /* IN: abort unfinished test RPC */
         int                     lstio_bat_nmlen;        /* IN: name length */
         char                   *lstio_bat_namep;        /* IN: batch name */
-        struct list_head       *lstio_bat_resultp;      /* OUT: list head of result buffer */
+        cfs_list_t             *lstio_bat_resultp;      /* OUT: list head of result buffer */
 } lstio_batch_stop_args_t;
 
 typedef struct {
@@ -365,7 +364,7 @@ typedef struct {
         int                     lstio_bat_timeout;      /* IN: timeout for waiting */
         int                     lstio_bat_nmlen;        /* IN: name length */
         char                   *lstio_bat_namep;        /* IN: batch name */
-        struct list_head       *lstio_bat_resultp;      /* OUT: list head of result buffer */
+        cfs_list_t             *lstio_bat_resultp;      /* OUT: list head of result buffer */
 } lstio_batch_query_args_t;
 
 typedef struct {
@@ -396,7 +395,7 @@ typedef struct {
         char                   *lstio_sta_namep;        /* IN: group name */
         int                     lstio_sta_count;        /* IN: # of pid */
         lnet_process_id_t      *lstio_sta_idsp;         /* IN: pid */
-        struct list_head       *lstio_sta_resultp;      /* OUT: list head of result buffer */
+        cfs_list_t             *lstio_sta_resultp;      /* OUT: list head of result buffer */
 } lstio_stat_args_t;
 
 typedef enum {
@@ -429,7 +428,7 @@ typedef struct {
                                                                lstio_ping_param_t,
                                                                ... more */
         int                    *lstio_tes_retp;         /* OUT: private returned value */
-        struct list_head       *lstio_tes_resultp;      /* OUT: list head of result buffer */
+        cfs_list_t             *lstio_tes_resultp;      /* OUT: list head of result buffer */
 } lstio_test_args_t;
 
 typedef enum {
@@ -458,7 +457,7 @@ typedef struct {
 } lst_test_ping_param_t;
 
 /* more tests */
-
+#include <libcfs/libcfs_pack.h>
 typedef struct {
         __u32 errors;
         __u32 rpcs_sent;
@@ -477,5 +476,6 @@ typedef struct {
         __u32 brw_errors;
         __u32 ping_errors;
 } WIRE_ATTR sfw_counters_t;
+#include <libcfs/libcfs_unpack.h>
 
 #endif

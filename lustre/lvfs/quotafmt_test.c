@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -66,7 +66,7 @@ static int quotfmt_initialize(struct lustre_quota_info *lqi,
 {
         struct lustre_disk_dqheader dqhead;
         static const uint quota_magics[] = LUSTRE_INITQMAGICS;
-        static const uint quota_versions[] = LUSTRE_INITQVERSIONS_V1;
+        static const uint quota_versions[] = LUSTRE_INITQVERSIONS_V2;
         struct file *fp;
         struct inode *parent_inode = tgt->obd_lvfs_ctxt.pwd->d_inode;
         size_t size;
@@ -82,10 +82,10 @@ static int quotfmt_initialize(struct lustre_quota_info *lqi,
                 int namelen = strlen(name);
 
                 /* remove the stale test quotafile */
-                LOCK_INODE_MUTEX(parent_inode);
+                LOCK_INODE_MUTEX_PARENT(parent_inode);
                 de = lookup_one_len(name, tgt->obd_lvfs_ctxt.pwd, namelen);
                 if (!IS_ERR(de) && de->d_inode)
-                        ll_vfs_unlink(parent_inode, de, 
+                        ll_vfs_unlink(parent_inode, de,
                                       tgt->obd_lvfs_ctxt.pwdmnt);
                 if (!IS_ERR(de))
                         dput(de);
@@ -137,7 +137,7 @@ static int quotfmt_finalize(struct lustre_quota_info *lqi,
                 filp_close(lqi->qi_files[i], 0);
 
                 /* unlink quota file */
-                LOCK_INODE_MUTEX(parent_inode);
+                LOCK_INODE_MUTEX_PARENT(parent_inode);
 
                 de = lookup_one_len(name, tgt->obd_lvfs_ctxt.pwd, namelen);
                 if (IS_ERR(de) || de->d_inode == NULL) {
@@ -181,13 +181,12 @@ static void print_quota_info(struct lustre_quota_info *lqi)
 
         for (i = 0; i < MAXQUOTAS; i++) {
                 dqinfo = &lqi->qi_info[i];
-                printk("%s quota info:\n", i == USRQUOTA ? "user " : "group");
-                printk
-                    ("dqi_bgrace(%u) dqi_igrace(%u) dqi_flags(%lu) dqi_blocks(%u) "
-                     "dqi_free_blk(%u) dqi_free_entry(%u)\n",
-                     dqinfo->dqi_bgrace, dqinfo->dqi_igrace, dqinfo->dqi_flags,
-                     dqinfo->dqi_blocks, dqinfo->dqi_free_blk,
-                     dqinfo->dqi_free_entry);
+                CDEBUG(D_INFO, "%s quota info:\n", i == USRQUOTA ? "user " : "group");
+                CDEBUG(D_INFO, "dqi_bgrace(%u) dqi_igrace(%u) dqi_flags(%lu) dqi_blocks(%u) "
+                       "dqi_free_blk(%u) dqi_free_entry(%u)\n",
+                       dqinfo->dqi_bgrace, dqinfo->dqi_igrace, dqinfo->dqi_flags,
+                       dqinfo->dqi_blocks, dqinfo->dqi_free_blk,
+                       dqinfo->dqi_free_entry);
         }
 #endif
 }
@@ -273,7 +272,7 @@ static int write_check_dquot(struct lustre_quota_info *lqi)
                 GOTO(out, rc);
         }
 
-        clear_bit(DQ_FAKE_B, &dquot->dq_flags);
+        cfs_clear_bit(DQ_FAKE_B, &dquot->dq_flags);
         /* for already exists entry, we rewrite it */
         rc = lustre_commit_dquot(dquot);
         if (rc) {
@@ -308,7 +307,7 @@ static int quotfmt_test_3(struct lustre_quota_info *lqi)
         if (dquot == NULL)
                 RETURN(-ENOMEM);
       repeat:
-        clear_bit(DQ_FAKE_B, &dquot->dq_flags);
+        cfs_clear_bit(DQ_FAKE_B, &dquot->dq_flags);
         /* write a new dquot */
         rc = lustre_commit_dquot(dquot);
         if (rc) {
@@ -324,13 +323,13 @@ static int quotfmt_test_3(struct lustre_quota_info *lqi)
                 CERROR("read dquot failed! (rc:%d)\n", rc);
                 GOTO(out, rc);
         }
-        if (!dquot->dq_off || test_bit(DQ_FAKE_B, &dquot->dq_flags)) {
+        if (!dquot->dq_off || cfs_test_bit(DQ_FAKE_B, &dquot->dq_flags)) {
                 CERROR("the dquot isn't committed\n");
                 GOTO(out, rc = -EINVAL);
         }
 
         /* remove this dquot */
-        set_bit(DQ_FAKE_B, &dquot->dq_flags);
+        cfs_set_bit(DQ_FAKE_B, &dquot->dq_flags);
         dquot->dq_dqb.dqb_curspace = 0;
         dquot->dq_dqb.dqb_curinodes = 0;
         rc = lustre_commit_dquot(dquot);
@@ -340,14 +339,14 @@ static int quotfmt_test_3(struct lustre_quota_info *lqi)
         }
 
         /* check if the dquot is really removed */
-        clear_bit(DQ_FAKE_B, &dquot->dq_flags);
+        cfs_clear_bit(DQ_FAKE_B, &dquot->dq_flags);
         dquot->dq_off = 0;
         rc = lustre_read_dquot(dquot);
         if (rc) {
                 CERROR("read dquot failed! (rc:%d)\n", rc);
                 GOTO(out, rc);
         }
-        if (!test_bit(DQ_FAKE_B, &dquot->dq_flags) || dquot->dq_off) {
+        if (!cfs_test_bit(DQ_FAKE_B, &dquot->dq_flags) || dquot->dq_off) {
                 CERROR("the dquot isn't removed!\n");
                 GOTO(out, rc = -EINVAL);
         }
@@ -382,27 +381,27 @@ static int quotfmt_test_4(struct lustre_quota_info *lqi)
 
 static int quotfmt_test_5(struct lustre_quota_info *lqi)
 {
-#ifndef KERNEL_SUPPORTS_QUOTA_READ 
+#ifndef KERNEL_SUPPORTS_QUOTA_READ
         int i, rc = 0;
 
         for (i = USRQUOTA; i < MAXQUOTAS && !rc; i++) {
-                struct list_head list;
+                cfs_list_t list;
                 struct dquot_id *dqid, *tmp;
 
-                INIT_LIST_HEAD(&list);
+                CFS_INIT_LIST_HEAD(&list);
                 rc = lustre_get_qids(lqi->qi_files[i], NULL, i, &list);
                 if (rc) {
                         CERROR("%s get all %ss (rc:%d):\n",
                                rc ? "error" : "success",
                                i == USRQUOTA ? "uid" : "gid", rc);
                 }
-                list_for_each_entry_safe(dqid, tmp, &list, di_link) {
-                        list_del_init(&dqid->di_link);
+                cfs_list_for_each_entry_safe(dqid, tmp, &list, di_link) {
+                        cfs_list_del_init(&dqid->di_link);
                         if (rc == 0)
-                                printk("%d ", dqid->di_id);
+                                CDEBUG(D_INFO, "%d ", dqid->di_id);
                         kfree(dqid);
                 }
-                printk("\n");
+                CDEBUG(D_INFO, "\n");
         }
         return rc;
 #else
@@ -478,10 +477,9 @@ static int quotfmt_test_cleanup(struct obd_device *obd)
         RETURN(0);
 }
 
-static int quotfmt_test_setup(struct obd_device *obd, obd_count len, void *buf)
+static int quotfmt_test_setup(struct obd_device *obd, struct lustre_cfg *lcfg)
 {
         struct lprocfs_static_vars lvars;
-        struct lustre_cfg *lcfg = buf;
         struct obd_device *tgt;
         int rc;
         ENTRY;
@@ -529,8 +527,8 @@ static int __init quotfmt_test_init(void)
         struct lprocfs_static_vars lvars;
 
         lprocfs_quotfmt_test_init_vars(&lvars);
-        return class_register_type(&quotfmt_obd_ops, lvars.module_vars,
-                                   "quotfmt_test");
+        return class_register_type(&quotfmt_obd_ops, NULL, lvars.module_vars,
+                                   "quotfmt_test", NULL);
 }
 
 static void __exit quotfmt_test_exit(void)

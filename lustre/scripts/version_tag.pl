@@ -84,7 +84,7 @@ sub generate_ver($$$$$$$)
     if ($local_version ne "") {
         print "-$local_version";
     }
- 
+
     print "-$buildid";
     # if we want to get rid of the PRISTINE/CHANGED thing, get rid of these
     # lines.  maybe we only want to print -CHANGED when something is changed

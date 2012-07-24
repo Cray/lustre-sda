@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -64,6 +64,8 @@ typedef enum {
         SRPC_MSG_JOIN_REQST     = 16,
         SRPC_MSG_JOIN_REPLY     = 17,
 } srpc_msg_type_t;
+
+#include <libcfs/libcfs_pack.h>
 
 /* CAVEAT EMPTOR:
  * All srpc_*_reqst_t's 1st field must be matchbits of reply buffer,
@@ -264,5 +266,7 @@ typedef struct {
                 srpc_brw_reply_t     brw_reply;
         }     msg_body;
 } WIRE_ATTR srpc_msg_t;
+
+#include <libcfs/libcfs_unpack.h>
 
 #endif /* __SELFTEST_RPC_H__ */

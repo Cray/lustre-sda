@@ -30,6 +30,9 @@
  * Use is subject to license terms.
  */
 /*
+ * Copyright (c) 2011 Whamcloud, Inc.
+ */
+/*
  * This file is part of Lustre, http://www.lustre.org/
  * Lustre is a trademark of Sun Microsystems, Inc.
  */
@@ -37,6 +40,7 @@
 
 #include <linux/version.h>
 #include <asm/statfs.h>
+#include <obd_cksum.h>
 #include <obd_class.h>
 #include <lprocfs_status.h>
 #include <linux/seq_file.h>
@@ -78,45 +82,6 @@ static int osc_wr_active(struct file *file, const char *buffer,
         return count;
 }
 
-
-static int osc_rd_max_pages_per_rpc(char *page, char **start, off_t off,
-                                    int count, int *eof, void *data)
-{
-        struct obd_device *dev = data;
-        struct client_obd *cli = &dev->u.cli;
-        int rc;
-
-        client_obd_list_lock(&cli->cl_loi_list_lock);
-        rc = snprintf(page, count, "%d\n", cli->cl_max_pages_per_rpc);
-        client_obd_list_unlock(&cli->cl_loi_list_lock);
-        return rc;
-}
-
-static int osc_wr_max_pages_per_rpc(struct file *file, const char *buffer,
-                                    unsigned long count, void *data)
-{
-        struct obd_device *dev = data;
-        struct client_obd *cli = &dev->u.cli;
-        struct obd_connect_data *ocd;
-        int val, rc;
-
-        rc = lprocfs_write_helper(buffer, count, &val);
-        if (rc)
-                return rc;
-
-        LPROCFS_CLIMP_CHECK(dev);
-        ocd = &cli->cl_import->imp_connect_data;
-        if (val < 1 || val > ocd->ocd_brw_size >> CFS_PAGE_SHIFT) {
-                LPROCFS_CLIMP_EXIT(dev);
-                return -ERANGE;
-        }
-        client_obd_list_lock(&cli->cl_loi_list_lock);
-        cli->cl_max_pages_per_rpc = val;
-        client_obd_list_unlock(&cli->cl_loi_list_lock);
-        LPROCFS_CLIMP_EXIT(dev);
-        return count;
-}
-
 static int osc_rd_max_rpcs_in_flight(char *page, char **start, off_t off,
                                      int count, int *eof, void *data)
 {
@@ -135,17 +100,17 @@ static int osc_wr_max_rpcs_in_flight(struct file *file, const char *buffer,
 {
         struct obd_device *dev = data;
         struct client_obd *cli = &dev->u.cli;
-        struct ptlrpc_request_pool *pool;
+        struct ptlrpc_request_pool *pool = cli->cl_import->imp_rq_pool;
         int val, rc;
 
         rc = lprocfs_write_helper(buffer, count, &val);
         if (rc)
                 return rc;
+
         if (val < 1 || val > OSC_MAX_RIF_MAX)
                 return -ERANGE;
 
         LPROCFS_CLIMP_CHECK(dev);
-        pool = cli->cl_import->imp_rq_pool;
         if (pool && val > cli->cl_max_rpcs_in_flight)
                 pool->prp_populate(pool, val-cli->cl_max_rpcs_in_flight);
 
@@ -185,8 +150,9 @@ static int osc_wr_max_dirty_mb(struct file *file, const char *buffer,
         if (rc)
                 return rc;
 
-        if (pages_number < 0 || pages_number > OSC_MAX_DIRTY_MB_MAX << (20 - CFS_PAGE_SHIFT) ||
-            pages_number > num_physpages / 4) /* 1/4 of RAM */
+        if (pages_number < 0 ||
+            pages_number > OSC_MAX_DIRTY_MB_MAX << (20 - CFS_PAGE_SHIFT) ||
+            pages_number > cfs_num_physpages / 4) /* 1/4 of RAM */
                 return -ERANGE;
 
         client_obd_list_lock(&cli->cl_loi_list_lock);
@@ -312,6 +278,16 @@ static int osc_rd_create_count(char *page, char **start, off_t off, int count,
                         obd->u.cli.cl_oscc.oscc_grow_count);
 }
 
+/**
+ * Set OSC creator's osc_creator::oscc_grow_count
+ *
+ * \param file   proc file
+ * \param buffer buffer containing the value
+ * \param count  buffer size
+ * \param data   obd device
+ *
+ * \retval \a count
+ */
 static int osc_wr_create_count(struct file *file, const char *buffer,
                                unsigned long count, void *data)
 {
@@ -347,6 +323,20 @@ static int osc_wr_create_count(struct file *file, const char *buffer,
         return count;
 }
 
+/**
+ * Read OSC creator's osc_creator::oscc_max_grow_count
+ *
+ * \param page       buffer to hold the returning string
+ * \param start
+ * \param off
+ * \param count
+ * \param eof
+ *              proc read function parameters, please refer to kernel
+ *              code fs/proc/generic.c proc_file_read()
+ * \param data   obd device
+ *
+ * \retval number of characters printed.
+ */
 static int osc_rd_max_create_count(char *page, char **start, off_t off,
                                    int count, int *eof, void *data)
 {
@@ -359,6 +349,16 @@ static int osc_rd_max_create_count(char *page, char **start, off_t off,
                         obd->u.cli.cl_oscc.oscc_max_grow_count);
 }
 
+/**
+ * Set OSC creator's osc_creator::oscc_max_grow_count
+ *
+ * \param file   proc file
+ * \param buffer buffer containing the value
+ * \param count  buffer size
+ * \param data   obd device
+ *
+ * \retval \a count
+ */
 static int osc_wr_max_create_count(struct file *file, const char *buffer,
                                    unsigned long count, void *data)
 {
@@ -477,7 +477,7 @@ static int osc_wd_checksum_type(struct file *file, const char *buffer,
 
         if (count > sizeof(kernbuf) - 1)
                 return -EINVAL;
-        if (copy_from_user(kernbuf, buffer, count))
+        if (cfs_copy_from_user(kernbuf, buffer, count))
                 return -EFAULT;
         if (count > 0 && kernbuf[count - 1] == '\n')
                 kernbuf[count - 1] = '\0';
@@ -500,7 +500,8 @@ static int osc_rd_resend_count(char *page, char **start, off_t off, int count,
 {
         struct obd_device *obd = data;
 
-        return snprintf(page, count, "%u\n", atomic_read(&obd->u.cli.cl_resends));
+        return snprintf(page, count, "%u\n",
+                        cfs_atomic_read(&obd->u.cli.cl_resends));
 }
 
 static int osc_wr_resend_count(struct file *file, const char *buffer,
@@ -516,9 +517,47 @@ static int osc_wr_resend_count(struct file *file, const char *buffer,
         if (val < 0)
                return -EINVAL;
 
-        atomic_set(&obd->u.cli.cl_resends, val);
+        cfs_atomic_set(&obd->u.cli.cl_resends, val);
 
         return count;
+}
+
+static int osc_rd_contention_seconds(char *page, char **start, off_t off,
+                                     int count, int *eof, void *data)
+{
+        struct obd_device *obd = data;
+        struct osc_device *od  = obd2osc_dev(obd);
+
+        return snprintf(page, count, "%u\n", od->od_contention_time);
+}
+
+static int osc_wr_contention_seconds(struct file *file, const char *buffer,
+                                     unsigned long count, void *data)
+{
+        struct obd_device *obd = data;
+        struct osc_device *od  = obd2osc_dev(obd);
+
+        return lprocfs_write_helper(buffer, count, &od->od_contention_time) ?:
+                count;
+}
+
+static int osc_rd_lockless_truncate(char *page, char **start, off_t off,
+                                    int count, int *eof, void *data)
+{
+        struct obd_device *obd = data;
+        struct osc_device *od  = obd2osc_dev(obd);
+
+        return snprintf(page, count, "%u\n", od->od_lockless_truncate);
+}
+
+static int osc_wr_lockless_truncate(struct file *file, const char *buffer,
+                                    unsigned long count, void *data)
+{
+        struct obd_device *obd = data;
+        struct osc_device *od  = obd2osc_dev(obd);
+
+        return lprocfs_write_helper(buffer, count, &od->od_lockless_truncate) ?:
+                count;
 }
 
 static int osc_rd_destroys_in_flight(char *page, char **start, off_t off,
@@ -526,7 +565,7 @@ static int osc_rd_destroys_in_flight(char *page, char **start, off_t off,
 {
         struct obd_device *obd = data;
         return snprintf(page, count, "%u\n",
-                        atomic_read(&obd->u.cli.cl_destroy_in_flight));
+                        cfs_atomic_read(&obd->u.cli.cl_destroy_in_flight));
 }
 
 static struct lprocfs_vars lprocfs_osc_obd_vars[] = {
@@ -544,8 +583,8 @@ static struct lprocfs_vars lprocfs_osc_obd_vars[] = {
         { "ost_conn_uuid",   lprocfs_rd_conn_uuid, 0, 0 },
         { "active",          osc_rd_active,
                              osc_wr_active, 0 },
-        { "max_pages_per_rpc", osc_rd_max_pages_per_rpc,
-                               osc_wr_max_pages_per_rpc, 0 },
+        { "max_pages_per_rpc", lprocfs_obd_rd_max_pages_per_rpc,
+                               lprocfs_obd_wr_max_pages_per_rpc, 0 },
         { "max_rpcs_in_flight", osc_rd_max_rpcs_in_flight,
                                 osc_wr_max_rpcs_in_flight, 0 },
         { "destroys_in_flight", osc_rd_destroys_in_flight, 0, 0 },
@@ -563,9 +602,13 @@ static struct lprocfs_vars lprocfs_osc_obd_vars[] = {
         { "prealloc_last_id", osc_rd_prealloc_last_id, 0, 0 },
         { "checksums",       osc_rd_checksum, osc_wr_checksum, 0 },
         { "checksum_type",   osc_rd_checksum_type, osc_wd_checksum_type, 0 },
-        { "resend_count",  osc_rd_resend_count, osc_wr_resend_count, 0},
+        { "resend_count",    osc_rd_resend_count, osc_wr_resend_count, 0},
         { "timeouts",        lprocfs_rd_timeouts,      0, 0 },
-        { "import",          lprocfs_rd_import, lprocfs_wr_reconnect, 0 },
+        { "contention_seconds", osc_rd_contention_seconds,
+                                osc_wr_contention_seconds, 0 },
+        { "lockless_truncate",  osc_rd_lockless_truncate,
+                                osc_wr_lockless_truncate, 0 },
+        { "import",          lprocfs_rd_import,        0, 0 },
         { "state",           lprocfs_rd_state,         0, 0 },
         { 0 }
 };
@@ -585,23 +628,19 @@ static int osc_rpc_stats_seq_show(struct seq_file *seq, void *v)
         unsigned long read_tot = 0, write_tot = 0, read_cum, write_cum;
         int i;
 
-        do_gettimeofday(&now);
+        cfs_gettimeofday(&now);
 
         client_obd_list_lock(&cli->cl_loi_list_lock);
 
-        seq_printf(seq, "snapshot_time:            %lu.%lu (secs.usecs)\n",
+        seq_printf(seq, "snapshot_time:         %lu.%lu (secs.usecs)\n",
                    now.tv_sec, now.tv_usec);
-        seq_printf(seq, "read RPCs in flight:      %d\n",
+        seq_printf(seq, "read RPCs in flight:  %d\n",
                    cli->cl_r_in_flight);
-        seq_printf(seq, "write RPCs in flight:     %d\n",
+        seq_printf(seq, "write RPCs in flight: %d\n",
                    cli->cl_w_in_flight);
-        seq_printf(seq, "dio read RPCs in flight:  %d\n",
-                   cli->cl_dio_r_in_flight);
-        seq_printf(seq, "dio write RPCs in flight: %d\n",
-                   cli->cl_dio_w_in_flight);
-        seq_printf(seq, "pending write pages:      %d\n",
+        seq_printf(seq, "pending write pages:  %d\n",
                    cli->cl_pending_w_pages);
-        seq_printf(seq, "pending read pages:       %d\n",
+        seq_printf(seq, "pending read pages:   %d\n",
                    cli->cl_pending_r_pages);
 
         seq_printf(seq, "\n\t\t\tread\t\t\twrite\n");
@@ -697,10 +736,48 @@ static ssize_t osc_rpc_stats_seq_write(struct file *file, const char *buf,
 
 LPROC_SEQ_FOPS(osc_rpc_stats);
 
+static int osc_stats_seq_show(struct seq_file *seq, void *v)
+{
+        struct timeval now;
+        struct obd_device *dev = seq->private;
+        struct osc_stats *stats = &obd2osc_dev(dev)->od_stats;
+
+        cfs_gettimeofday(&now);
+
+        seq_printf(seq, "snapshot_time:         %lu.%lu (secs.usecs)\n",
+                   now.tv_sec, now.tv_usec);
+        seq_printf(seq, "lockless_write_bytes\t\t"LPU64"\n",
+                   stats->os_lockless_writes);
+        seq_printf(seq, "lockless_read_bytes\t\t"LPU64"\n",
+                   stats->os_lockless_reads);
+        seq_printf(seq, "lockless_truncate\t\t"LPU64"\n",
+                   stats->os_lockless_truncates);
+        return 0;
+}
+
+static ssize_t osc_stats_seq_write(struct file *file, const char *buf,
+                                   size_t len, loff_t *off)
+{
+        struct seq_file *seq = file->private_data;
+        struct obd_device *dev = seq->private;
+        struct osc_stats *stats = &obd2osc_dev(dev)->od_stats;
+
+        memset(stats, 0, sizeof(*stats));
+        return len;
+}
+
+LPROC_SEQ_FOPS(osc_stats);
+
 int lproc_osc_attach_seqstat(struct obd_device *dev)
 {
-        return lprocfs_obd_seq_create(dev, "rpc_stats", 0444,
-                                      &osc_rpc_stats_fops, dev);
+        int rc;
+
+        rc = lprocfs_seq_create(dev->obd_proc_entry, "osc_stats", 0444,
+                                &osc_stats_fops, dev);
+        if (rc == 0)
+                rc = lprocfs_obd_seq_create(dev, "rpc_stats", 0444,
+                                            &osc_rpc_stats_fops, dev);
+        return rc;
 }
 
 void lprocfs_osc_init_vars(struct lprocfs_static_vars *lvars)

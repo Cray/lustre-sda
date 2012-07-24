@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -53,7 +53,7 @@ static struct inode *ll_alloc_inode(struct super_block *sb)
 {
         struct ll_inode_info *lli;
         ll_stats_ops_tally(ll_s2sbi(sb), LPROC_LL_ALLOC_INODE, 1);
-        OBD_SLAB_ALLOC_PTR(lli, ll_inode_cachep);
+        OBD_SLAB_ALLOC_PTR_GFP(lli, ll_inode_cachep, CFS_ALLOC_IO);
         if (lli == NULL)
                 return NULL;
 
@@ -73,7 +73,7 @@ int ll_init_inodecache(void)
 {
         ll_inode_cachep = cfs_mem_cache_create("lustre_inode_cache",
                                                sizeof(struct ll_inode_info),
-                                               0, SLAB_HWCACHE_ALIGN);
+                                               0, CFS_SLAB_HWCACHE_ALIGN);
         if (ll_inode_cachep == NULL)
                 return -ENOMEM;
         return 0;
@@ -93,18 +93,19 @@ struct super_operations lustre_super_operations =
         .alloc_inode   = ll_alloc_inode,
         .destroy_inode = ll_destroy_inode,
         .clear_inode   = ll_clear_inode,
+        .delete_inode  = ll_delete_inode,
         .put_super     = ll_put_super,
         .statfs        = ll_statfs,
         .umount_begin  = ll_umount_begin,
         .remount_fs    = ll_remount_fs,
         .show_options  = ll_show_options,
-        .delete_inode  = ll_delete_inode,
 };
 
 
 void lustre_register_client_process_config(int (*cpc)(struct lustre_cfg *lcfg));
 
-static struct shrinker *ll_shrinker;
+int vvp_global_init(void);
+void vvp_global_fini(void);
 
 static int __init init_lustre_lite(void)
 {
@@ -112,26 +113,48 @@ static int __init init_lustre_lite(void)
         struct timeval tv;
         lnet_process_id_t lnet_id;
 
-#ifndef CRAY_XT3
-        printk(KERN_INFO "Lustre: Lustre Client File System; "
-               "http://www.lustre.org/\n");
-#endif
+        /* print an address of _any_ initialized kernel symbol from this
+         * module, to allow debugging with gdb that doesn't support data
+         * symbols from modules.*/
+        CDEBUG(D_INFO, "Lustre client module (%p).\n",
+               &lustre_super_operations);
+
         rc = ll_init_inodecache();
         if (rc)
                 return -ENOMEM;
         ll_file_data_slab = cfs_mem_cache_create("ll_file_data",
                                                  sizeof(struct ll_file_data), 0,
-                                                 SLAB_HWCACHE_ALIGN);
+                                                 CFS_SLAB_HWCACHE_ALIGN);
         if (ll_file_data_slab == NULL) {
                 ll_destroy_inodecache();
                 return -ENOMEM;
         }
 
-        proc_lustre_fs_root = proc_lustre_root ?
-                              proc_mkdir("llite", proc_lustre_root) : NULL;
+        ll_remote_perm_cachep = cfs_mem_cache_create("ll_remote_perm_cache",
+                                                  sizeof(struct ll_remote_perm),
+                                                      0, 0);
+        if (ll_remote_perm_cachep == NULL) {
+                cfs_mem_cache_destroy(ll_file_data_slab);
+                ll_file_data_slab = NULL;
+                ll_destroy_inodecache();
+                return -ENOMEM;
+        }
 
-        init_rwsem(&ll_sb_sem);
-        ll_shrinker = set_shrinker(DEFAULT_SEEKS, ll_cache_shrink);
+        ll_rmtperm_hash_cachep = cfs_mem_cache_create("ll_rmtperm_hash_cache",
+                                                   REMOTE_PERM_HASHSIZE *
+                                                   sizeof(cfs_list_t),
+                                                   0, 0);
+        if (ll_rmtperm_hash_cachep == NULL) {
+                cfs_mem_cache_destroy(ll_remote_perm_cachep);
+                ll_remote_perm_cachep = NULL;
+                cfs_mem_cache_destroy(ll_file_data_slab);
+                ll_file_data_slab = NULL;
+                ll_destroy_inodecache();
+                return -ENOMEM;
+        }
+
+        proc_lustre_fs_root = proc_lustre_root ?
+                              lprocfs_register("llite", proc_lustre_root, NULL, NULL) : NULL;
 
         lustre_register_client_fill_super(ll_fill_super);
         lustre_register_kill_super_cb(ll_kill_super);
@@ -151,8 +174,17 @@ static int __init init_lustre_lite(void)
                 }
         }
 
-        do_gettimeofday(&tv);
+        cfs_gettimeofday(&tv);
         cfs_srand(tv.tv_sec ^ seed[0], tv.tv_usec ^ seed[1]);
+
+        init_timer(&ll_capa_timer);
+        ll_capa_timer.function = ll_capa_timer_callback;
+        rc = ll_capa_thread_start();
+        /*
+         * XXX normal cleanup is needed here.
+         */
+        if (rc == 0)
+                rc = vvp_global_init();
 
         return rc;
 }
@@ -161,22 +193,30 @@ static void __exit exit_lustre_lite(void)
 {
         int rc;
 
+        vvp_global_fini();
+        del_timer(&ll_capa_timer);
+        ll_capa_thread_stop();
+        LASSERTF(capa_count[CAPA_SITE_CLIENT] == 0,
+                 "client remaining capa count %d\n",
+                 capa_count[CAPA_SITE_CLIENT]);
+
         lustre_register_client_fill_super(NULL);
         lustre_register_kill_super_cb(NULL);
 
         lustre_register_client_process_config(NULL);
 
-        remove_shrinker(ll_shrinker);
-
         ll_destroy_inodecache();
+
+        rc = cfs_mem_cache_destroy(ll_rmtperm_hash_cachep);
+        LASSERTF(rc == 0, "couldn't destroy ll_rmtperm_hash_cachep\n");
+        ll_rmtperm_hash_cachep = NULL;
+
+        rc = cfs_mem_cache_destroy(ll_remote_perm_cachep);
+        LASSERTF(rc == 0, "couldn't destroy ll_remote_perm_cachep\n");
+        ll_remote_perm_cachep = NULL;
+
         rc = cfs_mem_cache_destroy(ll_file_data_slab);
         LASSERTF(rc == 0, "couldn't destroy ll_file_data slab\n");
-        
-        if (ll_async_page_slab) {
-                rc = cfs_mem_cache_destroy(ll_async_page_slab);
-                LASSERTF(rc == 0, "couldn't destroy ll_async_page slab\n");
-        }
-
         if (proc_lustre_fs_root)
                 lprocfs_remove(&proc_lustre_fs_root);
 }

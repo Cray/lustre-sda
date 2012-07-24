@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -47,7 +47,9 @@
 
 #if !defined(HAVE_LINUX_FIEMAP_H) || !defined(__KERNEL__)
 
-#include <linux/lustre_types.h>
+#ifndef __KERNEL__
+#include <libcfs/posix/posix-types.h>
+#endif
 
 struct ll_fiemap_extent {
         __u64 fe_logical;  /* logical offset in bytes for the start of

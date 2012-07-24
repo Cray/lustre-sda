@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -57,33 +57,33 @@ usocklnd_send_tx_immediately(usock_conn_t *conn, usock_tx_t *tx)
         rc = usocklnd_send_tx(conn, tx);
         if (rc == 0) { /* partial send or connection closed */
                 pthread_mutex_lock(&conn->uc_lock);
-                list_add(&tx->tx_list, &conn->uc_tx_list);
+                cfs_list_add(&tx->tx_list, &conn->uc_tx_list);
                 conn->uc_sending = 0;
                 pthread_mutex_unlock(&conn->uc_lock);
                 partial_send = 1;
-        } else {                
+        } else {
                 usocklnd_destroy_tx(peer->up_ni, tx);
                 /* NB: lnetmsg was finalized, so we *must* return 0 */
 
-                if (rc < 0) { /* real error */                       
+                if (rc < 0) { /* real error */
                         usocklnd_conn_kill(conn);
                         return 0;
                 }
-                
+
                 /* rc == 1: tx was sent completely */
                 rc = 0; /* let's say to caller 'Ok' */
                 //counter_imm_complete++;
         }
 
         pthread_mutex_lock(&conn->uc_lock);
-        conn->uc_sending = 0;               
+        conn->uc_sending = 0;
 
         /* schedule write handler */
         if (partial_send ||
             (conn->uc_state == UC_READY &&
-             (!list_empty(&conn->uc_tx_list) ||
-              !list_empty(&conn->uc_zcack_list)))) {
-                conn->uc_tx_deadline = 
+             (!cfs_list_empty(&conn->uc_tx_list) ||
+              !cfs_list_empty(&conn->uc_zcack_list)))) {
+                conn->uc_tx_deadline =
                         cfs_time_shift(usock_tuns.ut_timeout);
                 conn->uc_tx_flag = 1;
                 rc2 = usocklnd_add_pollrequest(conn, POLL_TX_SET_REQUEST, POLLOUT);
@@ -108,16 +108,16 @@ usocklnd_send(lnet_ni_t *ni, void *private, lnet_msg_t *lntmsg)
         int               rc;
         usock_conn_t     *conn;
         int               send_immediately;
-        
+
         tx = usocklnd_create_tx(lntmsg);
         if (tx == NULL)
                 return -ENOMEM;
-        
+
         rc = usocklnd_find_or_create_peer(ni, target, &peer);
         if (rc) {
                 LIBCFS_FREE (tx, tx->tx_size);
                 return rc;
-        }                
+        }
         /* peer cannot disappear now because its refcount was incremented */
 
         type = usocklnd_get_conn_type(lntmsg);
@@ -150,7 +150,7 @@ usocklnd_recv(lnet_ni_t *ni, void *private, lnet_msg_t *msg, int delayed,
         /* I don't think that we'll win much concurrency moving lock()
          * call below lnet_extract_iov() */
         pthread_mutex_lock(&conn->uc_lock);
-        
+
         conn->uc_rx_lnetmsg = msg;
         conn->uc_rx_nob_wanted = mlen;
         conn->uc_rx_nob_left = rlen;
@@ -162,8 +162,8 @@ usocklnd_recv(lnet_ni_t *ni, void *private, lnet_msg_t *msg, int delayed,
         /* the gap between lnet_parse() and usocklnd_recv() happened? */
         if (conn->uc_rx_state == UC_RX_PARSE_WAIT) {
                 conn->uc_rx_flag = 1; /* waiting for incoming lnet payload */
-                conn->uc_rx_deadline = 
-                        cfs_time_shift(usock_tuns.ut_timeout);                
+                conn->uc_rx_deadline =
+                        cfs_time_shift(usock_tuns.ut_timeout);
                 rc = usocklnd_add_pollrequest(conn, POLL_RX_SET_REQUEST, POLLIN);
                 if (rc != 0) {
                         usocklnd_conn_kill_locked(conn);
@@ -173,23 +173,23 @@ usocklnd_recv(lnet_ni_t *ni, void *private, lnet_msg_t *msg, int delayed,
         }
 
         conn->uc_rx_state = UC_RX_LNET_PAYLOAD;
-  recv_out:        
+  recv_out:
         pthread_mutex_unlock(&conn->uc_lock);
         usocklnd_conn_decref(conn);
         return rc;
 }
 
 int
-usocklnd_accept(lnet_ni_t *ni, int sock_fd)
+usocklnd_accept(lnet_ni_t *ni, cfs_socket_t *sock)
 {
         int           rc;
         usock_conn_t *conn;
-        
-        rc = usocklnd_create_passive_conn(ni, sock_fd, &conn);
+
+        rc = usocklnd_create_passive_conn(ni, sock, &conn);
         if (rc)
                 return rc;
         LASSERT(conn != NULL);
-        
+
         /* disable shutdown event temporarily */
         lnet_ni_addref(ni);
 
@@ -199,7 +199,7 @@ usocklnd_accept(lnet_ni_t *ni, int sock_fd)
 
         /* NB: conn reference counter was incremented while adding
          * poll request if rc == 0 */
-        
+
         usocklnd_conn_decref(conn); /* should destroy conn if rc != 0 */
         return rc;
 }

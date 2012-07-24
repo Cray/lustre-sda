@@ -28,6 +28,9 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2011 Whamcloud, Inc.
+ *
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -58,14 +61,14 @@
 /* 512byte block min */
 #define MAX_BLOCKS_PER_PAGE (CFS_PAGE_SIZE / 512)
 struct filter_iobuf {
-        atomic_t          dr_numreqs;  /* number of reqs being processed */
-        wait_queue_head_t dr_wait;
-        int               dr_max_pages;
-        int               dr_npages;
-        int               dr_error;
-        struct page     **dr_pages;
-        unsigned long    *dr_blocks;
-        unsigned int      dr_ignore_quota:1;
+        cfs_atomic_t       dr_numreqs;  /* number of reqs being processed */
+        cfs_waitq_t        dr_wait;
+        int                dr_max_pages;
+        int                dr_npages;
+        int                dr_error;
+        struct page      **dr_pages;
+        unsigned long     *dr_blocks;
+        unsigned int       dr_ignore_quota:1;
         struct filter_obd *dr_filter;
 };
 
@@ -74,34 +77,36 @@ static void record_start_io(struct filter_iobuf *iobuf, int rw, int size,
 {
         struct filter_obd *filter = iobuf->dr_filter;
 
-        atomic_inc(&iobuf->dr_numreqs);
+        cfs_atomic_inc(&iobuf->dr_numreqs);
 
         if (rw == OBD_BRW_READ) {
-                atomic_inc(&filter->fo_r_in_flight);
+                cfs_atomic_inc(&filter->fo_r_in_flight);
                 lprocfs_oh_tally(&filter->fo_filter_stats.hist[BRW_R_RPC_HIST],
-                                 atomic_read(&filter->fo_r_in_flight));
+                                 cfs_atomic_read(&filter->fo_r_in_flight));
                 lprocfs_oh_tally_log2(&filter->
                                        fo_filter_stats.hist[BRW_R_DISK_IOSIZE],
                                       size);
                 if (exp->exp_nid_stats && exp->exp_nid_stats->nid_brw_stats) {
                         lprocfs_oh_tally(&exp->exp_nid_stats->nid_brw_stats->
-                                          hist[BRW_R_RPC_HIST],
-                                         atomic_read(&filter->fo_r_in_flight));
+                                         hist[BRW_R_RPC_HIST],
+                                         cfs_atomic_read(&filter-> \
+                                         fo_r_in_flight));
                         lprocfs_oh_tally_log2(&exp->exp_nid_stats->
                                          nid_brw_stats->hist[BRW_R_DISK_IOSIZE],
                                               size);
                 }
         } else {
-                atomic_inc(&filter->fo_w_in_flight);
+                cfs_atomic_inc(&filter->fo_w_in_flight);
                 lprocfs_oh_tally(&filter->fo_filter_stats.hist[BRW_W_RPC_HIST],
-                                 atomic_read(&filter->fo_w_in_flight));
+                                 cfs_atomic_read(&filter->fo_w_in_flight));
                 lprocfs_oh_tally_log2(&filter->
                                        fo_filter_stats.hist[BRW_W_DISK_IOSIZE],
                                       size);
                 if (exp->exp_nid_stats && exp->exp_nid_stats->nid_brw_stats) {
                         lprocfs_oh_tally(&exp->exp_nid_stats->nid_brw_stats->
                                           hist[BRW_W_RPC_HIST],
-                                         atomic_read(&filter->fo_w_in_flight));
+                                         cfs_atomic_read(&filter-> \
+                                         fo_w_in_flight));
                         lprocfs_oh_tally_log2(&exp->exp_nid_stats->
                                         nid_brw_stats->hist[BRW_W_DISK_IOSIZE],
                                               size);
@@ -117,19 +122,19 @@ static void record_finish_io(struct filter_iobuf *iobuf, int rw, int rc)
          * DO NOT record procfs stats here!!! */
 
         if (rw == OBD_BRW_READ)
-                atomic_dec(&filter->fo_r_in_flight);
+                cfs_atomic_dec(&filter->fo_r_in_flight);
         else
-                atomic_dec(&filter->fo_w_in_flight);
+                cfs_atomic_dec(&filter->fo_w_in_flight);
 
-        if (atomic_dec_and_test(&iobuf->dr_numreqs))
-                wake_up(&iobuf->dr_wait);
+        if (cfs_atomic_dec_and_test(&iobuf->dr_numreqs))
+                cfs_waitq_signal(&iobuf->dr_wait);
 }
 
 #ifdef HAVE_BIO_ENDIO_2ARG
 #define DIO_RETURN(a)
 static void dio_complete_routine(struct bio *bio, int error)
 #else
-#define DIO_RETURN(a)   a
+#define DIO_RETURN(a)   return(a)
 static int dio_complete_routine(struct bio *bio, unsigned int done, int error)
 #endif
 {
@@ -140,43 +145,37 @@ static int dio_complete_routine(struct bio *bio, unsigned int done, int error)
         /* CAVEAT EMPTOR: possibly in IRQ context
          * DO NOT record procfs stats here!!! */
 
-#ifndef HAVE_BIO_ENDIO_2ARG
-	/* The "bi_size" check was needed for kernels < 2.6.24 in order to
-	 * handle the case where a SCSI request error caused this callback
-	 * to be called before all of the biovecs had been processed.
-	 * Without this check the server thread will hang.  In newer kernels
-	 * the bio_end_io routine is never called for partial completions,
-	 * so this check is no longer needed. */
-	if (bio->bi_size)		       /* Not complete */
-                return DIO_RETURN(1);
+#ifdef HAVE_BIO_ENDIO_2ARG
+       /* The "bi_size" check was needed for kernels < 2.6.24 in order to
+        * handle the case where a SCSI request error caused this callback
+        * to be called before all of the biovecs had been processed.
+        * Without this check the server thread will hang.  In newer kernels
+        * the bio_end_io routine is never called for partial completions,
+        * so this check is no longer needed. */
+        if (bio->bi_size)                      /* Not complete */
+                DIO_RETURN(1);
 #endif
 
         if (unlikely(iobuf == NULL)) {
-                LCONSOLE_ERROR("bio->bi_private is NULL!  This should never "
+                CERROR("***** bio->bi_private is NULL!  This should never "
                        "happen.  Normally, I would crash here, but instead I "
                        "will dump the bio contents to the console.  Please "
-                       "report this to <http://bugs.whamcloud.com/> , along "
+                       "report this to <http://bugs.whamcloud.com/>, along "
                        "with any interesting messages leading up to this point "
                        "(like SCSI errors, perhaps).  Because bi_private is "
                        "NULL, I can't wake up the thread that initiated this "
                        "IO - you will probably have to reboot this node.\n");
                 CERROR("bi_next: %p, bi_flags: %lx, bi_rw: %lu, bi_vcnt: %d, "
                        "bi_idx: %d, bi->size: %d, bi_end_io: %p, bi_cnt: %d, "
-                       "bi_private: %p, error: %d\n",
-                       bio->bi_next, bio->bi_flags,
+                       "bi_private: %p\n", bio->bi_next, bio->bi_flags,
                        bio->bi_rw, bio->bi_vcnt, bio->bi_idx, bio->bi_size,
-                       bio->bi_end_io, atomic_read(&bio->bi_cnt),
-                       bio->bi_private, error);
-                return DIO_RETURN(0);
+                       bio->bi_end_io, cfs_atomic_read(&bio->bi_cnt),
+                       bio->bi_private);
+                DIO_RETURN(0);
         }
 
         /* the check is outside of the cycle for performance reason -bzzz */
-#ifdef CONFIG_LUSTRE_PATCH	/* hack to recognize SLES11SP2 */
-        if (!(bio->bi_rw & REQ_WRITE))
-#else
-        if (!test_bit(BIO_RW, &bio->bi_rw))
-#endif
-					    {
+        if (!cfs_test_bit(BIO_RW, &bio->bi_rw)) {
                 bio_for_each_segment(bvl, bio, i) {
                         if (likely(error == 0))
                                 SetPageUptodate(bvl->bv_page);
@@ -203,7 +202,7 @@ static int dio_complete_routine(struct bio *bio, unsigned int done, int error)
          * deadlocking the OST.  The bios are now released as soon as complete
          * so the pool cannot be exhausted while IOs are competing. bug 10076 */
         bio_put(bio);
-        return DIO_RETURN(0);
+        DIO_RETURN(0);
 }
 
 static int can_be_merged(struct bio *bio, sector_t sector)
@@ -238,8 +237,8 @@ struct filter_iobuf *filter_alloc_iobuf(struct filter_obd *filter,
                 goto failed_2;
 
         iobuf->dr_filter = filter;
-        init_waitqueue_head(&iobuf->dr_wait);
-        atomic_set(&iobuf->dr_numreqs, 0);
+        cfs_waitq_init(&iobuf->dr_wait);
+        cfs_atomic_set(&iobuf->dr_numreqs, 0);
         iobuf->dr_max_pages = num_pages;
         iobuf->dr_npages = 0;
         iobuf->dr_error = 0;
@@ -259,7 +258,7 @@ static void filter_clear_iobuf(struct filter_iobuf *iobuf)
 {
         iobuf->dr_npages = 0;
         iobuf->dr_error = 0;
-        atomic_set(&iobuf->dr_numreqs, 0);
+        cfs_atomic_set(&iobuf->dr_numreqs, 0);
 }
 
 void filter_free_iobuf(struct filter_iobuf *iobuf)
@@ -375,35 +374,21 @@ int filter_do_bio(struct obd_export *exp, struct inode *inode,
 
                         if (bio != NULL) {
                                 struct request_queue *q =
-                                       bdev_get_queue(bio->bi_bdev);
+                                        bdev_get_queue(bio->bi_bdev);
 
                                 /* Dang! I have to fragment this I/O */
-#ifdef CONFIG_LUSTRE_PATCH	/* hack to recognize SLES11SP2 */
                                 CDEBUG(D_INODE, "bio++ sz %d vcnt %d(%d) "
                                        "sectors %d(%d) psg %d(%d) hsg %d(%d) "
-                                       "sector "LPU64" next "LPU64"\n",
-                                       bio->bi_size,
-                                       bio->bi_vcnt, bio->bi_max_vecs,
-                                       bio->bi_size >> 9, queue_max_sectors(q),
-                                       bio_phys_segments(q, bio),
-                                       queue_max_segments(q),
-                                       bio_hw_segments(q, bio),
-                                       queue_max_segments(q),
-                                       (u64)bio->bi_sector,
-                                       (u64)sector);
-#else
-                                CDEBUG(D_INODE, "bio++ sz %d vcnt %d(%d) "
-                                       "sectors %d(%d) psg %d(%d) max hsg %d "
-                                       "sector "LPU64" next "LPU64"\n",
+                                       "sector %llu next %llu\n",
                                        bio->bi_size,
                                        bio->bi_vcnt, bio->bi_max_vecs,
                                        bio->bi_size >> 9, queue_max_sectors(q),
                                        bio_phys_segments(q, bio),
                                        queue_max_phys_segments(q),
+                                       bio_hw_segments(q, bio),
                                        queue_max_hw_segments(q),
-                                       (u64)bio->bi_sector,
-                                       (u64)sector);
-#endif
+                                       (unsigned long long)bio->bi_sector,
+                                       (unsigned long long)sector);
 
                                 record_start_io(iobuf, rw, bio->bi_size, exp);
                                 rc = fsfilt_send_bio(rw, obd, inode, bio);
@@ -451,7 +436,8 @@ int filter_do_bio(struct obd_export *exp, struct inode *inode,
         }
 
  out:
-        wait_event(iobuf->dr_wait, atomic_read(&iobuf->dr_numreqs) == 0);
+        cfs_wait_event(iobuf->dr_wait,
+                       cfs_atomic_read(&iobuf->dr_numreqs) == 0);
 
         if (rw == OBD_BRW_READ) {
                 lprocfs_oh_tally(&obd->u.filter.fo_filter_stats.
@@ -498,7 +484,7 @@ int filter_direct_io(int rw, struct dentry *dchild, struct filter_iobuf *iobuf,
         struct inode *inode = dchild->d_inode;
         int blocks_per_page = CFS_PAGE_SIZE >> inode->i_blkbits;
         int rc, rc2, create;
-        struct semaphore *sem;
+        cfs_semaphore_t *sem;
         ENTRY;
 
         LASSERTF(iobuf->dr_npages <= iobuf->dr_max_pages, "%d,%d\n",
@@ -557,7 +543,7 @@ int filter_direct_io(int rw, struct dentry *dchild, struct filter_iobuf *iobuf,
                 }
 
                 if (wait_handle)
-                        rc2 = fsfilt_commit_async(obd, inode, oti->oti_handle,
+                        rc2 = fsfilt_commit_async(obd,inode,oti->oti_handle,
                                                   wait_handle);
                 else
                         rc2 = fsfilt_commit(obd, inode, oti->oti_handle, 0);
@@ -623,10 +609,9 @@ int filter_commitrw_write(struct obd_export *exp, struct obdo *oa,
         struct filter_obd *fo = &obd->u.filter;
         void *wait_handle = NULL;
         int total_size = 0;
-        int quota_pending[2] = {0, 0}, quota_pages = 0;
-        unsigned int qcids[MAXQUOTAS] = {oa->o_uid, oa->o_gid};
+        unsigned int qcids[MAXQUOTAS] = { oa->o_uid, oa->o_gid };
+        int rec_pending[MAXQUOTAS] = { 0, 0 }, quota_pages = 0;
         int sync_journal_commit = obd->u.filter.fo_syncjournal;
-        int clear_cache = 0;
         int retries = 0;
         ENTRY;
 
@@ -648,13 +633,12 @@ int filter_commitrw_write(struct obd_export *exp, struct obdo *oa,
         iobuf->dr_ignore_quota = 0;
         for (i = 0, lnb = res; i < niocount; i++, lnb++) {
                 loff_t this_size;
-
+                __u32 flags = lnb->flags;
 
                 if (filter_range_is_mapped(inode, lnb->offset, lnb->len)) {
                         /* If overwriting an existing block,
                          * we don't need a grant */
-                        if (!(lnb->flags & OBD_BRW_GRANTED) &&
-                            lnb->rc == -ENOSPC)
+                        if (!(flags & OBD_BRW_GRANTED) && lnb->rc == -ENOSPC)
                                 lnb->rc = 0;
                 } else {
                         quota_pages++;
@@ -668,11 +652,9 @@ int filter_commitrw_write(struct obd_export *exp, struct obdo *oa,
                 LASSERT(PageLocked(lnb->page));
                 LASSERT(!PageWriteback(lnb->page));
 
-                /* Calling clear_page_dirty_for_io() is no longer needed since
-                 * write and truncate are serialized by i_alloc_sem and
-                 * filter_setattr_internal() flushes any partial-page
-                 * truncates before releasing i_alloc_sem, so there should
-                 * never be any dirty pages at this time. */
+                /* since write & truncate are serialized by the i_alloc_sem,
+                 * even partial truncate should not leave dirty pages in
+                 * the page cache */
                 LASSERT(!PageDirty(lnb->page));
 
                 SetPageUptodate(lnb->page);
@@ -690,32 +672,32 @@ int filter_commitrw_write(struct obd_export *exp, struct obdo *oa,
 
                 /* if one page is a write-back page from client cache and
                  * not from direct_io, or it's written by root, then mark
-                 * the whole io request as ignore quota request */
-                if (lnb->flags & OBD_BRW_NOQUOTA ||
-                    (lnb->flags & (OBD_BRW_FROM_GRANT | OBD_BRW_SYNC)) ==
-                    OBD_BRW_FROM_GRANT)
+                 * the whole io request as ignore quota request, remote
+                 * client can not break through quota. */
+                if (exp_connect_rmtclient(exp))
+                        flags &= ~OBD_BRW_NOQUOTA;
+                if ((flags & OBD_BRW_NOQUOTA) ||
+                    (flags & (OBD_BRW_FROM_GRANT | OBD_BRW_SYNC)) ==
+                     OBD_BRW_FROM_GRANT)
                         iobuf->dr_ignore_quota = 1;
 
-                /* This is a direct i/o request, don't cache anything at
-                 * the application's request */
-                if (lnb->flags & OBD_BRW_SYNC)
-                        clear_cache = 1;
-
-                if (!(lnb->flags & OBD_BRW_ASYNC))
+                if (!(lnb->flags & OBD_BRW_ASYNC)) {
                         sync_journal_commit = 1;
+                }
         }
 
         /* we try to get enough quota to write here, and let ldiskfs
          * decide if it is out of quota or not b=14783 */
-        rc = lquota_chkquota(filter_quota_interface_ref, exp, qcids[0],
-                             qcids[1], quota_pages, quota_pending, oti,
-                             inode, obj->ioo_bufcnt);
+        rc = lquota_chkquota(filter_quota_interface_ref, obd, exp, qcids,
+                             rec_pending, quota_pages, oti, LQUOTA_FLAGS_BLK,
+                             (void *)inode, obj->ioo_bufcnt);
         if (rc == -ENOTCONN)
                 GOTO(cleanup, rc);
 
         push_ctxt(&saved, &obd->obd_lvfs_ctxt, NULL);
         cleanup_phase = 2;
 
+        ll_vfs_dq_init(inode);
         fsfilt_check_slow(obd, now, "quota init");
 
 retry:
@@ -734,9 +716,6 @@ retry:
         /* have to call fsfilt_commit() from this point on */
 
         fsfilt_check_slow(obd, now, "brw_start");
-
-        /* Locking order: i_mutex -> journal_lock -> dqptr_sem. LU-952 */
-        ll_vfs_dq_init(inode);
 
         i = OBD_MD_FLATIME | OBD_MD_FLMTIME | OBD_MD_FLCTIME;
 
@@ -788,11 +767,8 @@ retry:
                 goto retry;
         }
 
-        if (rc == 0)
-                obdo_from_inode(oa, inode,
-                                FILTER_VALID_FLAGS |OBD_MD_FLUID |OBD_MD_FLGID);
-        else
-                obdo_from_inode(oa, inode, OBD_MD_FLUID | OBD_MD_FLGID);
+        obdo_from_inode(oa, inode, NULL, rc == 0 ? FILTER_VALID_FLAGS : 0 |
+                                                   OBD_MD_FLUID |OBD_MD_FLGID);
 
         lquota_getflag(filter_quota_interface_ref, obd, oa);
 
@@ -809,17 +785,34 @@ retry:
                         rc = err;
         }
 
-        if (obd->obd_replayable && !rc && wait_handle)
-                LASSERTF(oti->oti_transno <= obd->obd_last_committed,
-                         "oti_transno "LPU64" last_committed "LPU64"\n",
-                         oti->oti_transno, obd->obd_last_committed);
+        /* In rare cases fsfilt_commit_wait() will wake up and return after
+         * the transaction has finished its work and updated j_commit_sequence
+         * but the commit callbacks have not been run yet.  Wait here until
+         * that is finished so that clients requesting sync IO don't see the
+         * reply transno < last_committed.  LU-753 */
+        if (unlikely(obd->obd_replayable && !rc && wait_handle &&
+                     oti->oti_transno > obd->obd_last_committed)) {
+                cfs_waitq_t wq;
+                struct l_wait_info lwi =
+                        LWI_TIMEOUT_INTERVAL(cfs_time_seconds(5),
+                                             (cfs_duration_t)((HZ + 4)/5),
+                                             NULL, NULL);
+                cfs_waitq_init(&wq);
+                l_wait_event(wq,
+                             oti->oti_transno <= obd->obd_last_committed,
+                             &lwi);
+
+                /* commit callback isn't done after waiting for 5 secs ? */
+                if (unlikely(oti->oti_transno > obd->obd_last_committed))
+                        CERROR("transno:"LPU64" > last_committed:"LPU64"\n",
+                               oti->oti_transno, obd->obd_last_committed);
+        }
 
         fsfilt_check_slow(obd, now, "commitrw commit");
 
 cleanup:
-        if (quota_pending[0] || quota_pending[1])
-                lquota_pending_commit(filter_quota_interface_ref, obd,
-                                      qcids[0], qcids[1], quota_pending);
+        lquota_pending_commit(filter_quota_interface_ref, obd, qcids,
+                              rec_pending, 1);
 
         filter_grant_commit(exp, niocount, res);
 
@@ -841,14 +834,16 @@ cleanup:
         err = lquota_adjust(filter_quota_interface_ref, obd, qcids, NULL, rc,
                             FSFILT_OP_CREATE);
         CDEBUG(err ? D_ERROR : D_QUOTA, "filter adjust qunit! "
-               "(rc:%d, uid:%u, gid:%u)\n", err, qcids[0], qcids[1]);
+               "(rc:%d, uid:%u, gid:%u)\n",
+               err, qcids[USRQUOTA], qcids[GRPQUOTA]);
         if (qcids[USRQUOTA] != oa->o_uid || qcids[GRPQUOTA] != oa->o_gid) {
-                qcids[0] = oa->o_uid;
-                qcids[1] = oa->o_gid;
+                qcids[USRQUOTA] = oa->o_uid;
+                qcids[GRPQUOTA] = oa->o_gid;
                 err = lquota_adjust(filter_quota_interface_ref, obd, qcids,
                                     NULL, rc, FSFILT_OP_CREATE);
                 CDEBUG(err ? D_ERROR : D_QUOTA, "filter adjust qunit! "
-                       "(rc:%d, uid:%u, gid:%u)\n", err, qcids[0], qcids[1]);
+                       "(rc:%d, uid:%u, gid:%u)\n",
+                       err, qcids[USRQUOTA], qcids[GRPQUOTA]);
         }
 
         for (i = 0, lnb = res; i < niocount; i++, lnb++) {
@@ -868,14 +863,14 @@ cleanup:
                 page_cache_release(lnb->page);
                 lnb->page = NULL;
         }
+        f_dput(res->dentry);
 
         if (inode) {
-                if (fo->fo_writethrough_cache == 0 || clear_cache ||
+                if (fo->fo_writethrough_cache == 0 ||
                     i_size_read(inode) > fo->fo_readcache_max_filesize)
                         filter_release_cache(obd, obj, nb, inode);
                 up_read(&inode->i_alloc_sem);
         }
-        f_dput(res->dentry);
 
         RETURN(rc);
 }

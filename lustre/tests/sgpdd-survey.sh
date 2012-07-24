@@ -5,6 +5,7 @@ set -e
 LUSTRE=${LUSTRE:-`dirname $0`/..}
 . $LUSTRE/tests/test-framework.sh
 init_test_env $@
+. ${CONFIG:=$LUSTRE/tests/cfg/$NAME.sh}
 init_logging
 
 # QE uses the following parameters:
@@ -13,9 +14,12 @@ crghi=${crghi:-2}
 thrhi=${thrhi:-16}
 size=${size:-1024}
 
-. ${CONFIG:=$LUSTRE/tests/cfg/$NAME.sh}
-
 [ "$SLOW" = no ] && { crghi=2; thrhi=2; }
+
+if ! ([ "$SGPDD_YES" ] && [ "$REFORMAT" ]); then
+    skip_env "$0 reformats all devices, please set SGPDD_YES and REFORMAT to run this test"
+    exit 0
+fi
 
 # Skip these tests
 ALWAYS_EXCEPT="$SGPDD_SURVEY_EXCEPT"
@@ -42,14 +46,13 @@ run_sgpdd_facets () {
     for facet in ${facets//,/ }; do
         local host=$(facet_host $facet)
         local dev=${facet}_dev
-
-        local var=$(node_var_name $host)_devs
+        local var=$(node_var_name ${host}_devs)
         eval ${var}=$(expand_list ${!var} ${!dev})
         facetshosts=$(expand_list $facetshosts $host)
     done
 
     for host in ${facetshosts//,/ }; do
-        var=$(node_var_name $host)_devs
+        var=$(node_var_name ${host}_devs)
         echo "=== $facets === $host === ${!var} ==="
         local scsidevs=${!var}
         run_sgpdd_host $host ${scsidevs}
@@ -57,10 +60,12 @@ run_sgpdd_facets () {
 }
 
 test_1 () {
-    check_progs_installed $(facets_hosts mds) $SGPDDSURVEY sg_map || \
+    local mdss=$(get_facets MDS)
+
+    check_progs_installed $(facets_hosts $mdss) $SGPDDSURVEY sg_map || \
         { skip_env "SGPDDSURVEY=$SGPDDSURVEY or sg_map not found" && return 0; }
 
-    run_sgpdd_facets mds
+    run_sgpdd_facets $mdss
 }
 run_test 1 "sgpdd-survey, mds, scsidevs"
 

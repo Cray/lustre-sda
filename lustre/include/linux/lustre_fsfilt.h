@@ -58,12 +58,15 @@ struct fsfilt_objinfo {
         int fso_bufcnt;
 };
 
-#define XATTR_LUSTRE_MDS_LOV_EA         "lov"
+struct fsfilt_fid {
+        __u32 ino;
+        __u32 gen;
+};
 
 struct lustre_dquot;
 struct fsfilt_operations {
-        struct list_head fs_list;
-        struct module *fs_owner;
+        cfs_list_t fs_list;
+        cfs_module_t *fs_owner;
         char   *fs_type;
         char   *(* fs_getlabel)(struct super_block *sb);
         int     (* fs_setlabel)(struct super_block *sb, char *label);
@@ -107,7 +110,7 @@ struct fsfilt_operations {
         int     (* fs_map_inode_pages)(struct inode *inode, struct page **page,
                                        int pages, unsigned long *blocks,
                                        int *created, int create,
-                                       struct semaphore *sem);
+                                       cfs_semaphore_t *sem);
         int     (* fs_write_record)(struct file *, void *, int size, loff_t *,
                                     int force_sync);
         int     (* fs_read_record)(struct file *, void *, int size, loff_t *);
@@ -122,11 +125,14 @@ struct fsfilt_operations {
         int     (* fs_quotainfo)(struct lustre_quota_info *lqi, int type,
                                  int cmd);
         int     (* fs_qids)(struct file *file, struct inode *inode, int type,
-                            struct list_head *list);
-        int     (* fs_dquot)(struct lustre_dquot *dquot, int cmd);
+                            cfs_list_t *list);
         int     (* fs_get_mblk)(struct super_block *sb, int *count,
                                 struct inode *inode, int frags);
+        int     (* fs_dquot)(struct lustre_dquot *dquot, int cmd);
         lvfs_sbdev_type (* fs_journal_sbdev)(struct super_block *sb);
+        struct dentry  *(* fs_fid2dentry)(struct vfsmount *mnt,
+                                          struct fsfilt_fid *fid,
+                                          int ignore_gen);
 };
 
 extern int fsfilt_register_ops(struct fsfilt_operations *fs_ops);
@@ -169,38 +175,40 @@ static inline lvfs_sbdev_type fsfilt_journal_sbdev(struct obd_device *obd,
         return (lvfs_sbdev_type)0;
 }
 
-#define FSFILT_OP_UNLINK         1
-#define FSFILT_OP_RMDIR          2
-#define FSFILT_OP_RENAME         3
-#define FSFILT_OP_CREATE         4
-#define FSFILT_OP_MKDIR          5
-#define FSFILT_OP_SYMLINK        6
-#define FSFILT_OP_MKNOD          7
-#define FSFILT_OP_SETATTR        8
-#define FSFILT_OP_LINK           9
-#define FSFILT_OP_CANCEL_UNLINK 10
-#define FSFILT_OP_JOIN          11
-#define FSFILT_OP_NOOP          15
+#define FSFILT_OP_UNLINK                1
+#define FSFILT_OP_RMDIR                 2
+#define FSFILT_OP_RENAME                3
+#define FSFILT_OP_CREATE                4
+#define FSFILT_OP_MKDIR                 5
+#define FSFILT_OP_SYMLINK               6
+#define FSFILT_OP_MKNOD                 7
+#define FSFILT_OP_SETATTR               8
+#define FSFILT_OP_LINK                  9
+#define FSFILT_OP_CANCEL_UNLINK         10
+#define FSFILT_OP_NOOP                  15
+#define FSFILT_OP_UNLINK_PARTIAL_CHILD  21
+#define FSFILT_OP_UNLINK_PARTIAL_PARENT 22
+#define FSFILT_OP_CREATE_PARTIAL_CHILD  23
 
-#define __fsfilt_check_slow(obd, start, msg)                                 \
-do {                                                                         \
-        if (time_before(jiffies, start + 15 * HZ))                           \
-                break;                                                       \
-        else if (time_before(jiffies, start + 30 * HZ))                      \
-                CDEBUG(D_VFSTRACE, "%s: slow %s %lus due to heavy IO load\n",\
-                       obd->obd_name, msg, (jiffies-start) / HZ);            \
-        else if (time_before(jiffies, start + DISK_TIMEOUT * HZ))            \
-                LCONSOLE_INFO("%s: slow %s %lus due to heavy IO load\n",     \
-                              obd->obd_name, msg, (jiffies - start) / HZ);   \
-        else                                                                 \
-                LCONSOLE_WARN("%s: slow %s %lus due to heavy IO load\n",     \
-                              obd->obd_name, msg, (jiffies - start) / HZ);   \
+#define __fsfilt_check_slow(obd, start, msg)                              \
+do {                                                                      \
+        if (cfs_time_before(jiffies, start + 15 * CFS_HZ))                \
+                break;                                                    \
+        else if (cfs_time_before(jiffies, start + 30 * CFS_HZ))           \
+                CDEBUG(D_VFSTRACE, "%s: slow %s %lus\n", obd->obd_name,   \
+                       msg, (jiffies-start) / CFS_HZ);                    \
+        else if (cfs_time_before(jiffies, start + DISK_TIMEOUT * CFS_HZ)) \
+                CWARN("%s: slow %s %lus\n", obd->obd_name, msg,           \
+                      (jiffies - start) / CFS_HZ);                        \
+        else                                                              \
+                CERROR("%s: slow %s %lus\n", obd->obd_name, msg,          \
+                       (jiffies - start) / CFS_HZ);                       \
 } while (0)
 
-#define fsfilt_check_slow(obd, start, msg)    \
-do {                                          \
-        __fsfilt_check_slow(obd, start, msg); \
-        start = jiffies;                      \
+#define fsfilt_check_slow(obd, start, msg)              \
+do {                                                    \
+        __fsfilt_check_slow(obd, start, msg);           \
+        start = jiffies;                                \
 } while (0)
 
 static inline void *fsfilt_start_log(struct obd_device *obd,
@@ -436,7 +444,7 @@ static inline int fsfilt_quotainfo(struct obd_device *obd,
 
 static inline int fsfilt_qids(struct obd_device *obd, struct file *file,
                               struct inode *inode, int type,
-                              struct list_head *list)
+                              cfs_list_t *list)
 {
         if (obd->obd_fsops->fs_qids)
                 return obd->obd_fsops->fs_qids(file, inode, type, list);
@@ -464,7 +472,7 @@ static inline int fsfilt_map_inode_pages(struct obd_device *obd,
                                          struct inode *inode,
                                          struct page **page, int pages,
                                          unsigned long *blocks, int *created,
-                                         int create, struct semaphore *sem)
+                                         int create, cfs_semaphore_t *sem)
 {
         return obd->obd_fsops->fs_map_inode_pages(inode, page, pages, blocks,
                                                   created, create, sem);
@@ -501,9 +509,19 @@ static inline __u64 fsfilt_set_version(struct obd_device *obd,
 static inline __u64 fsfilt_get_version(struct obd_device *obd,
                                        struct inode *inode)
 {
-        if (obd->obd_fsops->fs_set_version)
+        if (obd->obd_fsops->fs_get_version)
                 return obd->obd_fsops->fs_get_version(inode);
         return -EOPNOTSUPP;
+}
+
+static inline struct dentry *fsfilt_fid2dentry(struct obd_device *obd,
+                                               struct vfsmount *mnt,
+                                               struct fsfilt_fid *fid,
+                                               int ignore_gen)
+{
+        if (obd->obd_fsops->fs_fid2dentry)
+                return obd->obd_fsops->fs_fid2dentry(mnt, fid, ignore_gen);
+        return ERR_PTR(-EOPNOTSUPP);
 }
 
 #endif /* __KERNEL__ */

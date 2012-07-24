@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -52,6 +52,7 @@
 
 #define SOCKLND_CONN_ACK        SOCKLND_CONN_BULK_IN
 
+#include <libcfs/libcfs_pack.h>
 typedef struct {
         __u32                   kshm_magic;     /* magic number of socklnd message */
         __u32                   kshm_version;   /* version of socklnd message */
@@ -68,7 +69,13 @@ typedef struct {
 
 typedef struct {
         lnet_hdr_t              ksnm_hdr;       /* lnet hdr */
-        char                    ksnm_payload[0];/* lnet payload */
+
+        /*
+         * ksnm_payload is removed because of winnt compiler's limitation:
+         * zero-sized array can only be placed at the tail of [nested]
+         * structure definitions. lnet payload will be stored just after
+         * the body of structure ksock_lnet_msg_t 
+         */
 } WIRE_ATTR ksock_lnet_msg_t;
 
 typedef struct {
@@ -87,6 +94,8 @@ socklnd_init_msg(ksock_msg_t *msg, int type)
         msg->ksm_type           = type;
         msg->ksm_zc_cookies[0]  = msg->ksm_zc_cookies[1]  = 0;
 }
+
+#include <libcfs/libcfs_unpack.h>
 
 #define KSOCK_MSG_NOOP          0xc0            /* ksm_u empty */
 #define KSOCK_MSG_LNET          0xc1            /* lnet msg */

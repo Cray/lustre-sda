@@ -1,5 +1,5 @@
 .\" -*- nroff -*-
-.\" Copyright (c) 2006, 2010, Oracle and/or its affiliates. All rights reserved.
+.\" Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
 .\" This file may be copied under the terms of the GNU Public License, v2.
 .\"
 .TH tunefs.lustre 8 "2008 Mar 15" Lustre "configuration utilities"
@@ -8,7 +8,7 @@ tunefs.lustre \- modify the Lustre configuration information on a disk
 .SH SYNOPSIS
 .br
 .B tunefs.lustre
-[options]
+[options] 
 .I device
 .br
 .SH DESCRIPTION
@@ -33,14 +33,19 @@ Only print what would be done; does not affect the disk
 .BI \--erase-params
 Remove all previous parameter info
 .TP
-.BI \--failnode= nid,...
+.BI \--failnode= nid,...  
 Set the NID(s) of a failover partner. This option can be repeated as desired.
+Cannot be used with --servicenode.
 .TP
-.BI \--fsname= filesystem_name
+.BI \--servicenode= nid,....
+Set the NID(s) of all service partner. This option treats all nodes as equal
+service nodes. Cannot be used with --failnode.
+.TP
+.BI \--fsname= filesystem_name  
 The Lustre filesystem this service will be part of.  Default is 'lustre'
 .TP
 .BI \--index= index
-Force a particular OST or MDT index
+Force a particular OST or MDT index 
 .TP
 .BI \--mountfsoptions= opts
 Set  the mount options that will be used when mounting the backing fs.
@@ -49,13 +54,16 @@ completely replaces the existing mount options with those specified on
 the command line, issuing a warning  on  stderr  if any  of the default
 mount options are omitted.  The defaults for ldiskfs  are
 OST: \fIerrors=remount-ro,mballoc,extents\fR;
-MGS/MDT: \fIerrors=remount-ro,iopen_nopriv,user_xattr\fR.
+MGS/MDT: \fIerrors=remount-ro,user_xattr\fR.
 \fBDO NOT\fR alter the default mount options unless you know what you are doing.
+.TP
+.BI \--network= net,...
+Network(s) to restrict this ost/mdt to. This option can be repeated as desired.
 .TP
 .BI \--mgs
 Add a configuration management service to this target
 .TP
-.BI \--mgsnode= nid,...
+.BI \--mgsnode= nid,...  
 Set the NID(s) of the MGS node, required for all targets other than the MGS.
 .TP
 .BI \--nomgs
@@ -68,8 +76,8 @@ Print less information.
 Print more information.
 .TP
 .BI \--writeconf
-Erase the configuration logs for the filesystem that this server is part of, and regenerate them. This is very dangerous.  All clients must be unmounted and servers for this filesystem should be stopped.
-All targets (OSTs/MDTs) must then be restarted to regenerate the logs.
+Erase the configuration logs for the filesystem that this server is part of, and regenerate them. This is very dangerous.  All clients must be unmounted and servers for this filesystem should be stopped.  
+All targets (OSTs/MDTs) must then be restarted to regenerate the logs. 
 No clients should be started until all targets have restarted.
 .br
 Correct order of operations is:
@@ -93,7 +101,7 @@ since they should all be contacting the same MGS.)
 Add a failover NID location for this target
 .TP
 .B tunefs.lustre --mgs --mdt --fsname=testfs /dev/sda
-Upgrade an old 1.4.X Lustre MDT to 1.6. The new filesystem name is "testfs".
+Upgrade an old 1.4.X Lustre MDT to 1.6. The new filesystem name is "testfs". 
 .TP
 .B tunefs.lustre --writeconf --mgs --mdt --fsname=testfs /dev/sda1
 Upgrade an old 1.4.X Lustre MDT to 1.6, and start with brand-new 1.6
@@ -103,8 +111,8 @@ configuration logs. All old servers and clients must be stopped.
 Please report all bugs to Sun Microsystems using http://bugzilla.lustre.org/
 .SH AVAILABILITY
 .B tunefs.lustre
-is part of the
-.BR Lustre (7)
+is part of the 
+.BR Lustre (7) 
 filesystem package and is available from Sun Microsystems, Inc via
 .br
 http://downloads.lustre.org

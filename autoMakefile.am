@@ -1,12 +1,8 @@
 SUBDIRS := @LDISKFS_SUBDIR@ @SPL_SUBDIR@ @ZFS_SUBDIR@ . @LIBSYSIO_SUBDIR@ @SNMP_SUBDIR@ @LUSTREIOKIT_SUBDIR@ @LIBCFS_SUBDIR@ lnet lustre
-DIST_SUBDIRS := @SNMP_DIST_SUBDIR@ libsysio ldiskfs @LUSTREIOKIT_SUBDIR@ @LIBCFS_SUBDIR@ lnet lustre
+DIST_SUBDIRS := @LDISKFS_DIST_SUBDIR@ @SNMP_DIST_SUBDIR@ libsysio lustre-iokit @LIBCFS_SUBDIR@ lnet lustre
 SOURCES_SUBDIRS := @LDISKFS_SUBDIR@ @LIBCFS_SUBDIR@ lnet lustre
 RPM_SUBDIRS := @LDISKFS_SUBDIR@ @LUSTREIOKIT_SUBDIR@
-if LDISKFS_ENABLED
-if !LDISKFS_IN_KERNEL
-EXTRA_SOURCES := @SYMVERFILE@
-endif
-endif
+MODULE_SYMVERS_DEPS = module-symvers
 
 @TESTS_TRUE@BUILD_TESTS = true
 @TESTS_FALSE@BUILD_TESTS = false
@@ -20,28 +16,24 @@ include build/autoMakefile.am.toplevel
 EXTRA_DIST += config.h.in
 
 if USES_DPKG
-EXTRA_DIST += debian/control.modules.in debian/control.main \
-	      debian/linux-patch-lustre.kpatches \
-	      debian/lustre-utils.examples debian/copyright debian/source \
-	      debian/source/format debian/lustre-source.docs \
-	      debian/lustre-utils.docs debian/lustre-utils.manpages \
-	      debian/lustre-client-modules.install debian/README.Debian \
-	      debian/.gitignore debian/linux-patch-lustre.dirs \
-	      debian/linux-patch-lustre.unpatch debian/lustre-dev.install \
-	      debian/lustre-source.dirs debian/liblustre.install debian/rules \
-	      debian/lustre-dev.dirs debian/linux-patch-lustre.apply \
-	      debian/control debian/changelog debian/lustre-tests.install \
-	      debian/lustre-utils.install
+EXTRA_DIST += debian/*
 endif
 
+module-symvers-ldiskfs:
 if LDISKFS_ENABLED
-if !LDISKFS_IN_KERNEL
-@SYMVERFILE@: @LDISKFS_DIR@/@SYMVERFILE@
-	touch @SYMVERFILE@
-	-grep -v ldiskfs @SYMVERFILE@ > @SYMVERFILE@.old
-	cat @SYMVERFILE@.old @LDISKFS_DIR@/@SYMVERFILE@ > @SYMVERFILE@
-endif
-endif
+	@if [ -f @LDISKFS_DIR@/@SYMVERFILE@ ]; then \
+		cat @LDISKFS_DIR@/@SYMVERFILE@ >>@SYMVERFILE@; \
+	elif [ -f @LDISKFS_DIR@/ldiskfs/@SYMVERFILE@ ]; then \
+		cat @LDISKFS_DIR@/ldiskfs/@SYMVERFILE@ >>@SYMVERFILE@; \
+	else \
+		echo -e "\n" \
+		"*** Missing ldiskfs symbols. Ensure you have built ldiskfs:\n"\
+		"*** - @LDISKFS_OBJ@/ldiskfs/@SYMVERFILE@\n"; \
+		exit 1; \
+	fi
+endif # LDISKFS_ENABLED
+
+module-symvers: module-symvers-ldiskfs
 
 CSTK=/tmp/checkstack
 CSTKO=/tmp/checkstack.orig
@@ -69,16 +61,4 @@ module-dist-hook:
 	else \
 	    echo -e "I have no idea how to create a META file in $(distdir).\nPlease file a bug at http://bugzilla.lustre.org/"; \
 	    exit 1; \
-	fi
-	if [ -d .git ]; then \
-		build/extract_patches $(distdir); \
-		if grep -e "^--- .*\/autoconf" -e "^--- .*\/Makefile\.am" -e ".*\/configure\.ac" -e ".*\/configure\.in" $(distdir)/debian/patches/*; then \
-			cp build/autogen.sh $(distdir)/build; \
-			cp libsysio/autogen.sh $(distdir)/libsysio; \
-			cp lustre-iokit/autogen.sh $(distdir)/lustre-iokit; \
-		fi; \
-		mkdir empty; \
-		diff -urN empty $(distdir)/debian > debian.diff; \
-		rm -rf $(distdir)/debian; \
-		rmdir empty; \
 	fi

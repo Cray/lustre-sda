@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -39,16 +39,7 @@
 
 #include <linux/lustre_version.h>
 
-#ifndef HAVE_VFS_INTENT_PATCHES
-#define IT_OPEN     (1)
-#define IT_CREAT    (1<<1)
-#define IT_READDIR  (1<<2)
-#define IT_GETATTR  (1<<3)
-#define IT_LOOKUP   (1<<4)
-#define IT_UNLINK   (1<<5)
-#define IT_TRUNC    (1<<6)
-#define IT_GETXATTR (1<<7)
-
+/* intent IT_XXX are defined in lustre/include/obd.h */
 struct lustre_intent_data {
         int       it_disposition;
         int       it_status;
@@ -66,6 +57,4 @@ struct lookup_intent {
         } d;
 };
 
-
-#endif
 #endif

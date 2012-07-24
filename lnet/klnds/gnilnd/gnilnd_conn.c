@@ -4,6 +4,7 @@
  * Copyright (C) 2012 Cray, Inc.
  *   Author: Igor Gorodetsky <iogordet@cray.com>
  *   Author: Nic Henke <nic@cray.com>
+ *   Author: James Shimek <jshimek@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
  *
@@ -165,7 +166,7 @@ kgnilnd_unmap_fmablk(kgn_device_t *dev, kgn_fma_memblock_t *fma_blk)
 
         if (fma_blk->gnm_held_mboxs) {
                 /* if some held, set hold_timeout from conn timeouts used in this block */
-                hold_timeout = GNILND_TIMEOUT2DEADMAN(fma_blk->gnm_max_timeout);
+                hold_timeout = GNILND_TIMEOUT2DEADMAN;
         }
 
         /* nfmablk is the number of LIVE fmablks, so decrement here */
@@ -291,11 +292,6 @@ kgnilnd_find_free_mbox(kgn_conn_t *conn)
                 smsg_attr->mbox_offset = fma_blk->gnm_mbox_size * id;
                 smsg_attr->mem_hndl = fma_blk->gnm_hndl;
                 smsg_attr->buff_size = fma_blk->gnm_mbox_size;
-
-                if (id != (int) smsg_attr->mbox_offset/smsg_attr->buff_size) {
-                        CERROR("Calcuation is invalid wrong mailbox will be freed: correct %d invalid %d\n",
-                        id, (int) smsg_attr->mbox_offset/smsg_attr->buff_size);
-                }
 
                 CDEBUG(D_NET, "conn %p smsg %p fmablk %p "
                         "allocating SMSG mbox %d buf %p "
@@ -1464,6 +1460,7 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
         kgn_tx_t          *tx;
         kgn_tx_t          *txn;
         kgn_mbox_info_t   *mbox;
+        kgn_conn_t        *connN;
         int                rc;
         int                nstale;
 
@@ -1528,6 +1525,17 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
                 }
         }
 
+
+        /* Kill outstanding ep_handles on any conns sitting on the peer's list. 
+         * We are wiring up a new connection so the other side has already closed their's. 
+         * Data safety requires that we do not send data on an old EP after we start sending 
+         * traffic on this EP 
+         */
+        
+        list_for_each_entry(connN, &peer->gnp_conns, gnc_list) {
+                kgnilnd_destroy_conn_ep(connN);
+        }
+
         /* either way with peer (new or existing), we are ok with ref counts here as the
          * kgnilnd_add_peer_locked will use our ref on new_peer (from create_peer_safe) as the
          * ref for the peer table. */
@@ -1538,8 +1546,13 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
         dgram->gndg_state = GNILND_DGRAM_DONE;
 
         /* initialise timestamps before reaper looks at them */
-        conn->gnc_last_tx = conn->gnc_last_rx = conn->gnc_last_rx_cq = jiffies;
-
+        conn->gnc_last_rx = conn->gnc_last_rx_cq = jiffies;
+        
+        /* last_tx is initialized to jiffies - (keepalive*2) so that if the NOOP fails it will 
+         * immediatly send a NOOP in the reaper thread during the call to 
+         * kgnilnd_check_conn_timeouts_locked
+         */
+        conn->gnc_last_tx = jiffies - (cfs_time_seconds(GNILND_TO2KA(conn->gnc_timeout)) * 2);
         conn->gnc_state = GNILND_CONN_ESTABLISHED;
 
         /* refs are not transferred from dgram to tables, so increment to
@@ -1554,6 +1567,18 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
                       kgnilnd_cqid2connlist(conn->gnc_cqid));
         kgnilnd_data.kgn_conn_version++;
 
+        /* Dont send NOOP if fail_loc is set
+         */
+        if (!CFS_FAIL_CHECK(CFS_FAIL_GNI_ONLY_NOOP)) {
+                tx = kgnilnd_new_tx_msg(GNILND_MSG_NOOP, peer->gnp_net->gnn_ni->ni_nid);
+                if (tx == NULL) {
+                        CNETERR("can't get TX to initiate NOOP to %s\n",
+                                libcfs_nid2str(peer->gnp_nid));
+                } else {        
+                        kgnilnd_queue_tx(conn, tx);
+                }
+        }
+ 
         /* Schedule all packets blocking for a connection */
         list_for_each_entry_safe(tx, txn, &peer->gnp_tx_queue, tx_list) {
                 /* lock held here is the peer_conn lock */
@@ -1566,9 +1591,6 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
                 /* conn->gnc_last_rx is jiffies it better exist as it was just set */
                 mbox->mbx_release_purg_active_dgram = conn->gnc_last_rx;
         }
-
-        /* the peer will hang around after this because we just added a conn */
-        kgnilnd_detach_purgatory_locked(peer, &souls);
 
         /* Bug 765042: wake up scheduler for a race with finish_connect and 
          * complete_conn_closed with a conn in purgatory 
@@ -1593,6 +1615,14 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
         kgnilnd_peer_alive(peer);
         peer->gnp_reconnect_interval = 0; 
         
+        /* clear the unlink attribute if we dont clear it kgnilnd_del_conn_or_peer will wait
+         * on the atomic forever
+         */
+        if (peer->gnp_pending_unlink) {
+                peer->gnp_pending_unlink = 0;
+                kgnilnd_admin_decref(kgnilnd_data.kgn_npending_unlink);
+                CDEBUG(D_NET,"Clearing peer unlink %p\n",peer);
+        } 
         /* add ref to make it hang around until after we drop the lock */
         kgnilnd_conn_addref(conn);
 
@@ -1600,8 +1630,6 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
          * CLOSING->CLOSED->DONE in the scheduler thread, so hold the 
          * lock until we are really done */
         write_unlock(&kgnilnd_data.kgn_peer_conn_lock);
-
-        kgnilnd_release_purgatory_list(&souls);
 
         /* Notify LNET that we now have a working connection to this peer.
          * This is a Cray extension to the "standard" LND behavior. */
@@ -2017,7 +2045,6 @@ kgnilnd_start_outbound_dgrams(kgn_device_t *dev)
                         spin_lock(&dev->gnd_connd_lock);
                         list_add_tail(&peer->gnp_connd_list,
                                       &dev->gnd_connd_peers);
-                        spin_unlock(&dev->gnd_connd_lock);
                         /* the datagrams are a global pool,
                          * so break out of trying and hope some free
                          * up soon */
@@ -2098,7 +2125,7 @@ kgnilnd_dgram_mover(void *arg)
                 down_read(&kgnilnd_data.kgn_net_rw_sem);
                 
                 rc = kgnilnd_probe_and_process_dgram(dev);
-                if (rc > 0 ) {
+                if (rc > 0) {
                         did_something += rc;
                 }
 

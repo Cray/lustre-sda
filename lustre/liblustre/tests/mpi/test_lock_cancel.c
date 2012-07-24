@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -106,7 +106,7 @@ int main(int argc, char *argv[])
                 {"dumpfile", 1, 0, 0},
                 {0, 0, 0, 0}
         };
-	int fd = 0;
+	int fd;
         long time1, time2;
         struct stat statbuf;
 
@@ -195,7 +195,7 @@ int main(int argc, char *argv[])
 
         time1 = time(NULL);
         if (unlink(test_file_name)) {
-                printf("Node %d: error unlink file: %d\n", rank, fd);
+                printf("Node %d: error unlink file: %s\n", rank, test_file_name);
                 fflush(stdout);
                 goto cleanup;
         }

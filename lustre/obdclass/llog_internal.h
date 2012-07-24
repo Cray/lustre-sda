@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -45,12 +45,9 @@ struct llog_process_info {
         void               *lpi_cbdata;
         void               *lpi_catdata;
         int                 lpi_rc;
-        struct completion   lpi_completion;
+        int                 lpi_flags;
+        cfs_completion_t    lpi_completion;
 };
-
-int llog_put_cat_list(struct obd_device *obd, struct obd_device *disk_obd,
-                      char *name, int idx, int count,
-                      struct llog_catid *idarray);
 
 int llog_cat_id2handle(struct llog_handle *cathandle, struct llog_handle **res,
                        struct llog_logid *logid);

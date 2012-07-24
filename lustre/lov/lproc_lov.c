@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -213,7 +213,7 @@ static int lov_rd_qos_priofree(char *page, char **start, off_t off, int count,
         lov = &dev->u.lov;
         *eof = 1;
         return snprintf(page, count, "%d%%\n", 
-                        (lov->lov_qos.lq_prio_free * 100 + 255) >> 8);
+                        (lov->lov_qos.lq_prio_free * 100) >> 8);
 }
 
 static int lov_wr_qos_priofree(struct file *file, const char *buffer,
@@ -247,7 +247,7 @@ static int lov_rd_qos_thresholdrr(char *page, char **start, off_t off,
         lov = &dev->u.lov;
         *eof = 1;
         return snprintf(page, count, "%d%%\n",
-                        (lov->lov_qos.lq_threshold_rr * 100 + 255) >> 8);
+                        (lov->lov_qos.lq_threshold_rr * 100) >> 8);
 }
 
 static int lov_wr_qos_thresholdrr(struct file *file, const char *buffer,

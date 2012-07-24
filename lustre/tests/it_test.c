@@ -45,7 +45,7 @@
 #include <time.h>
 #include <sys/time.h>
 
-#include <libcfs/kp30.h>
+#include <libcfs/libcfs.h>
 #include <../ldlm/interval_tree.c>
 
 #define dprintf(fmt, args...) //printf(fmt, ##args)
@@ -63,11 +63,11 @@
 
 static struct it_node {
         struct interval_node node;
-        struct list_head list;
+        cfs_list_t list;
         int hit, valid;
 } *it_array;
 static int it_count;
-CFS_LIST_HEAD(header);
+static CFS_LIST_HEAD(header);
 static unsigned long max_count = ULONG_MAX & ALIGN_MASK;
 static int have_wide_lock = 0;
 
@@ -88,7 +88,7 @@ static enum interval_iter cb(struct interval_node *n, void *args)
                        __F(&n->in_extent));
                 return INTERVAL_ITER_CONT;
         }
-        
+
         if (node->valid == 0) {
                 error("A deleted node "__S" being accessed\n",
                        __F(&n->in_extent));
@@ -126,23 +126,23 @@ static int it_test_search(struct interval_node *root)
                 interval_search(root, &ext, cb, NULL);
 
                 dprintf("\nverifing ...");
-        
+
                 /* verify */
                 for (i = 0; i < it_count; i++) {
                         n = &it_array[i];
                         if (n->valid == 0)
                                 continue;
 
-                        if (extent_overlapped(&ext, &n->node.in_extent) && 
+                        if (extent_overlapped(&ext, &n->node.in_extent) &&
                             n->hit == 0)
                                 error("node "__S" overlaps" __S","
-                                      "but never to be hit.\n", 
+                                      "but never to be hit.\n",
                                       __F(&n->node.in_extent),
                                       __F(&ext));
 
-                        if (!extent_overlapped(&ext, &n->node.in_extent) && 
+                        if (!extent_overlapped(&ext, &n->node.in_extent) &&
                             n->hit)
-                                error("node "__S" overlaps" __S", but hit.\n", 
+                                error("node "__S" overlaps" __S", but hit.\n",
                                       __F(&n->node.in_extent),
                                       __F(&ext));
                 }
@@ -283,7 +283,7 @@ err:
         }
         if (nr)
                 error("wrong tree, unbalanced!\n");
-        
+
         return 0;
 }
 
@@ -339,7 +339,7 @@ static int it_test_search_hole(struct interval_node *root)
         return 0;
 }
 
-static int contended_count = 0; 
+static int contended_count = 0;
 #define LOOP_COUNT 1000
 static enum interval_iter perf_cb(struct interval_node *n, void *args)
 {
@@ -354,7 +354,7 @@ static inline long tv_delta(struct timeval *s, struct timeval *e)
         long c = e->tv_sec - s->tv_sec;
         c *= 1000;
         c += (long int)(e->tv_usec - s->tv_usec) / 1000;
-        dprintf("\tStart: %lu:%lu -> End: %lu:%lu\n", 
+        dprintf("\tStart: %lu:%lu -> End: %lu:%lu\n",
                 s->tv_sec, s->tv_usec, e->tv_sec, e->tv_usec);
         return c;
 }
@@ -366,7 +366,7 @@ static int it_test_performance(struct interval_node *root, unsigned long len)
         struct it_node *n;
         struct timeval start, end;
         unsigned long count;
-        
+
         ext.start = (random() % (max_count - len)) & ALIGN_MASK;
         ext.end = (ext.start + len) & ALIGN_MASK;
         if (have_wide_lock) {
@@ -379,7 +379,7 @@ static int it_test_performance(struct interval_node *root, unsigned long len)
         /* list */
         contended_count = 0;
         gettimeofday(&start, NULL);
-        list_for_each_entry(n, &header, list) {
+        cfs_list_for_each_entry(n, &header, list) {
                 if (extent_overlapped(&ext, &n->node.in_extent)) {
                         count = LOOP_COUNT;
                         while (count--);
@@ -420,11 +420,11 @@ static struct interval_node *it_test_helper(struct interval_node *root)
                 if (n->valid) {
                         if (!interval_find(root, &n->node.in_extent))
                                 error("Cannot find an existent node\n");
-                        dprintf("Erasing a node "__S"\n", 
+                        dprintf("Erasing a node "__S"\n",
                                 __F(&n->node.in_extent));
                         interval_erase(&n->node, &root);
                         n->valid = 0;
-                        list_del_init(&n->list);
+                        cfs_list_del_init(&n->list);
                 } else {
                         __u64 low, high;
                         low = (random() % max_count) & ALIGN_MASK;
@@ -434,10 +434,10 @@ static struct interval_node *it_test_helper(struct interval_node *root)
                         interval_set(&n->node, low, high);
                         while (interval_insert(&n->node, &root))
                                 interval_set(&n->node, low, ++high);
-                        dprintf("Adding a node "__S"\n", 
+                        dprintf("Adding a node "__S"\n",
                                 __F(&n->node.in_extent));
                         n->valid = 1;
-                        list_add(&n->list, &header);
+                        cfs_list_add(&n->list, &header);
                 }
         }
 
@@ -474,9 +474,9 @@ static struct interval_node *it_test_init(int count)
                 n->hit = 0;
                 n->valid = 1;
                 if (i == 0)
-                        list_add_tail(&n->list, &header);
+                        cfs_list_add_tail(&n->list, &header);
                 else
-                        list_add_tail(&n->list, &it_array[rand()%i].list);
+                        cfs_list_add_tail(&n->list, &it_array[rand()%i].list);
         }
 
         return root;

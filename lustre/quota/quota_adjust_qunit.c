@@ -43,11 +43,12 @@
 # include <linux/module.h>
 # include <linux/init.h>
 # include <linux/fs.h>
+# include <linux/jbd.h>
 # include <linux/quota.h>
-#  include <linux/smp_lock.h>
-#  include <linux/buffer_head.h>
-#  include <linux/workqueue.h>
-#  include <linux/mount.h>
+# include <linux/smp_lock.h>
+# include <linux/buffer_head.h>
+# include <linux/workqueue.h>
+# include <linux/mount.h>
 #else /* __KERNEL__ */
 # include <liblustre.h>
 #endif
@@ -59,13 +60,13 @@
 #include <obd_ost.h>
 #include <lustre_fsfilt.h>
 #include <linux/lustre_quota.h>
-#include <class_hash.h>
 #include "quota_internal.h"
 
 #ifdef HAVE_QUOTA_SUPPORT
 
 #ifdef __KERNEL__
-/* this function is charge of recording lqs_ino_rec and
+/**
+ * This function is charge of recording lqs_ino_rec and
  * lqs_blk_rec. when a lquota slave checks a quota
  * request(check_cur_qunit) and finishes a quota
  * request(dqacq_completion), it will be called.
@@ -89,19 +90,45 @@ void quota_compute_lqs(struct qunit_data *qdata, struct lustre_qunit_size *lqs,
 
 }
 
-static struct lustre_qunit_size *
-quota_create_lqs(unsigned long long lqs_key, struct lustre_quota_ctxt *qctxt)
+struct lustre_qunit_size *quota_search_lqs(unsigned long long lqs_key,
+                                           struct lustre_quota_ctxt *qctxt,
+                                           int create)
 {
-        struct lustre_qunit_size *lqs = NULL;
+        struct lustre_qunit_size *lqs;
+        struct lustre_qunit_size *lqs2;
+        cfs_hash_t *hs = NULL;
         int rc = 0;
 
+        cfs_spin_lock(&qctxt->lqc_lock);
+        if (qctxt->lqc_valid) {
+                LASSERT(qctxt->lqc_lqs_hash != NULL);
+                hs = cfs_hash_getref(qctxt->lqc_lqs_hash);
+        }
+        cfs_spin_unlock(&qctxt->lqc_lock);
+
+        if (hs == NULL) {
+                rc = -EBUSY;
+                goto out;
+        }
+
+        /* cfs_hash_lookup will +1 refcount for caller */
+        lqs = cfs_hash_lookup(qctxt->lqc_lqs_hash, &lqs_key);
+        if (lqs != NULL) /* found */
+                goto out_put;
+
+        if (!create)
+                goto out_put;
+
         OBD_ALLOC_PTR(lqs);
-        if (!lqs)
-                GOTO(out, rc = -ENOMEM);
+        if (!lqs) {
+                rc = -ENOMEM;
+                goto out_put;
+        }
 
         lqs->lqs_key = lqs_key;
 
-        spin_lock_init(&lqs->lqs_lock);
+        cfs_spin_lock_init(&lqs->lqs_lock);
+
         lqs->lqs_bwrite_pending = 0;
         lqs->lqs_iwrite_pending = 0;
         lqs->lqs_ino_rec = 0;
@@ -112,72 +139,38 @@ quota_create_lqs(unsigned long long lqs_key, struct lustre_quota_ctxt *qctxt)
         lqs->lqs_iunit_sz = qctxt->lqc_iunit_sz;
         lqs->lqs_btune_sz = qctxt->lqc_btune_sz;
         lqs->lqs_itune_sz = qctxt->lqc_itune_sz;
-        lqs->lqs_ctxt = qctxt;
         if (qctxt->lqc_handler) {
                 lqs->lqs_last_bshrink  = 0;
                 lqs->lqs_last_ishrink  = 0;
         }
-        lqs_initref(lqs);
 
-        spin_lock(&qctxt->lqc_lock);
-        if (!qctxt->lqc_valid)
-                rc = -EBUSY;
-        else
-                rc = lustre_hash_add_unique(qctxt->lqc_lqs_hash,
-                                    &lqs->lqs_key, &lqs->lqs_hash);
-        spin_unlock(&qctxt->lqc_lock);
+        lqs->lqs_ctxt = qctxt; /* must be called before lqs_initref */
+        cfs_atomic_set(&lqs->lqs_refcount, 1); /* 1 for caller */
+        cfs_atomic_inc(&lqs->lqs_ctxt->lqc_lqs);
 
-        if (!rc)
-                lqs_getref(lqs);
+        /* lqc_lqs_hash will take +1 refcount on lqs on adding */
+        lqs2 = cfs_hash_findadd_unique(qctxt->lqc_lqs_hash,
+                                       &lqs->lqs_key, &lqs->lqs_hash);
+        if (lqs2 == lqs) /* added to hash */
+                goto out_put;
 
+        create = 0;
+        lqs_putref(lqs);
+        lqs = lqs2;
+
+ out_put:
+        cfs_hash_putref(hs);
  out:
-        if (rc && lqs)
-                OBD_FREE_PTR(lqs);
-
-        if (rc)
-                return ERR_PTR(rc);
-        else
-                return lqs;
-}
-
-struct lustre_qunit_size *quota_search_lqs(unsigned long long lqs_key,
-                                           struct lustre_quota_ctxt *qctxt,
-                                           int create)
-{
-        struct lustre_qunit_size *lqs;
-        int rc = 0;
-
- search_lqs:
-        lqs = lustre_hash_lookup(qctxt->lqc_lqs_hash, &lqs_key);
-        if (IS_ERR(lqs))
-                GOTO(out, rc = PTR_ERR(lqs));
-
-        if (create && lqs == NULL) {
-                /* if quota_create_lqs is successful, it will get a
-                 * ref to the lqs. The ref will be released when
-                 * qctxt_cleanup() or quota is nullified */
-                lqs = quota_create_lqs(lqs_key, qctxt);
-                if (IS_ERR(lqs))
-                        rc = PTR_ERR(lqs);
-                if (rc == -EALREADY)
-                        GOTO(search_lqs, rc = 0);
-                /* get a reference for the caller when creating lqs
-                 * successfully */
-                if (rc == 0)
-                        lqs_getref(lqs);
-        }
-
-        if (lqs && rc == 0)
-                LQS_DEBUG(lqs, "%s\n",
-                          (create == 1 ? "create lqs" : "search lqs"));
-
- out:
-        if (rc == 0) {
-                return lqs;
-        } else {
+        if (rc != 0) { /* error */
                 CERROR("get lqs error(rc: %d)\n", rc);
                 return ERR_PTR(rc);
         }
+
+        if (lqs != NULL) {
+                LQS_DEBUG(lqs, "%s\n",
+                          (create == 1 ? "create lqs" : "search lqs"));
+        }
+        return lqs;
 }
 
 int quota_adjust_slave_lqs(struct quota_adjust_qunit *oqaq,
@@ -199,18 +192,9 @@ int quota_adjust_slave_lqs(struct quota_adjust_qunit *oqaq,
                 RETURN(PTR_ERR(lqs));
         }
 
-        if (OBD_FAIL_CHECK(OBD_FAIL_QUOTA_WITHOUT_CHANGE_QS)) {
-                lqs->lqs_bunit_sz = qctxt->lqc_bunit_sz;
-                lqs->lqs_btune_sz = qctxt->lqc_btune_sz;
-                lqs->lqs_iunit_sz = qctxt->lqc_iunit_sz;
-                lqs->lqs_itune_sz = qctxt->lqc_itune_sz;
-                lqs_putref(lqs);
-                RETURN(0);
-        }
-
         CDEBUG(D_QUOTA, "before: bunit: %lu, iunit: %lu.\n",
                lqs->lqs_bunit_sz, lqs->lqs_iunit_sz);
-        spin_lock(&lqs->lqs_lock);
+        cfs_spin_lock(&lqs->lqs_lock);
         for (i = 0; i < 2; i++) {
                 if (i == 0 && !QAQ_IS_ADJBLK(oqaq))
                         continue;
@@ -256,7 +240,7 @@ int quota_adjust_slave_lqs(struct quota_adjust_qunit *oqaq,
                 if (tmp < 0)
                         rc |= i ? LQS_INO_INCREASE : LQS_BLK_INCREASE;
         }
-        spin_unlock(&lqs->lqs_lock);
+        cfs_spin_unlock(&lqs->lqs_lock);
         CDEBUG(D_QUOTA, "after: bunit: %lu, iunit: %lu.\n",
                lqs->lqs_bunit_sz, lqs->lqs_iunit_sz);
 
@@ -267,10 +251,11 @@ int quota_adjust_slave_lqs(struct quota_adjust_qunit *oqaq,
 
 int filter_quota_adjust_qunit(struct obd_export *exp,
                               struct quota_adjust_qunit *oqaq,
-                              struct lustre_quota_ctxt *qctxt)
+                              struct lustre_quota_ctxt *qctxt,
+                              struct ptlrpc_request_set *rqset)
 {
         struct obd_device *obd = exp->exp_obd;
-        unsigned int uid = 0, gid = 0;
+        unsigned int id[MAXQUOTAS] = { 0, 0 };
         int rc = 0;
         ENTRY;
 
@@ -282,12 +267,12 @@ int filter_quota_adjust_qunit(struct obd_export *exp,
                 RETURN(rc);
         }
         if (QAQ_IS_GRP(oqaq))
-                gid = oqaq->qaq_id;
+                id[GRPQUOTA] = oqaq->qaq_id;
         else
-                uid = oqaq->qaq_id;
+                id[USRQUOTA] = oqaq->qaq_id;
 
         if (rc > 0) {
-                rc = qctxt_adjust_qunit(obd, qctxt, uid, gid, 1, 0, NULL);
+                rc = qctxt_adjust_qunit(obd, qctxt, id, 1, 0, NULL);
                 if (rc == -EDQUOT || rc == -EBUSY ||
                     rc == QUOTA_REQ_RETURNED || rc == -EAGAIN) {
                         CDEBUG(D_QUOTA, "rc: %d.\n", rc);
@@ -303,17 +288,16 @@ int filter_quota_adjust_qunit(struct obd_export *exp,
 
 int client_quota_adjust_qunit(struct obd_export *exp,
                               struct quota_adjust_qunit *oqaq,
-                              struct lustre_quota_ctxt *qctxt)
+                              struct lustre_quota_ctxt *qctxt,
+                              struct ptlrpc_request_set *rqset)
 {
         struct ptlrpc_request *req;
         struct quota_adjust_qunit *oqa;
-        __u32 size[2] = { sizeof(struct ptlrpc_body), sizeof(*oqaq) };
         int rc = 0;
         ENTRY;
 
         /* client don't support this kind of operation, abort it */
-        if (!(exp->exp_connect_flags & OBD_CONNECT_CHANGE_QS)||
-            OBD_FAIL_CHECK(OBD_FAIL_QUOTA_WITHOUT_CHANGE_QS)) {
+        if (!(exp->exp_connect_flags & OBD_CONNECT_CHANGE_QS)) {
                 CDEBUG(D_QUOTA, "osc: %s don't support change qunit size\n",
                        exp->exp_obd->obd_name);
                 RETURN(rc);
@@ -321,34 +305,33 @@ int client_quota_adjust_qunit(struct obd_export *exp,
         if (strcmp(exp->exp_obd->obd_type->typ_name, LUSTRE_OSC_NAME))
                 RETURN(-EINVAL);
 
-        req = ptlrpc_prep_req(class_exp2cliimp(exp), LUSTRE_OST_VERSION,
-                              OST_QUOTA_ADJUST_QUNIT, 2, size, NULL);
-        if (!req)
-                GOTO(out, rc = -ENOMEM);
+        LASSERT(rqset);
 
-        oqa = lustre_msg_buf(req->rq_reqmsg, REQ_REC_OFF, sizeof(*oqaq));
+        req = ptlrpc_request_alloc_pack(class_exp2cliimp(exp),
+                                        &RQF_OST_QUOTA_ADJUST_QUNIT,
+                                        LUSTRE_OST_VERSION,
+                                        OST_QUOTA_ADJUST_QUNIT);
+        if (req == NULL)
+                RETURN(-ENOMEM);
+
+        oqa = req_capsule_client_get(&req->rq_pill, &RMF_QUOTA_ADJUST_QUNIT);
         *oqa = *oqaq;
 
-        ptlrpc_req_set_repsize(req, 2, size);
+        ptlrpc_request_set_replen(req);
 
-        rc = ptlrpc_queue_wait(req);
-        if (rc) {
-                CERROR("%s: %s failed: rc = %d\n", exp->exp_obd->obd_name,
-                       __FUNCTION__, rc);
-                GOTO(out, rc);
-        }
-        ptlrpc_req_finished(req);
-out:
+        ptlrpc_set_add_req(rqset, req);
         RETURN (rc);
 }
 
 int lov_quota_adjust_qunit(struct obd_export *exp,
                            struct quota_adjust_qunit *oqaq,
-                           struct lustre_quota_ctxt *qctxt)
+                           struct lustre_quota_ctxt *qctxt,
+                           struct ptlrpc_request_set *rqset)
 {
         struct obd_device *obd = class_exp2obd(exp);
         struct lov_obd *lov = &obd->u.lov;
-        int i, rc = 0;
+        int i, err, rc = 0;
+        unsigned no_set = 0;
         ENTRY;
 
         if (!QAQ_IS_ADJBLK(oqaq)) {
@@ -356,24 +339,39 @@ int lov_quota_adjust_qunit(struct obd_export *exp,
                 RETURN(-EFAULT);
         }
 
+
+        if (rqset == NULL) {
+                rqset = ptlrpc_prep_set();
+                if (!rqset)
+                        RETURN(-ENOMEM);
+                no_set = 1;
+        }
+
         obd_getref(obd);
         for (i = 0; i < lov->desc.ld_tgt_count; i++) {
-                int err;
 
-                if (!lov->lov_tgts[i] || !lov->lov_tgts[i]->ltd_active ||
-                    !lov->lov_tgts[i]->ltd_exp) {
+                if (!lov->lov_tgts[i] || !lov->lov_tgts[i]->ltd_active) {
                         CDEBUG(D_HA, "ost %d is inactive\n", i);
                         continue;
                 }
 
                 err = obd_quota_adjust_qunit(lov->lov_tgts[i]->ltd_exp, oqaq,
-                                             NULL);
+                                             NULL, rqset);
                 if (err) {
                         if (lov->lov_tgts[i]->ltd_active && !rc)
                                 rc = err;
                         continue;
                 }
         }
+
+        err = ptlrpc_set_wait(rqset);
+        if (!rc)
+                rc = err;
+
+        /* Destroy the set if none was provided by the caller */
+        if (no_set)
+                ptlrpc_set_destroy(rqset);
+
         obd_putref(obd);
         RETURN(rc);
 }

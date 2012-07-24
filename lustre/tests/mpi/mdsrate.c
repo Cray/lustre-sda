@@ -8,7 +8,7 @@
  */
 
 /*
- * Copyright 2008 Sun Microsystems, Inc. All rights reserved.
+ * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -32,6 +32,7 @@
 #include "mpi.h"
 
 /* lustre */
+#include <liblustre.h>
 #include <lustre/liblustreapi.h>        /* for O_LOV_DELAY_CREATE */
 
 #define CHECK_COUNT 10000
@@ -242,7 +243,7 @@ static void
 process_args(int argc, char *argv[])
 {
         char   *cp, *endptr;
-        int    i, index, offset, tmpend, rc, c;
+        int    i, index, offset, tmpend, rc;
         char   tmp[16];
         FILE * seed_file;
         struct option *opt;
@@ -260,8 +261,8 @@ process_args(int argc, char *argv[])
                         *++cp = ':';
         }
 
-        while ((c = getopt_long(argc,argv, shortOpts, longOpts,&index)) != -1) {
-                switch (c) {
+        while ((rc = getopt_long(argc,argv, shortOpts, longOpts,&index)) != -1) {
+                switch (rc) {
                 case OPEN:
                         openflags &= ~(O_CREAT|O_EXCL);
                 case CREATE:
@@ -276,7 +277,7 @@ process_args(int argc, char *argv[])
                                            "specified: --%s\n",
                                         longOpts[index].name);
                         }
-                        mode = c;
+                        mode = rc;
                         cmd = (char *)longOpts[index].name;
                         break;
                 case NOEXCL:
@@ -401,7 +402,7 @@ process_args(int argc, char *argv[])
                                          "--lookup, or --open.\n",
                                       (char *)longOpts[index].name);
                         }
-                        order = c;
+                        order = rc;
                         break;
                 case IGNORE:
                         ++ignore;
@@ -544,7 +545,7 @@ int
 main(int argc, char *argv[])
 {
         int    i, j, fd, rc, nops, lastOps;
-        int    ag_ops = 0;
+        int ag_ops = 0;
         double ag_interval = 0;
         double ag_rate = 0;
         double rate, avg_rate, effective_rate;

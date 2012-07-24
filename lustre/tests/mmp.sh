@@ -24,8 +24,8 @@ init_test_env $@
 . ${CONFIG:=$LUSTRE/tests/cfg/$NAME.sh}
 init_logging
 
-require_dsh_mds || exit 0
-require_dsh_ost || exit 0
+remote_mds_nodsh && skip "remote MDS with nodsh" && exit 0
+remote_ost_nodsh && skip "remote OST with nodsh" && exit 0
 
 # unmount and cleanup the Lustre filesystem
 MMP_RESTORE_MOUNT=false
@@ -55,10 +55,11 @@ get_failover_facet() {
 
 # Initiate the variables for Lustre servers and targets.
 init_vars() {
-    MMP_MDS=mds
+    MMP_MDS=${MMP_MDS:-$SINGLEMDS}
     MMP_MDS_FAILOVER=$(get_failover_facet $MMP_MDS)
 
-    MMP_MDSDEV=$MDSDEV
+    local mds_num=$(echo $MMP_MDS | tr -d "mds")
+    MMP_MDSDEV=$(mdsdevname $mds_num)
 
     MMP_OSS=${MMP_OSS:-ost1}
     MMP_OSS_FAILOVER=$(get_failover_facet $MMP_OSS)
@@ -167,14 +168,14 @@ mmp_init() {
     # Otherwise, the Lustre administrator has to manually enable
     # this feature when the file system is unmounted.
 
-    if [ -z "$mdsfailover_HOST" ]; then
+    local var=${MMP_MDS}failover_HOST
+    if [ -z "${!var}" ]; then
         log "Failover is not used on MDS, enabling MMP manually..."
         enable_mmp $MMP_MDS $MMP_MDSDEV || \
             error "failed to enable MMP on $MMP_MDSDEV on $MMP_MDS"
     fi
 
-    local var=${MMP_OSS}failover_HOST
-
+    var=${MMP_OSS}failover_HOST
     if [ -z "${!var}" ]; then
         log "Failover is not used on OSS, enabling MMP manually..."
         enable_mmp $MMP_OSS $MMP_OSTDEV || \
@@ -193,7 +194,8 @@ mmp_init() {
 # which did not use failover.
 mmp_fini() {
 
-    if [ -z "$mdsfailover_HOST" ]; then
+    local var=${MMP_MDS}failover_HOST
+    if [ -z "${!var}" ]; then
         log "Failover is not used on MDS, disabling MMP manually..."
         disable_mmp $MMP_MDS $MMP_MDSDEV || \
             error "failed to disable MMP on $MMP_MDSDEV on $MMP_MDS"
@@ -201,8 +203,7 @@ mmp_fini() {
             error "MMP was not disabled on $MMP_MDSDEV on $MMP_MDS"
     fi
 
-    local var=${MMP_OSS}failover_HOST
-
+    var=${MMP_OSS}failover_HOST
     if [ -z "${!var}" ]; then
         log "Failover is not used on OSS, disabling MMP manually..."
         disable_mmp $MMP_OSS $MMP_OSTDEV || \
@@ -214,7 +215,7 @@ mmp_fini() {
     return 0
 }
 
-# Mount the shared target on the failover server after some interval it's
+# Mount the shared target on the failover server after some interval it's 
 # mounted on the primary server.
 mount_after_interval_sub() {
     local interval=$1
@@ -279,7 +280,7 @@ mount_after_interval() {
     return 0
 }
 
-# Mount the shared target on the failover server
+# Mount the shared target on the failover server 
 # during unmounting it on the primary server.
 mount_during_unmount() {
     local device=$1
@@ -296,9 +297,11 @@ mount_during_unmount() {
     log "Mounting $device on $facet..."
     start $facet $device $mnt_opts || return ${PIPESTATUS[0]}
 
+    log "Unmounting $device on $facet..."
     stop $facet &
     unmount_pid=$!
 
+    log "Mounting $device on $failover_facet..."
     start $failover_facet $device $mnt_opts
     mount_rc=${PIPESTATUS[0]}
 
@@ -319,7 +322,7 @@ mount_during_unmount() {
     return 0
 }
 
-# Mount the shared target on the failover server
+# Mount the shared target on the failover server 
 # after clean unmounting it on the primary server.
 mount_after_unmount() {
     local device=$1
@@ -333,7 +336,7 @@ mount_after_unmount() {
     start $facet $device $mnt_opts || return ${PIPESTATUS[0]}
 
     log "Unmounting $device on $facet..."
-    stop $facet || return ${PIPESTATUS[0]}
+    stop $facet || return ${PIPESTATUS[0]} 
 
     log "Mounting $device on $failover_facet..."
     start $failover_facet $device $mnt_opts || return ${PIPESTATUS[0]}
@@ -590,9 +593,9 @@ test_10() {
     run_e2fsck $MMP_MDS_FAILOVER $MMP_MDSDEV "-fn"
     rc=${PIPESTATUS[0]}
 
-    # e2fsck is always called with -n, i.e.
-    # 0 (No errors) and 4 (File system errors left uncorrected) are the only acceptable
-    # e2fsck exit codes in case
+    # e2fsck is called with -n option (Open the filesystem read-only), so
+    # 0 (No errors) and 4 (File system errors left uncorrected) are the only
+    # acceptable exit codes in this case
     if [ $rc -ne 0 ] && [ $rc -ne 4 ]; then
         error_noexit "e2fsck $MMP_MDSDEV on $MMP_MDS_FAILOVER returned $rc"
         stop $MMP_MDS || return ${PIPESTATUS[0]}

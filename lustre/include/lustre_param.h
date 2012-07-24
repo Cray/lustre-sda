@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2006, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -43,10 +43,19 @@
 #ifndef _LUSTRE_PARAM_H
 #define _LUSTRE_PARAM_H
 
+/** \defgroup param param
+ *
+ * @{
+ */
+
 /* obd_config.c */
 int class_find_param(char *buf, char *key, char **valp);
+int class_get_next_param(char **params, char *copy);
 int class_match_param(char *buf, char *key, char **valp);
 int class_parse_nid(char *buf, lnet_nid_t *nid, char **endh);
+int class_parse_net(char *buf, __u32 *net, char **endh);
+int class_match_nid(char *buf, char *key, lnet_nid_t nid);
+int class_match_net(char *buf, char *key, __u32 net);
 /* obd_mount.c */
 int do_lcfg(char *cfgname, lnet_nid_t nid, int cmd,
             char *s1, char *s2, char *s3, char *s4);
@@ -77,15 +86,22 @@ int do_lcfg(char *cfgname, lnet_nid_t nid, int cmd,
 #define PARAM_FAILNODE             "failover.node="    /* add failover nid */
 #define PARAM_FAILMODE             "failover.mode="    /* initial mount only */
 #define PARAM_ACTIVE               "active="           /* activate/deactivate */
-#define PARAM_MDT_UPCALL           "mdt.group_upcall=" /* mds group upcall */
+#define PARAM_NETWORK              "network="          /* bind on nid */
 
 /* Prefixes for parameters handled by obd's proc methods (XXX_process_config) */
 #define PARAM_OST                  "ost."
 #define PARAM_OSC                  "osc."
 #define PARAM_MDT                  "mdt."
+#define PARAM_MDD                  "mdd."
 #define PARAM_MDC                  "mdc."
 #define PARAM_LLITE                "llite."
 #define PARAM_LOV                  "lov."
 #define PARAM_SYS                  "sys."              /* global */
+#define PARAM_SRPC                 "srpc."
+#define PARAM_SRPC_FLVR            "srpc.flavor."
+#define PARAM_SRPC_UDESC           "srpc.udesc.cli2mdt"
+#define PARAM_SEC                  "security."
+
+/** @} param */
 
 #endif /* _LUSTRE_PARAM_H */

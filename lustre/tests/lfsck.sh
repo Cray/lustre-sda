@@ -9,7 +9,6 @@ LUSTRE=${LUSTRE:-$(cd $(dirname $0)/..; echo $PWD)}
 . $LUSTRE/tests/test-framework.sh
 init_test_env $@
 . ${CONFIG:=$LUSTRE/tests/cfg/$NAME.sh}
-init_logging
 
 NUMFILES=${NUMFILES:-10}
 NUMDIRS=${NUMDIRS:-4}
@@ -23,7 +22,7 @@ which can be accessable on all of the nodes" && exit 0; }
 which getfattr &>/dev/null || { skip_env "could not find getfattr" && exit 0; }
 which setfattr &>/dev/null || { skip_env "could not find setfattr" && exit 0; }
 
-if [ ! -x $(which $LFSCK_BIN) ]; then
+if [ ! -x `which $LFSCK_BIN` ]; then
     log "$($E2FSCK -V)"
     error "e2fsprogs does not support lfsck"
 fi
@@ -107,7 +106,7 @@ get_ost_node() {
     local ost_node
     local node
 
-    ost_uuid=$(ostuuid_from_index $obdidx)
+    ost_uuid=$($LFS osts | grep "^$obdidx: " | cut -d' ' -f2 | head -n1)
 
     for node in $(osts_nodes); do
         do_node $node "lctl get_param -n obdfilter.*.uuid" | grep -q $ost_uuid
@@ -125,8 +124,10 @@ get_ost_dev() {
     local ost_name
     local ost_dev
 
-    ost_name=$(ostname_from_index $obdidx)
-    ost_dev=$(do_node $node "lctl get_param -n obdfilter.${ost_name}.mntdev")
+    ost_name=$($LFS osts | grep "^$obdidx: " | cut -d' ' -f2 | \
+                head -n1 | sed -e 's/_UUID$//')
+
+    ost_dev=$(do_node $node "lctl get_param -n obdfilter.$ost_name.mntdev")
     [ ${PIPESTATUS[0]} -ne 0 ] && \
         echo "failed to find the OST device with index $obdidx on $facet" && \
         return 1
@@ -160,7 +161,7 @@ get_files() {
     esac
 
     local files=""
-    local f
+    local f 
     for f in $(seq -f testfile.%g $first $last); do
         test_file=$test_dir/$f
         files="$files $test_file"
@@ -207,6 +208,8 @@ duplicate_files() {
 
 #********************************* Main Flow **********************************#
 
+init_logging
+
 # get the server target devices
 get_svr_devs
 
@@ -240,10 +243,10 @@ if is_empty_fs $MOUNT; then
         error "removing objects failed"
 
     # remove files from MDS
-    remove_files mds $MDSDEV $MDS_REMOVE || error "removing files failed"
+    remove_files $SINGLEMDS $MDTDEV $MDS_REMOVE || error "removing files failed"
 
     # create EAs on files so objects are referenced from different files
-    duplicate_files mds $MDSDEV $MDS_DUPE || \
+    duplicate_files $SINGLEMDS $MDTDEV $MDS_DUPE || \
         error "duplicating files failed"
     FSCK_MAX_ERR=1   # file system errors corrected
 else # is_empty_fs $MOUNT

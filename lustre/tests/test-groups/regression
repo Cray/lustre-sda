@@ -13,6 +13,9 @@ replay-dual
 replay-vbr
 insanity
 sanity-quota
+sanity-sec
+sanity-gss
+lustre_rsync-test
 ost-pools
 lnet-selftest
 mmp

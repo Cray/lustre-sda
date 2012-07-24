@@ -26,7 +26,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright  2008 Sun Microsystems, Inc. All rights reserved
+ * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 /*
@@ -48,7 +48,7 @@ static struct lprocfs_vars lprocfs_mgc_obd_vars[] = {
         { "connect_flags",   lprocfs_rd_connect_flags, 0, 0 },
         { "mgs_server_uuid", lprocfs_rd_server_uuid,   0, 0 },
         { "mgs_conn_uuid",   lprocfs_rd_conn_uuid,     0, 0 },
-        { "import",          lprocfs_rd_import, lprocfs_wr_reconnect, 0 },
+        { "import",          lprocfs_rd_import,        0, 0 },
         { "state",           lprocfs_rd_state,         0, 0 },
         { 0 }
 };

@@ -23,6 +23,7 @@ error_msg() {
 
 	if [ ! -x /usr/bin/lsb_release ]; then
 		echo "lsb_release could not be found.  If it were available more help on how to resolve this\nsituation would be available."
+                exit 1
 	fi
 
 	local dist_id="$(lsb_release -is)"
@@ -31,7 +32,7 @@ error_msg() {
 		echo -e "To install $cmd, you can use the command:\n# $1"
 	}
 	case $dist_id in
-		        Ubuntu) howto "apt-get install $cmd" ;;
+		 Ubuntu|Debian) howto "apt-get install $cmd" ;;
 	CentOS|RedHat*|Fedora*) howto "yum install $cmd" ;;
 	                 SUSE*) howto "yast -i $cmd" ;;
 	                     *) echo -e "\nInstallation instructions for the package $cmd on $dist_id are not known.\nIf you know how to install the required package, please file a bug at\nhttp://bugs.whamcloud.com/ and include your distribution and the output from:\n\"lsb_release -is\" is: \"$dist_id\"" ;;
@@ -66,9 +67,9 @@ if [ -d kernel_patches ] ; then
     REQUIRED_DIRS="build"
     CONFIGURE_DIRS=""
 else
-    REQUIRED_DIRS="build lnet lustre"
+    REQUIRED_DIRS="build libcfs lnet lustre"
     OPTIONAL_DIRS="snmp portals"
-    CONFIGURE_DIRS="libsysio lustre-iokit ldiskfs spl zfs"
+    CONFIGURE_DIRS="libsysio lustre-iokit ldiskfs"
 fi
 
 for dir in $REQUIRED_DIRS ; do
@@ -90,7 +91,7 @@ done
 
 found=false
 for AMVER in 1.9 1.10 1.11; do
-    if [ "$(which automake-$AMVER 2> /dev/null)" ]; then
+    if which automake-$AMVER 2> /dev/null; then
         found=true
         break
     fi
@@ -106,13 +107,10 @@ fi
 check_version automake automake-$AMVER "1.9"
 check_version autoconf autoconf "2.57"
 
-export ACLOCAL="aclocal-$AMVER"
-export AUTOMAKE="automake-$AMVER"
-
 run_cmd()
 {
     cmd="$@"
-    echo -n "Running $cmd... "
+    echo -n "Running $cmd"
     eval $cmd
     res=$?
     if [ $res -ne 0 ]; then
@@ -122,6 +120,9 @@ run_cmd()
     fi
     echo
 }
+
+export ACLOCAL="aclocal-$AMVER"
+export AUTOMAKE="automake-$AMVER"
 
 run_cmd "$ACLOCAL $ACLOCAL_FLAGS"
 run_cmd "autoheader"
