@@ -147,7 +147,7 @@ static int changelog_init_cb(struct llog_handle *llh, struct llog_rec_hdr *hdr,
         ENTRY;
 
         LASSERT(llh->lgh_hdr->llh_flags & LLOG_F_IS_PLAIN);
-        LASSERT(rec->cr_hdr.lrh_type == CHANGELOG_VREC || rec->cr_hdr.lrh_type == CHANGELOG_REC);
+        LASSERT(rec->cr_hdr.lrh_type == CHANGELOG_REC);
 
         CDEBUG(D_INFO,
                "seeing record at index %d/%d/"LPU64" t=%x %.*s in log "LPX64"\n",
@@ -329,7 +329,7 @@ int mdd_changelog_llog_write(struct mdd_device         *mdd,
 
         rec->cr_hdr.lrh_len = llog_data_len(sizeof(*rec) + rec->cr.cr_namelen);
         /* llog_lvfs_write_rec sets the llog tail len */
-        rec->cr_hdr.lrh_type = CHANGELOG_VREC;
+        rec->cr_hdr.lrh_type = CHANGELOG_REC;
         rec->cr.cr_time = cl_time();
         cfs_spin_lock(&mdd->mdd_cl.mc_lock);
         /* NB: I suppose it's possible llog_add adds out of order wrt cr_index,
@@ -417,7 +417,7 @@ int mdd_changelog_write_header(struct mdd_device *mdd, int markerflags)
         if (rec == NULL)
                 RETURN(-ENOMEM);
 
-        rec->cr.cr_version = CL_VERSION;
+        rec->cr.cr_flags = CLF_VERSION;
         rec->cr.cr_type = CL_MARK;
         rec->cr.cr_namelen = len;
         memcpy(rec->cr.cr_name, obd->obd_name, rec->cr.cr_namelen);

@@ -524,17 +524,14 @@ static inline const char *changelog_type2str(int type) {
         return NULL;
 }
 
-/* the version of the changelog record on-disk format */
-#define CL_VERSION 0x0
-
-/* All the event flags to be stored within this mask */
-#define CLF_EVENT_FLAGMASK 0xFFFF
+/* per-record flags */
+#define CLF_VERSION  0x1000
+#define CLF_FLAGMASK 0x0FFF
 /* Anything under the flagmask may be per-type (if desired) */
 /* Flags for unlink */
 #define CLF_UNLINK_LAST       0x0001 /* Unlink of last hardlink */
 #define CLF_UNLINK_HSM_EXISTS 0x0002 /* File has something in HSM */
                                      /* HSM cleaning needed */
-
 /* Flags for HSM */
 /* 12b used (from high weight to low weight):
  * 2b for flags
@@ -607,7 +604,7 @@ static inline void hsm_set_cl_error(int *flags, int error)
 #define CR_MAXSIZE (PATH_MAX + sizeof(struct changelog_rec))
 struct changelog_rec {
         __u16                 cr_namelen;
-        __u16                 cr_version;     /** changelog record version */
+        __u16                 cr_flags; /**< (flags&CLF_FLAGMASK)|CLF_VERSION */
         __u32                 cr_type;  /**< \a changelog_rec_type */
         __u64                 cr_index; /**< changelog record number */
         __u64                 cr_prev;  /**< last index for this target fid */
@@ -620,7 +617,6 @@ struct changelog_rec {
                 __u32         cr_markerflags; /**< CL_MARK flags */
         };
         lustre_fid            cr_pfid;        /**< parent fid */
-        __u32                 cr_flags;       /** common and per-event flags */
         char                  cr_name[0];     /**< last element */
 } __attribute__((packed));
 

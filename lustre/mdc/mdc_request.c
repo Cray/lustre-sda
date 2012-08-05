@@ -1230,16 +1230,10 @@ static int changelog_show_cb(struct llog_handle *llh, struct llog_rec_hdr *hdr,
         int len, rc;
         ENTRY;
 
-        if ((rec->cr_hdr.lrh_type != CHANGELOG_VREC) ||
+        if ((rec->cr_hdr.lrh_type != CHANGELOG_REC) ||
             (rec->cr.cr_type >= CL_LAST)) {
                 CERROR("Not a changelog rec %d/%d\n", rec->cr_hdr.lrh_type,
                        rec->cr.cr_type);
-                RETURN(-EINVAL);
-        }
-
-        if (rec->cr.cr_version != CL_VERSION) {
-                CERROR("Unknown changelog record version %d\n",
-                       rec->cr.cr_version);
                 RETURN(-EINVAL);
         }
 
@@ -1250,11 +1244,12 @@ static int changelog_show_cb(struct llog_handle *llh, struct llog_rec_hdr *hdr,
                 RETURN(0);
         }
 
-        CDEBUG(D_CHANGELOG, "v=%u "LPU64" %02d%-5s "LPU64" 0x%x t="DFID" p="
-               DFID" %.*s\n", rec->cr.cr_version, rec->cr.cr_index,
-               rec->cr.cr_type, changelog_type2str(rec->cr.cr_type),
-               rec->cr.cr_time, rec->cr.cr_flags, PFID(&rec->cr.cr_tfid),
-               PFID(&rec->cr.cr_pfid), rec->cr.cr_namelen, rec->cr.cr_name);
+        CDEBUG(D_CHANGELOG, LPU64" %02d%-5s "LPU64" 0x%x t="DFID" p="DFID
+               " %.*s\n", rec->cr.cr_index, rec->cr.cr_type,
+               changelog_type2str(rec->cr.cr_type), rec->cr.cr_time,
+               rec->cr.cr_flags & CLF_FLAGMASK,
+               PFID(&rec->cr.cr_tfid), PFID(&rec->cr.cr_pfid),
+               rec->cr.cr_namelen, rec->cr.cr_name);
 
         len = sizeof(*lh) + sizeof(rec->cr) + rec->cr.cr_namelen;
 

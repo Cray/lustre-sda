@@ -2568,8 +2568,7 @@ typedef enum {
         PTL_CFG_REC        = LLOG_OP_MAGIC | 0x30000, /* obsolete */
         LLOG_GEN_REC       = LLOG_OP_MAGIC | 0x40000,
         LLOG_JOIN_REC      = LLOG_OP_MAGIC | 0x50000, /* obsolete */
-        CHANGELOG_REC      = LLOG_OP_MAGIC | 0x60000, /* obsolete */
-        CHANGELOG_VREC     = LLOG_OP_MAGIC | 0x61000,
+        CHANGELOG_REC      = LLOG_OP_MAGIC | 0x60000,
         CHANGELOG_USER_REC = LLOG_OP_MAGIC | 0x70000,
         LLOG_HDR_MAGIC     = LLOG_OP_MAGIC | 0x45539,
         LLOG_LOGID_MAGIC   = LLOG_OP_MAGIC | 0x4553b,

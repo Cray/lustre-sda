@@ -2610,14 +2610,7 @@ static int lfs_changelog(int argc, char **argv)
                        ts.tm_year + 1900, ts.tm_mon + 1, ts.tm_mday,
                        rec->cr_uid, rec->cr_gid,
                        libcfs_nid2str(rec->cr_clnid),
-                       rec->cr_flags, PFID(&rec->cr_tfid));
-
-                if (rec->cr_version > CL_VERSION) {
-                        printf(" not supported version %u\n", rec->cr_version);
-                        rc = -EPROTONOSUPPORT;
-                        break;
-                }
-
+                       rec->cr_flags & CLF_FLAGMASK, PFID(&rec->cr_tfid));
                 if (rec->cr_namelen)
                         /* namespace rec includes parent and filename */
                         printf(" p="DFID" %.*s\n", PFID(&rec->cr_pfid),
