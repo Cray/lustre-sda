@@ -72,6 +72,8 @@
 
 /* llo_* api support */
 #include <md_object.h>
+/* dt_acct_features */
+#include <lquota.h>
 
 #ifdef HAVE_LDISKFS_PDO
 int ldiskfs_pdo = 1;
@@ -88,6 +90,7 @@ static const char remote_obj_dir[] = "REM_OBJ_DIR";
 static const struct lu_object_operations      osd_lu_obj_ops;
 static const struct dt_object_operations      osd_obj_ops;
 static const struct dt_object_operations      osd_obj_ea_ops;
+static const struct dt_object_operations      osd_obj_otable_it_ops;
 static const struct dt_index_operations       osd_index_iam_ops;
 static const struct dt_index_operations       osd_index_ea_ops;
 
@@ -103,11 +106,16 @@ static int osd_object_invariant(const struct lu_object *l)
 
 #ifdef HAVE_QUOTA_SUPPORT
 static inline void
-osd_push_ctxt(const struct lu_env *env, struct osd_ctxt *save)
+osd_push_ctxt(const struct lu_env *env, struct osd_ctxt *save, bool is_md)
 {
-        struct md_ucred *uc = md_ucred_check(env);
+	struct md_ucred *uc;
         struct cred     *tc;
 
+	if (!is_md)
+		/* OFD support */
+		return;
+
+	uc = md_ucred_check(env);
         if (uc == NULL) {
                 CWARN("ucred is not initialized\n");
                 return;
@@ -126,9 +134,13 @@ osd_push_ctxt(const struct lu_env *env, struct osd_ctxt *save)
 }
 
 static inline void
-osd_pop_ctxt(const struct lu_env *env, struct osd_ctxt *save)
+osd_pop_ctxt(const struct lu_env *env, struct osd_ctxt *save, bool is_md)
 {
         struct cred *tc;
+
+	if (!is_md)
+		/* OFD support */
+		return;
 
         if (md_ucred_check(env) == NULL)
                 return;
@@ -304,8 +316,8 @@ struct inode *osd_iget(struct osd_thread_info *info, struct osd_device *dev,
 		iput(inode);
 		inode = ERR_PTR(-ESTALE);
 	} else if (is_bad_inode(inode)) {
-		CWARN("%s: bad inode: ino = %u\n",
-		dev->od_dt_dev.dd_lu_dev.ld_obd->obd_name, id->oii_ino);
+		CWARN("%.16s: bad inode: ino = %u\n",
+		LDISKFS_SB(osd_sb(dev))->s_es->s_volume_name, id->oii_ino);
 		iput(inode);
 		inode = ERR_PTR(-ENOENT);
 	} else {
@@ -390,7 +402,7 @@ static int osd_fid_lookup(const struct lu_env *env, struct osd_object *obj,
 	struct inode	       *inode;
 	struct osd_scrub       *scrub;
 	struct scrub_file      *sf;
-	int 			result;
+	int			result;
 	int			verify = 0;
 	ENTRY;
 
@@ -425,22 +437,19 @@ static int osd_fid_lookup(const struct lu_env *env, struct osd_object *obj,
 	}
 
 	fid_zero(&oic->oic_fid);
+
+	/*
+	 * Objects are created as locking anchors or place holders for objects
+	 * yet to be created. No need to osd_oi_lookup() at here because FID
+	 * shouldn't never be re-used, if it's really a duplicate FID from
+	 * unexpected reason, we should be able to detect it later by calling
+	 * do_create->osd_oi_insert()
+	 */
+	if (conf != NULL && (conf->loc_flags & LOC_F_NEW) != 0)
+		GOTO(out, result = 0);
+
 	/* Search order: 3. OI files. */
 	result = osd_oi_lookup(info, dev, fid, id);
-	if (result != 0 && result != -ENOENT)
-		GOTO(out, result);
-
-	/* If fid wasn't found in oi, inode-less object is created,
-	 * for which lu_object_exists() returns false. This is used
-	 * in a (frequent) case when objects are created as locking
-	 * anchors or place holders for objects yet to be created. */
-	if (conf != NULL && conf->loc_flags & LOC_F_NEW) {
-		if (unlikely(result == 0))
-			GOTO(out, result = -EEXIST);
-		else
-			GOTO(out, result = 0);
-	}
-
 	if (result == -ENOENT) {
 		if (!fid_is_norm(fid) ||
 		    !ldiskfs_test_bit(osd_oi_fid2idx(dev,fid),
@@ -449,6 +458,9 @@ static int osd_fid_lookup(const struct lu_env *env, struct osd_object *obj,
 
 		goto trigger;
 	}
+
+	if (result != 0)
+		GOTO(out, result);
 
 iget:
 	if (verify == 0)
@@ -466,9 +478,10 @@ trigger:
 				result = -EINPROGRESS;
 			} else if (!scrub->os_no_scrub) {
 				result = osd_scrub_start(dev);
-				LCONSOLE_ERROR("Trigger OI scrub by RPC for "
-					       DFID", rc = %d\n",
-					       PFID(fid), result);
+				LCONSOLE_ERROR("%.16s: trigger OI scrub by RPC "
+					       "for "DFID", rc = %d [1]\n",
+					       LDISKFS_SB(osd_sb(dev))->s_es->\
+					       s_volume_name,PFID(fid), result);
 				if (result == 0 || result == -EALREADY)
 					result = -EINPROGRESS;
 				else
@@ -527,13 +540,18 @@ static int osd_object_init(const struct lu_env *env, struct lu_object *l,
 	LINVRNT(osd_invariant(obj));
 
 	result = osd_fid_lookup(env, obj, lu_object_fid(l), conf);
-        obj->oo_dt.do_body_ops = &osd_body_ops_new;
-        if (result == 0) {
-                if (obj->oo_inode != NULL)
-                        osd_object_init0(obj);
-        }
-        LINVRNT(osd_invariant(obj));
-        return result;
+	obj->oo_dt.do_body_ops = &osd_body_ops_new;
+	if (result == 0) {
+		if (obj->oo_inode != NULL) {
+			osd_object_init0(obj);
+		} else if (fid_is_otable_it(&l->lo_header->loh_fid)) {
+			obj->oo_dt.do_ops = &osd_obj_otable_it_ops;
+			/* LFSCK iterator object is special without inode */
+			l->lo_header->loh_attr |= LOHA_EXISTS;
+		}
+	}
+	LINVRNT(osd_invariant(obj));
+	return result;
 }
 
 /*
@@ -702,6 +720,9 @@ static void osd_trans_commit_cb(struct journal_callback *jcb, int error)
 
 	/* call per-transaction callbacks if any */
 	cfs_list_for_each_entry_safe(dcb, tmp, &oh->ot_dcb_list, dcb_linkage) {
+		LASSERTF(dcb->dcb_magic == TRANS_COMMIT_CB_MAGIC,
+			 "commit callback entry: magic=%x name='%s'\n",
+			 dcb->dcb_magic, dcb->dcb_name);
 		cfs_list_del_init(&dcb->dcb_linkage);
 		dcb->dcb_func(NULL, th, dcb, error);
 	}
@@ -767,9 +788,10 @@ int osd_trans_start(const struct lu_env *env, struct dt_device *d,
                 GOTO(out, rc);
 
         if (!osd_param_is_sane(dev, th)) {
-                CWARN("%s: too many transaction credits (%d > %d)\n",
-                      d->dd_lu_dev.ld_obd->obd_name, oh->ot_credits,
-                      osd_journal(dev)->j_max_transaction_buffers);
+		CWARN("%.16s: too many transaction credits (%d > %d)\n",
+		      LDISKFS_SB(osd_sb(dev))->s_es->s_volume_name,
+		      oh->ot_credits,
+		      osd_journal(dev)->j_max_transaction_buffers);
                 /* XXX Limit the credits to 'max_transaction_buffers', and
                  *     let the underlying filesystem to catch the error if
                  *     we really need so many credits.
@@ -816,7 +838,7 @@ int osd_trans_start(const struct lu_env *env, struct dt_device *d,
                  *      data (ofd) and reverse ordering for metadata
                  *      (mdd). then at some point we'll fix the latter
                  */
-                if (lu_device_is_md(&d->dd_lu_dev)) {
+		if (dev->od_is_md) {
                         LASSERT(oti->oti_r_locks == 0);
                         LASSERT(oti->oti_w_locks == 0);
                 }
@@ -869,7 +891,7 @@ static int osd_trans_stop(const struct lu_env *env, struct thandle *th)
                  *      data (ofd) and reverse ordering for metadata
                  *      (mdd). then at some point we'll fix the latter
                  */
-                if (lu_device_is_md(&th->th_dev->dd_lu_dev)) {
+		if (osd_dt_dev(th->th_dev)->od_is_md) {
                         LASSERT(oti->oti_r_locks == 0);
                         LASSERT(oti->oti_w_locks == 0);
                 }
@@ -904,12 +926,14 @@ static int osd_trans_stop(const struct lu_env *env, struct thandle *th)
 
 static int osd_trans_cb_add(struct thandle *th, struct dt_txn_commit_cb *dcb)
 {
-        struct osd_thandle *oh = container_of0(th, struct osd_thandle,
-                                               ot_super);
+	struct osd_thandle *oh = container_of0(th, struct osd_thandle,
+					       ot_super);
 
-        cfs_list_add(&dcb->dcb_linkage, &oh->ot_dcb_list);
+	LASSERT(dcb->dcb_magic == TRANS_COMMIT_CB_MAGIC);
+	LASSERT(&dcb->dcb_func != NULL);
+	cfs_list_add(&dcb->dcb_linkage, &oh->ot_dcb_list);
 
-        return 0;
+	return 0;
 }
 
 /*
@@ -976,6 +1000,9 @@ int osd_statfs(const struct lu_env *env, struct dt_device *d,
         struct kstatfs     *ksfs;
         int result = 0;
 
+	if (unlikely(osd->od_mount == NULL))
+		return -EINPROGRESS;
+
         /* osd_lproc.c call this without env, allocate ksfs for that case */
         if (unlikely(env == NULL)) {
                 OBD_ALLOC_PTR(ksfs);
@@ -985,15 +1012,15 @@ int osd_statfs(const struct lu_env *env, struct dt_device *d,
                 ksfs = &osd_oti_get(env)->oti_ksfs;
         }
 
-        cfs_spin_lock(&osd->od_osfs_lock);
-        /* cache 1 second */
-        if (cfs_time_before_64(osd->od_osfs_age, cfs_time_shift_64(-1))) {
-                result = ll_do_statfs(sb, ksfs);
-                if (likely(result == 0)) { /* N.B. statfs can't really fail */
-                        osd->od_osfs_age = cfs_time_current_64();
-                        statfs_pack(&osd->od_statfs, ksfs);
-                }
-        }
+	cfs_spin_lock(&osd->od_osfs_lock);
+	/* cache 1 second */
+	if (cfs_time_before_64(osd->od_osfs_age, cfs_time_shift_64(-1))) {
+		result = sb->s_op->statfs(sb->s_root, ksfs);
+		if (likely(result == 0)) { /* N.B. statfs can't really fail */
+			osd->od_osfs_age = cfs_time_current_64();
+			statfs_pack(&osd->od_statfs, ksfs);
+		}
+	}
 
         if (likely(result == 0))
                 *sfs = osd->od_statfs;
@@ -1372,15 +1399,15 @@ int osd_object_auth(const struct lu_env *env, struct dt_object *dt,
 }
 
 static struct timespec *osd_inode_time(const struct lu_env *env,
-                                       struct inode *inode, __u64 seconds)
+				       struct inode *inode, __u64 seconds)
 {
-        struct osd_thread_info *oti = osd_oti_get(env);
-        struct timespec        *t   = &oti->oti_time;
+	struct osd_thread_info	*oti = osd_oti_get(env);
+	struct timespec		*t   = &oti->oti_time;
 
-        t->tv_sec  = seconds;
-        t->tv_nsec = 0;
-        *t = timespec_trunc(*t, get_sb_time_gran(inode->i_sb));
-        return t;
+	t->tv_sec = seconds;
+	t->tv_nsec = 0;
+	*t = timespec_trunc(*t, inode->i_sb->s_time_gran);
+	return t;
 }
 
 
@@ -1402,8 +1429,8 @@ static void osd_inode_getattr(const struct lu_env *env,
         attr->la_flags      = LDISKFS_I(inode)->i_flags;
         attr->la_nlink      = inode->i_nlink;
         attr->la_rdev       = inode->i_rdev;
-        attr->la_blksize    = ll_inode_blksize(inode);
-        attr->la_blkbits    = inode->i_blkbits;
+	attr->la_blksize    = 1 << inode->i_blkbits;
+	attr->la_blkbits    = inode->i_blkbits;
 }
 
 static int osd_attr_get(const struct lu_env *env,
@@ -1507,6 +1534,32 @@ static int osd_inode_setattr(const struct lu_env *env,
         return 0;
 }
 
+static int osd_quota_transfer(struct inode *inode, const struct lu_attr *attr)
+{
+	if ((attr->la_valid & LA_UID && attr->la_uid != inode->i_uid) ||
+	    (attr->la_valid & LA_GID && attr->la_gid != inode->i_gid)) {
+		struct iattr	iattr;
+		int		rc;
+
+		iattr.ia_valid = 0;
+		if (attr->la_valid & LA_UID)
+			iattr.ia_valid |= ATTR_UID;
+		if (attr->la_valid & LA_GID)
+			iattr.ia_valid |= ATTR_GID;
+		iattr.ia_uid = attr->la_uid;
+		iattr.ia_gid = attr->la_gid;
+
+		rc = ll_vfs_dq_transfer(inode, &iattr);
+		if (rc) {
+			CERROR("%s: quota transfer failed: rc = %d. Is quota "
+			       "enforcement enabled on the ldiskfs filesystem?",
+			       inode->i_sb->s_id, rc);
+			return rc;
+		}
+	}
+	return 0;
+}
+
 static int osd_attr_set(const struct lu_env *env,
                         struct dt_object *dt,
                         const struct lu_attr *attr,
@@ -1527,28 +1580,34 @@ static int osd_attr_set(const struct lu_env *env,
         OSD_EXEC_OP(handle, attr_set);
 
         inode = obj->oo_inode;
+	if (!osd_dt_dev(handle->th_dev)->od_is_md) {
+		/* OFD support */
+		rc = osd_quota_transfer(inode, attr);
+		if (rc)
+			return rc;
+	} else {
 #ifdef HAVE_QUOTA_SUPPORT
-        if ((attr->la_valid & LA_UID && attr->la_uid != inode->i_uid) ||
-            (attr->la_valid & LA_GID && attr->la_gid != inode->i_gid)) {
-                struct osd_ctxt *save = &osd_oti_get(env)->oti_ctxt;
-                struct iattr iattr;
-                int rc;
+		if ((attr->la_valid & LA_UID && attr->la_uid != inode->i_uid) ||
+		    (attr->la_valid & LA_GID && attr->la_gid != inode->i_gid)) {
+			struct osd_ctxt	*save = &osd_oti_get(env)->oti_ctxt;
+			struct		 iattr iattr;
+			int		 rc;
 
-                iattr.ia_valid = 0;
-                if (attr->la_valid & LA_UID)
-                        iattr.ia_valid |= ATTR_UID;
-                if (attr->la_valid & LA_GID)
-                        iattr.ia_valid |= ATTR_GID;
-                iattr.ia_uid = attr->la_uid;
-                iattr.ia_gid = attr->la_gid;
-                osd_push_ctxt(env, save);
-                rc = ll_vfs_dq_transfer(inode, &iattr) ? -EDQUOT : 0;
-                osd_pop_ctxt(env, save);
-                if (rc != 0)
-                        return rc;
-        }
+			iattr.ia_valid = 0;
+			if (attr->la_valid & LA_UID)
+				iattr.ia_valid |= ATTR_UID;
+			if (attr->la_valid & LA_GID)
+				iattr.ia_valid |= ATTR_GID;
+			iattr.ia_uid = attr->la_uid;
+			iattr.ia_gid = attr->la_gid;
+			osd_push_ctxt(env, save, 1);
+			rc = ll_vfs_dq_transfer(inode, &iattr) ? -EDQUOT : 0;
+			osd_pop_ctxt(env, save, 1);
+			if (rc != 0)
+				return rc;
+		}
 #endif
-
+	}
         cfs_spin_lock(&obj->oo_guard);
         rc = osd_inode_setattr(env, inode, attr);
         cfs_spin_unlock(&obj->oo_guard);
@@ -1556,26 +1615,6 @@ static int osd_attr_set(const struct lu_env *env,
         if (!rc)
                 inode->i_sb->s_op->dirty_inode(inode);
         return rc;
-}
-
-/*
- * Object creation.
- *
- * XXX temporary solution.
- */
-static int osd_create_pre(struct osd_thread_info *info, struct osd_object *obj,
-                          struct lu_attr *attr, struct thandle *th)
-{
-        return 0;
-}
-
-static int osd_create_post(struct osd_thread_info *info, struct osd_object *obj,
-                           struct lu_attr *attr, struct thandle *th)
-{
-        osd_object_init0(obj);
-        if (obj->oo_inode && (obj->oo_inode->i_state & I_NEW))
-                unlock_new_inode(obj->oo_inode);
-        return 0;
 }
 
 struct dentry *osd_child_dentry_get(const struct lu_env *env,
@@ -1616,14 +1655,14 @@ static int osd_mkfile(struct osd_thread_info *info, struct osd_object *obj,
                 parent = hint->dah_parent;
 
 #ifdef HAVE_QUOTA_SUPPORT
-        osd_push_ctxt(info->oti_env, save);
+	osd_push_ctxt(info->oti_env, save, osd_dt_dev(th->th_dev)->od_is_md);
 #endif
         inode = ldiskfs_create_inode(oth->ot_handle,
                                      parent ? osd_dt_obj(parent)->oo_inode :
                                               osd_sb(osd)->s_root->d_inode,
                                      mode);
 #ifdef HAVE_QUOTA_SUPPORT
-        osd_pop_ctxt(info->oti_env, save);
+	osd_pop_ctxt(info->oti_env, save, osd_dt_dev(th->th_dev)->od_is_md);
 #endif
         if (!IS_ERR(inode)) {
                 /* Do not update file c/mtime in ldiskfs.
@@ -1687,7 +1726,7 @@ static int osd_mk_index(struct osd_thread_info *info, struct osd_object *obj,
         struct osd_thandle *oth;
         const struct dt_index_features *feat = dof->u.dof_idx.di_feat;
 
-        __u32 mode = (attr->la_mode & (S_IFMT | S_IRWXUGO | S_ISVTX));
+        __u32 mode = (attr->la_mode & (S_IFMT | S_IALLUGO | S_ISVTX));
 
         LASSERT(S_ISREG(attr->la_mode));
 
@@ -1722,7 +1761,7 @@ static int osd_mkreg(struct osd_thread_info *info, struct osd_object *obj,
 {
         LASSERT(S_ISREG(attr->la_mode));
         return osd_mkfile(info, obj, (attr->la_mode &
-                               (S_IFMT | S_IRWXUGO | S_ISVTX)), hint, th);
+                               (S_IFMT | S_IALLUGO | S_ISVTX)), hint, th);
 }
 
 static int osd_mksym(struct osd_thread_info *info, struct osd_object *obj,
@@ -1733,7 +1772,7 @@ static int osd_mksym(struct osd_thread_info *info, struct osd_object *obj,
 {
         LASSERT(S_ISLNK(attr->la_mode));
         return osd_mkfile(info, obj, (attr->la_mode &
-                              (S_IFMT | S_IRWXUGO | S_ISVTX)), hint, th);
+                              (S_IFMT | S_IALLUGO | S_ISVTX)), hint, th);
 }
 
 static int osd_mknod(struct osd_thread_info *info, struct osd_object *obj,
@@ -1742,7 +1781,7 @@ static int osd_mknod(struct osd_thread_info *info, struct osd_object *obj,
                      struct dt_object_format *dof,
                      struct thandle *th)
 {
-        cfs_umode_t mode = attr->la_mode & (S_IFMT | S_IRWXUGO | S_ISVTX);
+        cfs_umode_t mode = attr->la_mode & (S_IFMT | S_IALLUGO | S_ISVTX);
         int result;
 
         LINVRNT(osd_invariant(obj));
@@ -1753,6 +1792,10 @@ static int osd_mknod(struct osd_thread_info *info, struct osd_object *obj,
         result = osd_mkfile(info, obj, mode, hint, th);
         if (result == 0) {
                 LASSERT(obj->oo_inode != NULL);
+		/*
+		 * This inode should be marked dirty for i_rdev.  Currently
+		 * that is done in the osd_attr_init().
+		 */
                 init_special_inode(obj->oo_inode, mode, attr->la_rdev);
         }
         LINVRNT(osd_invariant(obj));
@@ -1804,6 +1847,51 @@ static void osd_ah_init(const struct lu_env *env, struct dt_allocation_hint *ah,
         ah->dah_mode = child_mode;
 }
 
+static void osd_attr_init(struct osd_thread_info *info, struct osd_object *obj,
+			  struct lu_attr *attr, struct dt_object_format *dof)
+{
+	struct inode   *inode = obj->oo_inode;
+	__u64           valid = attr->la_valid;
+	int             result;
+
+	attr->la_valid &= ~(LA_TYPE | LA_MODE);
+
+        if (dof->dof_type != DFT_NODE)
+                attr->la_valid &= ~LA_RDEV;
+        if ((valid & LA_ATIME) && (attr->la_atime == LTIME_S(inode->i_atime)))
+                attr->la_valid &= ~LA_ATIME;
+        if ((valid & LA_CTIME) && (attr->la_ctime == LTIME_S(inode->i_ctime)))
+                attr->la_valid &= ~LA_CTIME;
+        if ((valid & LA_MTIME) && (attr->la_mtime == LTIME_S(inode->i_mtime)))
+                attr->la_valid &= ~LA_MTIME;
+
+	if (!osd_obj2dev(obj)->od_is_md) {
+		/* OFD support */
+		result = osd_quota_transfer(inode, attr);
+		if (result)
+			return;
+	} else {
+#ifdef HAVE_QUOTA_SUPPORT
+		attr->la_valid &= ~(LA_UID | LA_GID);
+#endif
+	}
+
+        if (attr->la_valid != 0) {
+                result = osd_inode_setattr(info->oti_env, inode, attr);
+                /*
+                 * The osd_inode_setattr() should always succeed here.  The
+                 * only error that could be returned is EDQUOT when we are
+                 * trying to change the UID or GID of the inode. However, this
+                 * should not happen since quota enforcement is no longer
+                 * enabled on ldiskfs (lquota takes care of it).
+                 */
+                LASSERTF(result == 0, "%d", result);
+                inode->i_sb->s_op->dirty_inode(inode);
+        }
+
+        attr->la_valid = valid;
+}
+
 /**
  * Helper function for osd_object_create()
  *
@@ -1815,16 +1903,26 @@ static int __osd_object_create(struct osd_thread_info *info,
                                struct dt_object_format *dof,
                                struct thandle *th)
 {
+	int	result;
+	__u32	umask;
 
-        int result;
+	/* we drop umask so that permissions we pass are not affected */
+	umask = current->fs->umask;
+	current->fs->umask = 0;
 
-        result = osd_create_pre(info, obj, attr, th);
+	result = osd_create_type_f(dof->dof_type)(info, obj, attr, hint, dof,
+						  th);
         if (result == 0) {
-                result = osd_create_type_f(dof->dof_type)(info, obj,
-                                           attr, hint, dof, th);
-                if (result == 0)
-                        result = osd_create_post(info, obj, attr, th);
+		osd_attr_init(info, obj, attr, dof);
+		osd_object_init0(obj);
+		/* bz 24037 */
+		if (obj->oo_inode && (obj->oo_inode->i_state & I_NEW))
+			unlock_new_inode(obj->oo_inode);
         }
+
+	/* restore previous umask value */
+	current->fs->umask = umask;
+
         return result;
 }
 
@@ -1904,6 +2002,11 @@ static int osd_object_create(const struct lu_env *env, struct dt_object *dt,
         LASSERT(osd_write_locked(env, obj));
         LASSERT(th != NULL);
 
+	if (unlikely(fid_is_acct(fid)))
+		/* Quota files can't be created from the kernel any more,
+		 * 'tune2fs -O quota' will take care of creating them */
+		RETURN(-EPERM);
+
         OSD_EXEC_OP(th, create);
 
         result = __osd_object_create(info, obj, attr, hint, dof, th);
@@ -1961,6 +2064,9 @@ static int osd_object_destroy(const struct lu_env *env,
         LASSERT(oh->ot_handle);
         LASSERT(inode);
         LASSERT(!lu_object_is_dying(dt->do_lu.lo_header));
+
+	if (unlikely(fid_is_acct(fid)))
+		RETURN(-EPERM);
 
 	/* Parallel control for OI scrub. For most of cases, there is no
 	 * lock contention. So it will not affect unlink performance. */
@@ -2110,6 +2216,11 @@ static int osd_object_ea_create(const struct lu_env *env, struct dt_object *dt,
         LASSERT(!dt_object_exists(dt));
         LASSERT(osd_write_locked(env, obj));
         LASSERT(th != NULL);
+
+	if (unlikely(fid_is_acct(fid)))
+		/* Quota files can't be created from the kernel any more,
+		 * 'tune2fs -O quota' will take care of creating them */
+		RETURN(-EPERM);
 
         OSD_EXEC_OP(th, create);
 
@@ -2504,23 +2615,23 @@ static struct obd_capa *osd_capa_get(const struct lu_env *env,
 
 static int osd_object_sync(const struct lu_env *env, struct dt_object *dt)
 {
-        struct osd_object      *obj    = osd_dt_obj(dt);
-        struct inode           *inode  = obj->oo_inode;
-        struct osd_thread_info *info   = osd_oti_get(env);
-        struct dentry          *dentry = &info->oti_obj_dentry;
-        struct file            *file   = &info->oti_file;
-        int                     rc;
+	struct osd_object	*obj    = osd_dt_obj(dt);
+	struct inode		*inode  = obj->oo_inode;
+	struct osd_thread_info	*info   = osd_oti_get(env);
+	struct dentry		*dentry = &info->oti_obj_dentry;
+	struct file		*file   = &info->oti_file;
+	int			rc;
 
-        ENTRY;
+	ENTRY;
 
-        dentry->d_inode = inode;
-        file->f_dentry = dentry;
-        file->f_mapping = inode->i_mapping;
-        file->f_op = inode->i_fop;
-        LOCK_INODE_MUTEX(inode);
-        rc = file->f_op->fsync(file, dentry, 0);
-        UNLOCK_INODE_MUTEX(inode);
-        RETURN(rc);
+	dentry->d_inode = inode;
+	file->f_dentry = dentry;
+	file->f_mapping = inode->i_mapping;
+	file->f_op = inode->i_fop;
+	mutex_lock(&inode->i_mutex);
+	rc = file->f_op->fsync(file, dentry, 0);
+	mutex_unlock(&inode->i_mutex);
+	RETURN(rc);
 }
 
 static int osd_data_get(const struct lu_env *env, struct dt_object *dt,
@@ -2605,10 +2716,10 @@ static int osd_iam_container_init(const struct lu_env *env,
 static int osd_index_try(const struct lu_env *env, struct dt_object *dt,
                          const struct dt_index_features *feat)
 {
-        int result;
-        int ea_dir = 0;
-        struct osd_object *obj = osd_dt_obj(dt);
-        struct osd_device *osd = osd_obj2dev(obj);
+	int			 result;
+	int			 skip_iam = 0;
+	struct osd_object	*obj = osd_dt_obj(dt);
+	struct osd_device	*osd = osd_obj2dev(obj);
 
         LINVRNT(osd_invariant(obj));
         LASSERT(dt_object_exists(dt));
@@ -2622,10 +2733,14 @@ static int osd_index_try(const struct lu_env *env, struct dt_object *dt,
                         result = 0;
                 else
                         result = -ENOTDIR;
-                ea_dir = 1;
+		skip_iam = 1;
 	} else if (unlikely(feat == &dt_otable_features)) {
 		dt->do_index_ops = &osd_otable_ops;
 		return 0;
+	} else if (feat == &dt_acct_features) {
+		dt->do_index_ops = &osd_acct_index_ops;
+		result = 0;
+		skip_iam = 1;
         } else if (!osd_has_index(obj)) {
                 struct osd_directory *dir;
 
@@ -2661,13 +2776,22 @@ static int osd_index_try(const struct lu_env *env, struct dt_object *dt,
                 result = 0;
         }
 
-        if (result == 0 && ea_dir == 0) {
+	if (result == 0 && skip_iam == 0) {
                 if (!osd_iam_index_probe(env, obj, feat))
                         result = -ENOTDIR;
         }
         LINVRNT(osd_invariant(obj));
 
         return result;
+}
+
+static int osd_otable_it_attr_get(const struct lu_env *env,
+				 struct dt_object *dt,
+				 struct lu_attr *attr,
+				 struct lustre_capa *capa)
+{
+	attr->la_valid = 0;
+	return 0;
 }
 
 static const struct dt_object_operations osd_obj_ops = {
@@ -2732,6 +2856,11 @@ static const struct dt_object_operations osd_obj_ea_ops = {
         .do_capa_get          = osd_capa_get,
         .do_object_sync       = osd_object_sync,
         .do_data_get          = osd_data_get,
+};
+
+static const struct dt_object_operations osd_obj_otable_it_ops = {
+	.do_attr_get	= osd_otable_it_attr_get,
+	.do_index_try	= osd_index_try,
 };
 
 static int osd_index_declare_iam_delete(const struct lu_env *env,
@@ -3237,8 +3366,10 @@ again:
 		CDEBUG(D_LFSCK, "Trigger OI scrub by RPC for "DFID"\n",
 		       PFID(fid));
 		rc = osd_scrub_start(dev);
-		CDEBUG(D_LFSCK, "Trigger OI scrub by RPC for "DFID", rc = %d\n",
-		       PFID(fid), rc);
+		LCONSOLE_ERROR("%.16s: trigger OI scrub by RPC for "DFID
+			       ", rc = %d [2]\n",
+			       LDISKFS_SB(osd_sb(dev))->s_es->s_volume_name,
+			       PFID(fid), rc);
 		if (rc == 0)
 			goto again;
 	}
@@ -3746,9 +3877,9 @@ static struct dt_it *osd_it_ea_init(const struct lu_env *env,
         it->oie_file.f_pos      = 0;
         it->oie_file.f_dentry   = obj_dentry;
         if (attr & LUDA_64BITHASH)
-                it->oie_file.f_flags = O_64BITHASH;
+		it->oie_file.f_mode |= FMODE_64BITHASH;
         else
-                it->oie_file.f_flags = O_32BITHASH;
+		it->oie_file.f_mode |= FMODE_32BITHASH;
         it->oie_file.f_mapping    = obj->oo_inode->i_mapping;
         it->oie_file.f_op         = obj->oo_inode->i_fop;
         it->oie_file.private_data = NULL;
@@ -3933,7 +4064,7 @@ static int osd_it_ea_next(const struct lu_env *env, struct dt_it *di)
                 it->oie_it_dirent++;
                 RETURN(0);
         } else {
-                if (it->oie_file.f_pos == LDISKFS_HTREE_EOF)
+		if (it->oie_file.f_pos == ldiskfs_get_htree_eof(&it->oie_file))
                         rc = +1;
                 else
                         rc = osd_ldiskfs_it_fill(env, di);
@@ -4183,7 +4314,10 @@ struct lu_context_key osd_key = {
 static int osd_device_init(const struct lu_env *env, struct lu_device *d,
                            const char *name, struct lu_device *next)
 {
-        return osd_procfs_init(osd_dev(d), name);
+	struct osd_device *osd = osd_dev(d);
+
+	strncpy(osd->od_svname, name, MAX_OBD_NAME);
+	return osd_procfs_init(osd, name);
 }
 
 static int osd_shutdown(const struct lu_env *env, struct osd_device *o)
@@ -4194,7 +4328,13 @@ static int osd_shutdown(const struct lu_env *env, struct osd_device *o)
 
 	if (o->od_fsops) {
 		fsfilt_put_ops(o->od_fsops);
-	o->od_fsops = NULL;
+		o->od_fsops = NULL;
+	}
+
+	/* shutdown quota slave instance associated with the device */
+	if (o->od_quota_slave != NULL) {
+		qsd_fini(env, o->od_quota_slave);
+		o->od_quota_slave = NULL;
 	}
 
 	RETURN(0);
@@ -4335,6 +4475,7 @@ static int osd_process_config(const struct lu_env *env,
                 err = osd_mount(env, o, cfg);
                 break;
         case LCFG_CLEANUP:
+		lu_dev_del_linkage(d->ld_site, d);
                 err = osd_shutdown(env, o);
                 break;
         default:
@@ -4362,10 +4503,36 @@ static int osd_prepare(const struct lu_env *env, struct lu_device *pdev,
         if (result < 0)
                 RETURN(result);
 
-        if (!lu_device_is_md(pdev))
+	/* 2. setup quota slave instance */
+	osd->od_quota_slave = qsd_init(env, osd->od_svname, &osd->od_dt_dev,
+				       osd->od_proc_entry);
+	if (IS_ERR(osd->od_quota_slave)) {
+		result = PTR_ERR(osd->od_quota_slave);
+		osd->od_quota_slave = NULL;
+		RETURN(result);
+	}
+
+#if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2,3,50,0)
+	/* Unfortunately, the current MDD implementation relies on some specific
+	 * code to be executed in the OSD layer. Since OFD now also uses the OSD
+	 * module, we need a way to skip the metadata-specific code when running
+	 * with OFD.
+	 * The hack here is to check the type of the parent device which is
+	 * either MD (i.e. MDD device) with the current MDT stack or DT (i.e.
+	 * OFD device) on an OST. As a reminder, obdfilter does not use the OSD
+	 * layer and still relies on lvfs. This hack won't work any more when
+	 * LOD is landed since LOD is of DT type.
+	 * This code should be removed once the orion MDT changes (LOD/OSP, ...)
+	 * have been landed */
+	osd->od_is_md = lu_device_is_md(pdev);
+#else
+#warning "all is_md checks must be removed from osd-ldiskfs"
+#endif
+
+        if (!osd->od_is_md)
                 RETURN(0);
 
-        /* 2. setup local objects */
+        /* 3. setup local objects */
         result = llo_local_objects_setup(env, lu2md_dev(pdev), lu2dt_dev(dev));
         RETURN(result);
 }

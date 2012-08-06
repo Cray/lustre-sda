@@ -47,7 +47,7 @@
 #include <lustre_handles.h>
 #include <lustre_lib.h>
 
-#if !defined(HAVE_RCU) || !defined(__KERNEL__)
+#ifndef __KERNEL__
 # define list_add_rcu            cfs_list_add
 # define list_del_rcu            cfs_list_del
 # define list_for_each_rcu       cfs_list_for_each
@@ -55,7 +55,7 @@
 # define list_for_each_entry_rcu cfs_list_for_each_entry
 # define rcu_read_lock()         cfs_spin_lock(&bucket->lock)
 # define rcu_read_unlock()       cfs_spin_unlock(&bucket->lock)
-#endif /* ifndef HAVE_RCU */
+#endif /* !__KERNEL__ */
 
 static __u64 handle_base;
 #define HANDLE_INCR 7
@@ -123,6 +123,7 @@ void class_handle_hash(struct portals_handle *h,
                h, h->h_cookie);
         EXIT;
 }
+EXPORT_SYMBOL(class_handle_hash);
 
 static void class_handle_unhash_nolock(struct portals_handle *h)
 {
@@ -154,6 +155,7 @@ void class_handle_unhash(struct portals_handle *h)
         class_handle_unhash_nolock(h);
         cfs_spin_unlock(&bucket->lock);
 }
+EXPORT_SYMBOL(class_handle_unhash);
 
 void class_handle_hash_back(struct portals_handle *h)
 {
@@ -169,6 +171,7 @@ void class_handle_hash_back(struct portals_handle *h)
 
         EXIT;
 }
+EXPORT_SYMBOL(class_handle_hash_back);
 
 void *class_handle2object(__u64 cookie)
 {
@@ -179,8 +182,8 @@ void *class_handle2object(__u64 cookie)
 
         LASSERT(handle_hash != NULL);
 
-        /* Be careful when you want to change this code. See the 
-         * rcu_read_lock() definition on top this file. - jxiong */
+	/* Be careful when you want to change this code. See the
+	 * rcu_read_lock() definition on top this file. - jxiong */
         bucket = handle_hash + (cookie & HANDLE_HASH_MASK);
 
         rcu_read_lock();
@@ -200,6 +203,7 @@ void *class_handle2object(__u64 cookie)
 
         RETURN(retval);
 }
+EXPORT_SYMBOL(class_handle2object);
 
 void class_handle_free_cb(cfs_rcu_head_t *rcu)
 {
@@ -211,6 +215,7 @@ void class_handle_free_cb(cfs_rcu_head_t *rcu)
 	else
 		OBD_FREE(ptr, h->h_size);
 }
+EXPORT_SYMBOL(class_handle_free_cb);
 
 int class_handle_init(void)
 {

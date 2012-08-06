@@ -42,7 +42,6 @@
 #include <linux/pagemap.h>
 #include <linux/mm.h>
 #include <linux/version.h>
-#include <linux/smp_lock.h>
 #include <asm/uaccess.h>
 #include <linux/buffer_head.h>   // for wait_on_buffer
 #include <linux/pagevec.h>
@@ -57,15 +56,6 @@
 #include <lustre_dlm.h>
 #include <lustre_fid.h>
 #include "llite_internal.h"
-
-#ifndef HAVE_PAGE_CHECKED
-#ifdef HAVE_PG_FS_MISC
-#define PageChecked(page)        test_bit(PG_fs_misc, &(page)->flags)
-#define SetPageChecked(page)     set_bit(PG_fs_misc, &(page)->flags)
-#else
-#error PageChecked or PageFsMisc not defined in kernel
-#endif
-#endif
 
 /*
  * (new) readdir implementation overview.
@@ -245,7 +235,6 @@ static int ll_dir_readpage(struct file *file, struct page *page0)
                                                GFP_KERNEL);
                 if (ret == 0) {
                         unlock_page(page);
-                        page_cache_get(page);
                         if (ll_pagevec_add(&lru_pvec, page) == 0)
                                 ll_pagevec_lru_add_file(&lru_pvec);
                 } else {
@@ -1287,61 +1276,7 @@ out_free:
                 return rc;
         }
         case OBD_IOC_LLOG_CATINFO: {
-                struct ptlrpc_request *req = NULL;
-                char                  *buf = NULL;
-                char                  *str;
-                int                    len = 0;
-
-                rc = obd_ioctl_getdata(&buf, &len, (void *)arg);
-                if (rc)
-                        RETURN(rc);
-                data = (void *)buf;
-
-                if (!data->ioc_inlbuf1) {
-                        obd_ioctl_freedata(buf, len);
-                        RETURN(-EINVAL);
-                }
-
-                req = ptlrpc_request_alloc(sbi2mdc(sbi)->cl_import,
-                                           &RQF_LLOG_CATINFO);
-                if (req == NULL)
-                        GOTO(out_catinfo, rc = -ENOMEM);
-
-                req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
-                                     data->ioc_inllen1);
-                req_capsule_set_size(&req->rq_pill, &RMF_STRING, RCL_CLIENT,
-                                     data->ioc_inllen2);
-
-                rc = ptlrpc_request_pack(req, LUSTRE_LOG_VERSION, LLOG_CATINFO);
-                if (rc) {
-                        ptlrpc_request_free(req);
-                        GOTO(out_catinfo, rc);
-                }
-
-                str = req_capsule_client_get(&req->rq_pill, &RMF_NAME);
-                memcpy(str, data->ioc_inlbuf1, data->ioc_inllen1);
-                if (data->ioc_inllen2) {
-                        str = req_capsule_client_get(&req->rq_pill,
-                                                     &RMF_STRING);
-                        memcpy(str, data->ioc_inlbuf2, data->ioc_inllen2);
-                }
-
-                req_capsule_set_size(&req->rq_pill, &RMF_STRING, RCL_SERVER,
-                                     data->ioc_plen1);
-                ptlrpc_request_set_replen(req);
-
-                rc = ptlrpc_queue_wait(req);
-                if (!rc) {
-                        str = req_capsule_server_get(&req->rq_pill,
-                                                     &RMF_STRING);
-                        if (cfs_copy_to_user(data->ioc_pbuf1, str,
-                                             data->ioc_plen1))
-                                rc = -EFAULT;
-                }
-                ptlrpc_req_finished(req);
-        out_catinfo:
-                obd_ioctl_freedata(buf, len);
-                RETURN(rc);
+		RETURN(-EOPNOTSUPP);
         }
         case OBD_IOC_QUOTACHECK: {
                 struct obd_quotactl *oqctl;

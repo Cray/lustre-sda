@@ -223,6 +223,29 @@ void client_destroy_import(struct obd_import *imp)
 }
 EXPORT_SYMBOL(client_destroy_import);
 
+/**
+ * check whether the osc is on MDT or not
+ * In the config log,
+ * osc on MDT
+ *	setup 0:{fsname}-OSTxxxx-osc[-MDTxxxx] 1:lustre-OST0000_UUID 2:NID
+ * osc on client
+ *	setup 0:{fsname}-OSTxxxx-osc 1:lustre-OST0000_UUID 2:NID
+ *
+ **/
+static int osc_on_mdt(char *obdname)
+{
+	char *ptr;
+
+	ptr = strrchr(obdname, '-');
+	if (ptr == NULL)
+		return 0;
+
+	if (strncmp(ptr + 1, "MDT", 3) == 0)
+		return 1;
+
+	return 0;
+}
+
 /* configure an RPC client OBD device
  *
  * lcfg parameters:
@@ -352,9 +375,11 @@ int client_obd_setup(struct obd_device *obddev, struct lustre_cfg *lcfg)
         } else if (cfs_num_physpages >> (20 - CFS_PAGE_SHIFT) <= 512 /* MB */) {
                 cli->cl_max_rpcs_in_flight = 4;
         } else {
-                cli->cl_max_rpcs_in_flight = OSC_MAX_RIF_DEFAULT;
+		if (osc_on_mdt(obddev->obd_name))
+			cli->cl_max_rpcs_in_flight = MDS_OSC_MAX_RIF_DEFAULT;
+		else
+			cli->cl_max_rpcs_in_flight = OSC_MAX_RIF_DEFAULT;
         }
-
         rc = ldlm_get_ref();
         if (rc) {
                 CERROR("ldlm_get_ref failed: %d\n", rc);
@@ -595,18 +620,20 @@ int server_disconnect_export(struct obd_export *exp)
                 struct ptlrpc_reply_state *rs =
                         cfs_list_entry(exp->exp_outstanding_replies.next,
                                        struct ptlrpc_reply_state, rs_exp_list);
-                struct ptlrpc_service *svc = rs->rs_service;
+		struct ptlrpc_service_part *svcpt = rs->rs_svcpt;
 
-                cfs_spin_lock(&svc->srv_rs_lock);
-                cfs_list_del_init(&rs->rs_exp_list);
-                cfs_spin_lock(&rs->rs_lock);
-                ptlrpc_schedule_difficult_reply(rs);
-                cfs_spin_unlock(&rs->rs_lock);
-                cfs_spin_unlock(&svc->srv_rs_lock);
-        }
-        cfs_spin_unlock(&exp->exp_lock);
+		cfs_spin_lock(&svcpt->scp_rep_lock);
 
-        RETURN(rc);
+		cfs_list_del_init(&rs->rs_exp_list);
+		cfs_spin_lock(&rs->rs_lock);
+		ptlrpc_schedule_difficult_reply(rs);
+		cfs_spin_unlock(&rs->rs_lock);
+
+		cfs_spin_unlock(&svcpt->scp_rep_lock);
+	}
+	cfs_spin_unlock(&exp->exp_lock);
+
+	RETURN(rc);
 }
 
 /* --------------------------------------------------------------------------
@@ -704,7 +731,7 @@ check_and_start_recovery_timer(struct obd_device *obd,
 
 int target_handle_connect(struct ptlrpc_request *req)
 {
-        struct obd_device *target, *targref = NULL;
+	struct obd_device *target = NULL, *targref = NULL;
         struct obd_export *export = NULL;
         struct obd_import *revimp;
         struct lustre_handle conn;
@@ -735,17 +762,29 @@ int target_handle_connect(struct ptlrpc_request *req)
         if (!target)
                 target = class_name2obd(str);
 
-        if (!target || target->obd_stopping || !target->obd_set_up) {
-                deuuidify(str, NULL, &target_start, &target_len);
-                LCONSOLE_ERROR_MSG(0x137, "%.*s: Not available for connect "
-                                   "from %s (%s)\n", target_len, target_start,
-                                   libcfs_nid2str(req->rq_peer.nid), !target ?
-                                   "no target" : (target->obd_stopping ?
-                                   "stopping" : "not set up"));
-                GOTO(out, rc = -ENODEV);
-        }
+	if (!target) {
+		deuuidify(str, NULL, &target_start, &target_len);
+		LCONSOLE_ERROR_MSG(0x137, "UUID '%s' is not available for "
+				   "connect (no target)\n", str);
+		GOTO(out, rc = -ENODEV);
+	}
+
+	cfs_spin_lock(&target->obd_dev_lock);
+	if (target->obd_stopping || !target->obd_set_up) {
+		cfs_spin_unlock(&target->obd_dev_lock);
+
+		deuuidify(str, NULL, &target_start, &target_len);
+		LCONSOLE_ERROR_MSG(0x137, "%.*s: Not available for connect "
+				   "from %s (%s)\n", target_len, target_start,
+				   libcfs_nid2str(req->rq_peer.nid), 
+				   (target->obd_stopping ?
+				   "stopping" : "not set up"));
+		GOTO(out, rc = -ENODEV);
+	}
 
         if (target->obd_no_conn) {
+		cfs_spin_unlock(&target->obd_dev_lock);
+
                 LCONSOLE_WARN("%s: Temporarily refusing client connection "
                               "from %s\n", target->obd_name,
                               libcfs_nid2str(req->rq_peer.nid));
@@ -757,6 +796,8 @@ int target_handle_connect(struct ptlrpc_request *req)
            Really, class_uuid2obd should take the ref. */
         targref = class_incref(target, __FUNCTION__, cfs_current());
 
+	target->obd_conn_inprogress++;
+	cfs_spin_unlock(&target->obd_dev_lock);
 
         str = req_capsule_client_get(&req->rq_pill, &RMF_CLUUID);
         if (str == NULL) {
@@ -957,38 +998,36 @@ no_export:
         if (export == NULL) {
                 if (target->obd_recovering) {
                         cfs_time_t t;
+			int	   c; /* connected */
+			int	   i; /* in progress */
+			int	   k; /* known */
 
-                        t = cfs_timer_deadline(&target->obd_recovery_timer);
-                        t = cfs_time_sub(t, cfs_time_current());
-                        t = cfs_duration_sec(t);
-                        LCONSOLE_WARN("%s: Denying connection for new client "
-                                      "%s (at %s), waiting for %d clients in "
-                                      "recovery for %d:%.02d\n",
-                                      target->obd_name,
-                                      libcfs_nid2str(req->rq_peer.nid),
-                                      cluuid.uuid,
-                                      cfs_atomic_read(&target-> \
-                                                      obd_lock_replay_clients),
-                                      (int)t / 60, (int)t % 60);
+			c = cfs_atomic_read(&target->obd_connected_clients);
+			i = cfs_atomic_read(&target->obd_lock_replay_clients);
+			k = target->obd_max_recoverable_clients;
+			t = cfs_timer_deadline(&target->obd_recovery_timer);
+			t = cfs_time_sub(t, cfs_time_current());
+			t = cfs_duration_sec(t);
+			LCONSOLE_WARN("%s: Denying connection for new client "
+				      "%s (at %s), waiting for all %d known "
+				      "clients (%d recovered, %d in progress, "
+				      "and %d unseen) to recover in %d:%.02d\n",
+				      target->obd_name, cluuid.uuid,
+				      libcfs_nid2str(req->rq_peer.nid), k,
+				      c - i, i, k - c, (int)t / 60,
+				      (int)t % 60);
                         rc = -EBUSY;
                 } else {
 dont_check_exports:
                         rc = obd_connect(req->rq_svc_thread->t_env,
                                          &export, target, &cluuid, data,
                                          client_nid);
-                        if (rc == 0) {
+                        if (rc == 0)
                                 conn.cookie = export->exp_handle.h_cookie;
-                                /* LU-1092 reconnect put export refcount in the
-                                 * end, connect needs take one here too. */
-                                class_export_get(export);
-                        }
                 }
         } else {
                 rc = obd_reconnect(req->rq_svc_thread->t_env,
                                    export, target, &cluuid, data, client_nid);
-                if (rc == 0)
-                        /* prevous done via class_conn2export */
-                        class_export_get(export);
         }
         if (rc)
                 GOTO(out, rc);
@@ -1024,7 +1063,8 @@ dont_check_exports:
         if (req->rq_export != NULL)
                 class_export_put(req->rq_export);
 
-        req->rq_export = export;
+	/* request takes one export refcount */
+	req->rq_export = class_export_get(export);
 
         cfs_spin_lock(&export->exp_lock);
         if (export->exp_conn_cnt >= lustre_msg_get_conn_cnt(req->rq_reqmsg)) {
@@ -1072,14 +1112,18 @@ dont_check_exports:
                              &export->exp_connection->c_peer.nid,
                              &export->exp_nid_hash);
         }
-        /**
-          class_disconnect->class_export_recovery_cleanup() race
-         */
+
         if (target->obd_recovering && !export->exp_in_recovery) {
                 int has_transno;
                 __u64 transno = data->ocd_transno;
 
                 cfs_spin_lock(&export->exp_lock);
+		/* possible race with class_disconnect_stale_exports,
+		 * export may be already in the eviction process */
+		if (export->exp_failed) {
+			cfs_spin_unlock(&export->exp_lock);
+			GOTO(out, rc = -ENODEV);
+		}
                 export->exp_in_recovery = 1;
                 export->exp_req_replay_needed = 1;
                 export->exp_lock_replay_needed = 1;
@@ -1171,8 +1215,13 @@ out:
 
                 class_export_put(export);
         }
-        if (targref)
+        if (targref) {
+		cfs_spin_lock(&target->obd_dev_lock);
+		target->obd_conn_inprogress--;
+		cfs_spin_unlock(&target->obd_dev_lock);
+
                 class_decref(targref, __FUNCTION__, cfs_current());
+	}
         if (rc)
                 req->rq_status = rc;
         RETURN(rc);
@@ -1517,7 +1566,7 @@ check_and_start_recovery_timer(struct obd_device *obd,
         if (!new_client && service_time)
                 /* Teach server about old server's estimates, as first guess
                  * at how long new requests will take. */
-                at_measured(&req->rq_rqbd->rqbd_service->srv_at_estimate,
+		at_measured(&req->rq_rqbd->rqbd_svcpt->scp_at_estimate,
                             service_time);
 
         target_start_recovery_timer(obd);
@@ -1828,15 +1877,17 @@ static int handle_recovery_req(struct ptlrpc_thread *thread,
                  * this client may come in recovery time
                  */
                 if (!AT_OFF) {
-                        struct ptlrpc_service *svc = req->rq_rqbd->rqbd_service;
-                        /* If the server sent early reply for this request,
-                         * the client will recalculate the timeout according to
-                         * current server estimate service time, so we will
-                         * use the maxium timeout here for waiting the client
-                         * sending the next req */
-                        to = max((int)at_est2timeout(
-                                 at_get(&svc->srv_at_estimate)),
-                                 (int)lustre_msg_get_timeout(req->rq_reqmsg));
+			struct ptlrpc_service_part *svcpt;
+
+			svcpt = req->rq_rqbd->rqbd_svcpt;
+			/* If the server sent early reply for this request,
+			 * the client will recalculate the timeout according to
+			 * current server estimate service time, so we will
+			 * use the maxium timeout here for waiting the client
+			 * sending the next req */
+			to = max((int)at_est2timeout(
+				 at_get(&svcpt->scp_at_estimate)),
+				 (int)lustre_msg_get_timeout(req->rq_reqmsg));
                         /* Add net_latency (see ptlrpc_replay_req) */
                         to += lustre_msg_get_service_time(req->rq_reqmsg);
                 }
@@ -2314,10 +2365,10 @@ int target_send_reply_msg(struct ptlrpc_request *req, int rc, int fail_id)
 
 void target_send_reply(struct ptlrpc_request *req, int rc, int fail_id)
 {
+	struct ptlrpc_service_part *svcpt;
         int                        netrc;
         struct ptlrpc_reply_state *rs;
         struct obd_export         *exp;
-        struct ptlrpc_service     *svc;
         ENTRY;
 
         if (req->rq_no_reply) {
@@ -2325,7 +2376,7 @@ void target_send_reply(struct ptlrpc_request *req, int rc, int fail_id)
                 return;
         }
 
-        svc = req->rq_rqbd->rqbd_service;
+	svcpt = req->rq_rqbd->rqbd_svcpt;
         rs = req->rq_reply_state;
         if (rs == NULL || !rs->rs_difficult) {
                 /* no notifiers */
@@ -2337,7 +2388,7 @@ void target_send_reply(struct ptlrpc_request *req, int rc, int fail_id)
         /* must be an export if locks saved */
         LASSERT (req->rq_export != NULL);
         /* req/reply consistent */
-        LASSERT (rs->rs_service == svc);
+	LASSERT(rs->rs_svcpt == svcpt);
 
         /* "fresh" reply */
         LASSERT (!rs->rs_scheduled);
@@ -2374,9 +2425,9 @@ void target_send_reply(struct ptlrpc_request *req, int rc, int fail_id)
 
         netrc = target_send_reply_msg (req, rc, fail_id);
 
-        cfs_spin_lock(&svc->srv_rs_lock);
+	cfs_spin_lock(&svcpt->scp_rep_lock);
 
-        cfs_atomic_inc(&svc->srv_n_difficult_replies);
+	cfs_atomic_inc(&svcpt->scp_nreps_difficult);
 
         if (netrc != 0) {
                 /* error sending: reply is off the net.  Also we need +1
@@ -2396,12 +2447,12 @@ void target_send_reply(struct ptlrpc_request *req, int rc, int fail_id)
                 CDEBUG(D_HA, "Schedule reply immediately\n");
                 ptlrpc_dispatch_difficult_reply(rs);
         } else {
-                cfs_list_add (&rs->rs_list, &svc->srv_active_replies);
-                rs->rs_scheduled = 0;           /* allow notifier to schedule */
-        }
-        cfs_spin_unlock(&rs->rs_lock);
-        cfs_spin_unlock(&svc->srv_rs_lock);
-        EXIT;
+		cfs_list_add(&rs->rs_list, &svcpt->scp_rep_active);
+		rs->rs_scheduled = 0;	/* allow notifier to schedule */
+	}
+	cfs_spin_unlock(&rs->rs_lock);
+	cfs_spin_unlock(&svcpt->scp_rep_lock);
+	EXIT;
 }
 
 int target_handle_qc_callback(struct ptlrpc_request *req)

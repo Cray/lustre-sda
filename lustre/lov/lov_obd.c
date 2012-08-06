@@ -1169,7 +1169,7 @@ static int lov_create(const struct lu_env *env, struct obd_export *exp,
 
         /* osc_create have timeout equ obd_timeout/2 so waiting don't be
          * longer then this */
-        l_wait_event(set->set_waitq, lov_finished_set(set), &lwi);
+	l_wait_event(set->set_waitq, lov_set_finished(set, 1), &lwi);
 
         /* we not have ptlrpc set for assign set->interpret and should
          * be call interpret function himself. calling from cb_create_update
@@ -2767,22 +2767,6 @@ static int lov_set_info_async(const struct lu_env *env, struct obd_export *exp,
         }
         RETURN(rc);
 }
-
-int lov_test_and_clear_async_rc(struct lov_stripe_md *lsm)
-{
-        int i, rc = 0;
-        ENTRY;
-
-        for (i = 0; i < lsm->lsm_stripe_count; i++) {
-                struct lov_oinfo *loi = lsm->lsm_oinfo[i];
-                if (loi->loi_ar.ar_rc && !rc)
-                        rc = loi->loi_ar.ar_rc;
-                loi->loi_ar.ar_rc = 0;
-        }
-        RETURN(rc);
-}
-EXPORT_SYMBOL(lov_test_and_clear_async_rc);
-
 
 static int lov_extent_calc(struct obd_export *exp, struct lov_stripe_md *lsm,
                            int cmd, __u64 *offset)

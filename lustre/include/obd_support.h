@@ -241,6 +241,11 @@ int obd_alloc_fail(const void *ptr, const char *name, const char *type,
 #define OBD_FAIL_MDS_GET_INFO_NET        0x186
 #define OBD_FAIL_MDS_DQACQ_NET           0x187
 
+/* OI scrub */
+#define OBD_FAIL_OSD_SCRUB_DELAY	 0x190
+#define OBD_FAIL_OSD_SCRUB_CRASH	 0x191
+#define OBD_FAIL_OSD_SCRUB_FATAL	 0x192
+
 #define OBD_FAIL_OST                     0x200
 #define OBD_FAIL_OST_CONNECT_NET         0x201
 #define OBD_FAIL_OST_DISCONNECT_NET      0x202
@@ -284,6 +289,7 @@ int obd_alloc_fail(const void *ptr, const char *name, const char *type,
 #define OBD_FAIL_OST_MAPBLK_ENOSPC       0x228
 #define OBD_FAIL_OST_ENOINO              0x229
 #define OBD_FAIL_OST_DQACQ_NET           0x230
+#define OBD_FAIL_OST_STATFS_EINPROGRESS  0x231
 
 #define OBD_FAIL_LDLM                    0x300
 #define OBD_FAIL_LDLM_NAMESPACE_NEW      0x301
@@ -335,6 +341,7 @@ int obd_alloc_fail(const void *ptr, const char *name, const char *type,
 #define OBD_FAIL_OSC_CP_CANCEL_RACE      0x40f
 #define OBD_FAIL_OSC_CP_ENQ_RACE         0x410
 #define OBD_FAIL_OSC_NO_GRANT            0x411
+#define OBD_FAIL_OSC_DELAY_SETTIME	 0x412
 
 #define OBD_FAIL_PTLRPC                  0x500
 #define OBD_FAIL_PTLRPC_ACK              0x501
@@ -631,10 +638,10 @@ do {									      \
 #ifdef __KERNEL__
 
 /* Allocations above this size are considered too big and could not be done
- * atomically. 
+ * atomically.
  *
  * Be very careful when changing this value, especially when decreasing it,
- * since vmalloc in Linux doesn't perform well on multi-cores system, calling 
+ * since vmalloc in Linux doesn't perform well on multi-cores system, calling
  * vmalloc in critical path would hurt peformance badly. See LU-66.
  */
 #define OBD_ALLOC_BIG (4 * CFS_PAGE_SIZE)
@@ -698,16 +705,6 @@ do {                                                                          \
 } while(0)
 
 
-#ifdef HAVE_RCU
-# ifdef HAVE_CALL_RCU_PARAM
-#  define my_call_rcu(rcu, cb)            call_rcu(rcu, cb, rcu)
-# else
-#  define my_call_rcu(rcu, cb)            call_rcu(rcu, cb)
-# endif
-#else
-# define my_call_rcu(rcu, cb)             (cb)(rcu)
-#endif
-
 #define OBD_FREE_RCU(ptr, size, handle)					      \
 do {									      \
 	struct portals_handle *__h = (handle);				      \
@@ -715,7 +712,7 @@ do {									      \
 	LASSERT(handle != NULL);					      \
 	__h->h_cookie = (unsigned long)(ptr);				      \
 	__h->h_size = (size);						      \
-	my_call_rcu(&__h->h_rcu, class_handle_free_cb);			      \
+	call_rcu(&__h->h_rcu, class_handle_free_cb);			      \
 	POISON_PTR(ptr);						      \
 } while(0)
 

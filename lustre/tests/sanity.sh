@@ -15,12 +15,6 @@ CPU=`awk '/model/ {print $4}' /proc/cpuinfo`
 #                                    buffer i/o errs             sock spc runas
 [ "$CPU" = "UML" ] && EXCEPT="$EXCEPT 27m 27n 27o 27p 27q 27r 31d 54a  64b 99a 99b 99c 99d 99e 99f 101a"
 
-case `uname -r` in
-2.4*) FSTYPE=${FSTYPE:-ext3} ;;
-2.6*) FSTYPE=${FSTYPE:-ldiskfs} ;;
-*) error "unsupported kernel" ;;
-esac
-
 SRCDIR=$(cd $(dirname $0); echo $PWD)
 export PATH=$PATH:/sbin
 
@@ -1356,9 +1350,6 @@ check_seq_oid()
         # compare lmm_object_id and lu_fid->oid
         [ $lmm_oid = ${fid[2]} ] || { error "OID mismatch"; return 2; }
 
-        [ "$FSTYPE" != "ldiskfs" ] &&
-                skip "cannot check filter fid FSTYPE=$FSTYPE" && return 0
-
         # check the trusted.fid attribute of the OST objects of the file
         local have_obdidx=false
         local stripe_nr=0
@@ -1370,6 +1361,11 @@ check_seq_oid()
 
                 local ost=$((obdidx + 1))
                 local dev=$(ostdevname $ost)
+
+		if [ $(facet_fstype ost$ost) != ldiskfs ]; then
+			echo "Currently only works with ldiskfs-based OSTs"
+			continue
+		fi
 
                 log "want: stripe:$stripe_nr ost:$obdidx oid:$oid/$hex seq:$seq"
 
@@ -2429,7 +2425,10 @@ test_39j() {
 	touch $DIR1/$tfile
 	sleep 1
 
-	multiop_bg_pause $DIR1/$tfile oO_RDWR:w2097152_c || error "multiop failed"
+	#define OBD_FAIL_OSC_DELAY_SETTIME	 0x412
+	lctl set_param fail_loc=0x80000412
+	multiop_bg_pause $DIR1/$tfile oO_RDWR:w2097152_c ||
+		error "multiop failed"
 	local multipid=$!
 	local mtime1=`stat -c %Y $DIR1/$tfile`
 
@@ -2440,12 +2439,14 @@ test_39j() {
 
 	for (( i=0; i < 2; i++ )) ; do
 		local mtime2=`stat -c %Y $DIR1/$tfile-1`
-		[ "$mtime1" = "$mtime2" ] || \
-			error "mtime is lost on close: $mtime2, should be $mtime1"
+		[ "$mtime1" = "$mtime2" ] ||
+			error "mtime is lost on close: $mtime2, " \
+			      "should be $mtime1"
 
 		cancel_lru_locks osc
 		if [ $i = 0 ] ; then echo "repeat after cancel_lru_locks"; fi
 	done
+	lctl set_param fail_loc=0
 	stop_full_debug_logging
 }
 run_test 39j "write, rename, close, stat ======================="
@@ -4265,7 +4266,8 @@ run_test 65l "lfs find on -1 stripe dir ========================"
 test_66() {
 	COUNT=${COUNT:-8}
 	dd if=/dev/zero of=$DIR/f66 bs=1k count=$COUNT
-	sync; sleep 1; sync
+	sync; sync_all_data; sync; sync_all_data
+	cancel_lru_locks osc
 	BLOCKS=`ls -s $DIR/f66 | awk '{ print $1 }'`
 	[ $BLOCKS -ge $COUNT ] || error "$DIR/f66 blocks $BLOCKS < $COUNT"
 }
@@ -4719,7 +4721,7 @@ test_77i() { # bug 13805
 	for VALUE in `lctl get_param osc.*osc-[^mM]*.checksum_type`; do
 		PARAM=`echo ${VALUE[0]} | cut -d "=" -f1`
 		algo=`lctl get_param -n $PARAM | sed 's/.*\[\(.*\)\].*/\1/g'`
-		[ "$algo" = "crc32" ] || error "algo set to $algo instead of crc32"
+		[ "$algo" = "adler" ] || error "algo set to $algo instead of adler"
 	done
 	remount_client $MOUNT
 }
@@ -6937,7 +6939,10 @@ set_dir_limits () {
 	done
 }
 test_129() {
-	[ "$FSTYPE" != "ldiskfs" ] && skip "not needed for FSTYPE=$FSTYPE" && return 0
+	if [ "$(facet_type_fstype MDS)" != ldiskfs ]; then
+		skip "Only applicable to ldiskfs-based MDTs"
+		return
+	fi
 	remote_mds_nodsh && skip "remote MDS with nodsh" && return
 
 	EFBIG=27
@@ -7523,22 +7528,24 @@ test_133d() {
     mkdir -p ${testdir2} || error "mkdir failed"
 
     createmany -o $testdir1/test 512 || error "createmany failed"
-    local testdir1_size=$(ls -l $DIR/${tdir} |
-                          awk '/stats_testdir1/ {print $5}')
-    local testdir2_size=$(ls -l $DIR/${tdir} |
-                          awk '/stats_testdir2/ {print $5}')
 
-    testdir1_size=$(order_2 $testdir1_size)
-    testdir2_size=$(order_2 $testdir2_size)
+	# check samedir rename size
+	mv ${testdir1}/test0 ${testdir1}/test_0
 
-    testdir1_size=$(size_in_KMGT $testdir1_size)
-    testdir2_size=$(size_in_KMGT $testdir2_size)
+	local testdir1_size=$(ls -l $DIR/${tdir} |
+		awk '/stats_testdir1/ {print $5}')
+	local testdir2_size=$(ls -l $DIR/${tdir} |
+		awk '/stats_testdir2/ {print $5}')
 
-    echo "source rename dir size: ${testdir1_size}"
-    echo "target rename dir size: ${testdir2_size}"
+	testdir1_size=$(order_2 $testdir1_size)
+	testdir2_size=$(order_2 $testdir2_size)
 
-    # check samedir rename size
-    mv ${testdir1}/test0 ${testdir1}/test_0
+	testdir1_size=$(size_in_KMGT $testdir1_size)
+	testdir2_size=$(size_in_KMGT $testdir2_size)
+
+	echo "source rename dir size: ${testdir1_size}"
+	echo "target rename dir size: ${testdir2_size}"
+
     local cmd="do_facet $SINGLEMDS $LCTL get_param mdt.*.rename_stats"
     eval $cmd || error "$cmd failed"
     local samedir=$($cmd | grep 'same_dir')
@@ -7551,6 +7558,21 @@ test_133d() {
 
     # check crossdir rename size
     mv ${testdir1}/test_0 ${testdir2}/test_0
+
+	testdir1_size=$(ls -l $DIR/${tdir} |
+		awk '/stats_testdir1/ {print $5}')
+	testdir2_size=$(ls -l $DIR/${tdir} |
+		awk '/stats_testdir2/ {print $5}')
+
+	testdir1_size=$(order_2 $testdir1_size)
+	testdir2_size=$(order_2 $testdir2_size)
+
+	testdir1_size=$(size_in_KMGT $testdir1_size)
+	testdir2_size=$(size_in_KMGT $testdir2_size)
+
+	echo "source rename dir size: ${testdir1_size}"
+	echo "target rename dir size: ${testdir2_size}"
+
     eval $cmd || error "$cmd failed"
     local crossdir=$($cmd | grep 'crossdir')
     local src_sample=$(get_rename_size $testdir1_size)
@@ -7625,44 +7647,43 @@ test_150() {
 run_test 150 "truncate/append tests"
 
 function roc_hit() {
-    local list=$(comma_list $(osts_nodes))
+	local list=$(comma_list $(osts_nodes))
 
-    ACCNUM=$(do_nodes $list $LCTL get_param -n obdfilter.*.stats | \
-        awk '/'cache_hit'/ {sum+=$2} END {print sum}')
-    echo $ACCNUM
+	echo $(get_obdfilter_param $list '' stats |
+	       awk '/'cache_hit'/ {sum+=$2} END {print sum}')
 }
 
 function set_cache() {
-    local on=1
+	local on=1
 
-    if [ "$2" == "off" ]; then
-        on=0;
-    fi
-    local list=$(comma_list $(osts_nodes))
-    do_nodes $list lctl set_param obdfilter.*.${1}_cache_enable $on
+	if [ "$2" == "off" ]; then
+		on=0;
+	fi
+	local list=$(comma_list $(osts_nodes))
+	set_obdfilter_param $list '' $1_cache_enable $on
 
-    cancel_lru_locks osc
+	cancel_lru_locks osc
 }
 
 test_151() {
-        remote_ost_nodsh && skip "remote OST with nodsh" && return
+	remote_ost_nodsh && skip "remote OST with nodsh" && return
 
-        local CPAGES=3
-        local list=$(comma_list $(osts_nodes))
+	local CPAGES=3
+	local list=$(comma_list $(osts_nodes))
 
-        # check whether obdfilter is cache capable at all
-        if ! do_nodes $list $LCTL get_param -n obdfilter.*.read_cache_enable > /dev/null; then
-                echo "not cache-capable obdfilter"
-                return 0
-        fi
+	# check whether obdfilter is cache capable at all
+	if ! get_obdfilter_param $list '' read_cache_enable >/dev/null; then
+		echo "not cache-capable obdfilter"
+		return 0
+	fi
 
-        # check cache is enabled on all obdfilters
-        if do_nodes $list $LCTL get_param -n obdfilter.*.read_cache_enable | grep 0 >&/dev/null; then
-                echo "oss cache is disabled"
-                return 0
-        fi
+	# check cache is enabled on all obdfilters
+	if get_obdfilter_param $list '' read_cache_enable | grep 0; then
+		echo "oss cache is disabled"
+		return 0
+	fi
 
-        do_nodes $list $LCTL set_param -n obdfilter.*.writethrough_cache_enable 1
+	set_obdfilter_param $list '' writethrough_cache_enable 1
 
         # pages should be in the case right after write
         dd if=/dev/urandom of=$DIR/$tfile bs=4k count=$CPAGES || error "dd failed"
@@ -7676,7 +7697,7 @@ test_151() {
 
         # the following read invalidates the cache
         cancel_lru_locks osc
-        do_nodes $list $LCTL set_param -n obdfilter.*.read_cache_enable 0
+	set_obdfilter_param $list '' read_cache_enable 0
         cat $DIR/$tfile >/dev/null
 
         # now data shouldn't be found in the cache
@@ -7688,7 +7709,7 @@ test_151() {
                 error "IN CACHE: before: $BEFORE, after: $AFTER"
         fi
 
-        do_nodes $list $LCTL set_param -n obdfilter.*.read_cache_enable 1
+	set_obdfilter_param $list '' read_cache_enable 1
         rm -f $DIR/$tfile
 }
 run_test 151 "test cache on oss and controls ==============================="
@@ -8499,189 +8520,299 @@ test_182() {
 run_test 182 "Disable MDC RPCs semaphore wouldn't crash client ================"
 
 # OST pools tests
-POOL=${POOL:-cea1}
-TGT_COUNT=$OSTCOUNT
-TGTPOOL_FIRST=1
-TGTPOOL_MAX=$(($TGT_COUNT - 1))
-TGTPOOL_STEP=2
-TGTPOOL_LIST=`seq $TGTPOOL_FIRST $TGTPOOL_STEP $TGTPOOL_MAX`
-POOL_ROOT=${POOL_ROOT:-$DIR/d200.pools}
-POOL_DIR_NAME=dir_tst
-POOL_DIR=$POOL_ROOT/$POOL_DIR_NAME
-POOL_FILE=$POOL_ROOT/file_tst
-
 check_file_in_pool()
 {
-	file=$1
-	res=$($GETSTRIPE $file | grep 0x | cut -f2)
+	local file=$1
+	local pool=$2
+	local tlist="$3"
+	local res=$($GETSTRIPE $file | grep 0x | cut -f2)
 	for i in $res
 	do
-		found=$(echo :$TGTPOOL_LIST: | tr " " ":"  | grep :$i:)
-		if [[ "$found" == "" ]]
-		then
-			echo "pool list: $TGTPOOL_LIST"
-			echo "striping: $res"
-			error "$file not allocated in $POOL"
-			return 1
-		fi
+		for t in $tlist ; do
+			[ "$i" -eq "$t" ] && continue 2
+		done
+
+		echo "pool list: $tlist"
+		echo "striping: $res"
+		error_noexit "$file not allocated in $pool"
+		return 1
 	done
 	return 0
 }
 
-trap "cleanup_pools $FSNAME" EXIT
+pool_add() {
+	echo "Creating new pool"
+	local pool=$1
 
-test_200a() {
-	remote_mgs_nodsh && skip "remote MGS with nodsh" && return
-    create_pool $FSNAME.$POOL || return $?
-	[ $($LFS pool_list $FSNAME | grep -c $POOL) -eq 1 ] ||
-		error "$POOL not in lfs pool_list"
+	create_pool $FSNAME.$pool ||
+		{ error_noexit "No pool created, result code $?"; return 1; }
+	[ $($LFS pool_list $FSNAME | grep -c $pool) -eq 1 ] ||
+		{ error_noexit "$pool not in lfs pool_list"; return 2; }
 }
-run_test 200a "Create new pool =========================================="
 
-test_200b() {
-	remote_mgs_nodsh && skip "remote MGS with nodsh" && return
-	TGT=$(for i in $TGTPOOL_LIST; do printf "$FSNAME-OST%04x_UUID " $i; done)
-	do_facet mgs $LCTL pool_add $FSNAME.$POOL \
-		$FSNAME-OST[$TGTPOOL_FIRST-$TGTPOOL_MAX/$TGTPOOL_STEP]
-	wait_update $HOSTNAME "lctl get_param -n lov.$FSNAME-*.pools.$POOL | sort -u | tr '\n' ' ' " "$TGT" ||
-		error "Add to pool failed"
-	local lfscount=$($LFS pool_list $FSNAME.$POOL | grep -c "\-OST")
-	local addcount=$((($TGTPOOL_MAX - $TGTPOOL_FIRST) / $TGTPOOL_STEP + 1))
-	[ $lfscount -eq $addcount ] ||
-		error "lfs pool_list bad ost count $lfscount != $addcount"
+pool_add_targets() {
+	echo "Adding targets to pool"
+	local pool=$1
+	local first=$2
+	local last=$3
+	local step=${4:-1}
+
+	local list=$(seq $first $step $last)
+
+	local t=$(for i in $list; do printf "$FSNAME-OST%04x_UUID " $i; done)
+	do_facet mgs $LCTL pool_add \
+			$FSNAME.$pool $FSNAME-OST[$first-$last/$step]
+	wait_update $HOSTNAME "lctl get_param -n lov.$FSNAME-*.pools.$pool \
+			| sort -u | tr '\n' ' ' " "$t" || { 
+		error_noexit "Add to pool failed"
+		return 1
+	}
+	local lfscount=$($LFS pool_list $FSNAME.$pool | grep -c "\-OST")
+	local addcount=$(((last - first) / step + 1))
+	[ $lfscount -eq $addcount ] || {
+		error_noexit "lfs pool_list bad ost count" \
+						"$lfscount != $addcount"
+		return 2
+	}
 }
-run_test 200b "Add targets to a pool ===================================="
 
-test_200c() {
-	remote_mgs_nodsh && skip "remote MGS with nodsh" && return
-	mkdir -p $POOL_DIR
-	$SETSTRIPE -c 2 -p $POOL $POOL_DIR
-	[ $? = 0 ] || error "Cannot set pool $POOL to $POOL_DIR"
-	# b-19919 test relative path works well
-	mkdir -p $POOL_DIR/$POOL_DIR_NAME
-	cd $POOL_DIR
-	$SETSTRIPE -c 2 -p $POOL $POOL_DIR_NAME
-	[ $? = 0 ] || error "Cannot set pool $POOL to $POOL_DIR/$POOL_DIR_NAME"
-	$SETSTRIPE -c 2 -p $POOL ./$POOL_DIR_NAME
-	[ $? = 0 ] || error "Cannot set pool $POOL to $POOL_DIR/./$POOL_DIR_NAME"
-	$SETSTRIPE -c 2 -p $POOL ../$POOL_DIR_NAME
-	[ $? = 0 ] || error "Cannot set pool $POOL to $POOL_DIR/../$POOL_DIR_NAME"
-	$SETSTRIPE -c 2 -p $POOL ../$POOL_DIR_NAME/$POOL_DIR_NAME
-	[ $? = 0 ] || error "Cannot set pool $POOL to $POOL_DIR/../$POOL_DIR_NAME/$POOL_DIR_NAME"
-	rm -rf $POOL_DIR_NAME; cd -
+pool_set_dir() {
+	local pool=$1
+	local tdir=$2
+	echo "Setting pool on directory $tdir"
+
+	$SETSTRIPE -c 2 -p $pool $tdir && return 0
+
+	error_noexit "Cannot set pool $pool to $tdir"
+	return 1
 }
-run_test 200c "Set pool on a directory ================================="
 
-test_200d() {
-	remote_mgs_nodsh && skip "remote MGS with nodsh" && return
-	res=$($GETSTRIPE --pool $POOL_DIR)
-	[ $res = $POOL ] || error "Pool on $POOL_DIR is $res, not $POOL"
+pool_check_dir() {
+	local pool=$1
+	local tdir=$2
+	echo "Checking pool on directory $tdir"
+
+	local res=$($GETSTRIPE --pool $tdir | sed "s/\s*$//")
+	[ "$res" = "$pool" ] && return 0
+
+	error_noexit "Pool on '$tdir' is '$res', not '$pool'"
+	return 1
 }
-run_test 200d "Check pool on a directory ==============================="
 
-test_200e() {
-	remote_mgs_nodsh && skip "remote MGS with nodsh" && return
-	failed=0
-	for i in $(seq -w 1 $(($TGT_COUNT * 3)))
+pool_dir_rel_path() {
+	echo "Testing relative path works well"
+	local pool=$1
+	local tdir=$2
+	local root=$3
+
+	mkdir -p $root/$tdir/$tdir
+	cd $root/$tdir
+	pool_set_dir $pool $tdir          || return 1
+	pool_set_dir $pool ./$tdir        || return 2
+	pool_set_dir $pool ../$tdir       || return 3
+	pool_set_dir $pool ../$tdir/$tdir || return 4
+	rm -rf $tdir; cd - > /dev/null
+}
+
+pool_alloc_files() {
+	echo "Checking files allocation from directory pool"
+	local pool=$1
+	local tdir=$2
+	local count=$3
+	local tlist="$4"
+
+	local failed=0
+	for i in $(seq -w 1 $count)
 	do
-		file=$POOL_DIR/file-$i
+		local file=$tdir/file-$i
 		touch $file
-		check_file_in_pool $file
-		if [[ $? != 0 ]]
-		then
-			failed=$(($failed + 1))
-		fi
+		check_file_in_pool $file $pool "$tlist" || \
+			failed=$((failed + 1))
 	done
-	[ "$failed" = 0 ] || error "$failed files not allocated in $POOL"
-}
-run_test 200e "Check files allocation from directory pool =============="
+	[ "$failed" = 0 ] && return 0
 
-test_200f() {
-	remote_mgs_nodsh && skip "remote MGS with nodsh" && return
-	mkdir -p $POOL_FILE
-	failed=0
-	for i in $(seq -w 1 $(($TGT_COUNT * 3)))
+	error_noexit "$failed files not allocated in $pool"
+	return 1
+}
+
+pool_create_files() {
+	echo "Creating files in pool"
+	local pool=$1
+	local tdir=$2
+	local count=$3
+	local tlist="$4"
+
+	mkdir -p $tdir
+	local failed=0
+	for i in $(seq -w 1 $count)
 	do
-		file=$POOL_FILE/spoo-$i
-		$SETSTRIPE -p $POOL $file
-		check_file_in_pool $file
-		if [[ $? != 0 ]]
-		then
-			failed=$(($failed + 1))
-		fi
+		local file=$tdir/spoo-$i
+		$SETSTRIPE -p $pool $file
+		check_file_in_pool $file $pool "$tlist" || \
+			failed=$((failed + 1))
 	done
-	[ "$failed" = 0 ] || error "$failed files not allocated in $POOL"
+	[ "$failed" = 0 ] && return 0
+
+	error_noexit "$failed files not allocated in $pool"
+	return 1
 }
-run_test 200f "Create files in a pool ==================================="
 
-test_200g() {
-	remote_mgs_nodsh && skip "remote MGS with nodsh" && return
-	TGT=$($LCTL get_param -n lov.$FSNAME-clilov-*.pools.$POOL | tr '\n' ' ')
-	res=$($LFS df --pool $FSNAME.$POOL | awk '{print $1}' | grep "$FSNAME-OST" | tr '\n' ' ')
-	[ "$res" = "$TGT" ] || error "Pools OSTs '$TGT' is not '$res' that lfs df reports"
+pool_lfs_df() {
+	echo "Checking 'lfs df' output"
+	local pool=$1
+
+	local t=$($LCTL get_param -n lov.$FSNAME-clilov-*.pools.$pool |
+			tr '\n' ' ')
+	local res=$($LFS df --pool $FSNAME.$pool |
+			awk '{print $1}' |
+			grep "$FSNAME-OST" |
+			tr '\n' ' ')
+	[ "$res" = "$t" ] && return 0
+
+	error_noexit "Pools OSTs '$t' is not '$res' that lfs df reports"
+	return 1
 }
-run_test 200g "lfs df a pool ============================================"
 
-test_200h() { # b=24039
-	mkdir -p $POOL_DIR || error "unable to create $POOL_DIR"
+pool_file_rel_path() {
+	echo "Creating files in a pool with relative pathname"
+	local pool=$1
+	local tdir=$2
 
-	local file="/..$POOL_DIR/$tfile-1"
-	$SETSTRIPE -p $POOL $file || error "unable to create $file"
+	mkdir -p $tdir ||
+		{ error_noexit "unable to create $tdir"; return 1 ; }
+	local file="/..$tdir/$tfile-1"
+	$SETSTRIPE -p $pool $file ||
+		{ error_noexit "unable to create $file" ; return 2 ; }
 
-	cd $POOL_DIR
-	$SETSTRIPE -p $POOL $tfile-2 || \
-		error "unable to create $tfile-2 in $POOL_DIR"
+	cd $tdir
+	$SETSTRIPE -p $pool $tfile-2 || {
+		error_noexit "unable to create $tfile-2 in $tdir"
+		return 3
+	}
 }
-run_test 200h "Create files in a pool with relative pathname ============"
 
-test_201a() {
-	remote_mgs_nodsh && skip "remote MGS with nodsh" && return
-	TGT=$($LCTL get_param -n lov.$FSNAME-*.pools.$POOL | head -1)
-	do_facet mgs $LCTL pool_remove $FSNAME.$POOL $TGT
-	wait_update $HOSTNAME "lctl get_param -n lov.$FSNAME-*.pools.$POOL | grep $TGT" "" ||
-		error "$TGT not removed from $FSNAME.$POOL"
+pool_remove_first_target() {
+	echo "Removing first target from a pool"
+	local pool=$1
+
+	local pname="lov.$FSNAME-*.pools.$pool"
+	local t=$($LCTL get_param -n $pname | head -1)
+	do_facet mgs $LCTL pool_remove $FSNAME.$pool $t
+	wait_update $HOSTNAME "lctl get_param -n $pname | grep $t" "" || {
+		error_noexit "$t not removed from $FSNAME.$pool"
+		return 1
+	}
 }
-run_test 201a "Remove a target from a pool ============================="
 
-test_201b() {
-	remote_mgs_nodsh && skip "remote MGS with nodsh" && return
-	for TGT in $($LCTL get_param -n lov.$FSNAME-*.pools.$POOL | sort -u)
+pool_remove_all_targets() {
+	echo "Removing all targets from pool"
+	local pool=$1
+	local file=$2
+	local pname="lov.$FSNAME-*.pools.$pool"
+	for t in $($LCTL get_param -n $pname | sort -u)
 	do
-		do_facet mgs $LCTL pool_remove $FSNAME.$POOL $TGT
- 	done
-	wait_update $HOSTNAME "lctl get_param -n lov.$FSNAME-*.pools.$POOL" "" ||
-		error "Pool $FSNAME.$POOL cannot be drained"
-	# striping on an empty/nonexistant pool should fall back to "pool of everything"
-	touch ${POOL_DIR}/$tfile || error "failed to use fallback striping for empty pool"
+		do_facet mgs $LCTL pool_remove $FSNAME.$pool $t
+	done
+	wait_update $HOSTNAME "lctl get_param -n $pname" "" || {
+		error_noexit "Pool $FSNAME.$pool cannot be drained"
+		return 1
+	}
+	# striping on an empty/nonexistant pool should fall back 
+	# to "pool of everything"
+	touch $file || {
+		error_noexit "failed to use fallback striping for empty pool"
+		return 2
+	}
 	# setstripe on an empty pool should fail
-	$SETSTRIPE -p $POOL ${POOL_FILE}/$tfile 2>/dev/null && \
-		error "expected failure when creating file with empty pool"
+	$SETSTRIPE -p $pool $file 2>/dev/null && {
+		error_noexit "expected failure when creating file" \
+							"with empty pool"
+		return 3
+	}
 	return 0
 }
-run_test 201b "Remove all targets from a pool =========================="
 
-test_201c() {
-	remote_mgs_nodsh && skip "remote MGS with nodsh" && return
-	do_facet mgs $LCTL pool_destroy $FSNAME.$POOL
+pool_remove() {
+	echo "Destroying pool"
+	local pool=$1
+	local file=$2
+
+	do_facet mgs $LCTL pool_destroy $FSNAME.$pool
 
 	sleep 2
-    # striping on an empty/nonexistant pool should fall back to "pool of everything"
-	touch ${POOL_DIR}/$tfile || error "failed to use fallback striping for missing pool"
+	# striping on an empty/nonexistant pool should fall back 
+	# to "pool of everything"
+	touch $file || {
+		error_noexit "failed to use fallback striping for missing pool"
+		return 1
+	}
 	# setstripe on an empty pool should fail
-	$SETSTRIPE -p $POOL ${POOL_FILE}/$tfile 2>/dev/null && \
-		error "expected failure when creating file with missing pool"
+	$SETSTRIPE -p $pool $file 2>/dev/null && {
+		error_noexit "expected failure when creating file" \
+							"with missing pool"
+		return 2
+	}
 
 	# get param should return err once pool is gone
-	if wait_update $HOSTNAME "lctl get_param -n lov.$FSNAME-*.pools.$POOL 2>/dev/null ||
-			echo foo" "foo"; then
-		remove_pool_from_list $FSNAME.$POOL
+	if wait_update $HOSTNAME "lctl get_param -n \
+		lov.$FSNAME-*.pools.$pool 2>/dev/null || echo foo" "foo"
+	then
+		remove_pool_from_list $FSNAME.$pool
 		return 0
 	fi
-	error "Pool $FSNAME.$POOL is not destroyed"
+	error_noexit "Pool $FSNAME.$pool is not destroyed"
+	return 3
 }
-run_test 201c "Remove a pool ============================================"
 
-cleanup_pools $FSNAME
+test_200() {
+	remote_mgs_nodsh && skip "remote MGS with nodsh" && return
+
+	local POOL=${POOL:-cea1}
+	local POOL_ROOT=${POOL_ROOT:-$DIR/d200.pools}
+	local POOL_DIR_NAME=${POOL_DIR_NAME:-dir_tst}
+	# Pool OST targets
+	local first_ost=1
+	local last_ost=$(($OSTCOUNT - 1))
+	local ost_step=2
+	local ost_list=$(seq $first_ost $ost_step $last_ost)
+	local ost_range="$first_ost $last_ost $ost_step"
+	local test_path=$POOL_ROOT/$POOL_DIR_NAME
+	local file_dir=$POOL_ROOT/file_tst
+
+	local rc=0
+	while : ; do
+		# former test_200a test_200b
+		pool_add $POOL				|| { rc=$? ; break; }
+		pool_add_targets  $POOL $ost_range	|| { rc=$? ; break; }
+		# former test_200c test_200d
+		mkdir -p $test_path
+		pool_set_dir      $POOL $test_path	|| { rc=$? ; break; }
+		pool_check_dir    $POOL $test_path	|| { rc=$? ; break; }
+		pool_dir_rel_path $POOL $POOL_DIR_NAME $POOL_ROOT \
+							|| { rc=$? ; break; }
+		# former test_200e test_200f
+		local files=$((OSTCOUNT*3))
+		pool_alloc_files  $POOL $test_path $files "$ost_list" \
+							|| { rc=$? ; break; }
+		pool_create_files $POOL $file_dir $files "$ost_list" \
+							|| { rc=$? ; break; }
+		# former test_200g test_200h
+		pool_lfs_df $POOL 			|| { rc=$? ; break; }
+		pool_file_rel_path $POOL $test_path	|| { rc=$? ; break; }
+
+		# former test_201a test_201b test_201c
+		pool_remove_first_target $POOL		|| { rc=$? ; break; }
+
+		local f=$test_path/$tfile
+		pool_remove_all_targets $POOL $f	|| { rc=$? ; break; }
+		pool_remove $POOL $f 			|| { rc=$? ; break; }
+		break
+	done
+
+	cleanup_pools
+	return $rc
+}
+run_test 200 "OST pools"
 
 # usage: default_attr <count | size | offset>
 default_attr() {
@@ -9043,10 +9174,10 @@ test_215() { # for bugs 18102, 21079, 21517
 	# /proc/sys/lnet/nis should look like this:
 	# nid status alive refs peer rtr max tx min
 	# where nid is a string like 192.168.1.1@tcp2, status is up/down,
-	# alive is numeric (0 or >0 or <0), refs > 0, peer >= 0,
+	# alive is numeric (0 or >0 or <0), refs >= 0, peer >= 0,
 	# rtr >= 0, max >=0, tx and min are numeric (0 or >0 or <0).
 	L1="^nid +status +alive +refs +peer +rtr +max +tx +min$"
-	BR="^$NID +(up|down) +$I +$P +$N +$N +$N +$I +$I$"
+	BR="^$NID +(up|down) +$I +$N +$N +$N +$N +$I +$I$"
 	create_lnet_proc_files "nis"
 	check_lnet_proc_entry "nis.out" "/proc/sys/lnet/nis" "$BR" "$L1"
 	check_lnet_proc_entry "nis.sys" "lnet.nis" "$BR" "$L1"

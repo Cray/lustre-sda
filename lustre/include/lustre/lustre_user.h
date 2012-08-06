@@ -192,6 +192,22 @@ struct obd_statfs {
 #define LOV_MAXPOOLNAME 16
 #define LOV_POOLNAMEF "%.16s"
 
+#define LOV_MIN_STRIPE_BITS 16   /* maximum PAGE_SIZE (ia64), power of 2 */
+#define LOV_MIN_STRIPE_SIZE (1<<LOV_MIN_STRIPE_BITS)
+#define LOV_MAX_STRIPE_COUNT_OLD 160
+/* This calculation is crafted so that input of 4096 will result in 160
+ * which in turn is equal to old maximal stripe count.
+ * XXX: In fact this is too simpified for now, what it also need is to get
+ * ea_type argument to clearly know how much space each stripe consumes.
+ *
+ * The limit of 12 pages is somewhat arbitrary, but is a reasonably large
+ * allocation that is sufficient for the current generation of systems.
+ *
+ * (max buffer size - lov+rpc header) / sizeof(struct lov_ost_data_v1) */
+#define LOV_MAX_STRIPE_COUNT 2000  /* ((12 * 4096 - 256) / 24) */
+#define LOV_ALL_STRIPES       0xffff /* only valid for directories */
+#define LOV_V1_INSANE_STRIPE_COUNT 65532 /* maximum stripe count bz13933 */
+
 #define lov_user_ost_data lov_user_ost_data_v1
 struct lov_user_ost_data_v1 {     /* per-stripe data structure */
         __u64 l_object_id;        /* OST object ID */
@@ -515,23 +531,29 @@ enum changelog_rec_type {
 };
 
 static inline const char *changelog_type2str(int type) {
-        static const char *changelog_str[] = {
-                "MARK",  "CREAT", "MKDIR", "HLINK", "SLINK", "MKNOD", "UNLNK",
-                "RMDIR", "RNMFM", "RNMTO", "OPEN",  "CLOSE", "IOCTL", "TRUNC",
-                "SATTR", "XATTR", "HSM",   "MTIME", "CTIME", "ATIME"  };
-        if (type >= 0 && type < CL_LAST)
-                return changelog_str[type];
-        return NULL;
+	static const char *changelog_str[] = {
+		"MARK",  "CREAT", "MKDIR", "HLINK", "SLINK", "MKNOD", "UNLNK",
+		"RMDIR", "RENME", "RNMTO", "OPEN",  "CLOSE", "IOCTL", "TRUNC",
+		"SATTR", "XATTR", "HSM",   "MTIME", "CTIME", "ATIME"  };
+	if (type >= 0 && type < CL_LAST)
+		return changelog_str[type];
+	return NULL;
 }
 
 /* per-record flags */
-#define CLF_VERSION  0x1000
-#define CLF_FLAGMASK 0x0FFF
+#define CLF_VERSION     0x1000
+#define CLF_EXT_VERSION 0x2000
+#define CLF_FLAGSHIFT   12
+#define CLF_FLAGMASK    ((1U << CLF_FLAGSHIFT) - 1)
+#define CLF_VERMASK     (~CLF_FLAGMASK)
 /* Anything under the flagmask may be per-type (if desired) */
 /* Flags for unlink */
 #define CLF_UNLINK_LAST       0x0001 /* Unlink of last hardlink */
 #define CLF_UNLINK_HSM_EXISTS 0x0002 /* File has something in HSM */
                                      /* HSM cleaning needed */
+/* Flags for rename */
+#define CLF_RENAME_LAST       0x0001 /* rename unlink last hardlink of target */
+
 /* Flags for HSM */
 /* 12b used (from high weight to low weight):
  * 2b for flags
@@ -601,7 +623,8 @@ static inline void hsm_set_cl_error(int *flags, int error)
         *flags |= (error << CLF_HSM_ERR_L);
 }
 
-#define CR_MAXSIZE (PATH_MAX + sizeof(struct changelog_rec))
+#define CR_MAXSIZE cfs_size_round(2*NAME_MAX + 1 + sizeof(struct changelog_rec))
+
 struct changelog_rec {
         __u16                 cr_namelen;
         __u16                 cr_flags; /**< (flags&CLF_FLAGMASK)|CLF_VERSION */
@@ -619,6 +642,58 @@ struct changelog_rec {
         lustre_fid            cr_pfid;        /**< parent fid */
         char                  cr_name[0];     /**< last element */
 } __attribute__((packed));
+
+/* changelog_ext_rec is 2*sizeof(lu_fid) bigger than changelog_rec, to save
+ * space, only rename uses changelog_ext_rec, while others use changelog_rec to
+ * store records.
+ */
+struct changelog_ext_rec {
+	__u16			cr_namelen;
+	__u16			cr_flags; /**< (flags & CLF_FLAGMASK) |
+						CLF_EXT_VERSION */
+	__u32			cr_type;  /**< \a changelog_rec_type */
+	__u64			cr_index; /**< changelog record number */
+	__u64			cr_prev;  /**< last index for this target fid */
+	__u64			cr_time;
+        __u32			cr_uid;     /**< user id that made the change */
+        __u32			cr_gid;     /**< group id of user that made the change */
+        __u64			cr_clnid;   /** < client nid that made the change */
+	union {
+		lustre_fid	cr_tfid;	/**< target fid */
+		__u32		cr_markerflags; /**< CL_MARK flags */
+	};
+	lustre_fid		cr_pfid;	/**< target parent fid */
+	lustre_fid		cr_sfid;	/**< source fid, or zero */
+	lustre_fid		cr_spfid;       /**< source parent fid, or zero */
+	char			cr_name[0];     /**< last element */
+} __attribute__((packed));
+
+#define CHANGELOG_REC_EXTENDED(rec) \
+	(((rec)->cr_flags & CLF_VERMASK) == CLF_EXT_VERSION)
+
+static inline int changelog_rec_size(struct changelog_rec *rec)
+{
+	return CHANGELOG_REC_EXTENDED(rec) ? sizeof(struct changelog_ext_rec):
+					     sizeof(*rec);
+}
+
+static inline char *changelog_rec_name(struct changelog_rec *rec)
+{
+	return CHANGELOG_REC_EXTENDED(rec) ?
+		((struct changelog_ext_rec *)rec)->cr_name: rec->cr_name;
+}
+
+static inline int changelog_rec_snamelen(struct changelog_ext_rec *rec)
+{
+	LASSERT(CHANGELOG_REC_EXTENDED(rec));
+	return rec->cr_namelen - strlen(rec->cr_name) - 1;
+}
+
+static inline char *changelog_rec_sname(struct changelog_ext_rec *rec)
+{
+	LASSERT(CHANGELOG_REC_EXTENDED(rec));
+	return rec->cr_name + strlen(rec->cr_name) + 1;
+}
 
 struct ioc_changelog {
         __u64 icc_recno;

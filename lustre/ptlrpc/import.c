@@ -221,6 +221,7 @@ void ptlrpc_deactivate_import(struct obd_import *imp)
         cfs_spin_lock(&imp->imp_lock);
         ptlrpc_deactivate_and_unlock_import(imp);
 }
+EXPORT_SYMBOL(ptlrpc_deactivate_import);
 
 static unsigned int
 ptlrpc_inflight_deadline(struct ptlrpc_request *req, time_t now)
@@ -379,6 +380,7 @@ void ptlrpc_invalidate_import(struct obd_import *imp)
         cfs_atomic_dec(&imp->imp_inval_count);
         cfs_waitq_broadcast(&imp->imp_recovery_waitq);
 }
+EXPORT_SYMBOL(ptlrpc_invalidate_import);
 
 /* unset imp_invalid */
 void ptlrpc_activate_import(struct obd_import *imp)
@@ -391,6 +393,7 @@ void ptlrpc_activate_import(struct obd_import *imp)
         cfs_spin_unlock(&imp->imp_lock);
         obd_import_event(obd, imp, IMP_EVENT_ACTIVE);
 }
+EXPORT_SYMBOL(ptlrpc_activate_import);
 
 void ptlrpc_fail_import(struct obd_import *imp, __u32 conn_cnt)
 {
@@ -419,6 +422,7 @@ void ptlrpc_fail_import(struct obd_import *imp, __u32 conn_cnt)
         }
         EXIT;
 }
+EXPORT_SYMBOL(ptlrpc_fail_import);
 
 int ptlrpc_reconnect_import(struct obd_import *imp)
 {
@@ -1024,28 +1028,29 @@ finish:
                                       newer : older, LUSTRE_VERSION_STRING);
                 }
 
-                if (ocd->ocd_connect_flags & OBD_CONNECT_CKSUM) {
-                        /* We sent to the server ocd_cksum_types with bits set
-                         * for algorithms we understand. The server masked off
-                         * the checksum types it doesn't support */
-                        if ((ocd->ocd_cksum_types & cksum_types_supported()) == 0) {
-                                LCONSOLE_WARN("The negotiation of the checksum "
-                                              "alogrithm to use with server %s "
-                                              "failed (%x/%x), disabling "
-                                              "checksums\n",
-                                              obd2cli_tgt(imp->imp_obd),
-                                              ocd->ocd_cksum_types,
-                                              cksum_types_supported());
-                                cli->cl_checksum = 0;
-                                cli->cl_supp_cksum_types = OBD_CKSUM_CRC32;
-                        } else {
-                                cli->cl_supp_cksum_types = ocd->ocd_cksum_types;
-                        }
-                } else {
-                        /* The server does not support OBD_CONNECT_CKSUM.
-                         * Enforce CRC32 for backward compatibility*/
-                        cli->cl_supp_cksum_types = OBD_CKSUM_CRC32;
-                }
+		if (ocd->ocd_connect_flags & OBD_CONNECT_CKSUM) {
+			/* We sent to the server ocd_cksum_types with bits set
+			 * for algorithms we understand. The server masked off
+			 * the checksum types it doesn't support */
+			if ((ocd->ocd_cksum_types &
+			     cksum_types_supported_client()) == 0) {
+				LCONSOLE_WARN("The negotiation of the checksum "
+					      "alogrithm to use with server %s "
+					      "failed (%x/%x), disabling "
+					      "checksums\n",
+					      obd2cli_tgt(imp->imp_obd),
+					      ocd->ocd_cksum_types,
+					      cksum_types_supported_client());
+				cli->cl_checksum = 0;
+				cli->cl_supp_cksum_types = OBD_CKSUM_ADLER;
+			} else {
+				cli->cl_supp_cksum_types = ocd->ocd_cksum_types;
+			}
+		} else {
+			/* The server does not support OBD_CONNECT_CKSUM.
+			 * Enforce ADLER for backward compatibility*/
+			cli->cl_supp_cksum_types = OBD_CKSUM_ADLER;
+		}
                 cli->cl_cksum_type =cksum_type_select(cli->cl_supp_cksum_types);
 
                 if (ocd->ocd_connect_flags & OBD_CONNECT_BRW_SIZE)
@@ -1431,17 +1436,10 @@ int ptlrpc_disconnect_import(struct obd_import *imp, int noclose)
                  * if the client doesn't know the server is gone yet. */
                 req->rq_no_resend = 1;
 
-#ifndef CRAY_XT3
                 /* We want client umounts to happen quickly, no matter the
                    server state... */
                 req->rq_timeout = min_t(int, req->rq_timeout,
                                         INITIAL_CONNECT_TIMEOUT);
-#else
-                /* ... but we always want liblustre clients to nicely
-                   disconnect, so only use the adaptive value. */
-                if (AT_OFF)
-                        req->rq_timeout = obd_timeout / 3;
-#endif
 
                 IMPORT_SET_STATE(imp, LUSTRE_IMP_CONNECTING);
                 req->rq_send_state =  LUSTRE_IMP_CONNECTING;
@@ -1462,6 +1460,7 @@ out:
 
         RETURN(rc);
 }
+EXPORT_SYMBOL(ptlrpc_disconnect_import);
 
 void ptlrpc_cleanup_imp(struct obd_import *imp)
 {
@@ -1475,6 +1474,7 @@ void ptlrpc_cleanup_imp(struct obd_import *imp)
 
         EXIT;
 }
+EXPORT_SYMBOL(ptlrpc_cleanup_imp);
 
 /* Adaptive Timeout utils */
 extern unsigned int at_min, at_max, at_history;

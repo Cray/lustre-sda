@@ -438,6 +438,7 @@ static struct ldlm_lock *ldlm_lock_new(struct ldlm_resource *resource)
         CFS_INIT_LIST_HEAD(&lock->l_sl_mode);
         CFS_INIT_LIST_HEAD(&lock->l_sl_policy);
         CFS_INIT_HLIST_NODE(&lock->l_exp_hash);
+	CFS_INIT_HLIST_NODE(&lock->l_exp_flock_hash);
 
         lprocfs_counter_incr(ldlm_res_to_ns(resource)->ns_stats,
                              LDLM_NSS_LOCKS);
@@ -1781,14 +1782,17 @@ void ldlm_lock_cancel(struct ldlm_lock *lock)
                 LBUG();
         }
 
-        ldlm_del_waiting_lock(lock);
+	if (lock->l_waited)
+		ldlm_del_waiting_lock(lock);
 
         /* Releases cancel callback. */
         ldlm_cancel_callback(lock);
 
         /* Yes, second time, just in case it was added again while we were
            running with no res lock in ldlm_cancel_callback */
-        ldlm_del_waiting_lock(lock);
+	if (lock->l_waited)
+		ldlm_del_waiting_lock(lock);
+
         ldlm_resource_unlink_lock(lock);
         ldlm_lock_destroy_nolock(lock);
 

@@ -51,9 +51,6 @@
 
 #define DEBUG_SUBSYSTEM S_FILTER
 
-#ifndef AUTOCONF_INCLUDED
-#include <linux/config.h>
-#endif
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/dcache.h>
@@ -1421,8 +1418,8 @@ obd_id filter_last_id(struct filter_obd *filter, obd_seq group)
 
 static int filter_lock_dentry(struct obd_device *obd, struct dentry *dparent)
 {
-        LOCK_INODE_MUTEX_PARENT(dparent->d_inode);
-        return 0;
+	mutex_lock_nested(&dparent->d_inode->i_mutex, I_MUTEX_PARENT);
+	return 0;
 }
 
 /* We never dget the object parent, so DON'T dput it either */
@@ -1462,7 +1459,7 @@ struct dentry *filter_parent_lock(struct obd_device *obd, obd_seq group,
 /* We never dget the object parent, so DON'T dput it either */
 static void filter_parent_unlock(struct dentry *dparent)
 {
-        UNLOCK_INODE_MUTEX(dparent->d_inode);
+	mutex_unlock(&dparent->d_inode->i_mutex);
 }
 
 /* How to get files, dentries, inodes from object id's.
@@ -1571,9 +1568,9 @@ int filter_vfs_unlink(struct inode *dir, struct dentry *dentry,
 
         /* don't need dir->i_zombie for 2.4, it is for rename/unlink of dir
          * itself we already hold dir->i_mutex for child create/unlink ops */
-        LASSERT(dentry->d_inode != NULL);
-        LASSERT(TRYLOCK_INODE_MUTEX(dir) == 0);
-        LASSERT(TRYLOCK_INODE_MUTEX(dentry->d_inode) == 0);
+	LASSERT(dentry->d_inode != NULL);
+	LASSERT(mutex_trylock(&dir->i_mutex) == 0);
+	LASSERT(mutex_trylock(&dentry->d_inode->i_mutex) == 0);
 
 
         /* may_delete() */
@@ -1602,12 +1599,12 @@ int filter_vfs_unlink(struct inode *dir, struct dentry *dentry,
 
         rc = dir->i_op->unlink(dir, dentry);
 out:
-        /* need to drop i_mutex before we lose inode reference */
-        UNLOCK_INODE_MUTEX(dentry->d_inode);
-        if (rc == 0)
-                d_delete(dentry);
+	/* need to drop i_mutex before we lose inode reference */
+	mutex_unlock(&dentry->d_inode->i_mutex);
+	if (rc == 0)
+		d_delete(dentry);
 
-        RETURN(rc);
+	RETURN(rc);
 }
 
 /* Caller must hold LCK_PW on parent and push us into kernel context.
@@ -1848,15 +1845,16 @@ static int filter_intent_policy(struct ldlm_namespace *ns,
  * at the OST layer there are only (potentially) multiple obd_device of type
  * unknown at the time of OST thread creation.
  *
- * Instead array of iobuf's is attached to struct filter_obd (->fo_iobuf_pool
- * field). This array has size OST_MAX_THREADS, so that each OST thread uses
- * it's very own iobuf.
+ * We create a cfs_hash for struct filter_obd (->fo_iobuf_hash field) on
+ * initializing, each OST thread will create it's own iobuf on the first
+ * access and insert it into ->fo_iobuf_hash with thread ID as key,
+ * so the iobuf can be found again by thread ID.
  *
  * Functions below
  *
- *     filter_kiobuf_pool_init()
+ *     filter_iobuf_pool_init()
  *
- *     filter_kiobuf_pool_done()
+ *     filter_iobuf_pool_done()
  *
  *     filter_iobuf_get()
  *
@@ -1869,21 +1867,13 @@ static int filter_intent_policy(struct ldlm_namespace *ns,
  */
 static void filter_iobuf_pool_done(struct filter_obd *filter)
 {
-        struct filter_iobuf **pool;
-        int i;
+	ENTRY;
 
-        ENTRY;
-
-        pool = filter->fo_iobuf_pool;
-        if (pool != NULL) {
-                for (i = 0; i < filter->fo_iobuf_count; ++ i) {
-                        if (pool[i] != NULL)
-                                filter_free_iobuf(pool[i]);
-                }
-                OBD_FREE(pool, filter->fo_iobuf_count * sizeof pool[0]);
-                filter->fo_iobuf_pool = NULL;
-        }
-        EXIT;
+	if (filter->fo_iobuf_hash != NULL) {
+		cfs_hash_putref(filter->fo_iobuf_hash);
+		filter->fo_iobuf_hash = NULL;
+	}
+	EXIT;
 }
 
 static int filter_adapt_sptlrpc_conf(struct obd_device *obd, int initial)
@@ -1910,50 +1900,126 @@ static int filter_adapt_sptlrpc_conf(struct obd_device *obd, int initial)
         return 0;
 }
 
+static unsigned
+filter_iobuf_hop_hash(cfs_hash_t *hs, const void *key, unsigned mask)
+{
+	__u64	val = *((__u64 *)key);
+
+	return cfs_hash_long(val, hs->hs_cur_bits);
+}
+
+static void *
+filter_iobuf_hop_key(cfs_hlist_node_t *hnode)
+{
+	struct filter_iobuf	*pool;
+
+	pool = cfs_hlist_entry(hnode, struct filter_iobuf, dr_hlist);
+	return &pool->dr_hkey;
+}
+
+static int
+filter_iobuf_hop_keycmp(const void *key, cfs_hlist_node_t *hnode)
+{
+	struct filter_iobuf	*pool;
+
+	pool = cfs_hlist_entry(hnode, struct filter_iobuf, dr_hlist);
+	return pool->dr_hkey == *((__u64 *)key);
+}
+
+static void *
+filter_iobuf_hop_object(cfs_hlist_node_t *hnode)
+{
+	return cfs_hlist_entry(hnode, struct filter_iobuf, dr_hlist);
+}
+
+static void
+filter_iobuf_hop_get(cfs_hash_t *hs, cfs_hlist_node_t *hnode)
+{
+	/* dummy, required by cfs_hash */
+}
+
+static void
+filter_iobuf_hop_put_locked(cfs_hash_t *hs, cfs_hlist_node_t *hnode)
+{
+	/* dummy, required by cfs_hash */
+}
+
+static void
+filter_iobuf_hop_exit(cfs_hash_t *hs, cfs_hlist_node_t *hnode)
+{
+	struct filter_iobuf	*pool;
+
+	pool = cfs_hlist_entry(hnode, struct filter_iobuf, dr_hlist);
+	filter_free_iobuf(pool);
+}
+
+static struct cfs_hash_ops filter_iobuf_hops = {
+	.hs_hash        = filter_iobuf_hop_hash,
+	.hs_key         = filter_iobuf_hop_key,
+	.hs_keycmp      = filter_iobuf_hop_keycmp,
+	.hs_object      = filter_iobuf_hop_object,
+	.hs_get         = filter_iobuf_hop_get,
+	.hs_put_locked  = filter_iobuf_hop_put_locked,
+	.hs_exit        = filter_iobuf_hop_exit
+};
+
+#define FILTER_IOBUF_HASH_BITS	9
+#define FILTER_IOBUF_HBKT_BITS	4
+
 /*
  * pre-allocate pool of iobuf's to be used by filter_{prep,commit}rw_write().
  */
 static int filter_iobuf_pool_init(struct filter_obd *filter)
 {
-        void **pool;
+	filter->fo_iobuf_hash = cfs_hash_create("filter_iobuf",
+						FILTER_IOBUF_HASH_BITS,
+						FILTER_IOBUF_HASH_BITS,
+						FILTER_IOBUF_HBKT_BITS, 0,
+						CFS_HASH_MIN_THETA,
+						CFS_HASH_MAX_THETA,
+						&filter_iobuf_hops,
+						CFS_HASH_RW_BKTLOCK |
+						CFS_HASH_NO_ITEMREF);
 
-        ENTRY;
-
-
-        OBD_ALLOC_GFP(filter->fo_iobuf_pool, OSS_THREADS_MAX * sizeof(*pool),
-		      CFS_ALLOC_KERNEL);
-        if (filter->fo_iobuf_pool == NULL)
-                RETURN(-ENOMEM);
-
-        filter->fo_iobuf_count = OSS_THREADS_MAX;
-
-        RETURN(0);
+	return filter->fo_iobuf_hash != NULL ? 0 : -ENOMEM;
 }
 
-/* Return iobuf allocated for @thread_id.  We don't know in advance how
- * many threads there will be so we allocate a large empty array and only
- * fill in those slots that are actually in use.
- * If we haven't allocated a pool entry for this thread before, do so now. */
+/* Return iobuf allocated for @thread_id.
+ * If we haven't allocated a pool entry for this thread before, do so now and
+ * insert it into fo_iobuf_hash, otherwise we can find it from fo_iobuf_hash */
 void *filter_iobuf_get(struct filter_obd *filter, struct obd_trans_info *oti)
 {
-        int thread_id                    = (oti && oti->oti_thread) ?
-                                           oti->oti_thread->t_id : -1;
-        struct filter_iobuf  *pool       = NULL;
-        struct filter_iobuf **pool_place = NULL;
+	struct filter_iobuf	*pool = NULL;
+	__u64			key = 0;
+	int			thread_id;
+	int			rc;
 
-        if (thread_id >= 0) {
-                LASSERT(thread_id < filter->fo_iobuf_count);
-                pool = *(pool_place = &filter->fo_iobuf_pool[thread_id]);
-        }
+	thread_id = (oti && oti->oti_thread) ? oti->oti_thread->t_id : -1;
+	if (thread_id >= 0) {
+		struct ptlrpc_service_part *svcpt;
 
-        if (unlikely(pool == NULL)) {
-                pool = filter_alloc_iobuf(filter, OBD_BRW_WRITE,
-                                          PTLRPC_MAX_BRW_PAGES);
-                if (pool_place != NULL)
-                        *pool_place = pool;
-        }
+		svcpt = oti->oti_thread->t_svcpt;
+		LASSERT(svcpt != NULL);
 
-        return pool;
+		key = (__u64)(svcpt->scp_cpt) << 32 | thread_id;
+		pool = cfs_hash_lookup(filter->fo_iobuf_hash, &key);
+		if (pool != NULL)
+			return pool;
+	}
+
+	pool = filter_alloc_iobuf(filter, OBD_BRW_WRITE, PTLRPC_MAX_BRW_PAGES);
+	if (pool == NULL)
+		return NULL;
+
+	if (thread_id >= 0) {
+		pool->dr_hkey = key;
+		rc = cfs_hash_add_unique(filter->fo_iobuf_hash,
+					 &key, &pool->dr_hlist);
+		/* ptlrpc service thould guarantee thread ID is unique */
+		LASSERT(rc != -EALREADY);
+	}
+
+	return pool;
 }
 
 /* mount the file system (secretly).  lustre_cfg parameters are:
@@ -2408,7 +2474,7 @@ static int filter_llog_finish(struct obd_device *obd, int count)
                  * We actually do sync in disconnect time, but disconnect
                  * may not come being marked rq_no_resend = 1.
                  */
-                llog_sync(ctxt, NULL);
+		llog_sync(ctxt, NULL, OBD_LLOG_FL_EXIT);
 
                 /*
                  * Balance class_import_get() in llog_receptor_accept().
@@ -2420,16 +2486,16 @@ static int filter_llog_finish(struct obd_device *obd, int count)
                         class_import_put(ctxt->loc_imp);
                         ctxt->loc_imp = NULL;
                 }
+
+		if (filter->fo_lcm) {
+			llog_recov_thread_fini(filter->fo_lcm, obd->obd_force);
+			filter->fo_lcm = NULL;
+		}
+
                 cfs_mutex_unlock(&ctxt->loc_mutex);
                 llog_ctxt_put(ctxt);
         }
 
-        if (filter->fo_lcm) {
-                cfs_mutex_lock(&ctxt->loc_mutex);
-                llog_recov_thread_fini(filter->fo_lcm, obd->obd_force);
-                filter->fo_lcm = NULL;
-                cfs_mutex_unlock(&ctxt->loc_mutex);
-        }
         RETURN(filter_olg_fini(&obd->obd_olg));
 }
 
@@ -2777,11 +2843,9 @@ static int filter_connect_internal(struct obd_export *exp,
                 /* The client set in ocd_cksum_types the checksum types it
                  * supports. We have to mask off the algorithms that we don't
                  * support */
-                data->ocd_cksum_types &= cksum_types_supported();
+		data->ocd_cksum_types &= cksum_types_supported_server();
 
-                /* 1.6.4- only support CRC32 and didn't set ocd_cksum_types */
-                if (unlikely(data->ocd_cksum_types == 0))
-                        data->ocd_cksum_types = OBD_CKSUM_CRC32;
+		/* 1.6.4 clients are not supported any more */
 
                 CDEBUG(D_RPCTRACE, "%s: cli %s supports cksum type %x, return "
                                    "%x\n", exp->exp_obd->obd_name,
@@ -3066,7 +3130,7 @@ static void filter_sync_llogs(struct obd_device *obd, struct obd_export *dexp)
                         ctxt = llog_group_get_ctxt(olg_min,
                                                    LLOG_MDS_OST_REPL_CTXT);
                         if (ctxt) {
-                                err = llog_sync(ctxt, olg_min->olg_exp);
+				err = llog_sync(ctxt, olg_min->olg_exp, 0);
                                 llog_ctxt_put(ctxt);
                                 if (err) {
                                         CERROR("error flushing logs to MDS: "
@@ -3277,17 +3341,17 @@ int filter_setattr_internal(struct obd_export *exp, struct dentry *dentry,
                 if (fcc != NULL)
                         *fcc = oa->o_lcookie;
         }
-        if (ia_valid & (ATTR_SIZE | ATTR_UID | ATTR_GID)) {
-                unsigned long now = jiffies;
-                /* Filter truncates and writes are serialized by
-                 * i_alloc_sem, see the comment in
-                 * filter_preprw_write.*/
-                if (ia_valid & ATTR_SIZE)
-                        down_write(&inode->i_alloc_sem);
-                LOCK_INODE_MUTEX(inode);
-                fsfilt_check_slow(exp->exp_obd, now, "i_alloc_sem and i_mutex");
-                old_size = i_size_read(inode);
-        }
+	if (ia_valid & (ATTR_SIZE | ATTR_UID | ATTR_GID)) {
+		unsigned long now = jiffies;
+		/* Filter truncates and writes are serialized by
+		 * i_alloc_sem, see the comment in
+		 * filter_preprw_write.*/
+		if (ia_valid & ATTR_SIZE)
+			down_write(&inode->i_alloc_sem);
+		mutex_lock(&inode->i_mutex);
+		fsfilt_check_slow(exp->exp_obd, now, "i_alloc_sem and i_mutex");
+		old_size = i_size_read(inode);
+	}
 
         /* VBR: version recovery check */
         rc = filter_version_get_check(exp, oti, inode);
@@ -3406,12 +3470,12 @@ out_unlock:
         if (page)
                 page_cache_release(page);
 
-        if (ia_valid & (ATTR_SIZE | ATTR_UID | ATTR_GID))
-                UNLOCK_INODE_MUTEX(inode);
-        if (ia_valid & ATTR_SIZE)
-                up_write(&inode->i_alloc_sem);
-        if (fcc)
-                OBD_FREE(fcc, sizeof(*fcc));
+	if (ia_valid & (ATTR_SIZE | ATTR_UID | ATTR_GID))
+		mutex_unlock(&inode->i_mutex);
+	if (ia_valid & ATTR_SIZE)
+		up_write(&inode->i_alloc_sem);
+	if (fcc)
+		OBD_FREE(fcc, sizeof(*fcc));
 
         /* trigger quota release */
         if (ia_valid & (ATTR_SIZE | ATTR_UID | ATTR_GID)) {
@@ -3721,8 +3785,15 @@ static int filter_handle_precreate(struct obd_export *exp, struct obdo *oa,
                 CDEBUG(D_RPCTRACE, "filter_last_id() = "LPU64" -> diff = %d\n",
                        filter_last_id(filter, group), diff);
 
-                LASSERTF(diff >= 0,"%s: "LPU64" - "LPU64" = %d\n",obd->obd_name,
-                         oa->o_id, filter_last_id(filter, group), diff);
+		/*
+		 * Check obd->obd_recovering to handle the race condition
+		 * while recreating missing precreated objects through
+		 * filter_preprw_write() and mds_lov_clear_orphans()
+		 * at the same time.
+		 */
+		LASSERTF(ergo(!obd->obd_recovering, diff >= 0),
+			 "%s: "LPU64" - "LPU64" = %d\n", obd->obd_name,
+			 oa->o_id, filter_last_id(filter, group), diff);
         }
 
         if (diff > 0) {
@@ -4233,40 +4304,40 @@ int filter_destroy(const struct lu_env *env, struct obd_export *exp,
          * between page lock, i_mutex & starting new journal handle.
          * (see bug 20321) -johann
          */
-        now = jiffies;
-        down_write(&dchild->d_inode->i_alloc_sem);
-        LOCK_INODE_MUTEX(dchild->d_inode);
-        fsfilt_check_slow(exp->exp_obd, now, "i_alloc_sem and i_mutex");
+	now = jiffies;
+	down_write(&dchild->d_inode->i_alloc_sem);
+	mutex_lock(&dchild->d_inode->i_mutex);
+	fsfilt_check_slow(exp->exp_obd, now, "i_alloc_sem and i_mutex");
 
-        /* VBR: version recovery check */
-        rc = filter_version_get_check(exp, oti, dchild->d_inode);
-        if (rc) {
-                UNLOCK_INODE_MUTEX(dchild->d_inode);
-                up_write(&dchild->d_inode->i_alloc_sem);
-                GOTO(cleanup, rc);
-        }
+	/* VBR: version recovery check */
+	rc = filter_version_get_check(exp, oti, dchild->d_inode);
+	if (rc) {
+		mutex_unlock(&dchild->d_inode->i_mutex);
+		up_write(&dchild->d_inode->i_alloc_sem);
+		GOTO(cleanup, rc);
+	}
 
-        handle = fsfilt_start_log(obd, dchild->d_inode, FSFILT_OP_SETATTR,
-                                  NULL, 1);
-        if (IS_ERR(handle)) {
-                UNLOCK_INODE_MUTEX(dchild->d_inode);
-                up_write(&dchild->d_inode->i_alloc_sem);
-                GOTO(cleanup, rc = PTR_ERR(handle));
-        }
+	handle = fsfilt_start_log(obd, dchild->d_inode, FSFILT_OP_SETATTR,
+				  NULL, 1);
+	if (IS_ERR(handle)) {
+		mutex_unlock(&dchild->d_inode->i_mutex);
+		up_write(&dchild->d_inode->i_alloc_sem);
+		GOTO(cleanup, rc = PTR_ERR(handle));
+	}
 
-        /* Locking order: i_mutex -> journal_lock -> dqptr_sem. LU-952 */
-        ll_vfs_dq_init(dchild->d_inode);
+	/* Locking order: i_mutex -> journal_lock -> dqptr_sem. LU-952 */
+	ll_vfs_dq_init(dchild->d_inode);
 
-        iattr.ia_valid = ATTR_SIZE;
-        iattr.ia_size = 0;
-        rc = fsfilt_setattr(obd, dchild, handle, &iattr, 1);
-        rc2 = fsfilt_commit(obd, dchild->d_inode, handle, 0);
-        UNLOCK_INODE_MUTEX(dchild->d_inode);
-        up_write(&dchild->d_inode->i_alloc_sem);
-        if (rc)
-                GOTO(cleanup, rc);
-        if (rc2)
-                GOTO(cleanup, rc = rc2);
+	iattr.ia_valid = ATTR_SIZE;
+	iattr.ia_size = 0;
+	rc = fsfilt_setattr(obd, dchild, handle, &iattr, 1);
+	rc2 = fsfilt_commit(obd, dchild->d_inode, handle, 0);
+	mutex_unlock(&dchild->d_inode->i_mutex);
+	up_write(&dchild->d_inode->i_alloc_sem);
+	if (rc)
+		GOTO(cleanup, rc);
+	if (rc2)
+		GOTO(cleanup, rc = rc2);
 
         /* We don't actually need to lock the parent until we are unlinking
          * here, and not while truncating above.  That avoids holding the
@@ -4277,13 +4348,14 @@ int filter_destroy(const struct lu_env *env, struct obd_export *exp,
                 GOTO(cleanup, rc = PTR_ERR(dparent));
         cleanup_phase = 3; /* filter_parent_unlock */
 
-        LOCK_INODE_MUTEX(dchild->d_inode);
-        handle = fsfilt_start_log(obd, dparent->d_inode,FSFILT_OP_UNLINK,oti,1);
-        if (IS_ERR(handle)) {
-                UNLOCK_INODE_MUTEX(dchild->d_inode);
-                GOTO(cleanup, rc = PTR_ERR(handle));
-        }
-        cleanup_phase = 4; /* fsfilt_commit */
+	mutex_lock(&dchild->d_inode->i_mutex);
+	handle = fsfilt_start_log(obd, dparent->d_inode,
+				  FSFILT_OP_UNLINK, oti, 1);
+	if (IS_ERR(handle)) {
+		mutex_unlock(&dchild->d_inode->i_mutex);
+		GOTO(cleanup, rc = PTR_ERR(handle));
+	}
+	cleanup_phase = 4; /* fsfilt_commit */
 
         /* Quota release need uid/gid of inode */
         obdo_from_inode(oa, dchild->d_inode, OBD_MD_FLUID | OBD_MD_FLGID);
@@ -4401,21 +4473,21 @@ static int filter_sync(const struct lu_env *env, struct obd_export *exp,
 
         push_ctxt(&saved, &exp->exp_obd->obd_lvfs_ctxt, NULL);
 
-        LOCK_INODE_MUTEX(dentry->d_inode);
+	mutex_lock(&dentry->d_inode->i_mutex);
 
-        rc = filemap_fdatawrite(dentry->d_inode->i_mapping);
-        if (rc == 0) {
-                /* just any file to grab fsync method - "file" arg unused */
-                struct file *file = obt->obt_rcvd_filp;
+	rc = filemap_fdatawrite(dentry->d_inode->i_mapping);
+	if (rc == 0) {
+		/* just any file to grab fsync method - "file" arg unused */
+		struct file *file = obt->obt_rcvd_filp;
 
-                if (file->f_op && file->f_op->fsync)
-                        rc = file->f_op->fsync(NULL, dentry, 1);
+		if (file->f_op && file->f_op->fsync)
+			rc = file->f_op->fsync(NULL, dentry, 1);
 
-                rc2 = filemap_fdatawait(dentry->d_inode->i_mapping);
-                if (!rc)
-                        rc = rc2;
-        }
-        UNLOCK_INODE_MUTEX(dentry->d_inode);
+		rc2 = filemap_fdatawait(dentry->d_inode->i_mapping);
+		if (!rc)
+			rc = rc2;
+	}
+	mutex_unlock(&dentry->d_inode->i_mutex);
 
         oinfo->oi_oa->o_valid = OBD_MD_FLID;
         obdo_from_inode(oinfo->oi_oa, dentry->d_inode, FILTER_VALID_FLAGS);

@@ -314,16 +314,16 @@ int osd_compat_del_entry(struct osd_thread_info *info, struct osd_device *osd,
         child->d_parent = dird;
         child->d_inode = NULL;
 
-        LOCK_INODE_MUTEX(dir);
-        rc = -ENOENT;
-        bh = osd_ldiskfs_find_entry(dir, child, &de, NULL);
-        if (bh) {
-                rc = ldiskfs_delete_entry(oh->ot_handle, dir, de, bh);
-                brelse(bh);
-        }
-        UNLOCK_INODE_MUTEX(dir);
+	mutex_lock(&dir->i_mutex);
+	rc = -ENOENT;
+	bh = osd_ldiskfs_find_entry(dir, child, &de, NULL);
+	if (bh) {
+		rc = ldiskfs_delete_entry(oh->ot_handle, dir, de, bh);
+		brelse(bh);
+	}
+	mutex_unlock(&dir->i_mutex);
 
-        RETURN(rc);
+	RETURN(rc);
 }
 
 int osd_compat_add_entry(struct osd_thread_info *info, struct osd_device *osd,
@@ -352,11 +352,11 @@ int osd_compat_add_entry(struct osd_thread_info *info, struct osd_device *osd,
         child->d_parent = dir;
         child->d_inode = inode;
 
-        LOCK_INODE_MUTEX(dir->d_inode);
-        rc = osd_ldiskfs_add_entry(oh->ot_handle, child, inode, NULL);
-        UNLOCK_INODE_MUTEX(dir->d_inode);
+	mutex_lock(&dir->d_inode->i_mutex);
+	rc = osd_ldiskfs_add_entry(oh->ot_handle, child, inode, NULL);
+	mutex_unlock(&dir->d_inode->i_mutex);
 
-        RETURN(rc);
+	RETURN(rc);
 }
 
 int osd_compat_objid_lookup(struct osd_thread_info *info,
@@ -398,10 +398,10 @@ int osd_compat_objid_lookup(struct osd_thread_info *info,
         /* XXX: we can use rc from sprintf() instead of strlen() */
         d_seq->d_name.len = strlen(name);
 
-        dir = d->d_inode;
-        LOCK_INODE_MUTEX(dir);
-        bh = osd_ldiskfs_find_entry(dir, d_seq, &de, NULL);
-        UNLOCK_INODE_MUTEX(dir);
+	dir = d->d_inode;
+	mutex_lock(&dir->i_mutex);
+	bh = osd_ldiskfs_find_entry(dir, d_seq, &de, NULL);
+	mutex_unlock(&dir->i_mutex);
 
 	if (bh == NULL)
 		RETURN(-ENOENT);
@@ -483,20 +483,22 @@ struct named_oid {
 };
 
 static const struct named_oid oids[] = {
-        { FLD_INDEX_OID,        "" /* "fld" */ },
-        { FID_SEQ_CTL_OID,      "" /* "seq_ctl" */ },
-        { FID_SEQ_SRV_OID,      "" /* "seq_srv" */ },
-        { MDD_ROOT_INDEX_OID,   "" /* "ROOT" */ },
-        { MDD_ORPHAN_OID,       "" /* "PENDING" */ },
-        { MDD_LOV_OBJ_OID,      "" /* LOV_OBJID */ },
-        { MDD_CAPA_KEYS_OID,    "" /* CAPA_KEYS */ },
+	{ FLD_INDEX_OID,        "" /* "fld" */ },
+	{ FID_SEQ_CTL_OID,      "" /* "seq_ctl" */ },
+	{ FID_SEQ_SRV_OID,      "" /* "seq_srv" */ },
+	{ MDD_ROOT_INDEX_OID,   "" /* "ROOT" */ },
+	{ MDD_ORPHAN_OID,       "" /* "PENDING" */ },
+	{ MDD_LOV_OBJ_OID,      "" /* LOV_OBJID */ },
+	{ MDD_CAPA_KEYS_OID,    "" /* CAPA_KEYS */ },
 	{ MDT_LAST_RECV_OID,    LAST_RCVD },
-        { OFD_LAST_RECV_OID,    "" /* LAST_RCVD */ },
+	{ LFSCK_BOOKMARK_OID,   "" /* "lfsck_bookmark" */ },
+	{ OTABLE_IT_OID,	"" /* "otable iterator" */},
+	{ OFD_LAST_RECV_OID,    "" /* LAST_RCVD */ },
 	{ OFD_LAST_GROUP_OID,   "LAST_GROUP" },
-        { LLOG_CATALOGS_OID,    "" /* "CATALOGS" */ },
-        { MGS_CONFIGS_OID,      "" /* MOUNT_CONFIGS_DIR */ },
+	{ LLOG_CATALOGS_OID,    "" /* "CATALOGS" */ },
+	{ MGS_CONFIGS_OID,      "" /* MOUNT_CONFIGS_DIR */ },
 	{ OFD_HEALTH_CHECK_OID, HEALTH_CHECK },
-        { 0,                    NULL }
+	{ 0,                    NULL }
 };
 
 static char *oid2name(const unsigned long oid)

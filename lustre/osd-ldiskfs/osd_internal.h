@@ -72,10 +72,12 @@
 #include <obd_class.h>
 #include <lustre_disk.h>
 #include <dt_object.h>
+#include <lquota.h>
 
 #include "osd_oi.h"
 #include "osd_iam.h"
 #include "osd_scrub.h"
+#include "osd_quota_fmt.h"
 
 struct inode;
 
@@ -262,7 +264,8 @@ struct osd_device {
         /*
          * Fid Capability
          */
-        unsigned int              od_fl_capa:1;
+	unsigned int              od_fl_capa:1,
+				  od_is_md:1; /* set in ->ldo_prepare */
         unsigned long             od_capa_timeout;
         __u32                     od_capa_alg;
         struct lustre_capa_key   *od_capa_keys;
@@ -301,6 +304,12 @@ struct osd_device {
 	cfs_mutex_t		  od_otable_mutex;
 	struct osd_otable_it	 *od_otable_it;
 	struct osd_scrub	  od_scrub;
+
+	/* service name associated with the osd device */
+	char                      od_svname[MAX_OBD_NAME];
+
+	/* quota slave instance */
+	struct qsd_instance      *od_quota_slave;
 };
 
 #define OSD_TRACK_DECLARES
@@ -465,6 +474,19 @@ struct osd_it_iam {
         struct iam_iterator    oi_it;
 };
 
+/**
+ * Iterator's in-memory data structure for quota file.
+ */
+struct osd_it_quota {
+	struct osd_object	*oiq_obj;
+	/** tree blocks path to where the entry is stored */
+	uint			 oiq_blk[LUSTRE_DQTREEDEPTH];
+	/** on-disk offset for current key where quota record can be found */
+	loff_t			 oiq_offset;
+	/** identifier for current quota record */
+	__u64			 oiq_id;
+};
+
 #define MAX_BLOCKS_PER_PAGE (CFS_PAGE_SIZE / 512)
 
 struct osd_iobuf {
@@ -528,11 +550,13 @@ struct osd_thread_info {
 
         /** osd iterator context used for iterator session */
 
-        union {
-                struct osd_it_iam      oti_it;
-                /** ldiskfs iterator data structure, see osd_it_ea_{init, fini} */
-                struct osd_it_ea       oti_it_ea;
-        };
+	union {
+		struct osd_it_iam	oti_it;
+		/* ldiskfs iterator data structure,
+		 * see osd_it_ea_{init, fini} */
+		struct osd_it_ea	oti_it_ea;
+		struct osd_it_quota	oti_it_quota;
+	};
 
         /** pre-allocated buffer used by oti_it_ea, size OSD_IT_EA_BUFSIZE */
         void                  *oti_it_ea_buf;
@@ -573,6 +597,12 @@ struct osd_thread_info {
 #define OSD_FID_REC_SZ 32
         char                   oti_ldp[OSD_FID_REC_SZ];
         char                   oti_ldp2[OSD_FID_REC_SZ];
+
+	/* used by quota code */
+	union {
+		struct if_dqblk		oti_dqblk;
+		struct if_dqinfo	oti_dqinfo;
+	};
 };
 
 extern int ldiskfs_pdo;
@@ -628,7 +658,19 @@ int osd_oii_insert(struct osd_device *dev, struct osd_idmap_cache *oic,
 		   int insert);
 int osd_oii_lookup(struct osd_device *dev, const struct lu_fid *fid,
 		   struct osd_inode_id *id);
+int osd_scrub_dump(struct osd_device *dev, char *buf, int len);
 
+/* osd_quota_fmt.c */
+int walk_tree_dqentry(const struct lu_env *env, struct osd_object *obj,
+                      int type, uint blk, int depth, uint index,
+                      struct osd_it_quota *it);
+int walk_block_dqentry(const struct lu_env *env, struct osd_object *obj,
+                       int type, uint blk, uint index,
+                       struct osd_it_quota *it);
+loff_t find_tree_dqentry(const struct lu_env *env,
+                         struct osd_object *obj, int type,
+                         qid_t dqid, uint blk, int depth,
+                         struct osd_it_quota *it);
 /*
  * Invariants, assertions.
  */
@@ -817,6 +859,32 @@ int osd_fid_unpack(struct lu_fid *fid, const struct osd_fid_pack *pack)
                 result = -EIO;
         }
         return result;
+}
+
+/**
+ * Quota/Accounting handling
+ */
+extern const struct dt_index_operations osd_acct_index_ops;
+int osd_acct_obj_lookup(struct osd_thread_info *info, struct osd_device *osd,
+			const struct lu_fid *fid, struct osd_inode_id *id);
+
+/* copy from fs/ext4/dir.c */
+static inline int is_32bit_api(void)
+{
+#ifdef CONFIG_COMPAT
+	return is_compat_task();
+#else
+	return (BITS_PER_LONG == 32);
+#endif
+}
+
+static inline loff_t ldiskfs_get_htree_eof(struct file *filp)
+{
+	if ((filp->f_mode & FMODE_32BITHASH) ||
+	    (!(filp->f_mode & FMODE_64BITHASH) && is_32bit_api()))
+		return LDISKFS_HTREE_EOF_32BIT;
+	else
+		return LDISKFS_HTREE_EOF_64BIT;
 }
 
 #endif /* __KERNEL__ */

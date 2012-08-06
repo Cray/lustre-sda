@@ -192,7 +192,6 @@ extern int llapi_obd_statfs(char *path, __u32 type, __u32 index,
                      struct obd_uuid *uuid_buf);
 extern int llapi_ping(char *obd_type, char *obd_name);
 extern int llapi_target_check(int num_types, char **obd_types, char *dir);
-extern int llapi_catinfo(char *dir, char *keyword, char *node_name);
 extern int llapi_file_get_lov_uuid(const char *path, struct obd_uuid *lov_uuid);
 extern int llapi_file_fget_lov_uuid(int fd, struct obd_uuid *lov_uuid);
 extern int llapi_lov_get_uuids(int fd, struct obd_uuid *uuidp, int *ost_count);
@@ -240,11 +239,16 @@ extern int llapi_get_data_version(int fd, __u64 *data_version, __u64 flags);
    slow user parsing of the records, but it also prevents us from cleaning
    up if the records are not consumed. */
 
+/* Records received are in extentded format now, though most of them are still
+ * written in disk in changelog_rec format (to save space and time), it's
+ * converted to extented format in liblustre to ease changelog analysis. */
+#define HAVE_CHANGELOG_EXTEND_REC 1
+
 extern int llapi_changelog_start(void **priv, int flags, const char *mdtname,
                                  long long startrec);
 extern int llapi_changelog_fini(void **priv);
-extern int llapi_changelog_recv(void *priv, struct changelog_rec **rech);
-extern int llapi_changelog_free(struct changelog_rec **rech);
+extern int llapi_changelog_recv(void *priv, struct changelog_ext_rec **rech);
+extern int llapi_changelog_free(struct changelog_ext_rec **rech);
 /* Allow records up to endrec to be destroyed; requires registered id. */
 extern int llapi_changelog_clear(const char *mdtname, const char *idstr,
                                  long long endrec);

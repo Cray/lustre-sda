@@ -39,10 +39,6 @@
 
 #ifdef __KERNEL__
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
-#error sorry, lustre requires at least linux kernel 2.6.9 or later
-#endif
-
 #include <linux/fs_struct.h>
 #include <linux/namei.h>
 #include <libcfs/linux/portals_compat25.h>
@@ -56,15 +52,6 @@
  #define SEEK_CUR 1
  #define SEEK_END 2
 #endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,14)
-struct ll_iattr {
-        struct iattr    iattr;
-        unsigned int    ia_attr_flags;
-};
-#else
-#define ll_iattr iattr
-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,14) */
 
 #ifdef HAVE_FS_STRUCT_RWLOCK
 # define LOCK_FS_STRUCT(fs)   cfs_write_lock(&(fs)->lock)
@@ -121,34 +108,6 @@ static inline void ll_set_fs_pwd(struct fs_struct *fs, struct vfsmount *mnt,
  */
 #define ATTR_BLOCKS    (1 << 27)
 
-#if HAVE_INODE_I_MUTEX
-#define UNLOCK_INODE_MUTEX(inode) \
-do {cfs_mutex_unlock(&(inode)->i_mutex); } while(0)
-#define LOCK_INODE_MUTEX(inode) \
-do {cfs_mutex_lock(&(inode)->i_mutex); } while(0)
-#define LOCK_INODE_MUTEX_PARENT(inode) \
-do {cfs_mutex_lock_nested(&(inode)->i_mutex, I_MUTEX_PARENT); } while(0)
-#define TRYLOCK_INODE_MUTEX(inode) cfs_mutex_trylock(&(inode)->i_mutex)
-#else
-#define UNLOCK_INODE_MUTEX(inode) do  cfs_up(&(inode)->i_sem); } while(0)
-#define LOCK_INODE_MUTEX(inode) do  cfs_down(&(inode)->i_sem); } while(0)
-#define TRYLOCK_INODE_MUTEX(inode) (!down_trylock(&(inode)->i_sem))
-#define LOCK_INODE_MUTEX_PARENT(inode) LOCK_INODE_MUTEX(inode)
-#endif /* HAVE_INODE_I_MUTEX */
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,15)
-#define d_child d_u.d_child
-#define d_rcu d_u.d_rcu
-#endif
-
-#ifdef HAVE_DQUOTOFF_MUTEX
-#define UNLOCK_DQONOFF_MUTEX(dqopt) cfs_mutex_unlock(&(dqopt)->dqonoff_mutex)
-#define LOCK_DQONOFF_MUTEX(dqopt) cfs_mutex_lock(&(dqopt)->dqonoff_mutex)
-#else
-#define UNLOCK_DQONOFF_MUTEX(dqopt) cfs_up(&(dqopt)->dqonoff_sem)
-#define LOCK_DQONOFF_MUTEX(dqopt) cfs_down(&(dqopt)->dqonoff_sem)
-#endif /* HAVE_DQUOTOFF_MUTEX */
-
 #define current_ngroups current_cred()->group_info->ngroups
 #define current_groups current_cred()->group_info->small_block
 
@@ -188,12 +147,15 @@ do {cfs_mutex_lock_nested(&(inode)->i_mutex, I_MUTEX_PARENT); } while(0)
 #define ll_permission(inode,mask,nd)    permission(inode,mask,nd)
 #endif
 
-#ifdef HAVE_GENERIC_PERMISSION_4ARGS
-#define ll_generic_permission(inode, mask, flags, check_acl) \
-        generic_permission(inode, mask, flags, check_acl)
+#ifdef HAVE_GENERIC_PERMISSION_2ARGS
+# define ll_generic_permission(inode, mask, flags, check_acl) \
+	 generic_permission(inode, mask)
+#elif defined HAVE_GENERIC_PERMISSION_4ARGS
+# define ll_generic_permission(inode, mask, flags, check_acl) \
+	 generic_permission(inode, mask, flags, check_acl)
 #else
-#define ll_generic_permission(inode, mask, flags, check_acl) \
-        generic_permission(inode, mask, check_acl)
+# define ll_generic_permission(inode, mask, flags, check_acl) \
+	 generic_permission(inode, mask, check_acl)
 #endif
 
 #define ll_pgcache_lock(mapping)          cfs_spin_lock(&mapping->page_lock)
@@ -317,40 +279,35 @@ static inline int mapping_has_pages(struct address_space *mapping)
 
 #include <linux/mpage.h>        /* for generic_writepages */
 
+#ifdef HAVE_HIDE_VFSMOUNT_GUTS
+# include <../fs/mount.h>
+#else
+# define real_mount(mnt)	(mnt)
+#endif
+
+static inline const char *mnt_get_devname(struct vfsmount *mnt)
+{
+	return real_mount(mnt)->mnt_devname;
+}
+
 #ifndef HAVE_ATOMIC_MNT_COUNT
 static inline unsigned int mnt_get_count(struct vfsmount *mnt)
 {
 #ifdef CONFIG_SMP
-        unsigned int count = 0;
-        int cpu;
+	unsigned int count = 0;
+	int cpu;
 
-        for_each_possible_cpu(cpu) {
-                count += per_cpu_ptr(mnt->mnt_pcp, cpu)->mnt_count;
-        }
+	for_each_possible_cpu(cpu) {
+		count += per_cpu_ptr(real_mount(mnt)->mnt_pcp, cpu)->mnt_count;
+	}
 
-        return count;
+	return count;
 #else
-        return mnt->mnt_count;
+	return real_mount(mnt)->mnt_count;
 #endif
 }
 #else
-# define mnt_get_count(mnt)      cfs_atomic_read(&mnt->mnt_count)
-#endif
-
-#ifdef HAVE_STATFS_DENTRY_PARAM
-#define ll_do_statfs(sb, sfs) (sb)->s_op->statfs((sb)->s_root, (sfs))
-#else
-#define ll_do_statfs(sb, sfs) (sb)->s_op->statfs((sb), (sfs))
-#endif
-
-#ifndef HAVE_SB_TIME_GRAN
-#ifndef HAVE_S_TIME_GRAN
-#error Need s_time_gran patch!
-#endif
-static inline u32 get_sb_time_gran(struct super_block *sb)
-{
-        return sb->s_time_gran;
-}
+# define mnt_get_count(mnt)      cfs_atomic_read(&(real_mount(mnt)->mnt_count))
 #endif
 
 #ifdef HAVE_RW_TREE_LOCK
@@ -378,11 +335,7 @@ int ll_unregister_blkdev(unsigned int dev, const char *name)
 #define ll_invalidate_bdev(a,b)         invalidate_bdev((a))
 #endif
 
-#ifdef HAVE_INODE_BLKSIZE
-#define ll_inode_blksize(a)     (a)->i_blksize
-#else
 #define ll_inode_blksize(a)     (1<<(a)->i_blkbits)
-#endif
 
 #ifdef HAVE_FS_RENAME_DOES_D_MOVE
 #define LL_RENAME_DOES_D_MOVE   FS_RENAME_DOES_D_MOVE
@@ -670,16 +623,6 @@ static inline long labs(long x)
 }
 #endif /* HAVE_REGISTER_SHRINKER */
 
-#ifdef HAVE_INVALIDATE_INODE_PAGES
-#define invalidate_mapping_pages(mapping,s,e) invalidate_inode_pages(mapping)
-#endif
-
-#ifdef HAVE_INODE_IPRIVATE
-#define INODE_PRIVATE_DATA(inode)       ((inode)->i_private)
-#else
-#define INODE_PRIVATE_DATA(inode)       ((inode)->u.generic_ip)
-#endif
-
 #ifndef HAVE_SIMPLE_SETATTR
 #define simple_setattr(dentry, ops) inode_setattr((dentry)->d_inode, ops)
 #endif
@@ -822,7 +765,13 @@ static inline int ll_quota_off(struct super_block *sb, int off, int remount)
 #define ll_add_to_page_cache_lru(pg, mapping, off, gfp) \
         add_to_page_cache(pg, mapping, off, gfp)
 #define ll_pagevec_init(pv, cold)       pagevec_init(&lru_pvec, cold);
-#define ll_pagevec_add(pv, pg)          pagevec_add(pv, pg)
+#define ll_pagevec_add(pv, pg)					\
+({								\
+	int __ret;						\
+								\
+	page_cache_get(pg);					\
+	__ret = pagevec_add(pv, pg);				\
+})
 #define ll_pagevec_lru_add_file(pv)     pagevec_lru_add_file(pv)
 #endif
 

@@ -263,7 +263,7 @@ int osd_procfs_init(struct osd_device *osd, const char *name)
         /* Find the type procroot and add the proc entry for this device */
         lprocfs_osd_init_vars(&lvars);
         osd->od_proc_entry = lprocfs_register(name, type->typ_procroot,
-                                              lvars.obd_vars, osd);
+                                              lvars.obd_vars, &osd->od_dt_dev);
         if (IS_ERR(osd->od_proc_entry)) {
                 rc = PTR_ERR(osd->od_proc_entry);
                 CERROR("Error %d setting up lprocfs for %s\n",
@@ -310,129 +310,8 @@ void osd_lprocfs_time_end(const struct lu_env *env, struct osd_device *osd,
 
 
 
-int lprocfs_osd_rd_blksize(char *page, char **start, off_t off, int count,
-                           int *eof, void *data)
-{
-        struct osd_device *osd = data;
-        int rc;
-
-        if (unlikely(osd->od_mount == NULL))
-                return -EINPROGRESS;
-
-        rc = osd_statfs(NULL, &osd->od_dt_dev, &osd->od_statfs);
-        if (!rc) {
-                *eof = 1;
-                rc = snprintf(page, count, "%u\n", osd->od_statfs.os_bsize);
-        }
-        return rc;
-}
-
-int lprocfs_osd_rd_kbytestotal(char *page, char **start, off_t off, int count,
-                               int *eof, void *data)
-{
-        struct osd_device *osd = data;
-        int rc;
-
-        if (unlikely(osd->od_mount == NULL))
-                return -EINPROGRESS;
-
-        rc = osd_statfs(NULL, &osd->od_dt_dev, &osd->od_statfs);
-        if (!rc) {
-                __u32 blk_size = osd->od_statfs.os_bsize >> 10;
-                __u64 result = osd->od_statfs.os_blocks;
-
-                while (blk_size >>= 1)
-                        result <<= 1;
-
-                *eof = 1;
-                rc = snprintf(page, count, LPU64"\n", result);
-        }
-        return rc;
-}
-
-int lprocfs_osd_rd_kbytesfree(char *page, char **start, off_t off, int count,
-                              int *eof, void *data)
-{
-        struct osd_device *osd = data;
-        int rc;
-
-        if (unlikely(osd->od_mount == NULL))
-                return -EINPROGRESS;
-
-        rc = osd_statfs(NULL, &osd->od_dt_dev, &osd->od_statfs);
-        if (!rc) {
-                __u32 blk_size = osd->od_statfs.os_bsize >> 10;
-                __u64 result = osd->od_statfs.os_bfree;
-
-                while (blk_size >>= 1)
-                        result <<= 1;
-
-                *eof = 1;
-                rc = snprintf(page, count, LPU64"\n", result);
-        }
-        return rc;
-}
-
-int lprocfs_osd_rd_kbytesavail(char *page, char **start, off_t off, int count,
-                               int *eof, void *data)
-{
-        struct osd_device *osd = data;
-        int rc;
-
-        if (unlikely(osd->od_mount == NULL))
-                return -EINPROGRESS;
-
-        rc = osd_statfs(NULL, &osd->od_dt_dev, &osd->od_statfs);
-        if (!rc) {
-                __u32 blk_size = osd->od_statfs.os_bsize >> 10;
-                __u64 result = osd->od_statfs.os_bavail;
-
-                while (blk_size >>= 1)
-                        result <<= 1;
-
-                *eof = 1;
-                rc = snprintf(page, count, LPU64"\n", result);
-        }
-        return rc;
-}
-
-int lprocfs_osd_rd_filestotal(char *page, char **start, off_t off, int count,
-                              int *eof, void *data)
-{
-        struct osd_device *osd = data;
-        int rc;
-
-        if (unlikely(osd->od_mount == NULL))
-                return -EINPROGRESS;
-
-        rc = osd_statfs(NULL, &osd->od_dt_dev, &osd->od_statfs);
-        if (!rc) {
-                *eof = 1;
-                rc = snprintf(page, count, LPU64"\n", osd->od_statfs.os_files);
-        }
-
-        return rc;
-}
-
-int lprocfs_osd_rd_filesfree(char *page, char **start, off_t off, int count,
-                             int *eof, void *data)
-{
-        struct osd_device *osd = data;
-        int rc;
-
-        if (unlikely(osd->od_mount == NULL))
-                return -EINPROGRESS;
-
-        rc = osd_statfs(NULL, &osd->od_dt_dev, &osd->od_statfs);
-        if (!rc) {
-                *eof = 1;
-                rc = snprintf(page, count, LPU64"\n", osd->od_statfs.os_ffree);
-        }
-        return rc;
-}
-
-int lprocfs_osd_rd_fstype(char *page, char **start, off_t off, int count,
-                          int *eof, void *data)
+static int lprocfs_osd_rd_fstype(char *page, char **start, off_t off, int count,
+				 int *eof, void *data)
 {
         struct obd_device *osd = data;
 
@@ -443,17 +322,17 @@ int lprocfs_osd_rd_fstype(char *page, char **start, off_t off, int count,
 static int lprocfs_osd_rd_mntdev(char *page, char **start, off_t off, int count,
                                  int *eof, void *data)
 {
-        struct osd_device *osd = data;
+        struct osd_device *osd = osd_dt_dev(data);
 
         LASSERT(osd != NULL);
         if (unlikely(osd->od_mount == NULL))
                 return -EINPROGRESS;
 
-        LASSERT(osd->od_mount->lmi_mnt->mnt_devname);
-        *eof = 1;
+	LASSERT(mnt_get_devname(osd->od_mount->lmi_mnt));
+	*eof = 1;
 
-        return snprintf(page, count, "%s\n",
-                        osd->od_mount->lmi_mnt->mnt_devname);
+	return snprintf(page, count, "%s\n",
+			mnt_get_devname(osd->od_mount->lmi_mnt));
 }
 
 #ifdef HAVE_LDISKFS_PDO
@@ -481,6 +360,50 @@ static int lprocfs_osd_wr_pdo(struct file *file, const char *buffer,
 }
 #endif
 
+static int lprocfs_osd_rd_auto_scrub(char *page, char **start, off_t off,
+				     int count, int *eof, void *data)
+{
+	struct osd_device *dev = data;
+
+	LASSERT(dev != NULL);
+	if (unlikely(dev->od_mount == NULL))
+		return -EINPROGRESS;
+
+	*eof = 1;
+	return snprintf(page, count, "%d\n", !dev->od_scrub.os_no_scrub);
+}
+
+static int lprocfs_osd_wr_auto_scrub(struct file *file, const char *buffer,
+				     unsigned long count, void *data)
+{
+	struct osd_device *dev = data;
+	int val, rc;
+
+	LASSERT(dev != NULL);
+	if (unlikely(dev->od_mount == NULL))
+		return -EINPROGRESS;
+
+	rc = lprocfs_write_helper(buffer, count, &val);
+	if (rc)
+		return rc;
+
+	dev->od_scrub.os_no_scrub = !val;
+	return count;
+}
+
+static int lprocfs_osd_rd_oi_scrub(char *page, char **start, off_t off,
+				   int count, int *eof, void *data)
+{
+	struct osd_device *dev = data;
+
+	LASSERT(dev != NULL);
+	if (unlikely(dev->od_mount == NULL))
+		return -EINPROGRESS;
+
+	*eof = 1;
+	return osd_scrub_dump(dev, page, count);
+}
+
 struct lprocfs_vars lprocfs_osd_obd_vars[] = {
         { "blocksize",       lprocfs_osd_rd_blksize,     0, 0 },
         { "kbytestotal",     lprocfs_osd_rd_kbytestotal, 0, 0 },
@@ -493,7 +416,10 @@ struct lprocfs_vars lprocfs_osd_obd_vars[] = {
 #ifdef HAVE_LDISKFS_PDO
         { "pdo",             lprocfs_osd_rd_pdo, lprocfs_osd_wr_pdo, 0 },
 #endif
-        { 0 }
+	{ "auto_scrub",      lprocfs_osd_rd_auto_scrub,
+			     lprocfs_osd_wr_auto_scrub,  0 },
+	{ "oi_scrub",	     lprocfs_osd_rd_oi_scrub,    0, 0 },
+	{ 0 }
 };
 
 struct lprocfs_vars lprocfs_osd_module_vars[] = {

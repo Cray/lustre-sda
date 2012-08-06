@@ -102,6 +102,7 @@ static inline void loi_init(struct lov_oinfo *loi)
 }
 
 struct lov_stripe_md {
+	cfs_atomic_t     lsm_refc;
         cfs_spinlock_t   lsm_lock;
         pid_t            lsm_lock_owner; /* debugging */
 
@@ -360,20 +361,18 @@ struct filter_obd {
         cfs_atomic_t         fo_r_in_flight;
         cfs_atomic_t         fo_w_in_flight;
 
-        /*
-         * per-filter pool of kiobuf's allocated by filter_common_setup() and
-         * torn down by filter_cleanup(). Contains OST_NUM_THREADS elements of
-         * which ->fo_iobuf_count were allocated.
-         *
-         * This pool contains kiobuf used by
-         * filter_{prep,commit}rw_{read,write}() and is shared by all OST
-         * threads.
-         *
-         * Locking: none, each OST thread uses only one element, determined by
-         * its "ordinal number", ->t_id.
-         */
-        struct filter_iobuf    **fo_iobuf_pool;
-        int                      fo_iobuf_count;
+	/*
+	 * per-filter pool of kiobuf's allocated by filter_common_setup() and
+	 * torn down by filter_cleanup().
+	 *
+	 * This pool contains kiobuf used by
+	 * filter_{prep,commit}rw_{read,write}() and is shared by all OST
+	 * threads.
+	 *
+	 * Locking: protected by internal lock of cfs_hash, pool can be
+	 * found from this hash table by t_id of ptlrpc_thread.
+	 */
+	struct cfs_hash		*fo_iobuf_hash;
 
         cfs_list_t               fo_llog_list;
         cfs_spinlock_t           fo_llog_list_lock;
@@ -411,6 +410,7 @@ struct timeout_item {
 };
 
 #define OSC_MAX_RIF_DEFAULT       8
+#define MDS_OSC_MAX_RIF_DEFAULT   50
 #define OSC_MAX_RIF_MAX         256
 #define OSC_MAX_DIRTY_DEFAULT  (OSC_MAX_RIF_DEFAULT * 4)
 #define OSC_MAX_DIRTY_MB_MAX   2048     /* arbitrary, but < MAX_LONG bytes */
@@ -545,6 +545,8 @@ struct client_obd {
 
         /* ptlrpc work for writeback in ptlrpcd context */
         void                    *cl_writeback_work;
+	/* hash tables for osc_quota_info */
+	cfs_hash_t              *cl_quota_hash[MAXQUOTAS];
 };
 #define obd2cli_tgt(obd) ((char *)(obd)->u.cli.cl_target_uuid.uuid)
 
@@ -1181,9 +1183,12 @@ struct obd_device {
          * debugging.
          */
         struct lu_ref          obd_reference;
+
+	int		       obd_conn_inprogress;
 };
 
 #define OBD_LLOG_FL_SENDNOW     0x0001
+#define OBD_LLOG_FL_EXIT	0x0002
 
 enum obd_cleanup_stage {
 /* Special case hack for MDS LOVs */
@@ -1278,9 +1283,7 @@ struct md_op_data {
         /* iattr fields and blocks. */
         struct iattr            op_attr;
 #ifdef __KERNEL__
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,14)
-        unsigned int            op_attr_flags;
-#endif
+	unsigned int            op_attr_flags;
 #endif
         __u64                   op_valid;
         loff_t                  op_attr_blocks;

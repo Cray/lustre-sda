@@ -585,7 +585,7 @@ struct ldlm_interval_tree {
         struct interval_node *lit_root; /* actually ldlm_interval */
 };
 
-#define LUSTRE_TRACKS_LOCK_EXP_REFS (1)
+#define LUSTRE_TRACKS_LOCK_EXP_REFS (0)
 
 /* Cancel flag. */
 typedef enum {
@@ -601,6 +601,8 @@ struct ldlm_flock {
         __u64 owner;
         __u64 blocking_owner;
         struct obd_export *blocking_export;
+	/* Protected by the hash lock */
+	__u32 blocking_refs;
         __u32 pid;
 };
 
@@ -655,6 +657,12 @@ struct ldlm_lock {
         /**
          * Protected by lr_lock. Requested mode.
          */
+	/**
+	 * Protected by per-bucket exp->exp_flock_hash locks. Per export hash
+	 * of locks.
+	 */
+	cfs_hlist_node_t         l_exp_flock_hash;
+
         ldlm_mode_t              l_req_mode;
         /**
          * Granted mode, also protected by lr_lock.
@@ -725,6 +733,22 @@ struct ldlm_lock {
          * Protected by lock and resource locks.
          */
                               l_destroyed:1,
+	/*
+	 * it's set in lock_res_and_lock() and unset in unlock_res_and_lock().
+	 *
+	 * NB: compare with check_res_locked(), check this bit is cheaper,
+	 * also, spin_is_locked() is deprecated for kernel code, one reason is
+	 * because it works only for SMP so user needs add extra macros like
+	 * LASSERT_SPIN_LOCKED for uniprocessor kernels.
+	 */
+			      l_res_locked:1,
+	/*
+	 * it's set once we call ldlm_add_waiting_lock_res_locked()
+	 * to start the lock-timeout timer and it will never be reset.
+	 *
+	 * Protected by lock_res_and_lock().
+	 */
+			      l_waited:1,
         /**
          * flag whether this is a server namespace lock.
          */

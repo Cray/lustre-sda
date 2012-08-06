@@ -43,24 +43,15 @@
 #define DEBUG_SUBSYSTEM S_MDS
 
 #include <linux/module.h>
-#ifdef HAVE_EXT4_LDISKFS
 #include <ldiskfs/ldiskfs_jbd2.h>
-#else
-#include <linux/jbd.h>
-#endif
 #include <obd.h>
 #include <obd_class.h>
 #include <lustre_ver.h>
 #include <obd_support.h>
 #include <lprocfs_status.h>
 
-#include <lustre_disk.h>
 #include <lustre_fid.h>
-#ifdef HAVE_EXT4_LDISKFS
 #include <ldiskfs/ldiskfs.h>
-#else
-#include <linux/ldiskfs_fs.h>
-#endif
 #include <lustre_mds.h>
 #include <lustre/lustre_idl.h>
 #include <lustre_disk.h>      /* for changelogs */
@@ -121,6 +112,7 @@ static void mdd_device_shutdown(const struct lu_env *env,
                                 struct mdd_device *m, struct lustre_cfg *cfg)
 {
         ENTRY;
+	mdd_lfsck_cleanup(env, m);
         mdd_changelog_fini(env, m);
         dt_txn_callback_del(m->mdd_child, &m->mdd_txn_cb);
         if (m->mdd_dot_lustre_objs.mdd_obf)
@@ -348,6 +340,42 @@ int mdd_changelog_llog_write(struct mdd_device         *mdd,
         return rc;
 }
 
+/** Add a changelog_ext entry \a rec to the changelog llog
+ * \param mdd
+ * \param rec
+ * \param handle - currently ignored since llogs start their own transaction;
+ *		this will hopefully be fixed in llog rewrite
+ * \retval 0 ok
+ */
+int mdd_changelog_ext_llog_write(struct mdd_device *mdd,
+				 struct llog_changelog_ext_rec *rec,
+				 struct thandle *handle)
+{
+	struct obd_device *obd = mdd2obd_dev(mdd);
+	struct llog_ctxt *ctxt;
+	int rc;
+
+	rec->cr_hdr.lrh_len = llog_data_len(sizeof(*rec) + rec->cr.cr_namelen);
+	/* llog_lvfs_write_rec sets the llog tail len */
+	rec->cr_hdr.lrh_type = CHANGELOG_REC;
+	rec->cr.cr_time = cl_time();
+	cfs_spin_lock(&mdd->mdd_cl.mc_lock);
+	/* NB: I suppose it's possible llog_add adds out of order wrt cr_index,
+	 * but as long as the MDD transactions are ordered correctly for e.g.
+	 * rename conflicts, I don't think this should matter. */
+	rec->cr.cr_index = ++mdd->mdd_cl.mc_index;
+	cfs_spin_unlock(&mdd->mdd_cl.mc_lock);
+	ctxt = llog_get_context(obd, LLOG_CHANGELOG_ORIG_CTXT);
+	if (ctxt == NULL)
+		return -ENXIO;
+
+	/* nested journal transaction */
+	rc = llog_add(ctxt, &rec->cr_hdr, NULL, NULL, 0);
+	llog_ctxt_put(ctxt);
+
+	return rc;
+}
+
 /** Remove entries with indicies up to and including \a endrec from the
  *  changelog
  * \param mdd
@@ -453,7 +481,7 @@ static int create_dot_lustre_dir(const struct lu_env *env, struct mdd_device *m)
                 rc = PTR_ERR(mdo);
                 CERROR("creating obj [%s] fid = "DFID" rc = %d\n",
                         dot_lustre_name, PFID(fid), rc);
-                RETURN(rc);
+		return rc;
         }
 
         if (!IS_ERR(mdo))
@@ -1002,6 +1030,7 @@ static int mdd_process_config(const struct lu_env *env,
                 mdd_changelog_init(env, m);
                 break;
         case LCFG_CLEANUP:
+		lu_dev_del_linkage(d->ld_site, d);
                 mdd_device_shutdown(env, m, cfg);
         default:
                 rc = next->ld_ops->ldo_process_config(env, next, cfg);
@@ -1117,13 +1146,16 @@ static int mdd_prepare(const struct lu_env *env,
         /* we use capa file to declare llog changes,
          * will be fixed with new llog in 2.3 */
         root = dt_store_open(env, mdd->mdd_child, "", CAPA_KEYS, &fid);
-        if (!IS_ERR(root))
-                mdd->mdd_capa = root;
-        else
-                rc = PTR_ERR(root);
+	if (IS_ERR(root))
+		GOTO(out, rc = PTR_ERR(root));
+
+	mdd->mdd_capa = root;
+	rc = mdd_lfsck_setup(env, mdd);
+
+	GOTO(out, rc);
 
 out:
-        RETURN(rc);
+	return rc;
 }
 
 const struct lu_device_operations mdd_lu_ops = {
@@ -1481,7 +1513,7 @@ static int mdd_changelog_user_purge_cb(struct llog_handle *llh,
                         RETURN(-ENOMEM);
                 }
 
-                rc = mdd_declare_llog_cancel(mcud->mcud_env, mdd, th); 
+		rc = mdd_declare_llog_cancel(mcud->mcud_env, mdd, th);
                 if (rc)
                         GOTO(stop, rc);
 
@@ -1601,6 +1633,20 @@ static int mdd_iocontrol(const struct lu_env *env, struct md_device *m,
                 *mntopts = mdd->mdd_dt_conf.ddp_mntopts;
                 RETURN(0);
         }
+	case OBD_IOC_START_LFSCK: {
+		struct lfsck_start *start = karg;
+		struct md_lfsck *lfsck = &mdd->mdd_lfsck;
+
+		/* Return the kernel service version. */
+		/* XXX: version can be used for compatibility in the future. */
+		start->ls_version = lfsck->ml_version;
+		rc = mdd_lfsck_start(env, lfsck, start);
+		RETURN(rc);
+	}
+	case OBD_IOC_STOP_LFSCK: {
+		rc = mdd_lfsck_stop(env, &mdd->mdd_lfsck);
+		RETURN(rc);
+	}
         }
 
         /* Below ioctls use obd_ioctl_data */
@@ -1722,26 +1768,34 @@ static struct lu_local_obj_desc llod_mdd_root = {
         .llod_feat      = &dt_directory_features,
 };
 
+static struct lu_local_obj_desc llod_lfsck_bookmark = {
+	.llod_name      = lfsck_bookmark_name,
+	.llod_oid       = LFSCK_BOOKMARK_OID,
+	.llod_is_index  = 0,
+};
+
 static int __init mdd_mod_init(void)
 {
-        struct lprocfs_static_vars lvars;
-        lprocfs_mdd_init_vars(&lvars);
+	struct lprocfs_static_vars lvars;
+	lprocfs_mdd_init_vars(&lvars);
 
-        llo_local_obj_register(&llod_capa_key);
-        llo_local_obj_register(&llod_mdd_orphan);
-        llo_local_obj_register(&llod_mdd_root);
+	llo_local_obj_register(&llod_capa_key);
+	llo_local_obj_register(&llod_mdd_orphan);
+	llo_local_obj_register(&llod_mdd_root);
+	llo_local_obj_register(&llod_lfsck_bookmark);
 
-        return class_register_type(&mdd_obd_device_ops, NULL, lvars.module_vars,
-                                   LUSTRE_MDD_NAME, &mdd_device_type);
+	return class_register_type(&mdd_obd_device_ops, NULL, lvars.module_vars,
+				   LUSTRE_MDD_NAME, &mdd_device_type);
 }
 
 static void __exit mdd_mod_exit(void)
 {
-        llo_local_obj_unregister(&llod_capa_key);
-        llo_local_obj_unregister(&llod_mdd_orphan);
-        llo_local_obj_unregister(&llod_mdd_root);
+	llo_local_obj_unregister(&llod_capa_key);
+	llo_local_obj_unregister(&llod_mdd_orphan);
+	llo_local_obj_unregister(&llod_mdd_root);
+	llo_local_obj_unregister(&llod_lfsck_bookmark);
 
-        class_unregister_type(LUSTRE_MDD_NAME);
+	class_unregister_type(LUSTRE_MDD_NAME);
 }
 
 MODULE_AUTHOR("Sun Microsystems, Inc. <http://www.lustre.org/>");

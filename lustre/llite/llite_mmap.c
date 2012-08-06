@@ -34,15 +34,11 @@
  * Lustre is a trademark of Sun Microsystems, Inc.
  */
 
-#ifndef AUTOCONF_INCLUDED
-#include <linux/config.h>
-#endif
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/string.h>
 #include <linux/stat.h>
 #include <linux/errno.h>
-#include <linux/smp_lock.h>
 #include <linux/unistd.h>
 #include <linux/version.h>
 #include <asm/system.h>
@@ -53,7 +49,6 @@
 #include <asm/uaccess.h>
 #include <linux/mm.h>
 #include <linux/pagemap.h>
-#include <linux/smp_lock.h>
 
 #define DEBUG_SUBSYSTEM S_LLITE
 
@@ -604,15 +599,18 @@ int ll_teardown_mmaps(struct address_space *mapping, __u64 first, __u64 last)
 
 static struct vm_operations_struct ll_file_vm_ops = {
 #ifndef HAVE_VM_OP_FAULT
-        .nopage         = ll_nopage,
-        .populate       = ll_populate,
-
+	.nopage			= ll_nopage,
+	.populate		= ll_populate,
 #else
-        .fault          = ll_fault,
+	.fault			= ll_fault,
 #endif
-        .page_mkwrite   = ll_page_mkwrite,
-        .open           = ll_vm_open,
-        .close          = ll_vm_close,
+#ifndef HAVE_PGMKWRITE_COMPACT
+	.page_mkwrite		= ll_page_mkwrite,
+#else
+	._pmkw.page_mkwrite	= ll_page_mkwrite,
+#endif
+	.open			= ll_vm_open,
+	.close			= ll_vm_close,
 };
 
 int ll_file_mmap(struct file *file, struct vm_area_struct * vma)

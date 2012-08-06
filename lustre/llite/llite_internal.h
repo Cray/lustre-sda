@@ -58,6 +58,12 @@
 #define VM_FAULT_RETRY 0
 #endif
 
+/* Kernel 3.1 kills LOOKUP_CONTINUE, LOOKUP_PARENT is equivalent to it.
+ * seem kernel commit 49084c3bb2055c401f3493c13edae14d49128ca0 */
+#ifndef LOOKUP_CONTINUE
+#define LOOKUP_CONTINUE LOOKUP_PARENT
+#endif
+
 /** Only used on client-side for indicating the tail of dir hash/offset. */
 #define LL_DIR_END_OFF          0x7fffffffffffffffULL
 #define LL_DIR_END_OFF_32BIT    0x7fffffffUL
@@ -162,7 +168,7 @@ struct ll_inode_info {
         __u64                           lli_open_fd_write_count;
         __u64                           lli_open_fd_exec_count;
         /* Protects access to och pointers and their usage counters, also
-         * atomicity of check-update of lli_smd */
+	 * atomicity of check-update of lli_has_smd */
         cfs_mutex_t                     lli_och_mutex;
 
         struct inode                    lli_vfs_inode;
@@ -264,20 +270,22 @@ struct ll_inode_info {
          *      In the future, if more members are added only for directory,
          *      some of the following members can be moved into u.f.
          */
-        struct lov_stripe_md           *lli_smd;
-        struct cl_object               *lli_clob;
+	bool                            lli_has_smd;
+	struct cl_object	       *lli_clob;
+
+	/* mutex to request for layout lock exclusively. */
+	cfs_mutex_t		        lli_layout_mutex;
 };
 
 /*
  * Locking to guarantee consistency of non-atomic updates to long long i_size,
- * consistency between file size and KMS, and consistency within
- * ->lli_smd->lsm_oinfo[]'s.
+ * consistency between file size and KMS.
  *
- * Implemented by ->lli_size_sem and ->lsm_sem, nested in that order.
+ * Implemented by ->lli_size_sem and ->lsm_lock, nested in that order.
  */
 
-void ll_inode_size_lock(struct inode *inode, int lock_lsm);
-void ll_inode_size_unlock(struct inode *inode, int unlock_lsm);
+void ll_inode_size_lock(struct inode *inode);
+void ll_inode_size_unlock(struct inode *inode);
 
 // FIXME: replace the name of this with LL_I to conform to kernel stuff
 // static inline struct ll_inode_info *LL_I(struct inode *inode)
@@ -388,6 +396,7 @@ enum stats_track_type {
 #define LL_SBI_64BIT_HASH      0x4000 /* support 64-bits dir hash/offset */
 #define LL_SBI_AGL_ENABLED     0x8000 /* enable agl */
 #define LL_SBI_VERBOSE        0x10000 /* verbose mount/umount */
+#define LL_SBI_LAYOUT_LOCK    0x20000 /* layout lock support */
 
 /* default value for ll_sb_info->contention_time */
 #define SBI_DEFAULT_CONTENTION_SECONDS     60
@@ -662,6 +671,7 @@ struct page *ll_get_dir_page(struct file *filp, struct inode *dir, __u64 hash,
 int ll_readdir(struct file *filp, void *cookie, filldir_t filldir);
 
 int ll_get_mdt_idx(struct inode *inode);
+char *ll_get_fsname(struct inode *inode);
 /* llite/namei.c */
 int ll_objects_destroy(struct ptlrpc_request *request,
                        struct inode *dir);
@@ -799,11 +809,7 @@ struct inode *ll_inode_from_lock(struct ldlm_lock *lock);
 void ll_clear_inode(struct inode *inode);
 int ll_setattr_raw(struct dentry *dentry, struct iattr *attr);
 int ll_setattr(struct dentry *de, struct iattr *attr);
-#ifndef HAVE_STATFS_DENTRY_PARAM
-int ll_statfs(struct super_block *sb, struct kstatfs *sfs);
-#else
 int ll_statfs(struct dentry *de, struct kstatfs *sfs);
-#endif
 int ll_statfs_internal(struct super_block *sb, struct obd_statfs *osfs,
                        __u64 max_age, __u32 flags);
 void ll_update_inode(struct inode *inode, struct lustre_md *md);
@@ -1372,14 +1378,14 @@ static inline struct ll_file_data *cl_iattr2fd(struct inode *inode,
         return LUSTRE_FPRIVATE(attr->ia_file);
 }
 
-static inline void cl_isize_lock(struct inode *inode, int lsmlock)
+static inline void cl_isize_lock(struct inode *inode)
 {
-        ll_inode_size_lock(inode, lsmlock);
+	ll_inode_size_lock(inode);
 }
 
-static inline void cl_isize_unlock(struct inode *inode, int lsmlock)
+static inline void cl_isize_unlock(struct inode *inode)
 {
-        ll_inode_size_unlock(inode, lsmlock);
+	ll_inode_size_unlock(inode);
 }
 
 static inline void cl_isize_write_nolock(struct inode *inode, loff_t kms)
@@ -1390,9 +1396,9 @@ static inline void cl_isize_write_nolock(struct inode *inode, loff_t kms)
 
 static inline void cl_isize_write(struct inode *inode, loff_t kms)
 {
-        ll_inode_size_lock(inode, 0);
-        i_size_write(inode, kms);
-        ll_inode_size_unlock(inode, 0);
+	ll_inode_size_lock(inode);
+	i_size_write(inode, kms);
+	ll_inode_size_unlock(inode);
 }
 
 #define cl_isize_read(inode)             i_size_read(inode)
@@ -1536,5 +1542,8 @@ struct if_quotactl_18 {
 #else
 #warning "remove old LL_IOC_QUOTACTL_18 compatibility code"
 #endif /* LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2,7,50,0) */
+
+int ll_layout_conf(struct inode *inode, const struct cl_object_conf *conf);
+int ll_layout_refresh(struct inode *inode, __u32 *gen);
 
 #endif /* LLITE_INTERNAL_H */

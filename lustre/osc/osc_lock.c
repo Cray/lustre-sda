@@ -1117,14 +1117,6 @@ static int osc_lock_enqueue_wait(const struct lu_env *env,
                 if (!lockless && osc_lock_compatible(olck, scan_ols))
                         continue;
 
-                /* Now @scan is conflicting with @lock, this means current
-                 * thread have to sleep for @scan being destroyed. */
-                if (scan_ols->ols_owner == osc_env_io(env)) {
-                        CERROR("DEADLOCK POSSIBLE!\n");
-                        CL_LOCK_DEBUG(D_ERROR, env, scan, "queued.\n");
-                        CL_LOCK_DEBUG(D_ERROR, env, lock, "queuing.\n");
-                        libcfs_debug_dumpstack(NULL);
-                }
                 cl_lock_get_trust(scan);
                 conflict = scan;
                 break;
@@ -1469,6 +1461,7 @@ static int osc_lock_has_pages(struct osc_lock *olck)
         cfs_mutex_lock(&oob->oo_debug_mutex);
 
         io->ci_obj = cl_object_top(obj);
+	io->ci_ignore_layout = 1;
         cl_io_init(env, io, CIT_MISC, io->ci_obj);
         do {
                 result = cl_page_gang_lookup(env, obj, io,

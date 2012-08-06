@@ -251,13 +251,14 @@ static inline int range_compare_loc(const struct lu_seq_range *r1,
                r1->lsr_flags != r2->lsr_flags;
 }
 
-#define DRANGE "[%#16.16"LPF64"x-%#16.16"LPF64"x):%x:%x"
+#define DRANGE "[%#16.16"LPF64"x-%#16.16"LPF64"x):%x:%s"
 
 #define PRANGE(range)      \
-        (range)->lsr_start, \
-        (range)->lsr_end,    \
-        (range)->lsr_index,  \
-        (range)->lsr_flags
+	(range)->lsr_start, \
+	(range)->lsr_end,    \
+	(range)->lsr_index,  \
+	(range)->lsr_flags == LU_SEQ_RANGE_MDT ? "mdt" : "ost"
+
 
 /** \defgroup lu_fid lu_fid
  * @{ */
@@ -1154,6 +1155,9 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
                                                   * write RPC error properly */
 #define OBD_CONNECT_GRANT_PARAM 0x100000000000ULL/* extra grant params used for
                                                   * finer space reservation */
+#define OBD_CONNECT_NANOSECOND_TIMES 0x200000000000ULL /* nanosec resolution
+							* timestamps supported
+							*/
 /* XXX README XXX:
  * Please DO NOT add flag values here before first ensuring that this same
  * flag value is not in use on some other branch.  Please clear any such
@@ -1925,6 +1929,7 @@ extern void lustre_swab_mdt_rec_setattr (struct mdt_rec_setattr *sa);
 #define MDS_OPEN_SYNC            00010000
 #define MDS_OPEN_DIRECTORY       00200000
 
+#define MDS_OPEN_BY_FID 	040000000 /* open_by_fid for known object */
 #define MDS_OPEN_DELAY_CREATE  0100000000 /* delay initial object create */
 #define MDS_OPEN_OWNEROVERRIDE 0200000000 /* NFSD rw-reopen ro file for owner */
 #define MDS_OPEN_JOIN_FILE     0400000000 /* open for join file.
@@ -2218,22 +2223,6 @@ enum seq_op {
 /*
  *  LOV data structures
  */
-
-#define LOV_MIN_STRIPE_BITS 16   /* maximum PAGE_SIZE (ia64), power of 2 */
-#define LOV_MIN_STRIPE_SIZE (1<<LOV_MIN_STRIPE_BITS)
-#define LOV_MAX_STRIPE_COUNT_OLD 160
-/* This calculation is crafted so that input of 4096 will result in 160
- * which in turn is equal to old maximal stripe count.
- * XXX: In fact this is too simpified for now, what it also need is to get
- * ea_type argument to clearly know how much space each stripe consumes.
- *
- * The limit of 12 pages is somewhat arbitrary, but is a reasonably large
- * allocation that is sufficient for the current generation of systems.
- *
- * (max buffer size - lov+rpc header) / sizeof(struct lov_ost_data_v1) */
-#define LOV_MAX_STRIPE_COUNT 2000  /* ((12 * 4096 - 256) / 24) */
-#define LOV_ALL_STRIPES       0xffff /* only valid for directories */
-#define LOV_V1_INSANE_STRIPE_COUNT 65532 /* maximum stripe count bz13933 */
 
 #define LOV_MAX_UUID_BUFFER_SIZE  8192
 /* The size of the buffer the lov/mdc reserves for the
@@ -2689,6 +2678,12 @@ struct llog_changelog_rec {
         struct llog_rec_tail cr_tail; /**< for_sizezof_only */
 } __attribute__((packed));
 
+struct llog_changelog_ext_rec {
+	struct llog_rec_hdr      cr_hdr;
+	struct changelog_ext_rec cr;
+	struct llog_rec_tail     cr_tail; /**< for_sizezof_only */
+} __attribute__((packed));
+
 #define CHANGELOG_USER_PREFIX "cl"
 
 struct llog_changelog_user_rec {
@@ -2756,7 +2751,7 @@ enum llogd_rpc_ops {
         LLOG_ORIGIN_HANDLE_WRITE_REC    = 504,
         LLOG_ORIGIN_HANDLE_CLOSE        = 505,
         LLOG_ORIGIN_CONNECT             = 506,
-        LLOG_CATINFO                    = 507,  /* for lfs catinfo */
+	LLOG_CATINFO			= 507,  /* deprecated */
         LLOG_ORIGIN_HANDLE_PREV_BLOCK   = 508,
         LLOG_ORIGIN_HANDLE_DESTROY      = 509,  /* for destroy llog object*/
         LLOG_LAST_OPC,

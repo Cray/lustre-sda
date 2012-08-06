@@ -43,7 +43,6 @@
 #include <linux/string.h>
 #include <linux/stat.h>
 #include <linux/errno.h>
-#include <linux/smp_lock.h>
 #include <linux/unistd.h>
 #include <linux/version.h>
 #include <asm/system.h>
@@ -54,7 +53,6 @@
 #include <asm/uaccess.h>
 #include <linux/mm.h>
 #include <linux/pagemap.h>
-#include <linux/smp_lock.h>
 /* current_is_kswapd() */
 #include <linux/swap.h>
 
@@ -144,8 +142,8 @@ static struct ll_cl_context *ll_cl_init(struct file *file,
 		struct inode *inode = vmpage->mapping->host;
 		loff_t pos;
 
-		if (TRYLOCK_INODE_MUTEX(inode)) {
-			UNLOCK_INODE_MUTEX(inode);
+		if (mutex_trylock(&inode->i_mutex)) {
+			mutex_unlock(&(inode)->i_mutex);
 
 			/* this is too bad. Someone is trying to write the
 			 * page w/o holding inode mutex. This means we can
@@ -1186,6 +1184,7 @@ int ll_writepage(struct page *vmpage, struct writeback_control *wbc)
 
         io = ccc_env_thread_io(env);
         io->ci_obj = clob;
+	io->ci_ignore_layout = 1;
         result = cl_io_init(env, io, CIT_MISC, clob);
         if (result == 0) {
                 page = cl_page_find(env, clob, vmpage->index,
@@ -1296,7 +1295,7 @@ int ll_readpage(struct file *file, struct page *vmpage)
                         result = cl_io_read_page(env, io, page);
                 } else {
                         /* Page from a non-object file. */
-                        LASSERT(!ll_i2info(vmpage->mapping->host)->lli_smd);
+			LASSERT(!ll_i2info(vmpage->mapping->host)->lli_has_smd);
                         unlock_page(vmpage);
                         result = 0;
                 }

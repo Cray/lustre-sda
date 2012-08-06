@@ -75,7 +75,7 @@ struct adspasswd {
 typedef enum {
         FALSE = 0,
         TRUE  = 1
-} bool;
+} lu_bool;
 
 struct conf_params {
         const char *desc; /* conf parameter */

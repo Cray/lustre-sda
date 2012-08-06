@@ -36,7 +36,6 @@
 
 #include <linux/fs.h>
 #include <linux/sched.h>
-#include <linux/smp_lock.h>
 #include <linux/quotaops.h>
 
 #define DEBUG_SUBSYSTEM S_LLITE
@@ -135,8 +134,8 @@ static inline int return_if_equal(struct ldlm_lock *lock, void *data)
  *      < 0    error */
 static int find_cbdata(struct inode *inode)
 {
-        struct ll_inode_info *lli = ll_i2info(inode);
-        struct ll_sb_info *sbi = ll_i2sbi(inode);
+	struct ll_sb_info *sbi = ll_i2sbi(inode);
+	struct lov_stripe_md *lsm;
         int rc = 0;
         ENTRY;
 
@@ -146,11 +145,14 @@ static int find_cbdata(struct inode *inode)
         if (rc != 0)
                  RETURN(rc);
 
-        if (lli->lli_smd)
-                rc = obd_find_cbdata(sbi->ll_dt_exp, lli->lli_smd,
-                                     return_if_equal, NULL);
+	lsm = ccc_inode_lsm_get(inode);
+	if (lsm == NULL)
+		RETURN(rc);
 
-        RETURN(rc);
+	rc = obd_find_cbdata(sbi->ll_dt_exp, lsm, return_if_equal, NULL);
+	ccc_inode_lsm_put(inode, lsm);
+
+	RETURN(rc);
 }
 
 /**
@@ -171,31 +173,35 @@ static int ll_ddelete(HAVE_D_DELETE_CONST struct dentry *de)
 	       d_unhashed((struct dentry *)de) ? "" : "hashed,",
 	       list_empty(&de->d_subdirs) ? "" : "subdirs");
 
-	/* kernel >= 2.6.38 last refcount is decreased after this function. */
-#ifdef DCACHE_OP_DELETE
-	LASSERT(d_refcount(de) == 1);
-#else
+#ifdef HAVE_DCACHE_LOCK
 	LASSERT(d_refcount(de) == 0);
+#else
+	/* kernel >= 2.6.38 last refcount is decreased after this function. */
+	LASSERT(d_refcount(de) == 1);
 #endif
 
+	/* Disable this piece of code temproarily because this is called
+	 * inside dcache_lock so it's not appropriate to do lots of work
+	 * here. */
+#if 0
 	/* if not ldlm lock for this inode, set i_nlink to 0 so that
 	 * this inode can be recycled later b=20433 */
 	if (de->d_inode && !find_cbdata(de->d_inode))
 		de->d_inode->i_nlink = 0;
+#endif
 
 	if (d_lustre_invalid((struct dentry *)de))
-                RETURN(1);
-
-        RETURN(0);
+		RETURN(1);
+	RETURN(0);
 }
 
 static int ll_set_dd(struct dentry *de)
 {
-        ENTRY;
-        LASSERT(de != NULL);
+	ENTRY;
+	LASSERT(de != NULL);
 
-        CDEBUG(D_DENTRY, "ldd on dentry %.*s (%p) parent %p inode %p refc %d\n",
-               de->d_name.len, de->d_name.name, de, de->d_parent, de->d_inode,
+	CDEBUG(D_DENTRY, "ldd on dentry %.*s (%p) parent %p inode %p refc %d\n",
+		de->d_name.len, de->d_name.name, de, de->d_parent, de->d_inode,
 		d_refcount(de));
 
 	if (de->d_fsdata == NULL) {
@@ -209,12 +215,12 @@ static int ll_set_dd(struct dentry *de)
 			else
 				OBD_FREE_PTR(lld);
 			spin_unlock(&de->d_lock);
-                } else {
-                        RETURN(-ENOMEM);
-                }
-        }
+		} else {
+			RETURN(-ENOMEM);
+		}
+	}
 
-        RETURN(0);
+	RETURN(0);
 }
 
 int ll_dops_init(struct dentry *de, int block, int init_sa)
@@ -233,10 +239,11 @@ int ll_dops_init(struct dentry *de, int block, int init_sa)
         if (lld != NULL && init_sa != 0)
                 lld->lld_sa_generation = 0;
 
-#ifdef DCACHE_OP_HASH
-	LASSERT(de->d_op == &ll_d_ops);
-#else
+#ifdef HAVE_DCACHE_LOCK
 	de->d_op = &ll_d_ops;
+#else
+	/* kernel >= 2.6.38 d_op is set in d_alloc() */
+	LASSERT(de->d_op == &ll_d_ops);
 #endif
         return rc;
 }
@@ -613,7 +620,8 @@ int ll_revalidate_nd(struct dentry *dentry, struct nameidata *nd)
         int rc;
         ENTRY;
 
-#ifdef LOOKUP_RCU
+#ifndef HAVE_DCACHE_LOCK
+	/* kernel >= 2.6.38 supports rcu-walk, but lustre doesn't. */
 	if (nd->flags & LOOKUP_RCU)
 		return -ECHILD;
 #endif

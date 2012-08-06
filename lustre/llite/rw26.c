@@ -38,20 +38,21 @@
  * Lustre Lite I/O page cache routines for the 2.5/2.6 kernel version
  */
 
-#ifndef AUTOCONF_INCLUDED
-#include <linux/config.h>
-#endif
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/string.h>
 #include <linux/stat.h>
 #include <linux/errno.h>
-#include <linux/smp_lock.h>
 #include <linux/unistd.h>
 #include <linux/version.h>
 #include <asm/system.h>
 #include <asm/uaccess.h>
 
+#ifdef HAVE_MIGRATE_H
+#include <linux/migrate.h>
+#elif defined(HAVE_MIGRATE_MODE_H)
+#include <linux/migrate_mode.h>
+#endif
 #include <linux/fs.h>
 #include <linux/buffer_head.h>
 #include <linux/writeback.h>
@@ -59,7 +60,6 @@
 #include <asm/uaccess.h>
 #include <linux/mm.h>
 #include <linux/pagemap.h>
-#include <linux/smp_lock.h>
 
 #define DEBUG_SUBSYSTEM S_LLITE
 
@@ -385,13 +385,12 @@ static ssize_t ll_direct_IO_26(int rw, struct kiocb *iocb,
         long count = iov_length(iov, nr_segs);
         long tot_bytes = 0, result = 0;
         struct ll_inode_info *lli = ll_i2info(inode);
-        struct lov_stripe_md *lsm = lli->lli_smd;
         unsigned long seg = 0;
         long size = MAX_DIO_SIZE;
         int refcheck;
         ENTRY;
 
-        if (!lli->lli_smd || !lli->lli_smd->lsm_object_id)
+	if (!lli->lli_has_smd)
                 RETURN(-EBADF);
 
         /* FIXME: io smaller than PAGE_SIZE is broken on ia64 ??? */
@@ -416,11 +415,12 @@ static ssize_t ll_direct_IO_26(int rw, struct kiocb *iocb,
         io = ccc_env_io(env)->cui_cl.cis_io;
         LASSERT(io != NULL);
 
-        /* 0. Need locking between buffered and direct access. and race with
-         *    size changing by concurrent truncates and writes.
-         * 1. Need inode sem to operate transient pages. */
-        if (rw == READ)
-                LOCK_INODE_MUTEX(inode);
+	/* 0. Need locking between buffered and direct access. and race with
+	 *    size changing by concurrent truncates and writes.
+	 * 1. Need inode mutex to operate transient pages.
+	 */
+	if (rw == READ)
+		mutex_lock(&inode->i_mutex);
 
         LASSERT(obj->cob_transient_pages == 0);
         for (seg = 0; seg < nr_segs; seg++) {
@@ -482,20 +482,25 @@ static ssize_t ll_direct_IO_26(int rw, struct kiocb *iocb,
                 }
         }
 out:
-        LASSERT(obj->cob_transient_pages == 0);
-        if (rw == READ)
-                UNLOCK_INODE_MUTEX(inode);
+	LASSERT(obj->cob_transient_pages == 0);
+	if (rw == READ)
+		mutex_unlock(&inode->i_mutex);
 
         if (tot_bytes > 0) {
                 if (rw == WRITE) {
-                        lov_stripe_lock(lsm);
-                        obd_adjust_kms(ll_i2dtexp(inode), lsm, file_offset, 0);
-                        lov_stripe_unlock(lsm);
-                }
-        }
+			struct lov_stripe_md *lsm;
 
-        cl_env_put(env, &refcheck);
-        RETURN(tot_bytes ? : result);
+			lsm = ccc_inode_lsm_get(inode);
+			LASSERT(lsm != NULL);
+			lov_stripe_lock(lsm);
+			obd_adjust_kms(ll_i2dtexp(inode), lsm, file_offset, 0);
+			lov_stripe_unlock(lsm);
+			ccc_inode_lsm_put(inode, lsm);
+		}
+	}
+
+	cl_env_put(env, &refcheck);
+	RETURN(tot_bytes ? : result);
 }
 
 #if defined(HAVE_KERNEL_WRITE_BEGIN_END) || defined(MS_HAS_NEW_AOPS)
@@ -540,7 +545,11 @@ static int ll_write_end(struct file *file, struct address_space *mapping,
 
 #ifdef CONFIG_MIGRATION
 int ll_migratepage(struct address_space *mapping,
-                   struct page *newpage, struct page *page)
+		struct page *newpage, struct page *page
+#ifdef HAVE_MIGRATEPAGE_4ARGS
+		, enum migrate_mode mode
+#endif
+		)
 {
         /* Always fail page migration until we have a proper implementation */
         return -EIO;

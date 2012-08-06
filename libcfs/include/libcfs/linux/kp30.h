@@ -38,9 +38,6 @@
 #define __LIBCFS_LINUX_KP30_H__
 
 
-#ifndef AUTOCONF_INCLUDED
-# include <linux/config.h>
-#endif
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/string.h>
@@ -60,7 +57,6 @@
 #include <linux/highmem.h>
 #include <linux/module.h>
 #include <linux/version.h>
-#include <linux/smp_lock.h>
 #include <asm/atomic.h>
 #include <asm/uaccess.h>
 #include <linux/rwsem.h>

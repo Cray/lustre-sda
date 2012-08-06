@@ -451,102 +451,6 @@ AC_DEFUN([LC_CONFIG_GSS],
  fi
 ])
 
-AC_DEFUN([LC_QUOTA_READ],
-[AC_MSG_CHECKING([if kernel supports quota_read])
-LB_LINUX_TRY_COMPILE([
-	#include <linux/fs.h>
-],[
-	struct super_operations sp;
-        void *i = (void *)sp.quota_read;
-],[
-	AC_MSG_RESULT([yes])
-	AC_DEFINE(KERNEL_SUPPORTS_QUOTA_READ, 1, [quota_read found])
-],[
-	AC_MSG_RESULT([no])
-])
-])
-
-#
-# LC_COOKIE_FOLLOW_LINK
-#
-# kernel 2.6.13+ ->follow_link returns a cookie
-#
-AC_DEFUN([LC_COOKIE_FOLLOW_LINK],
-[AC_MSG_CHECKING([if inode_operations->follow_link returns a cookie])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/fs.h>
-        #include <linux/namei.h>
-],[
-        struct dentry *dentry = NULL;
-        struct nameidata nd;
-
-        dentry->d_inode->i_op->put_link(dentry, &nd, NULL);
-],[
-        AC_DEFINE(HAVE_COOKIE_FOLLOW_LINK, 1, [inode_operations->follow_link returns a cookie])
-        AC_MSG_RESULT([yes])
-],[
-        AC_MSG_RESULT([no])
-])
-])
-
-#
-# LC_FUNC_RCU
-#
-# kernels prior than 2.6.0(?) have no RCU supported; in kernel 2.6.5(SUSE),
-# call_rcu takes three parameters.
-#
-AC_DEFUN([LC_FUNC_RCU],
-[AC_MSG_CHECKING([if kernel have RCU supported])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/rcupdate.h>
-],[],[
-        AC_DEFINE(HAVE_RCU, 1, [have RCU defined])
-        AC_MSG_RESULT([yes])
-
-        AC_MSG_CHECKING([if call_rcu takes three parameters])
-        LB_LINUX_TRY_COMPILE([
-                #include <linux/rcupdate.h>
-        ],[
-                struct rcu_head rh;
-                call_rcu(&rh, (void (*)(struct rcu_head *))1, NULL);
-        ],[
-                AC_DEFINE(HAVE_CALL_RCU_PARAM, 1, [call_rcu takes three parameters])
-                AC_MSG_RESULT([yes])
-        ],[
-                AC_MSG_RESULT([no])
-        ])
-
-],[
-        AC_MSG_RESULT([no])
-])
-])
-
-AC_DEFUN([LC_PERCPU_COUNTER],
-[AC_MSG_CHECKING([if have struct percpu_counter defined])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/percpu_counter.h>
-],[],[
-        AC_DEFINE(HAVE_PERCPU_COUNTER, 1, [percpu_counter found])
-        AC_MSG_RESULT([yes])
-
-        AC_MSG_CHECKING([if percpu_counter_inc takes the 2nd argument])
-        LB_LINUX_TRY_COMPILE([
-                #include <linux/percpu_counter.h>
-        ],[
-                struct percpu_counter c;
-                percpu_counter_init(&c, 0);
-        ],[
-                AC_DEFINE(HAVE_PERCPU_2ND_ARG, 1, [percpu_counter_init has two
-                                                   arguments])
-                AC_MSG_RESULT([yes])
-        ],[
-                AC_MSG_RESULT([no])
-        ])
-],[
-        AC_MSG_RESULT([no])
-])
-])
-
 AC_DEFUN([LC_TASK_CLENV_STORE],
 [
         AC_MSG_CHECKING([if we can store cl_env in task_struct])
@@ -555,41 +459,10 @@ AC_DEFUN([LC_TASK_CLENV_STORE],
         fi
 ])
 
-# ~2.6.11
-
-AC_DEFUN([LC_S_TIME_GRAN],
-[AC_MSG_CHECKING([if super block has s_time_gran member])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/fs.h>
-],[
-        struct super_block *sb = NULL;
-
-        return sb->s_time_gran;
-],[
-	AC_MSG_RESULT([yes])
-	AC_DEFINE(HAVE_S_TIME_GRAN, 1, [super block has s_time_gran member])
-],[
-        AC_MSG_RESULT([no])
-])
-])
-
-AC_DEFUN([LC_SB_TIME_GRAN],
-[AC_MSG_CHECKING([if kernel has old get_sb_time_gran])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/fs.h>
-],[
-	return get_sb_time_gran(NULL);
-],[
-        AC_MSG_RESULT([yes])
-	AC_DEFINE(HAVE_SB_TIME_GRAN, 1, [kernel has old get_sb_time_gran])
-],[
-        AC_MSG_RESULT([no])
-])
-])
-
 # 2.6.12
 
 # ~2.6.12 merge patch from oracle to convert tree_lock from spinlock to rwlock
+# yet tree_lock is converted from rwlock to spin_lock since v2.6.26
 AC_DEFUN([LC_RW_TREE_LOCK],
 [AC_MSG_CHECKING([if kernel has tree_lock as rwlock])
 tmp_flags="$EXTRA_KCFLAGS"
@@ -609,131 +482,7 @@ LB_LINUX_TRY_COMPILE([
 EXTRA_KCFLAGS="$tmp_flags"
 ])
 
-# 2.6.15
-
-# LC_INODE_I_MUTEX
-# after 2.6.15 inode have i_mutex intead of i_sem
-AC_DEFUN([LC_INODE_I_MUTEX],
-[AC_MSG_CHECKING([if inode has i_mutex ])
-LB_LINUX_TRY_COMPILE([
-	#include <linux/mutex.h>
-	#include <linux/fs.h>
-	#undef i_mutex
-],[
-	struct inode i;
-
-	mutex_unlock(&i.i_mutex);
-],[
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_INODE_I_MUTEX, 1,
-                [after 2.6.15 inode have i_mutex intead of i_sem])
-],[
-        AC_MSG_RESULT(no)
-])
-])
-
-# 2.6.16
-
-# LC_SECURITY_PLUG  # for SLES10 SP2
-# check security plug in sles10 sp2 kernel
-AC_DEFUN([LC_SECURITY_PLUG],
-[AC_MSG_CHECKING([If kernel has security plug support])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/fs.h>
-        #include <linux/stddef.h>
-],[
-        notify_change(NULL, NULL, NULL);
-],[
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_SECURITY_PLUG, 1,
-                [SLES10 SP2 use extra parameter in vfs])
-],[
-        AC_MSG_RESULT(no)
-])
-])
-
-# 2.6.17
-
-# inode have i_private field since 2.6.17
-AC_DEFUN([LC_INODE_IPRIVATE],
-[AC_MSG_CHECKING([if inode has a i_private field])
-LB_LINUX_TRY_COMPILE([
-#include <linux/fs.h>
-],[
-	struct inode i;
-	i.i_private = NULL; 
-],[
-	AC_MSG_RESULT(yes)
-	AC_DEFINE(HAVE_INODE_IPRIVATE, 1,
-		[struct inode has i_private field])
-],[
-	AC_MSG_RESULT(no)
-])
-])
-
-# LC_DQUOTOFF_MUTEX
-# after 2.6.17 dquote use mutex instead if semaphore
-AC_DEFUN([LC_DQUOTOFF_MUTEX],
-[AC_MSG_CHECKING([use dqonoff_mutex])
-LB_LINUX_TRY_COMPILE([
-	#include <linux/mutex.h>
-	#include <linux/fs.h>
-        #include <linux/quota.h>
-],[
-        struct quota_info dq;
-
-        mutex_unlock(&dq.dqonoff_mutex);
-],[
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_DQUOTOFF_MUTEX, 1,
-                [after 2.6.17 dquote use mutex instead if semaphore])
-],[
-        AC_MSG_RESULT(no)
-])
-])
-
 # 2.6.18
-
-# LC_NR_PAGECACHE
-# 2.6.18 don't export nr_pagecahe
-AC_DEFUN([LC_NR_PAGECACHE],
-[AC_MSG_CHECKING([kernel export nr_pagecache])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/pagemap.h>
-],[
-        return atomic_read(&nr_pagecache);
-],[
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_NR_PAGECACHE, 1,
-                [is kernel export nr_pagecache])
-],[
-        AC_MSG_RESULT(no)
-])
-])
-
-#
-# LC_STATFS_DENTRY_PARAM
-# starting from 2.6.18 linux kernel uses dentry instead of super_block
-# for the first parameter of the super_operations->statfs() callback.
-#
-#
-AC_DEFUN([LC_STATFS_DENTRY_PARAM],
-[AC_MSG_CHECKING([if super_ops.statfs() first parameter is dentry])
-tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="-Werror"
-LB_LINUX_TRY_COMPILE([
-        #include <linux/fs.h>
-],[
-        ((struct super_operations *)0)->statfs((struct dentry *)0, (struct kstatfs*)0);
-],[
-        AC_DEFINE(HAVE_STATFS_DENTRY_PARAM, 1,
-                  [super_ops.statfs() first parameter is dentry])
-        AC_MSG_RESULT([yes])
-],[
-        AC_MSG_RESULT([no])
-])
-EXTRA_KCFLAGS="$tmp_flags"
-])
 
 # LC_UMOUNTBEGIN_HAS_VFSMOUNT
 # 2.6.18~2.6.25 umount_begin has different parameters
@@ -765,100 +514,13 @@ LB_LINUX_TRY_COMPILE([
 EXTRA_KCFLAGS="$tmp_flags"
 ])
 
-# LC_FLUSH_OWNER_ID
-# starting from 2.6.18 the file_operations .flush
-# method has a new "fl_owner_t id" parameter
-#
-AC_DEFUN([LC_FLUSH_OWNER_ID],
-[AC_MSG_CHECKING([if file_operations .flush has an fl_owner_t id])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/fs.h>
-],[
-        struct file_operations *fops = NULL;
-        fl_owner_t id = NULL;
-        int i;
-
-        i = fops->flush(NULL, id);
-],[
-        AC_DEFINE(HAVE_FLUSH_OWNER_ID, 1,
-                [file_operations .flush method has an fl_owner_t id])
-        AC_MSG_RESULT([yes])
-],[
-        AC_MSG_RESULT([no])
-])
-])
-
-#
-# LC_EXPORT_INVALIDATE_MAPPING_PAGES
-#
-# SLES9, RHEL4, RHEL5, vanilla 2.6.24 export invalidate_mapping_pages() but
-# SLES10 2.6.16 does not, for some reason.  For filter cache invalidation.
-#
-AC_DEFUN([LC_EXPORT_INVALIDATE_MAPPING_PAGES],
-    [LB_CHECK_SYMBOL_EXPORT([invalidate_mapping_pages], [mm/truncate.c], [
-         AC_DEFINE(HAVE_INVALIDATE_MAPPING_PAGES, 1,
-                        [exported invalidate_mapping_pages])],
-    [LB_CHECK_SYMBOL_EXPORT([invalidate_inode_pages], [mm/truncate.c], [
-         AC_DEFINE(HAVE_INVALIDATE_INODE_PAGES, 1,
-                        [exported invalidate_inode_pages])], [
-       AC_MSG_ERROR([no way to invalidate pages])
-  ])
-    ],[])
-])
-
 #2.6.18 + RHEL5 (fc6)
-
-# RHEL5 in FS-cache patch rename PG_checked flag into PG_fs_misc
-AC_DEFUN([LC_PG_FS_MISC],
-[AC_MSG_CHECKING([kernel has PG_fs_misc])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/mm.h>
-        #include <linux/page-flags.h>
-],[
-        #ifndef PG_fs_misc
-        #error PG_fs_misc not defined in kernel
-        #endif
-],[
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_PG_FS_MISC, 1,
-                  [is kernel have PG_fs_misc])
-],[
-        AC_MSG_RESULT(no)
-])
-])
-
-# RHEL5 PageChecked and SetPageChecked defined
-AC_DEFUN([LC_PAGE_CHECKED],
-[AC_MSG_CHECKING([kernel has PageChecked and SetPageChecked])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/mm.h>
-#ifdef HAVE_LINUX_MMTYPES_H
-        #include <linux/mm_types.h>
-#endif
-        #include <linux/page-flags.h>
-],[
-        struct page *p = NULL;
-
-        /* before 2.6.26 this define*/
-        #ifndef PageChecked	
-        /* 2.6.26 use function instead of define for it */
-        SetPageChecked(p);
-        PageChecked(p);
-        #endif
-],[
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_PAGE_CHECKED, 1,
-                  [does kernel have PageChecked and SetPageChecked])
-],[
-        AC_MSG_RESULT(no)
-])
-])
 
 #
 # LC_LINUX_FIEMAP_H
 #
-# If we have fiemap.h
-# after 2.6.27 use fiemap.h in include/linux
+# fiemap.h is added since v2.6.28
+# RHEL5 2.6.18 has it, while SLES10 2.6.27 does not
 #
 AC_DEFUN([LC_LINUX_FIEMAP_H],
 [LB_CHECK_FILE([$LINUX/include/linux/fiemap.h],[
@@ -877,24 +539,6 @@ AC_DEFUN([LC_LINUX_FIEMAP_H],
 ])
 
 # 2.6.19
-
-# 2.6.19 API changes
-# inode don't have i_blksize field
-AC_DEFUN([LC_INODE_BLKSIZE],
-[AC_MSG_CHECKING([inode has i_blksize field])
-LB_LINUX_TRY_COMPILE([
-#include <linux/fs.h>
-],[
-	struct inode i;
-	i.i_blksize = 0;
-],[
-	AC_MSG_RESULT(yes)
-	AC_DEFINE(HAVE_INODE_BLKSIZE, 1,
-		[struct inode has i_blksize field])
-],[
-	AC_MSG_RESULT(no)
-])
-])
 
 # LC_FILE_WRITEV
 # 2.6.19 replaced writev with aio_write
@@ -1172,7 +816,19 @@ LB_LINUX_TRY_COMPILE([
         AC_DEFINE(HAVE_PROCFS_USERS, 1,
                 [kernel has pde_users member in procfs entry struct])
 ],[
-        AC_MSG_RESULT([no])
+	LB_LINUX_TRY_COMPILE([
+		#include "$LINUX/fs/proc/internal.h"
+	],[
+		struct proc_dir_entry_aux pde_aux;
+
+		pde_aux.pde_users = 0;
+	],[
+		AC_MSG_RESULT([yes])
+		AC_DEFINE(HAVE_PROCFS_USERS, 1,
+			[kernel has pde_users member in proc_dir_entry_aux])
+	],[
+		AC_MSG_RESULT([no])
+	])
 ])
 ])
 
@@ -1283,10 +939,28 @@ LB_LINUX_TRY_COMPILE([
 ])
 ])
 
-
 #
 # 2.6.27
 #
+
+# LC_SECURITY_PLUG  # for SLES10 SP2 (2.6.27)
+# check security plug in sles10 sp2 kernel
+AC_DEFUN([LC_SECURITY_PLUG],
+[AC_MSG_CHECKING([If kernel has security plug support])
+LB_LINUX_TRY_COMPILE([
+        #include <linux/fs.h>
+        #include <linux/stddef.h>
+],[
+        notify_change(NULL, NULL, NULL);
+],[
+        AC_MSG_RESULT(yes)
+        AC_DEFINE(HAVE_SECURITY_PLUG, 1,
+                [SLES10 SP2 use extra parameter in vfs])
+],[
+        AC_MSG_RESULT(no)
+])
+])
+
 AC_DEFUN([LC_PGMKWRITE_USE_VMFAULT],
 [AC_MSG_CHECKING([kernel .page_mkwrite uses struct vm_fault *])
 tmp_flags="$EXTRA_KCFLAGS"
@@ -1301,6 +975,27 @@ LB_LINUX_TRY_COMPILE([
                 [kernel vm_operation_struct.page_mkwrite uses struct vm_fault * as second parameter])
 ],[
         AC_MSG_RESULT([no])
+])
+EXTRA_KCFLAGS="$tmp_flags"
+])
+
+AC_DEFUN([LC_PGMKWRITE_COMPACT],
+[AC_MSG_CHECKING([if kernel .page_mkwrite is located in vm_operation_struct._pmkw])
+tmp_flags="$EXTRA_KCFLAGS"
+EXTRA_KCFLAGS="-Werror"
+LB_LINUX_TRY_COMPILE([
+	#include <linux/mm.h>
+],[
+	struct vm_operations_struct *vm_ops;
+
+	vm_ops = NULL;
+	vm_ops->_pmkw.page_mkwrite(NULL, NULL);
+], [
+	AC_MSG_RESULT([yes])
+	AC_DEFINE(HAVE_PGMKWRITE_COMPACT, 1,
+		[kernel .page_mkwrite is located in vm_operation_struct._pmkw])
+],[
+	AC_MSG_RESULT([no])
 ])
 EXTRA_KCFLAGS="$tmp_flags"
 ])
@@ -1576,6 +1271,22 @@ LB_LINUX_TRY_COMPILE([
 
 # 2.6.32
 
+# 2.6.32 introduced inode_newsize_ok
+AC_DEFUN([LC_VFS_INODE_NEWSIZE_OK],
+[AC_MSG_CHECKING([if inode_newsize_ok is defined])
+LB_LINUX_TRY_COMPILE([
+	#include <linux/fs.h>
+],[
+	return inode_newsize_ok(NULL, 0);
+],[
+	AC_MSG_RESULT(yes)
+	AC_DEFINE(HAVE_VFS_INODE_NEWSIZE_OK, 1,
+		  [inode_newsize_ok is defined])
+],[
+	AC_MSG_RESULT(no)
+])
+])
+
 # 2.6.32 changes cache_detail's member cache_request to cache_upcall
 # in kernel commit bc74b4f5e63a09fb78e245794a0de1e5a2716bbe
 AC_DEFUN([LC_CACHE_UPCALL],
@@ -1642,7 +1353,7 @@ LB_LINUX_TRY_COMPILE([
 AC_DEFUN([LC_BDI_NAME],
 [AC_MSG_CHECKING([if backing_device_info has name field])
 LB_LINUX_TRY_COMPILE([
-        #include <linux/blkkdev.h>
+        #include <linux/blkdev.h>
 ],[
         struct backing_dev_info bdi;
         bdi.name = NULL;
@@ -1962,20 +1673,34 @@ AC_DEFINE(HAVE_BLKDEV_GET_BY_DEV, 1,
 #
 # 2.6.38 vfsmount.mnt_count doesn't use atomic_t
 #
+# 3.3 starts hiding vfsmount guts series (move from include/linux/mount.h to
+# fs/mount.h, see kernel commit 7d6fec45a5131918b51dcd76da52f2ec86a85be6)
+#
 AC_DEFUN([LC_ATOMIC_MNT_COUNT],
-[AC_MSG_CHECKING([if vfsmount.mnt_count is atomic_t])
+[AC_MSG_CHECKING([if vfsmount guts is hidden, or vfsmount.mnt_count is atomic_t.])
 LB_LINUX_TRY_COMPILE([
-        #include <asm/atomic.h>
-        #include <linux/fs.h>
-        #include <linux/mount.h>
+	#include <linux/fs.h>
+	#include <../fs/mount.h>
 ],[
-        ((struct vfsmount *)0)->mnt_count = ((atomic_t) { 0 });
+	struct mount *mnt =  real_mount((struct vfsmount *)0);
 ],[
-        AC_DEFINE(HAVE_ATOMIC_MNT_COUNT, 1,
-                [vfsmount.mnt_count is atomic_t])
-        AC_MSG_RESULT([yes])
+	AC_DEFINE(HAVE_HIDE_VFSMOUNT_GUTS, 1,
+		  [hide vfsmount guts in fs/mount.h])
+	AC_MSG_RESULT([yes, hide vfsmount guts in fs/mount.h])
 ],[
-        AC_MSG_RESULT([no])
+	LB_LINUX_TRY_COMPILE([
+		#include <asm/atomic.h>
+		#include <linux/fs.h>
+		#include <linux/mount.h>
+	],[
+		((struct vfsmount *)0)->mnt_count = ((atomic_t) { 0 });
+	],[
+		AC_DEFINE(HAVE_ATOMIC_MNT_COUNT, 1,
+			[vfsmount.mnt_count is atomic_t])
+		AC_MSG_RESULT([yes, vfsmount.mnt_count is atomic_t])
+	],[
+		AC_MSG_RESULT([no])
+	])
 ])
 ])
 
@@ -2020,21 +1745,34 @@ LB_LINUX_TRY_COMPILE([
 ])
 
 #
-# 2.6.38 generic_permission taken 4 paremater.
+# 2.6.38 generic_permission taken 4 parameters.
 # in fact, it means rcu-walk aware permission bring.
 #
+# 3.1 generic_permission taken 2 parameters.
+# see kernel commit 2830ba7f34ebb27c4e5b8b6ef408cd6d74860890
+#
 AC_DEFUN([LC_GENERIC_PERMISSION],
-[AC_MSG_CHECKING([if generic_permission take 4 arguments])
+[AC_MSG_CHECKING([if generic_permission take 2 or 4 arguments])
 LB_LINUX_TRY_COMPILE([
-        #include <linux/fs.h>
+	#include <linux/fs.h>
 ],[
-        generic_permission(NULL, 0, 0, NULL);
+	generic_permission(NULL, 0);
 ],[
-        AC_DEFINE(HAVE_GENERIC_PERMISSION_4ARGS, 1,
-                  [generic_permission taken 4 arguments])
-        AC_MSG_RESULT([yes])
+	AC_DEFINE(HAVE_GENERIC_PERMISSION_2ARGS, 1,
+		  [generic_permission taken 2 arguments])
+	AC_MSG_RESULT([yes, 2 args])
 ],[
-        AC_MSG_RESULT([no])
+	LB_LINUX_TRY_COMPILE([
+		#include <linux/fs.h>
+	],[
+		generic_permission(NULL, 0, 0, NULL);
+	],[
+		AC_DEFINE(HAVE_GENERIC_PERMISSION_4ARGS, 1,
+			  [generic_permission taken 4 arguments])
+		AC_MSG_RESULT([yes, 4 args])
+	],[
+		AC_MSG_RESULT([no])
+	])
 ])
 ])
 
@@ -2047,6 +1785,44 @@ AC_DEFUN([LC_EXPORT_SIMPLE_SETATTR],
 AC_DEFINE(HAVE_SIMPLE_SETATTR, 1,
             [simple_setattr is exported by the kernel])
 ],[
+])
+])
+
+#
+# 3.3 introduces migrate_mode.h and migratepage has 4 args
+#
+AC_DEFUN([LC_HAVE_MIGRATE_HEADER],
+[LB_CHECK_FILE([$LINUX/include/linux/migrate.h],[
+		AC_DEFINE(HAVE_MIGRATE_H, 1,
+		[kernel has include/linux/migrate.h])
+],[LB_CHECK_FILE([$LINUX/include/linux/migrate_mode.h],[
+		AC_DEFINE(HAVE_MIGRATE_MODE_H, 1,
+			[kernel has include/linux/migrate_mode.h])
+],[
+	AC_MSG_RESULT([no])
+])
+])
+])
+
+AC_DEFUN([LC_MIGRATEPAGE_4ARGS],
+[AC_MSG_CHECKING([if address_space_operations.migratepage has 4 args])
+LB_LINUX_TRY_COMPILE([
+	#include <linux/fs.h>
+#ifdef HAVE_MIGRATE_H
+	#include <linux/migrate.h>
+#elif defined(HAVE_MIGRATE_MODE_H)
+	#include <linux/migrate_mode.h>
+#endif
+],[
+	struct address_space_operations aops;
+
+	aops.migratepage(NULL, NULL, NULL, MIGRATE_ASYNC);
+],[
+	AC_DEFINE(HAVE_MIGRATEPAGE_4ARGS, 1,
+		[address_space_operations.migratepage has 4 args])
+	AC_MSG_RESULT([yes])
+],[
+	AC_MSG_RESULT([no])
 ])
 ])
 
@@ -2078,45 +1854,18 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_CAPA_CRYPTO
          LC_CONFIG_RMTCLIENT
          LC_CONFIG_GSS
-         LC_QUOTA_READ
-         LC_COOKIE_FOLLOW_LINK
-         LC_FUNC_RCU
-         LC_PERCPU_COUNTER
          LC_TASK_CLENV_STORE
-
-         # ~2.6.11
-         LC_S_TIME_GRAN
-         LC_SB_TIME_GRAN
 
          # 2.6.12
          LC_RW_TREE_LOCK
 
-         # 2.6.15
-         LC_INODE_I_MUTEX
-
-         # 2.6.16
-         LC_SECURITY_PLUG  # for SLES10 SP2
-
-         # 2.6.17
-         LC_INODE_IPRIVATE
-         LC_DQUOTOFF_MUTEX
-
          # 2.6.18
-         LC_NR_PAGECACHE
-         LC_STATFS_DENTRY_PARAM
          LC_UMOUNTBEGIN_HAS_VFSMOUNT
-         LC_FLUSH_OWNER_ID
-         if test x$enable_server = xyes ; then
-                LC_EXPORT_INVALIDATE_MAPPING_PAGES
-         fi
 
          #2.6.18 + RHEL5 (fc6)
-         LC_PG_FS_MISC
-         LC_PAGE_CHECKED
          LC_LINUX_FIEMAP_H
 
          # 2.6.19
-         LC_INODE_BLKSIZE
          LC_FILE_WRITEV
          LC_FILE_READV
 
@@ -2153,7 +1902,9 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_FS_STRUCT_USE_PATH
 
          # 2.6.27
+         LC_SECURITY_PLUG  # for SLES10 SP2
          LC_PGMKWRITE_USE_VMFAULT
+	 LC_PGMKWRITE_COMPACT
          LC_INODE_PERMISION_2ARGS
          LC_FILE_REMOVE_SUID
          LC_TRYLOCKPAGE
@@ -2192,6 +1943,7 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_EXPORT_GENERIC_ERROR_REMOVE_PAGE
          LC_SELINUX_IS_ENABLED
          LC_EXPORT_ACCESS_PROCESS_VM
+	 LC_VFS_INODE_NEWSIZE_OK
 
          # 2.6.35, 3.0.0
          LC_FILE_FSYNC
@@ -2215,6 +1967,10 @@ AC_DEFUN([LC_PROG_LINUX],
 
          # 2.6.39
          LC_REQUEST_QUEUE_UNPLUG_FN
+
+	# 3.3
+	LC_HAVE_MIGRATE_HEADER
+	LC_MIGRATEPAGE_4ARGS
 
          #
          if test x$enable_server = xyes ; then
@@ -2705,6 +2461,8 @@ lustre/ost/Makefile
 lustre/ost/autoMakefile
 lustre/osd-ldiskfs/Makefile
 lustre/osd-ldiskfs/autoMakefile
+lustre/osd-zfs/Makefile
+lustre/osd-zfs/autoMakefile
 lustre/mgc/Makefile
 lustre/mgc/autoMakefile
 lustre/mgs/Makefile
@@ -2716,6 +2474,7 @@ lustre/ptlrpc/gss/autoMakefile
 lustre/quota/Makefile
 lustre/quota/autoMakefile
 lustre/scripts/Makefile
+lustre/scripts/lustre
 lustre/tests/Makefile
 lustre/tests/mpi/Makefile
 lustre/utils/Makefile

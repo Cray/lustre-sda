@@ -2,9 +2,9 @@
 AM_CPPFLAGS = $(LLCPPFLAGS) -I/opt/lam/include -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 -DLUSTRE_UTILS
 AM_CFLAGS = $(LLCFLAGS)
 # LDADD = -lldap
-# LDADD := -lreadline -ltermcap # -lefence
+# LDADD = -lreadline -ltermcap # -lefence
 
-DIST_SUBDIRS := mpi
+DIST_SUBDIRS = mpi
 
 noinst_DATA = disk1_8.tar.bz2
 noinst_SCRIPTS = leak_finder.pl llmount.sh llmountcleanup.sh functions.sh
@@ -28,7 +28,7 @@ noinst_SCRIPTS += lnet-selftest.sh obdfilter-survey.sh mmp.sh mmp_mark.sh
 noinst_SCRIPTS += sgpdd-survey.sh maloo_upload.sh auster setup-nfs.sh
 noinst_SCRIPTS += mds-survey.sh parallel-scale-nfs.sh
 noinst_SCRIPTS += parallel-scale-nfsv3.sh parallel-scale-nfsv4.sh
-noinst_SCRIPTS += posix.sh
+noinst_SCRIPTS += posix.sh sanity-scrub.sh scrub-performance.sh
 nobase_noinst_SCRIPTS = cfg/local.sh
 nobase_noinst_SCRIPTS += test-groups/regression test-groups/regression-mpi
 nobase_noinst_SCRIPTS += acl/make-tree acl/run cfg/ncli.sh

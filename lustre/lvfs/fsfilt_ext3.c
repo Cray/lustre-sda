@@ -49,14 +49,8 @@
 #ifdef HAVE_LINUX_EXPORTFS_H
 #include <linux/exportfs.h>
 #endif
-#ifdef HAVE_EXT4_LDISKFS
 #include <ext4/ext4.h>
 #include <ext4/ext4_jbd2.h>
-#else
-#include <linux/jbd.h>
-#include <linux/ext3_fs.h>
-#include <linux/ext3_jbd.h>
-#endif
 #include <linux/version.h>
 #include <linux/bitops.h>
 #include <linux/quota.h>
@@ -96,21 +90,9 @@ extern int ext3_xattr_set_handle(handle_t *, struct inode *, int, const char *, 
 #include <linux/lustre_compat25.h>
 #include <linux/lprocfs_status.h>
 
-#ifdef HAVE_EXT4_LDISKFS
 #include <ext4/ext4_extents.h>
-#else
-#include <linux/ext3_extents.h>
-#endif
 
 #include "lustre_quota_fmt.h"
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,15)
-#define FSFILT_DATA_TRANS_BLOCKS(sb)      EXT3_DATA_TRANS_BLOCKS
-#define FSFILT_DELETE_TRANS_BLOCKS(sb)    EXT3_DELETE_TRANS_BLOCKS
-#else
-#define FSFILT_DATA_TRANS_BLOCKS(sb)      EXT3_DATA_TRANS_BLOCKS(sb)
-#define FSFILT_DELETE_TRANS_BLOCKS(sb)    EXT3_DELETE_TRANS_BLOCKS(sb)
-#endif
 
 /* for kernels 2.6.18 and later */
 #define FSFILT_SINGLEDATA_TRANS_BLOCKS(sb) EXT3_SINGLEDATA_TRANS_BLOCKS(sb)
@@ -121,16 +103,8 @@ extern int ext3_xattr_set_handle(handle_t *, struct inode *, int, const char *, 
 #define ext3_mb_discard_inode_preallocations(inode) \
                  ext3_discard_preallocations(inode)
 
-#ifdef HAVE_EXT4_LDISKFS
 #define fsfilt_log_start_commit(journal, tid) jbd2_log_start_commit(journal, tid)
 #define fsfilt_log_wait_commit(journal, tid) jbd2_log_wait_commit(journal, tid)
-#else
-#define fsfilt_log_start_commit(journal, tid) log_start_commit(journal, tid)
-#define fsfilt_log_wait_commit(journal, tid) log_wait_commit(journal, tid)
-#define ext_pblock(ex) le32_to_cpu((ex)->ee_start)
-#define ext3_ext_store_pblock(ex, pblock)  ((ex)->ee_start = cpu_to_le32(pblock))
-#define ext3_inode_bitmap(sb,desc) le32_to_cpu((desc)->bg_inode_bitmap)
-#endif
 
 #ifdef HAVE_EXT4_JOURNAL_CALLBACK_ADD
 # define journal_callback ext4_journal_cb_entry
@@ -270,11 +244,11 @@ static void *fsfilt_ext3_start(struct inode *inode, int op, void *desc_private,
         switch(op) {
         case FSFILT_OP_RMDIR:
         case FSFILT_OP_UNLINK:
-                /* delete one file + create/update logs for each stripe */
-                nblocks += FSFILT_DELETE_TRANS_BLOCKS(inode->i_sb);
-                nblocks += (EXT3_INDEX_EXTRA_TRANS_BLOCKS +
-                            FSFILT_SINGLEDATA_TRANS_BLOCKS(inode->i_sb)) * logs;
-                break;
+		/* delete one file + create/update logs for each stripe */
+		nblocks += EXT3_DELETE_TRANS_BLOCKS(inode->i_sb);
+		nblocks += (EXT3_INDEX_EXTRA_TRANS_BLOCKS +
+			    FSFILT_SINGLEDATA_TRANS_BLOCKS(inode->i_sb)) * logs;
+		break;
         case FSFILT_OP_RENAME:
                 /* modify additional directory */
                 nblocks += FSFILT_SINGLEDATA_TRANS_BLOCKS(inode->i_sb);
@@ -284,21 +258,6 @@ static void *fsfilt_ext3_start(struct inode *inode, int op, void *desc_private,
                 nblocks += 3;
                 /* no break */
         case FSFILT_OP_CREATE: {
-#if defined(EXT3_EXTENTS_FL) && defined(EXT3_INDEX_FL) && !defined(HAVE_EXT4_LDISKFS)
-                static int warned;
-                if (!warned) {
-                        if (!test_opt(inode->i_sb, EXTENTS)) {
-                                warned = 1;
-                        } else if (((EXT3_I(inode)->i_flags &
-                              cpu_to_le32(EXT3_EXTENTS_FL | EXT3_INDEX_FL)) ==
-                              cpu_to_le32(EXT3_EXTENTS_FL | EXT3_INDEX_FL))) {
-                                CWARN("extent-mapped directory found with "
-                                      "ext3-based ldiskfs - contact "
-                                      "http://bugs.whamcloud.com/\n");
-                                warned = 1;
-                        }
-                }
-#endif
                 /* no break */
         }
         case FSFILT_OP_MKDIR:
@@ -308,17 +267,17 @@ static void *fsfilt_ext3_start(struct inode *inode, int op, void *desc_private,
                 /* no break */
         case FSFILT_OP_LINK:
                 /* modify parent directory */
-                nblocks += EXT3_INDEX_EXTRA_TRANS_BLOCKS +
-                         FSFILT_DATA_TRANS_BLOCKS(inode->i_sb);
+		nblocks += EXT3_INDEX_EXTRA_TRANS_BLOCKS +
+			   EXT3_DATA_TRANS_BLOCKS(inode->i_sb);
                 /* create/update logs for each stripe */
                 nblocks += (EXT3_INDEX_EXTRA_TRANS_BLOCKS +
                             FSFILT_SINGLEDATA_TRANS_BLOCKS(inode->i_sb)) * logs;
                 break;
         case FSFILT_OP_SETATTR:
                 /* Setattr on inode */
-                nblocks += 1;
-                nblocks += EXT3_INDEX_EXTRA_TRANS_BLOCKS +
-                         FSFILT_DATA_TRANS_BLOCKS(inode->i_sb);
+		nblocks += 1;
+		nblocks += EXT3_INDEX_EXTRA_TRANS_BLOCKS +
+			   EXT3_DATA_TRANS_BLOCKS(inode->i_sb);
                 /* quota chown log for each stripe */
                 nblocks += (EXT3_INDEX_EXTRA_TRANS_BLOCKS +
                             FSFILT_SINGLEDATA_TRANS_BLOCKS(inode->i_sb)) * logs;
@@ -326,9 +285,9 @@ static void *fsfilt_ext3_start(struct inode *inode, int op, void *desc_private,
         case FSFILT_OP_CANCEL_UNLINK:
                 /* blocks for log header bitmap update OR
                  * blocks for catalog header bitmap update + unlink of logs */
-                nblocks = (LLOG_CHUNK_SIZE >> inode->i_blkbits) +
-                        FSFILT_DELETE_TRANS_BLOCKS(inode->i_sb) * logs;
-                break;
+		nblocks = (LLOG_CHUNK_SIZE >> inode->i_blkbits) +
+			EXT3_DELETE_TRANS_BLOCKS(inode->i_sb) * logs;
+		break;
         default: CERROR("unknown transaction start op %d\n", op);
                 LBUG();
         }
@@ -422,8 +381,8 @@ static int fsfilt_ext3_credits_needed(int objcount, struct fsfilt_objinfo *fso,
 
         needed += nbitmaps + ngdblocks;
 
-        /* last_rcvd update */
-        needed += FSFILT_DATA_TRANS_BLOCKS(sb);
+	/* last_rcvd update */
+	needed += EXT3_DATA_TRANS_BLOCKS(sb);
 
 #if defined(CONFIG_QUOTA)
         /* We assume that there will be 1 bit set in s_dquot.flags for each
@@ -690,14 +649,9 @@ static int fsfilt_ext3_iocontrol(struct inode *inode, struct file *file,
                 *(int *)arg |= EXT3_I(inode)->i_flags & EXT3_EXTENTS_FL;
         }
 
-#ifdef HAVE_EXT4_LDISKFS
         /* ext4_ioctl does not have a inode argument */
         if (inode->i_fop->unlocked_ioctl)
                 rc = inode->i_fop->unlocked_ioctl(file, cmd, arg);
-#else
-        if (inode->i_fop->ioctl)
-                rc = inode->i_fop->ioctl(inode, file, cmd, arg);
-#endif
         else
                 RETURN(-ENOTTY);
 
@@ -705,46 +659,45 @@ static int fsfilt_ext3_iocontrol(struct inode *inode, struct file *file,
 }
 
 static int fsfilt_ext3_set_md(struct inode *inode, void *handle,
-                              void *lmm, int lmm_size, const char *name)
+			      void *lmm, int lmm_size, const char *name)
 {
-        int rc;
+	int rc;
 
-        LASSERT(TRYLOCK_INODE_MUTEX(inode) == 0);
+	LASSERT(mutex_trylock(&inode->i_mutex) == 0);
 
-        rc = ext3_xattr_set_handle(handle, inode, EXT3_XATTR_INDEX_TRUSTED,
-                                   name, lmm, lmm_size, XATTR_NO_CTIME);
+	rc = ext3_xattr_set_handle(handle, inode, EXT3_XATTR_INDEX_TRUSTED,
+				   name, lmm, lmm_size, XATTR_NO_CTIME);
 
-
-        if (rc && rc != -EROFS)
-                CERROR("error adding MD data to inode %lu: rc = %d\n",
-                       inode->i_ino, rc);
-        return rc;
+	if (rc && rc != -EROFS)
+		CERROR("error adding MD data to inode %lu: rc = %d\n",
+		       inode->i_ino, rc);
+	return rc;
 }
 
 /* Must be called with i_mutex held */
 static int fsfilt_ext3_get_md(struct inode *inode, void *lmm, int lmm_size,
-                              const char *name)
+			      const char *name)
 {
-        int rc;
+	int rc;
 
-        LASSERT(TRYLOCK_INODE_MUTEX(inode) == 0);
+	LASSERT(mutex_trylock(&inode->i_mutex) == 0);
 
-        rc = ext3_xattr_get(inode, EXT3_XATTR_INDEX_TRUSTED,
-                            name, lmm, lmm_size);
+	rc = ext3_xattr_get(inode, EXT3_XATTR_INDEX_TRUSTED,
+			    name, lmm, lmm_size);
 
-        /* This gives us the MD size */
-        if (lmm == NULL)
-                return (rc == -ENODATA) ? 0 : rc;
+	/* This gives us the MD size */
+	if (lmm == NULL)
+		return (rc == -ENODATA) ? 0 : rc;
 
-        if (rc < 0) {
-                CDEBUG(D_INFO, "error getting EA %d/%s from inode %lu: rc %d\n",
-                       EXT3_XATTR_INDEX_TRUSTED, name,
-                       inode->i_ino, rc);
-                memset(lmm, 0, lmm_size);
-                return (rc == -ENODATA) ? 0 : rc;
-        }
+	if (rc < 0) {
+		CDEBUG(D_INFO, "error getting EA %d/%s from inode %lu: rc %d\n",
+		       EXT3_XATTR_INDEX_TRUSTED, name,
+		       inode->i_ino, rc);
+		memset(lmm, 0, lmm_size);
+		return (rc == -ENODATA) ? 0 : rc;
+	}
 
-        return rc;
+	return rc;
 }
 
 static int fsfilt_ext3_send_bio(int rw, struct inode *inode, struct bio *bio)
@@ -846,13 +799,13 @@ static int fsfilt_ext3_add_journal_cb(struct obd_device *obd, __u64 last_rcvd,
 
 static int fsfilt_ext3_statfs(struct super_block *sb, struct obd_statfs *osfs)
 {
-        struct kstatfs sfs;
-        int rc;
+	struct kstatfs sfs;
+	int rc;
 
-        memset(&sfs, 0, sizeof(sfs));
-        rc = ll_do_statfs(sb, &sfs);
-        statfs_pack(osfs, &sfs);
-        return rc;
+	memset(&sfs, 0, sizeof(sfs));
+	rc = sb->s_op->statfs(sb->s_root, &sfs);
+	statfs_pack(osfs, &sfs);
+	return rc;
 }
 
 static int fsfilt_ext3_sync(struct super_block *sb)
@@ -864,41 +817,16 @@ static int fsfilt_ext3_sync(struct super_block *sb)
 #define EXT3_EXTENTS_FL                 0x00080000 /* Inode uses extents */
 #endif
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,17))
-# define fsfilt_up_truncate_sem(inode)  up(&LDISKFS_I(inode)->truncate_sem);
-# define fsfilt_down_truncate_sem(inode)  down(&LDISKFS_I(inode)->truncate_sem);
-#else
-# ifdef HAVE_EXT4_LDISKFS
-#   define fsfilt_up_truncate_sem(inode) do{ }while(0)
-#   define fsfilt_down_truncate_sem(inode) do{ }while(0)
-# else
-#  define fsfilt_up_truncate_sem(inode)  mutex_unlock(&EXT3_I(inode)->truncate_mutex)
-#  define fsfilt_down_truncate_sem(inode)  mutex_lock(&EXT3_I(inode)->truncate_mutex)
-# endif
-#endif
-
 #ifndef EXT_ASSERT
 #define EXT_ASSERT(cond)  BUG_ON(!(cond))
 #endif
 
-#ifdef EXT3_EXT_HAS_NO_TREE
-/* for kernels 2.6.18 and later */
-#ifdef HAVE_EXT4_LDISKFS
 #define EXT_GENERATION(inode)           (EXT4_I(inode)->i_ext_generation)
-#else
-#define EXT_GENERATION(inode)           ext_generation(inode)
-#endif
 #define ext3_ext_base                   inode
 #define ext3_ext_base2inode(inode)      (inode)
 #define EXT_DEPTH(inode)                ext_depth(inode)
 #define fsfilt_ext3_ext_walk_space(inode, block, num, cb, cbdata) \
                         ext3_ext_walk_space(inode, block, num, cb, cbdata);
-#else
-#define ext3_ext_base                   ext3_extents_tree
-#define ext3_ext_base2inode(tree)       (tree->inode)
-#define fsfilt_ext3_ext_walk_space(tree, block, num, cb, cbdata) \
-                        ext3_ext_walk_space(tree, block, num, cb);
-#endif
 
 struct bpointers {
         unsigned long *blocks;
@@ -989,7 +917,6 @@ static unsigned long new_blocks(handle_t *handle, struct ext3_ext_base *base,
 }
 #endif
 
-#ifdef EXT3_EXT_HAS_NO_TREE
 static int ext3_ext_new_extent_cb(struct ext3_ext_base *base,
                                   struct ext3_ext_path *path,
                                   struct ext3_ext_cache *cex,
@@ -999,17 +926,6 @@ static int ext3_ext_new_extent_cb(struct ext3_ext_base *base,
                                   void *cbdata)
 {
         struct bpointers *bp = cbdata;
-#else
-static int ext3_ext_new_extent_cb(struct ext3_ext_base *base,
-                                  struct ext3_ext_path *path,
-                                  struct ext3_ext_cache *cex
-#ifdef HAVE_EXT_PREPARE_CB_EXTENT
-                                  , struct ext3_extent *ex
-#endif
-                                 )
-{
-        struct bpointers *bp = base->private;
-#endif
         struct inode *inode = ext3_ext_base2inode(base);
         struct ext3_extent nex;
         unsigned long pblock;
@@ -1042,24 +958,20 @@ static int ext3_ext_new_extent_cb(struct ext3_ext_base *base,
                 return EXT_CONTINUE;
         }
 
-        tgen = EXT_GENERATION(base);
-        count = ext3_ext_calc_credits_for_insert(base, path);
-        fsfilt_up_truncate_sem(inode);
+	tgen = EXT_GENERATION(base);
+	count = ext3_ext_calc_credits_for_insert(base, path);
 
-        handle = ext3_journal_start(inode, count+EXT3_ALLOC_NEEDED+1);
-        if (IS_ERR(handle)) {
-                fsfilt_down_truncate_sem(inode);
-                return PTR_ERR(handle);
-        }
+	handle = ext3_journal_start(inode, count+EXT3_ALLOC_NEEDED+1);
+	if (IS_ERR(handle)) {
+		return PTR_ERR(handle);
+	}
 
-        fsfilt_down_truncate_sem(inode);
         if (tgen != EXT_GENERATION(base)) {
                 /* the tree has changed. so path can be invalid at moment */
                 ext3_journal_stop(handle);
                 return EXT_REPEAT;
         }
 
-#if defined(HAVE_EXT4_LDISKFS)
         /* In 2.6.32 kernel, ext4_ext_walk_space()'s callback func is not
          * protected by i_data_sem as whole. so we patch it to store
 	 * generation to path and now verify the tree hasn't changed */
@@ -1072,7 +984,6 @@ static int ext3_ext_new_extent_cb(struct ext3_ext_base *base,
                 ext3_journal_stop(handle);
                 return EXT_REPEAT;
         }
-#endif
 
         count = cex->ec_len;
         pblock = new_blocks(handle, base, path, cex->ec_block, &count, &err);
@@ -1108,9 +1019,7 @@ static int ext3_ext_new_extent_cb(struct ext3_ext_base *base,
         BUG_ON(le32_to_cpu(nex.ee_block) != cex->ec_block);
 
 out:
-#if defined(HAVE_EXT4_LDISKFS)
         up_write((&EXT4_I(inode)->i_data_sem));
-#endif
         ext3_journal_stop(handle);
 map:
         if (err >= 0) {
@@ -1154,33 +1063,22 @@ int fsfilt_map_nblocks(struct inode *inode, unsigned long block,
                        unsigned long num, unsigned long *blocks,
                        int *created, int create)
 {
-#ifdef EXT3_EXT_HAS_NO_TREE
         struct ext3_ext_base *base = inode;
-#else
-        struct ext3_extents_tree tree;
-        struct ext3_ext_base *base = &tree;
-#endif
         struct bpointers bp;
         int err;
 
         CDEBUG(D_OTHER, "blocks %lu-%lu requested for inode %u\n",
                block, block + num - 1, (unsigned) inode->i_ino);
 
-#ifndef EXT3_EXT_HAS_NO_TREE
-        ext3_init_tree_desc(base, inode);
-        tree.private = &bp;
-#endif
         bp.blocks = blocks;
         bp.created = created;
         bp.start = block;
         bp.init_num = bp.num = num;
         bp.create = create;
 
-        fsfilt_down_truncate_sem(inode);
-        err = fsfilt_ext3_ext_walk_space(base, block, num,
-                                         ext3_ext_new_extent_cb, &bp);
-        ext3_ext_invalidate_cache(base);
-        fsfilt_up_truncate_sem(inode);
+	err = fsfilt_ext3_ext_walk_space(base, block, num,
+					 ext3_ext_new_extent_cb, &bp);
+	ext3_ext_invalidate_cache(base);
 
         return err;
 }
@@ -1414,13 +1312,14 @@ static int fsfilt_ext3_write_record(struct file *file, void *buf, int bufsize,
         block_count = (*offs & (blocksize - 1)) + bufsize;
         block_count = (block_count + blocksize - 1) >> inode->i_blkbits;
 
-        handle = ext3_journal_start(inode,
-                               block_count * FSFILT_DATA_TRANS_BLOCKS(inode->i_sb) + 2);
-        if (IS_ERR(handle)) {
-                CERROR("can't start transaction for %d blocks (%d bytes)\n",
-                       block_count * FSFILT_DATA_TRANS_BLOCKS(inode->i_sb) + 2, bufsize);
-                return PTR_ERR(handle);
-        }
+	handle = ext3_journal_start(inode,
+			block_count * EXT3_DATA_TRANS_BLOCKS(inode->i_sb) + 2);
+	if (IS_ERR(handle)) {
+		CERROR("can't start transaction for %d blocks (%d bytes)\n",
+		       block_count * EXT3_DATA_TRANS_BLOCKS(inode->i_sb) + 2,
+		       bufsize);
+		return PTR_ERR(handle);
+	}
 
         err = fsfilt_ext3_write_handle(inode, buf, bufsize, offs, handle);
 
@@ -1434,8 +1333,7 @@ static int fsfilt_ext3_write_record(struct file *file, void *buf, int bufsize,
 
 static int fsfilt_ext3_setup(struct super_block *sb)
 {
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,6)) && \
-     defined(HAVE_QUOTA_SUPPORT)) || defined(S_PDIROPS)
+#if defined(HAVE_QUOTA_SUPPORT) || defined(S_PDIROPS)
         struct ext3_sb_info *sbi = EXT3_SB(sb);
 #if 0
         sbi->dx_lock = fsfilt_ext3_dx_lock;
@@ -1455,7 +1353,7 @@ static int fsfilt_ext3_setup(struct super_block *sb)
 #endif
         if (!EXT3_HAS_COMPAT_FEATURE(sb, EXT3_FEATURE_COMPAT_DIR_INDEX))
                 CWARN("filesystem doesn't have dir_index feature enabled\n");
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,6)) && defined(HAVE_QUOTA_SUPPORT)
+#ifdef HAVE_QUOTA_SUPPORT
         /* enable journaled quota support */
         /* kfreed in ext3_put_super() */
         sbi->s_qf_names[USRQUOTA] = kstrdup("lquota.user.reserved", GFP_KERNEL);
@@ -1468,9 +1366,7 @@ static int fsfilt_ext3_setup(struct super_block *sb)
                 return -ENOMEM;
         }
         sbi->s_jquota_fmt = QFMT_LUSTRE;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,13))
         set_opt(sbi->s_mount_opt, QUOTA);
-#endif
 #endif
         return 0;
 }
@@ -1771,40 +1667,6 @@ static inline int read_old_dqinfo(struct super_block *sb, int type,
         RETURN(rc);
 }
 
-#ifndef HAVE_EXT4_LDISKFS
-static inline struct ext3_group_desc *
-get_group_desc(struct super_block *sb, int group, struct buffer_head **bh)
-{
-        unsigned long desc_block, desc;
-        struct ext3_group_desc *gdp;
-
-        desc_block = group / EXT3_DESC_PER_BLOCK(sb);
-        desc = group % EXT3_DESC_PER_BLOCK(sb);
-        gdp = (struct ext3_group_desc *)
-              EXT3_SB(sb)->s_group_desc[desc_block]->b_data;
-
-        return gdp + desc;
-}
-
-static inline struct buffer_head *
-ext3_read_inode_bitmap(struct super_block *sb, unsigned long group)
-{
-        struct ext3_group_desc *desc;
-        struct buffer_head *bh;
-
-        desc = get_group_desc(sb, group, NULL);
-        bh = sb_bread(sb, ext3_inode_bitmap(sb, desc));
-        return bh;
-}
-
-static __u32 ext3_itable_unused_count(struct super_block *sb,
-                               struct ext3_group_desc *bg) {
-       return le16_to_cpu(bg->bg_itable_unused);
-}
-#else
-#define get_group_desc ext3_get_group_desc
-#endif
-
 struct qchk_ctxt {
         cfs_hlist_head_t        qckt_hash[NR_DQHASH];      /* quotacheck hash */
         cfs_list_t              qckt_list;                 /* quotacheck list */
@@ -2066,34 +1928,22 @@ static int fsfilt_ext3_quotacheck(struct super_block *sb,
 
                 if (uninit_feat) {
                         struct ext3_group_desc *desc;
-                        desc = get_group_desc(sb, group, NULL);
+                        desc = ext3_get_group_desc(sb, group, NULL);
                         if (!desc)
                                 GOTO(out, -EIO);
 
                         /* we don't really need to take the group lock here,
                          * but it may be useful if one day we support online
                          * quotacheck */
-#ifdef HAVE_EXT4_LDISKFS
                         ext4_lock_group(sb, group);
-#else
-                        spin_lock(sb_bgl_lock(sbi, group));
-#endif
                         if (desc->bg_flags & cpu_to_le16(EXT3_BG_INODE_UNINIT)) {
                                 /* no inode in use in this group, just skip it */
-#ifdef HAVE_EXT4_LDISKFS
                                 ext3_unlock_group(sb, group);
-#else
-                                spin_unlock(sb_bgl_lock(sbi, group));
-#endif
                                 continue;
                         }
 
                         used_count -= ext3_itable_unused_count(sb, desc);
-#ifdef HAVE_EXT4_LDISKFS
                         ext3_unlock_group(sb, group);
-#else
-                        spin_unlock(sb_bgl_lock(sbi, group));
-#endif
                 }
 
                 ino = group * sbi->s_inodes_per_group + 1;
@@ -2113,11 +1963,7 @@ static int fsfilt_ext3_quotacheck(struct super_block *sb,
                         ino = i + group * sbi->s_inodes_per_group;
                         if (ino < sbi->s_first_ino)
                                 continue;
-#if defined(HAVE_EXT4_LDISKFS) || !defined(HAVE_READ_INODE_IN_SBOPS)
                         inode = ext3_iget(sb, ino);
-#else
-                        inode = iget(sb, ino);
-#endif
                         if (!inode || IS_ERR(inode))
                                 continue;
 
@@ -2145,15 +1991,11 @@ static int fsfilt_ext3_quotacheck(struct super_block *sb,
                         continue;
 
 
-                LASSERT(sb_dqopt(sb)->files[i] != NULL);
-                CFS_INIT_LIST_HEAD(&id_list);
-#ifndef KERNEL_SUPPORTS_QUOTA_READ
-                rc = lustre_get_qids(sb_dqopt(sb)->files[i], NULL, i, &id_list);
-#else
-                rc = lustre_get_qids(NULL, sb_dqopt(sb)->files[i], i, &id_list);
-#endif
-                if (rc)
-                        CERROR("read old limits failed. (rc:%d)\n", rc);
+		LASSERT(sb_dqopt(sb)->files[i] != NULL);
+		CFS_INIT_LIST_HEAD(&id_list);
+		rc = lustre_get_qids(NULL, sb_dqopt(sb)->files[i], i, &id_list);
+		if (rc)
+			CERROR("read old limits failed. (rc:%d)\n", rc);
 
                 cfs_list_for_each_entry_safe(dqid, tmp, &id_list, di_link) {
                         cfs_list_del_init(&dqid->di_link);
@@ -2273,14 +2115,7 @@ static int fsfilt_ext3_dquot(struct lustre_dquot *dquot, int cmd)
 static int fsfilt_ext3_get_mblk(struct super_block *sb, int *count,
                                 struct inode *inode, int frags)
 {
-#ifdef EXT3_EXT_HAS_NO_TREE
         struct ext3_ext_base *base = inode;
-#else
-        struct ext3_extents_tree tree;
-        struct ext3_ext_base *base = &tree;
-
-        ext3_init_tree_desc(base, inode);
-#endif
         /* for an ost_write request, it needs <#fragments> * <tree depth + 1>
          * metablocks at maxium b=16542 */
         *count = frags * (EXT_DEPTH(base) + 1) * EXT3_BLOCK_SIZE(sb);
@@ -2339,17 +2174,17 @@ void *lustre_quota_journal_start(struct inode *inode, int delete)
                 /* each indirect block (+4) may become free, attaching to the
                  * header list of free blocks (+1); the data block (+1) may
                  * become a free block (+0) or a block with free dqentries (+0) */
-                block_count = (4 + 1) + 1;
-                handle = ext3_journal_start(inode,
-                            block_count*FSFILT_DATA_TRANS_BLOCKS(inode->i_sb)+2);
+		block_count = (4 + 1) + 1;
+		handle = ext3_journal_start(inode,
+			     block_count*EXT3_DATA_TRANS_BLOCKS(inode->i_sb)+2);
         } else {
                 /* indirect blocks are touched (+4), each causes file expansion (+0) or
                  * freeblk reusage with a header update (+1); dqentry is either reused
                  * causing update of the entry block (+1), prev (+1) and next (+1) or
                  * a new block allocation (+1) with a header update (+1)              */
-                block_count = (4 + 1) + 3;
-                handle = ext3_journal_start(inode,
-                             block_count*FSFILT_DATA_TRANS_BLOCKS(inode->i_sb)+2);
+		block_count = (4 + 1) + 3;
+		handle = ext3_journal_start(inode,
+			     block_count*EXT3_DATA_TRANS_BLOCKS(inode->i_sb)+2);
 
         }
 

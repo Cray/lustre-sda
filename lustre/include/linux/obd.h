@@ -47,12 +47,15 @@
 # include <linux/fs.h>
 # include <linux/list.h>
 # include <linux/sched.h>  /* for struct task_struct, for current.h */
-# include <asm/current.h>  /* for smp_lock.h */
-# include <linux/smp_lock.h>
 # include <linux/proc_fs.h>
 # include <linux/mount.h>
 # include <linux/lustre_intent.h>
 #endif
+
+struct ll_iattr {
+	struct iattr	iattr;
+	unsigned int	ia_attr_flags;
+};
 
 #define CLIENT_OBD_LIST_LOCK_DEBUG 1
 typedef struct {

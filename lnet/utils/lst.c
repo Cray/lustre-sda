@@ -41,11 +41,21 @@
 #include <libcfs/libcfsutil.h>
 #include <lnet/lnetctl.h>
 #include <lnet/lnetst.h>
-
+/* NB: these includes are layering violation */
+#include <lustre_ver.h>
+#include <lustre/lustre_idl.h>
 
 lst_sid_t LST_INVALID_SID = {LNET_NID_ANY, -1};
 static lst_sid_t           session_id;
 static int                 session_key;
+
+#if LUSTRE_VERSION_CODE >= OBD_OCD_VERSION(2, 6, 50, 0)
+/* assume all nodes can understand feature LST_FEAT_BULK_LEN */
+static unsigned		   session_features = LST_FEATS_MASK;
+#else
+static unsigned		   session_features = LST_FEATS_EMPTY;
+#endif
+
 static lstcon_trans_stat_t trans_stat;
 
 typedef struct list_string {
@@ -454,7 +464,7 @@ lst_print_transerr(cfs_list_t *head, char *optstr)
                         continue;
                 }
 
-                fprintf(stderr, "%s failed on %s: %s\n",
+		fprintf(stderr, "operation %s failed on %s: %s\n",
                         optstr, libcfs_id2str(ent->rpe_peer),
                         strerror(ent->rpe_fwk_errno));
         }
@@ -503,7 +513,7 @@ lst_ioctl(unsigned int opc, void *buf, int len)
 }
 
 int
-lst_new_session_ioctl (char *name, int timeout, int force, lst_sid_t *sid)
+lst_new_session_ioctl(char *name, int timeout, int force, lst_sid_t *sid)
 {
         lstio_session_new_args_t args = {0};
 
@@ -511,6 +521,7 @@ lst_new_session_ioctl (char *name, int timeout, int force, lst_sid_t *sid)
         args.lstio_ses_timeout = timeout;
         args.lstio_ses_force   = force;
         args.lstio_ses_idp     = sid;
+	args.lstio_ses_feats   = session_features;
         args.lstio_ses_nmlen   = strlen(name);
         args.lstio_ses_namep   = name;
 
@@ -598,32 +609,31 @@ jt_lst_new_session(int argc,  char **argv)
         }
 
         rc = lst_new_session_ioctl(name, timeout, force, &session_id);
-
         if (rc != 0) {
                 lst_print_error("session", "Failed to create session: %s\n",
                                 strerror(errno));
                 return rc;
         }
 
-        fprintf(stdout, "SESSION: %s TIMEOUT: %d FORCE: %s\n",
-                name, timeout, force ? "Yes": "No");
-
-        return rc;
+	fprintf(stdout, "SESSION: %s FEATURES: %x TIMEOUT: %d FORCE: %s\n",
+		name, session_features, timeout, force ? "Yes" : "No");
+	return 0;
 }
 
 int
-lst_session_info_ioctl(char *name, int len, int *key,
-                       lst_sid_t *sid, lstcon_ndlist_ent_t *ndinfo)
+lst_session_info_ioctl(char *name, int len, int *key, unsigned *featp,
+		       lst_sid_t *sid, lstcon_ndlist_ent_t *ndinfo)
 {
-        lstio_session_info_args_t args = {0};
+	lstio_session_info_args_t args = {0};
 
-        args.lstio_ses_idp    = sid;
-        args.lstio_ses_keyp   = key;
-        args.lstio_ses_ndinfo = ndinfo;
-        args.lstio_ses_nmlen  = len;
-        args.lstio_ses_namep  = name;
+	args.lstio_ses_idp     = sid;
+	args.lstio_ses_keyp    = key;
+	args.lstio_ses_featp   = featp;
+	args.lstio_ses_ndinfo  = ndinfo;
+	args.lstio_ses_nmlen   = len;
+	args.lstio_ses_namep   = name;
 
-        return lst_ioctl(LSTIO_SESSION_INFO, &args, sizeof(args));
+	return lst_ioctl(LSTIO_SESSION_INFO, &args, sizeof(args));
 }
 
 int
@@ -632,10 +642,12 @@ jt_lst_show_session(int argc, char **argv)
         lstcon_ndlist_ent_t ndinfo;
         lst_sid_t           sid;
         char                name[LST_NAME_SIZE];
-        int                 key;
-        int                 rc;
+	unsigned	    feats;
+	int		    key;
+	int		    rc;
 
-        rc = lst_session_info_ioctl(name, LST_NAME_SIZE, &key, &sid, &ndinfo);
+	rc = lst_session_info_ioctl(name, LST_NAME_SIZE, &key,
+				    &feats, &sid, &ndinfo);
 
         if (rc != 0) {
                 lst_print_error("session", "Failed to show session: %s\n",
@@ -643,9 +655,9 @@ jt_lst_show_session(int argc, char **argv)
                 return -1;
         }
 
-        fprintf(stdout, "%s ID: "LPU64"@%s, KEY: %d NODES: %d\n",
-                name, sid.ses_stamp, libcfs_nid2str(sid.ses_nid),
-                key, ndinfo.nle_nnode);
+	fprintf(stdout, "%s ID: "LPU64"@%s, KEY: %d FEATURES: %x NODES: %d\n",
+		name, sid.ses_stamp, libcfs_nid2str(sid.ses_nid),
+		key, feats, ndinfo.nle_nnode);
 
         return 0;
 }
@@ -726,14 +738,15 @@ lst_get_node_count(int type, char *str, int *countp, lnet_process_id_t **idspp)
         lstcon_test_batch_ent_t ent;
         lstcon_ndlist_ent_t    *entp = &ent.tbe_cli_nle;
         lst_sid_t               sid;
-        int                     key;
-        int                     rc;
+	unsigned		feats;
+	int			key;
+	int			rc;
 
-        switch (type) {
-        case LST_OPC_SESSION:
-                rc = lst_session_info_ioctl(buf, LST_NAME_SIZE,
-                                            &key, &sid, entp);
-                break;
+	switch (type) {
+	case LST_OPC_SESSION:
+		rc = lst_session_info_ioctl(buf, LST_NAME_SIZE,
+					    &key, &feats, &sid, entp);
+		break;
 
         case LST_OPC_BATCHSRV:
                 entp = &ent.tbe_srv_nle;
@@ -896,7 +909,7 @@ out:
 
 int
 lst_add_nodes_ioctl (char *name, int count, lnet_process_id_t *ids,
-                     cfs_list_t *resultp)
+		     unsigned *featp, cfs_list_t *resultp)
 {
         lstio_group_nodes_args_t args = {0};
 
@@ -904,6 +917,7 @@ lst_add_nodes_ioctl (char *name, int count, lnet_process_id_t *ids,
         args.lstio_grp_nmlen   = strlen(name);
         args.lstio_grp_namep   = name;
         args.lstio_grp_count   = count;
+	args.lstio_grp_featp   = featp;
         args.lstio_grp_idsp    = ids;
         args.lstio_grp_resultp = resultp;
 
@@ -928,6 +942,7 @@ jt_lst_add_group(int argc, char **argv)
         cfs_list_t         head;
         lnet_process_id_t *ids;
         char              *name;
+	unsigned	   feats = session_features;
         int                count;
         int                rc;
         int                i;
@@ -974,31 +989,50 @@ jt_lst_add_group(int argc, char **argv)
                 rc = lst_alloc_rpcent(&head, count, 0);
                 if (rc != 0) {
                         fprintf(stderr, "Out of memory\n");
-                        break;
-                }
+			return -1;
+		}
 
-                rc = lst_add_nodes_ioctl(name, count, ids, &head);
+		rc = lst_add_nodes_ioctl(name, count, ids, &feats, &head);
 
-                free(ids);
+		free(ids);
 
-                if (rc == 0) {
-                        lst_free_rpcent(&head);
-                        fprintf(stderr, "%s are added to session\n", argv[i]);
-                        continue;
-                }
+		if (rc != 0)
+			goto failed;
 
-                if (rc == -1) {
-                        lst_free_rpcent(&head);
-                        lst_print_error("group", "Failed to add nodes %s: %s\n",
-                                        argv[i], strerror(errno));
-                        break;
-                }
+		fprintf(stdout, "%s are added to session\n", argv[i]);
 
-                lst_print_transerr(&head, "create session");
-                lst_free_rpcent(&head);
-        }
+		if ((feats & session_features) != session_features) {
+			fprintf(stdout,
+				"Warning, this session will run with "
+				"compatible mode because some test nodes "
+				"might not understand these features: %x\n",
+				(~feats & session_features));
+		}
 
-        return rc;
+		lst_free_rpcent(&head);
+	}
+
+	return 0;
+
+failed:
+	if (rc == -1) {
+		lst_print_error("group", "Failed to add nodes %s: %s\n",
+				argv[i], strerror(errno));
+
+	} else {
+		if (trans_stat.trs_fwk_errno == EPROTO) {
+			fprintf(stderr,
+				"test nodes might have different LST "
+				"features, please disable some features by "
+				"setting LST_FEATURES\n");
+		}
+
+		lst_print_transerr(&head, "create session");
+	}
+
+	lst_free_rpcent(&head);
+
+	return rc;
 }
 
 int
@@ -1554,6 +1588,22 @@ lst_lnet_stat_value(int bw, int send, int off)
         return *p;
 }
 
+static void
+lst_timeval_diff(struct timeval *tv1,
+		 struct timeval *tv2, struct timeval *df)
+{
+	if (tv1->tv_usec >= tv2->tv_usec) {
+		df->tv_sec  = tv1->tv_sec - tv2->tv_sec;
+		df->tv_usec = tv1->tv_usec - tv2->tv_usec;
+		return;
+	}
+
+	df->tv_sec  = tv1->tv_sec - 1 - tv2->tv_sec;
+	df->tv_usec = tv1->tv_usec + 1000000 - tv2->tv_usec;
+
+	return;
+}
+
 void
 lst_cal_lnet_stat(float delta, lnet_counters_t *lnet_new,
                   lnet_counters_t *lnet_old)
@@ -1674,7 +1724,7 @@ lst_print_lnet_stat(char *name, int bwrt, int rdwr, int type)
 
 void
 lst_print_stat(char *name, cfs_list_t *resultp,
-               int idx, int lnet, int bwrt, int rdwr, int type)
+	       int idx, int lnet, int bwrt, int rdwr, int type)
 {
         cfs_list_t        tmp[2];
         lstcon_rpc_ent_t *new;
@@ -1735,11 +1785,26 @@ lst_print_stat(char *name, cfs_list_t *resultp,
                 lnet_new = (lnet_counters_t *)((char *)srpc_new + sizeof(*srpc_new));
                 lnet_old = (lnet_counters_t *)((char *)srpc_old + sizeof(*srpc_old));
 
-                /* use the timestamp from the remote node, not our rpe_stamp
-                 * from when we copied up the data out of the kernel */
+		/* Prior to version 2.3, the running_ms field was a counter for
+		 * the number of running tests.  We are looking at this value
+		 * to determine if it is a millisecond timestamep (>= 2.3) or a
+		 * test counter (< 2.3).  The number 500 is being used for this
+		 * barrier as the test counter should never get this high, and
+		 * the timestamp should never get this low. */
 
-                delta = (float) (sfwk_new->running_ms -
-                                 sfwk_old->running_ms) / 1000;
+		if (sfwk_new->running_ms > 500) {
+			/* use the timestamp from the remote node, not our
+			 * rpe_stamp from when we copied up the data out of
+			 * the kernel */
+
+			delta = (float) (sfwk_new->running_ms -
+					sfwk_old->running_ms) / 1000;
+		} else {
+			struct timeval	  tv;
+
+			lst_timeval_diff(&new->rpe_stamp, &old->rpe_stamp, &tv);
+			delta = tv.tv_sec + (float)tv.tv_usec / 1000000;
+		}
 
                 if (!lnet) /* TODO */
                         continue;
@@ -1779,19 +1844,19 @@ jt_lst_stat(int argc, char **argv)
 
         static struct option stat_opts[] =
         {
-                {"timeout", required_argument, 0, 't' },
-                {"delay"  , required_argument, 0, 'd' },
-                {"count"  , required_argument, 0, 'o' },
-                {"lnet"   , no_argument,       0, 'l' },
-                {"rpc"    , no_argument,       0, 'c' },
-                {"bw"     , no_argument,       0, 'b' },
-                {"rate"   , no_argument,       0, 'a' },
-                {"read"   , no_argument,       0, 'r' },
-                {"write"  , no_argument,       0, 'w' },
-                {"avg"    , no_argument,       0, 'g' },
-                {"min"    , no_argument,       0, 'n' },
-                {"max"    , no_argument,       0, 'x' },
-                {0,         0,                 0,  0  }
+		{"timeout"   , required_argument, 0, 't' },
+		{"delay"     , required_argument, 0, 'd' },
+		{"count"     , required_argument, 0, 'o' },
+		{"lnet"	     , no_argument,	 0, 'l' },
+		{"rpc"	     , no_argument,	 0, 'c' },
+		{"bw"	     , no_argument,	 0, 'b' },
+		{"rate"	     , no_argument,	 0, 'a' },
+		{"read"	     , no_argument,	 0, 'r' },
+		{"write"     , no_argument,	 0, 'w' },
+		{"avg"	     , no_argument,	 0, 'g' },
+		{"min"	     , no_argument,	 0, 'n' },
+		{"max"	     , no_argument,	 0, 'x' },
+		{0,	       0,		 0,  0  }
         };
 
         if (session_key == 0) {
@@ -1801,7 +1866,7 @@ jt_lst_stat(int argc, char **argv)
         }
 
         while (1) {
-                c = getopt_long(argc, argv, "t:d:lcbarwgnx", stat_opts, &optidx);
+		c = getopt_long(argc, argv, "t:d:lcbarwgnx", stat_opts, &optidx);
 
                 if (c == -1)
                         break;
@@ -1855,6 +1920,7 @@ jt_lst_stat(int argc, char **argv)
                         }
                         type |= 4;
                         break;
+
                 default:
                         lst_print_usage(argv[0]);
                         return -1;
@@ -1911,8 +1977,8 @@ jt_lst_stat(int argc, char **argv)
                                 goto out;
                         }
 
-                        lst_print_stat(srp->srp_name, srp->srp_result,
-                                       idx, lnet, bwrt, rdwr, type);
+			lst_print_stat(srp->srp_name, srp->srp_result,
+				       idx, lnet, bwrt, rdwr, type);
 
                         lst_reset_rpcent(&srp->srp_result[1 - idx]);
                 }
@@ -3137,9 +3203,9 @@ static command_t lst_cmdlist[] = {
          "Usage: lst update_group NAME [--clean] [--refresh] [--remove IDs]"            },
         {"list_group",          jt_lst_list_group,      NULL,
           "Usage: lst list_group [--active] [--busy] [--down] [--unknown] GROUP ..."    },
-        {"stat",                jt_lst_stat,            NULL,
-         "Usage: lst stat [--bw] [--rate] [--read] [--write] [--max] [--min] [--avg] "
-         " [--timeout #] [--delay #] [--count #] GROUP [GROUP]"                         },
+	{"stat",                jt_lst_stat,            NULL,
+	 "Usage: lst stat [--bw] [--rate] [--read] [--write] [--max] [--min] [--avg] "
+	 " [--timeout #] [--delay #] [--count #] GROUP [GROUP]"                         },
         {"show_error",          jt_lst_show_error,      NULL,
          "Usage: lst show_error NAME | IDS ..."                                         },
         {"add_batch",           jt_lst_add_batch,       NULL,
@@ -3162,7 +3228,20 @@ static command_t lst_cmdlist[] = {
 int
 lst_initialize(void)
 {
-        char   *key;
+	char   *key;
+	char   *feats;
+
+	feats = getenv("LST_FEATURES");
+	if (feats != NULL)
+		session_features = strtol(feats, NULL, 16);
+
+	if ((session_features & ~LST_FEATS_MASK) != 0) {
+		fprintf(stderr,
+			"Unsupported session features %x, "
+			"only support these features so far: %x\n",
+			(session_features & ~LST_FEATS_MASK), LST_FEATS_MASK);
+		return -1;
+	}
 
         key = getenv("LST_SESSION");
 

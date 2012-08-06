@@ -6,15 +6,13 @@
 # Run test by setting NOSETUP=true when ltest has setup env for us
 set -e
 
-#kernel 2.4.x doesn't support quota
-K_VER=`uname --kernel-release | cut -b 1-3`
-if [ $K_VER = "2.4" ]; then
-    echo "Kernel 2.4 doesn't support quota"
-    exit 0
-fi
-
 SRCDIR=`dirname $0`
 export PATH=$PWD/$SRCDIR:$SRCDIR:$PWD/$SRCDIR/../utils:$PATH:/sbin
+
+if [ "$USE_OFD" = "yes" -a -z "$ONLY" ]; then
+	# only accounting tests are supported with OFD for the time being
+	ONLY="33 34 35"
+fi
 
 ONLY=${ONLY:-"$*"}
 # test_11 has been used to protect a kernel bug(bz10912), now it isn't
@@ -23,11 +21,6 @@ ONLY=${ONLY:-"$*"}
 # b=20877
 ALWAYS_EXCEPT="10 12 $SANITY_QUOTA_EXCEPT"
 # UPDATE THE COMMENT ABOVE WITH BUG NUMBERS WHEN CHANGING ALWAYS_EXCEPT!
-
-case `uname -r` in
-2.6*) FSTYPE=${FSTYPE:-ldiskfs};;
-*) error "unsupported kernel" ;;
-esac
 
 [ "$ALWAYS_EXCEPT$EXCEPT" ] && \
 	echo "Skipping tests: `echo $ALWAYS_EXCEPT $EXCEPT`"
@@ -95,6 +88,22 @@ cycle=30
 [ "$SLOW" = "no" ] && cycle=10
 
 build_test_filter
+
+if [ "$USE_OFD" = "yes" ]; then
+	for num in `seq $OSTCOUNT`; do
+		if [ $(facet_fstype ost$num) = ldiskfs ]; then
+			# not the most efficient way to enable the quota feature
+			# on ost, but it still allows us to test ofd accounting
+			# for now
+			device=$(ostdevname $num)
+			stop ost$num
+			do_facet ost$num "$TUNE2FS -O quota $device"
+			[ ${PIPESTATUS[0]} -ne 0] && \
+			      error "failed to enable quota feature for ost$num"
+			start ost$num $device $OST_MOUNT_OPTS
+		fi
+	done
+fi
 
 # set_blk_tunables(btune_sz)
 set_blk_tunesz() {
@@ -2002,39 +2011,57 @@ run_test_with_stat 28 "test for consistency for qunit when setquota (18574) ====
 
 test_29()
 {
-        local BLK_LIMIT=$((100 * 1024 * 1024)) # 100G
-        local timeout
-        local pid
+	local BLK_LIMIT=$((100 * 1024 * 1024)) # 100G
+	local timeout
+	local at_max_val
+	local pid
+	local waited
+	local deadline
 
-        if at_is_enabled; then
-                timeout=$(at_max_get client)
-                at_max_set 10 client
-        else
-                timeout=$(lctl get_param -n timeout)
-                lctl set_param timeout=10
-        fi
+	at_max_val=10
+
+	if at_is_enabled; then
+		timeout=$(at_max_get client)
+		[ $(at_min_get client) -gt $at_max_val ] &&
+			at_max_val=$(at_min_get client)
+		at_max_set $at_max_val client
+	else
+		timeout=$(lctl get_param -n timeout)
+		lctl set_param timeout=$at_max_val
+	fi
 	# actually send a RPC to make service at_current confined within at_max
-        $LFS setquota -u $TSTUSR -b 0 -B $BLK_LIMIT -i 0 -I 0 $DIR || error "should succeed"
+	$LFS setquota -u $TSTUSR -b 0 -B $BLK_LIMIT -i 0 -I 0 $DIR ||
+		error "should succeed"
 
-        #define OBD_FAIL_MDS_QUOTACTL_NET 0x12e
-        lustre_fail mds 0x12e
+	#define OBD_FAIL_MDS_QUOTACTL_NET 0x12e
+	lustre_fail mds 0x12e
 
-        $LFS setquota -u $TSTUSR -b 0 -B $BLK_LIMIT -i 0 -I 0 $DIR & pid=$!
+	$LFS setquota -u $TSTUSR -b 0 -B $BLK_LIMIT -i 0 -I 0 $DIR & pid=$!
 
-        echo "sleeping for 10 * 1.25 + 5 + 10 seconds"
-        sleep 28
-        ps -p $pid && error "lfs hadn't finished by timeout"
-        wait $pid && error "succeeded, but should have failed"
+	deadline=$((2 * (($at_max_val << 1) + ($at_max_val >> 2) + 5)))
+	echo "wait at most 2 * ($at_max_val * 2.25 + 5) = $deadline seconds," \
+	     "it is server process time add the network latency."
 
-        lustre_fail mds 0
+	waited=0
+	while [ $waited -lt $deadline ]; do
+		echo -n "."
+		sleep 1
+		waited=$(($waited + 1))
+		ps -p $pid > /dev/null || break
+	done
+	echo "waited $waited seconds"
+	ps -p $pid && error "lfs hadn't finished by $deadline seconds"
+	wait $pid && error "succeeded, but should have failed"
 
-        if at_is_enabled; then
-                at_max_set $timeout client
-        else
-                lctl set_param timeout=$timeout
-        fi
+	lustre_fail mds 0
 
-        resetquota -u $TSTUSR
+	if at_is_enabled; then
+		at_max_set $timeout client
+	else
+		lctl set_param timeout=$timeout
+	fi
+
+	resetquota -u $TSTUSR
 }
 run_test_with_stat 29 "unhandled quotactls must not hang lustre client (19778) ========"
 
@@ -2227,11 +2254,13 @@ test_33() {
         [ $USED -ne 0 ] && \
                 error "Used space ($USED) for group $TSTID isn't 0."
 
-        echo "Write files..."
-        for i in `seq 0 $INODES`; do
-                $RUNAS dd if=/dev/zero of=$DIR/$tdir/$tfile-$i bs=$BLK_SZ \
-                   count=$BLK_CNT oflag=sync 2>/dev/null || error "write failed"
-        done
+	for i in `seq 0 $INODES`; do
+		$RUNAS dd if=/dev/zero of=$DIR/$tdir/$tfile-$i conv=fsync \
+			bs=$((BLK_SZ * BLK_CNT)) count=1 2>/dev/null ||
+			error "write failed"
+		echo "Iteration $i/$INODES completed"
+	done
+	sync; sync_all_data;
 
         echo "Verify disk usage after write"
         USED=`getquota -u $TSTID global curspace`
@@ -2268,7 +2297,7 @@ test_34() {
         BLK_CNT=1024
         mkdir -p $DIR/$tdir
         chmod 0777 $DIR/$tdir
-        
+
         trap cleanup_quota_test EXIT
 
         # make sure the system is clean
@@ -2277,12 +2306,16 @@ test_34() {
         USED=`getquota -g $TSTID global curspace`
         [ $USED -ne 0 ] && error "Used space ($USED) for group $TSTID isn't 0."
 
-        echo "Write file..."
-        dd if=/dev/zero of=$DIR/$tdir/$tfile bs=$BLK_SZ count=$BLK_CNT \
-                oflag=sync 2>/dev/null || error "write failed"
+	echo "Write file..."
+	dd if=/dev/zero of=$DIR/$tdir/$tfile bs=$((BLK_SZ * BLK_CNT)) count=1 \
+		conv=fsync 2>/dev/null || error "write failed"
+	sync; sync_all_data;
 
         echo "chown the file to user $TSTID"
         chown $TSTID $DIR/$tdir/$tfile || error "chown failed"
+
+	echo "Wait for setattr on objects finished..."
+	wait_delete_completed
 
         echo "Verify disk usage for user $TSTID"
         USED=`getquota -u $TSTID global curspace`
@@ -2294,6 +2327,9 @@ test_34() {
 
         echo "chgrp the file to group $TSTID"
         chgrp $TSTID $DIR/$tdir/$tfile || error "chgrp failed"
+
+	echo "Wait for setattr on objects finished..."
+	wait_delete_completed
 
         echo "Verify disk usage for group $TSTID"
         USED=`getquota -g $TSTID global curspace`
@@ -2315,9 +2351,10 @@ test_35() {
 
         trap cleanup_quota_test EXIT
 
-        echo "Write file..."
-        $RUNAS dd if=/dev/zero of=$DIR/$tdir/$tfile bs=$BLK_SZ \
-                count=$BLK_CNT oflag=sync 2>/dev/null || error "write failed"
+	echo "Write file..."
+	$RUNAS dd if=/dev/zero of=$DIR/$tdir/$tfile bs=$((BLK_SZ * BLK_CNT)) \
+		count=1 conv=fsync 2>/dev/null || error "write failed"
+	sync; sync_all_data;
 
         echo "Save disk usage before restart"
         ORIG_USR_SPACE=`getquota -u $TSTID global curspace`
@@ -2361,7 +2398,6 @@ test_35() {
         cleanup_quota_test
 }
 run_test 35 "usage is still accessible across reboot ============================"
-
 
 # turn off quota
 quota_fini()

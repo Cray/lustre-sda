@@ -52,6 +52,7 @@
 # include <lustre_quota.h>
 #endif
 #include <lustre_fsfilt.h>
+#include <lustre/lustre_lfsck_user.h>
 
 #ifdef HAVE_QUOTA_SUPPORT
 /* quota stuff */
@@ -96,6 +97,30 @@ struct mdd_dot_lustre_objs {
         struct mdd_object *mdd_obf;
 };
 
+extern const char lfsck_bookmark_name[];
+
+struct md_lfsck {
+	cfs_mutex_t	      ml_mutex;
+	cfs_spinlock_t	      ml_lock;
+	struct ptlrpc_thread  ml_thread;
+	struct dt_object     *ml_bookmark_obj;
+	struct dt_object     *ml_it_obj;
+	__u32		      ml_new_scanned;
+	/* Arguments for low layer iteration. */
+	__u32		      ml_args;
+
+	/* Raw value for LFSCK speed limit. */
+	__u32		      ml_speed_limit;
+
+	/* Schedule for every N objects. */
+	__u32		      ml_sleep_rate;
+
+	/* Sleep N jiffies for each schedule. */
+	__u32		      ml_sleep_jif;
+	__u16		      ml_version;
+	unsigned int	      ml_paused:1; /* The lfsck is paused. */
+};
+
 struct mdd_device {
         struct md_device                 mdd_md_dev;
         struct dt_device                *mdd_child;
@@ -111,7 +136,8 @@ struct mdd_device {
         unsigned long                    mdd_atime_diff;
         struct mdd_object               *mdd_dot_lustre;
         struct mdd_dot_lustre_objs       mdd_dot_lustre_objs;
-        unsigned int                     mdd_sync_permission;
+	struct md_lfsck			 mdd_lfsck;
+	unsigned int			 mdd_sync_permission;
 };
 
 enum mod_flags {
@@ -320,11 +346,10 @@ int mdd_get_cookie_size(const struct lu_env *env, struct mdd_device *mdd,
 int mdd_lov_setattr_async(const struct lu_env *env, struct mdd_object *obj,
                           struct lov_mds_md *lmm, int lmm_size,
                           struct llog_cookie *logcookies);
+
 int mdd_lovobj_unlink(const struct lu_env *env, struct mdd_device *mdd,
-                      struct mdd_object *obj, struct lu_attr *la,
-                      struct lov_mds_md *lmm, int lmm_size,
-                      struct llog_cookie *logcookies,
-                      int log_unlink);
+		      struct mdd_object *obj, struct lu_attr *la,
+		      struct md_attr *ma, int log_unlink);
 
 struct mdd_thread_info *mdd_env_info(const struct lu_env *env);
 
@@ -437,6 +462,14 @@ int mdd_txn_stop_cb(const struct lu_env *env, struct thandle *txn,
 int mdd_txn_start_cb(const struct lu_env *env, struct thandle *,
                      void *cookie);
 
+/* mdd_lfsck.c */
+void mdd_lfsck_set_speed(struct md_lfsck *lfsck, __u32 limit);
+int mdd_lfsck_start(const struct lu_env *env, struct md_lfsck *lfsck,
+		    struct lfsck_start *start);
+int mdd_lfsck_stop(const struct lu_env *env, struct md_lfsck *lfsck);
+int mdd_lfsck_setup(const struct lu_env *env, struct mdd_device *mdd);
+void mdd_lfsck_cleanup(const struct lu_env *env, struct mdd_device *mdd);
+
 /* mdd_device.c */
 struct lu_object *mdd_object_alloc(const struct lu_env *env,
                                    const struct lu_object_header *hdr,
@@ -445,6 +478,9 @@ struct llog_changelog_rec;
 int mdd_changelog_llog_write(struct mdd_device         *mdd,
                              struct llog_changelog_rec *rec,
                              struct thandle            *handle);
+int mdd_changelog_ext_llog_write(struct mdd_device *mdd,
+				 struct llog_changelog_ext_rec *rec,
+				 struct thandle *handle);
 int mdd_changelog_llog_cancel(struct mdd_device *mdd, long long endrec);
 int mdd_changelog_write_header(struct mdd_device *mdd, int markerflags);
 int mdd_changelog_on(struct mdd_device *mdd, int on);

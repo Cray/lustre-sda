@@ -37,7 +37,6 @@
 #include <linux/fs.h>
 #include <linux/sched.h>
 #include <linux/mm.h>
-#include <linux/smp_lock.h>
 #include <linux/quotaops.h>
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
@@ -178,7 +177,7 @@ static void ll_invalidate_negative_children(struct inode *dir)
 
 			list_for_each_entry_safe(child, tmp_subdir,
 						 &dentry->d_subdirs,
-						 d_child) {
+						 d_u.d_child) {
 				if (child->d_inode == NULL)
 					d_lustre_invalidate(child);
 			}
@@ -216,8 +215,10 @@ int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
                         break;
 
                 LASSERT(lock->l_flags & LDLM_FL_CANCELING);
-                /* For OPEN locks we differentiate between lock modes - CR, CW. PR - bug 22891 */
-                if (bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_UPDATE))
+                /* For OPEN locks we differentiate between lock modes
+		 * LCK_CR, LCK_CW, LCK_PR - bug 22891 */
+		if (bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_UPDATE |
+			    MDS_INODELOCK_LAYOUT))
                         ll_have_md_lock(inode, &bits, LCK_MINMODE);
 
                 if (bits & MDS_INODELOCK_OPEN)
@@ -251,7 +252,15 @@ int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
                         ll_md_real_close(inode, flags);
                 }
 
-                lli = ll_i2info(inode);
+		lli = ll_i2info(inode);
+		if (bits & MDS_INODELOCK_LAYOUT) {
+			struct cl_object_conf conf = { .coc_inode = inode,
+						       .coc_invalidate = true };
+			rc = ll_layout_conf(inode, &conf);
+			if (rc)
+				CDEBUG(D_INODE, "invaliding layout %d.\n", rc);
+		}
+
                 if (bits & MDS_INODELOCK_UPDATE)
                         lli->lli_flags &= ~LLIF_MDS_SIZE_LOCK;
 
@@ -571,13 +580,6 @@ static struct dentry *ll_lookup_nd(struct inode *parent, struct dentry *dentry,
         if (nd && !(nd->flags & (LOOKUP_CONTINUE|LOOKUP_PARENT))) {
                 struct lookup_intent *it;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,17)
-                /* Did we came here from failed revalidate just to propagate
-                 * its error? */
-                if (nd->flags & LOOKUP_OPEN)
-                        if (IS_ERR(nd->intent.open.file))
-                                RETURN((struct dentry *)nd->intent.open.file);
-#endif
                 if (ll_d2d(dentry) && ll_d2d(dentry)->lld_it) {
                         it = ll_d2d(dentry)->lld_it;
                         ll_d2d(dentry)->lld_it = NULL;

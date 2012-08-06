@@ -676,6 +676,9 @@ void lu_object_fini       (struct lu_object *o);
 void lu_object_add_top    (struct lu_object_header *h, struct lu_object *o);
 void lu_object_add        (struct lu_object *before, struct lu_object *o);
 
+void lu_dev_add_linkage(struct lu_site *s, struct lu_device *d);
+void lu_dev_del_linkage(struct lu_site *s, struct lu_device *d);
+
 /**
  * Helpers to initialize and finalize device types.
  */
@@ -944,6 +947,7 @@ struct lu_context {
          * from enum lu_context_tag.
          */
         __u32                  lc_tags;
+	enum lu_context_state  lc_state;
         /**
          * Pointer to the home service thread. NULL for other execution
          * contexts.
@@ -954,7 +958,6 @@ struct lu_context {
          * detail.
          */
         void                 **lc_value;
-        enum lu_context_state  lc_state;
         /**
          * Linkage into a list of all remembered contexts. Only
          * `non-transient' contexts, i.e., ones created for service threads

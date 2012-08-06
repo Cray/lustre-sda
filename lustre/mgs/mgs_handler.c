@@ -251,8 +251,8 @@ static int mgs_setup(struct obd_device *obd, struct lustre_cfg *lcfg)
 		},
 		.psc_thr		= {
 			.tc_thr_name		= "ll_mgs",
-			.tc_nthrs_min		= MGS_THREADS_AUTO_MIN,
-			.tc_nthrs_max		= MGS_THREADS_AUTO_MAX,
+			.tc_nthrs_init		= MGS_NTHRS_INIT,
+			.tc_nthrs_max		= MGS_NTHRS_MAX,
 			.tc_ctx_tags		= LCT_MD_THREAD,
 		},
 		.psc_ops		= {
@@ -930,10 +930,9 @@ int mgs_handle(struct ptlrpc_request *req)
                 rc = llog_origin_handle_close(req);
                 break;
         case LLOG_CATINFO:
-                DEBUG_REQ(D_MGS, req, "llog catinfo");
-                req_capsule_set(&req->rq_pill, &RQF_LLOG_CATINFO);
-                rc = llog_catinfo(req);
-                break;
+		DEBUG_REQ(D_MGS, req, "llog catinfo");
+		rc = -EOPNOTSUPP;
+		break;
         default:
                 req->rq_status = -ENOTSUPP;
                 rc = ptlrpc_error(req);

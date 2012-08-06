@@ -37,7 +37,6 @@
 #include <linux/fs.h>
 #include <linux/sched.h>
 #include <linux/mm.h>
-#include <linux/smp_lock.h>
 #ifdef HAVE_SELINUX_IS_ENABLED
 #include <linux/selinux.h>
 #endif
@@ -96,8 +95,6 @@ int xattr_type_filter(struct ll_sb_info *sbi, int xattr_type)
            !(sbi->ll_flags & LL_SBI_ACL))
                 return -EOPNOTSUPP;
 
-        if (xattr_type == XATTR_SECURITY_T && !selinux_is_enabled())
-                return -EOPNOTSUPP;
         if (xattr_type == XATTR_USER_T && !(sbi->ll_flags & LL_SBI_USER_XATTR))
                 return -EOPNOTSUPP;
         if (xattr_type == XATTR_TRUSTED_T && !cfs_capable(CFS_CAP_SYS_ADMIN))
@@ -137,6 +134,11 @@ int ll_setxattr_common(struct inode *inode, const char *name,
         if ((xattr_type == XATTR_SECURITY_T &&
             strcmp(name, "security.capability") == 0))
                 RETURN(0);
+
+        /* LU-549:  Disable security.selinux when selinux is disabled */
+        if (xattr_type == XATTR_SECURITY_T && !selinux_is_enabled() &&
+            strcmp(name, "security.selinux") == 0)
+                RETURN(-EOPNOTSUPP);
 
 #ifdef CONFIG_FS_POSIX_ACL
         if (sbi->ll_flags & LL_SBI_RMT_CLIENT &&
@@ -307,6 +309,11 @@ int ll_getxattr_common(struct inode *inode, const char *name,
             strcmp(name, "security.capability") == 0))
                 RETURN(-ENODATA);
 
+        /* LU-549:  Disable security.selinux when selinux is disabled */
+        if (xattr_type == XATTR_SECURITY_T && !selinux_is_enabled() &&
+            strcmp(name, "security.selinux") == 0)
+                RETURN(-EOPNOTSUPP);
+
 #ifdef CONFIG_FS_POSIX_ACL
         if (sbi->ll_flags & LL_SBI_RMT_CLIENT &&
             (xattr_type == XATTR_ACL_ACCESS_T ||
@@ -431,6 +438,7 @@ ssize_t ll_getxattr(struct dentry *dentry, const char *name,
             (strncmp(name, XATTR_LUSTRE_PREFIX,
                      sizeof(XATTR_LUSTRE_PREFIX) - 1) == 0 &&
              strcmp(name + sizeof(XATTR_LUSTRE_PREFIX) - 1, "lov") == 0)) {
+		struct lov_stripe_md *lsm;
                 struct lov_user_md *lump;
                 struct lov_mds_md *lmm = NULL;
                 struct ptlrpc_request *request = NULL;
@@ -445,7 +453,8 @@ ssize_t ll_getxattr(struct dentry *dentry, const char *name,
                         GOTO(out, rc = sizeof(struct lov_user_md));
                 }
 
-                if (!ll_i2info(inode)->lli_smd) {
+		lsm = ccc_inode_lsm_get(inode);
+		if (lsm == NULL) {
                         if (S_ISDIR(inode->i_mode)) {
                                 rc = ll_dir_getstripe(inode, &lmm,
                                                       &lmmsize, &request);
@@ -455,10 +464,10 @@ ssize_t ll_getxattr(struct dentry *dentry, const char *name,
                 } else {
                         /* LSM is present already after lookup/getattr call.
                          * we need to grab layout lock once it is implemented */
-                        rc = obd_packmd(ll_i2dtexp(inode), &lmm,
-                                        ll_i2info(inode)->lli_smd);
-                        lmmsize = rc;
-                }
+			rc = obd_packmd(ll_i2dtexp(inode), &lmm, lsm);
+			lmmsize = rc;
+		}
+		ccc_inode_lsm_put(inode, lsm);
 
                 if (rc < 0)
                        GOTO(out, rc);
@@ -535,8 +544,8 @@ ssize_t ll_listxattr(struct dentry *dentry, char *buffer, size_t size)
 			rc -= xlen;
 		}
 	}
-        if (S_ISREG(inode->i_mode)) {
-                if (ll_i2info(inode)->lli_smd == NULL)
+	if (S_ISREG(inode->i_mode)) {
+		if (!ll_i2info(inode)->lli_has_smd)
                         rc2 = -1;
         } else if (S_ISDIR(inode->i_mode)) {
                 rc2 = ll_dir_getstripe(inode, &lmm, &lmmsize, &request);

@@ -550,6 +550,7 @@ static inline void obd_ioctl_freedata(char *buf, int len)
 #define OBD_IOC_LLOG_CANCEL            _IOWR('f', 193, OBD_IOC_DATA_TYPE)
 #define OBD_IOC_LLOG_REMOVE            _IOWR('f', 194, OBD_IOC_DATA_TYPE)
 #define OBD_IOC_LLOG_CHECK             _IOWR('f', 195, OBD_IOC_DATA_TYPE)
+/* OBD_IOC_LLOG_CATINFO is deprecated */
 #define OBD_IOC_LLOG_CATINFO           _IOWR('f', 196, OBD_IOC_DATA_TYPE)
 
 #define ECHO_IOC_GET_STRIPE            _IOWR('f', 200, OBD_IOC_DATA_TYPE)
@@ -564,6 +565,10 @@ static inline void obd_ioctl_freedata(char *buf, int len)
 
 #define OBD_IOC_ECHO_MD                _IOR('f', 221, struct obd_ioctl_data)
 #define OBD_IOC_ECHO_ALLOC_SEQ         _IOWR('f', 222, struct obd_ioctl_data)
+
+#define OBD_IOC_START_LFSCK	       _IOWR('f', 230, OBD_IOC_DATA_TYPE)
+#define OBD_IOC_STOP_LFSCK	       _IOW('f', 231, OBD_IOC_DATA_TYPE)
+
 /* XXX _IOWR('f', 250, long) has been defined in
  * libcfs/include/libcfs/libcfs_private.h for debug, don't use it
  */

@@ -66,6 +66,14 @@ static int oss_num_create_threads;
 CFS_MODULE_PARM(oss_num_create_threads, "i", int, 0444,
                 "number of OSS create threads to start");
 
+static char *oss_cpts;
+CFS_MODULE_PARM(oss_cpts, "s", charp, 0444,
+		"CPU partitions OSS threads should run on");
+
+static char *oss_io_cpts;
+CFS_MODULE_PARM(oss_io_cpts, "s", charp, 0444,
+		"CPU partitions OSS IO threads should run on");
+
 /**
  * Do not return server-side uid/gid to remote client
  */
@@ -314,6 +322,9 @@ static int ost_statfs(struct ptlrpc_request *req)
         if (req->rq_status != 0)
                 CERROR("ost: statfs failed: rc %d\n", req->rq_status);
 
+	if (OBD_FAIL_CHECK(OBD_FAIL_OST_STATFS_EINPROGRESS))
+		req->rq_status = -EINPROGRESS;
+
         RETURN(0);
 }
 
@@ -521,36 +532,57 @@ static int ost_setattr(struct obd_export *exp, struct ptlrpc_request *req,
 }
 
 static __u32 ost_checksum_bulk(struct ptlrpc_bulk_desc *desc, int opc,
-                               cksum_type_t cksum_type)
+			       cksum_type_t cksum_type)
 {
-        __u32 cksum;
-        int i;
+	struct cfs_crypto_hash_desc	*hdesc;
+	unsigned int			bufsize;
+	int				i, err;
+	unsigned char			cfs_alg = cksum_obd2cfs(cksum_type);
+	__u32				cksum;
 
-        cksum = init_checksum(cksum_type);
-        for (i = 0; i < desc->bd_iov_count; i++) {
-                struct page *page = desc->bd_iov[i].kiov_page;
-                int off = desc->bd_iov[i].kiov_offset & ~CFS_PAGE_MASK;
-                char *ptr = kmap(page) + off;
-                int len = desc->bd_iov[i].kiov_len;
+	hdesc = cfs_crypto_hash_init(cfs_alg, NULL, 0);
+	if (IS_ERR(hdesc)) {
+		CERROR("Unable to initialize checksum hash %s\n",
+		       cfs_crypto_hash_name(cfs_alg));
+		return PTR_ERR(hdesc);
+	}
+	CDEBUG(D_INFO, "Checksum for algo %s\n", cfs_crypto_hash_name(cfs_alg));
+	for (i = 0; i < desc->bd_iov_count; i++) {
 
-                /* corrupt the data before we compute the checksum, to
-                 * simulate a client->OST data error */
-                if (i == 0 && opc == OST_WRITE &&
-                    OBD_FAIL_CHECK(OBD_FAIL_OST_CHECKSUM_RECEIVE))
-                        memcpy(ptr, "bad3", min(4, len));
-                cksum = compute_checksum(cksum, ptr, len, cksum_type);
-                /* corrupt the data after we compute the checksum, to
-                 * simulate an OST->client data error */
-                if (i == 0 && opc == OST_READ &&
-                    OBD_FAIL_CHECK(OBD_FAIL_OST_CHECKSUM_SEND)) {
-                        memcpy(ptr, "bad4", min(4, len));
-                        /* nobody should use corrupted page again */
-                        ClearPageUptodate(page);
-                }
-                kunmap(page);
-        }
+		/* corrupt the data before we compute the checksum, to
+		 * simulate a client->OST data error */
+		if (i == 0 && opc == OST_WRITE &&
+		    OBD_FAIL_CHECK(OBD_FAIL_OST_CHECKSUM_RECEIVE)) {
+			int off = desc->bd_iov[i].kiov_offset & ~CFS_PAGE_MASK;
+			int len = desc->bd_iov[i].kiov_len;
+			char *ptr = kmap(desc->bd_iov[i].kiov_page) + off;
+			memcpy(ptr, "bad3", min(4, len));
+			kunmap(desc->bd_iov[i].kiov_page);
+		}
+		cfs_crypto_hash_update_page(hdesc, desc->bd_iov[i].kiov_page,
+				  desc->bd_iov[i].kiov_offset & ~CFS_PAGE_MASK,
+				  desc->bd_iov[i].kiov_len);
 
-        return fini_checksum(cksum, cksum_type);
+		 /* corrupt the data after we compute the checksum, to
+		 * simulate an OST->client data error */
+		if (i == 0 && opc == OST_READ &&
+		    OBD_FAIL_CHECK(OBD_FAIL_OST_CHECKSUM_SEND)) {
+			int off = desc->bd_iov[i].kiov_offset & ~CFS_PAGE_MASK;
+			int len = desc->bd_iov[i].kiov_len;
+			char *ptr = kmap(desc->bd_iov[i].kiov_page) + off;
+			memcpy(ptr, "bad4", min(4, len));
+			kunmap(desc->bd_iov[i].kiov_page);
+			/* nobody should use corrupted page again */
+			ClearPageUptodate(desc->bd_iov[i].kiov_page);
+		}
+	}
+
+	bufsize = 4;
+	err = cfs_crypto_hash_final(hdesc, (unsigned char *)&cksum, &bufsize);
+	if (err)
+		cfs_crypto_hash_final(hdesc, NULL, NULL);
+
+	return cksum;
 }
 
 static int ost_brw_lock_get(int mode, struct obd_export *exp,
@@ -1559,6 +1591,7 @@ int ost_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
 		oa->o_seq = lock->l_resource->lr_name.name[1];
 		oa->o_valid = OBD_MD_FLID|OBD_MD_FLGROUP;
 		oinfo->oi_oa = oa;
+		oinfo->oi_capa = BYPASS_CAPA;
 
 		rc = obd_sync(&env, lock->l_export, oinfo,
 			      lock->l_policy_data.l_extent.start,
@@ -1689,12 +1722,13 @@ struct ost_prolong_data {
  */
 static inline int prolong_timeout(struct ptlrpc_request *req)
 {
-        struct ptlrpc_service *svc = req->rq_rqbd->rqbd_service;
+	struct ptlrpc_service_part *svcpt = req->rq_rqbd->rqbd_svcpt;
 
-        if (AT_OFF)
-                return obd_timeout / 2;
+	if (AT_OFF)
+		return obd_timeout / 2;
 
-        return max(at_est2timeout(at_get(&svc->srv_at_estimate)), ldlm_timeout);
+	return max(at_est2timeout(at_get(&svcpt->scp_at_estimate)),
+		   ldlm_timeout);
 }
 
 static void ost_prolong_lock_one(struct ost_prolong_data *opd,
@@ -2189,11 +2223,11 @@ int ost_handle(struct ptlrpc_request *req)
                 req_capsule_set(&req->rq_pill, &RQF_OST_BRW_WRITE);
                 CDEBUG(D_INODE, "write\n");
                 /* req->rq_request_portal would be nice, if it was set */
-                if (req->rq_rqbd->rqbd_service->srv_req_portal !=OST_IO_PORTAL){
-                        CERROR("%s: deny write request from %s to portal %u\n",
-                               req->rq_export->exp_obd->obd_name,
-                               obd_export_nid2str(req->rq_export),
-                               req->rq_rqbd->rqbd_service->srv_req_portal);
+		if (ptlrpc_req2svc(req)->srv_req_portal != OST_IO_PORTAL) {
+			CERROR("%s: deny write request from %s to portal %u\n",
+			       req->rq_export->exp_obd->obd_name,
+			       obd_export_nid2str(req->rq_export),
+			       ptlrpc_req2svc(req)->srv_req_portal);
                         GOTO(out, rc = -EPROTO);
                 }
                 if (OBD_FAIL_CHECK(OBD_FAIL_OST_BRW_NET))
@@ -2210,11 +2244,11 @@ int ost_handle(struct ptlrpc_request *req)
                 req_capsule_set(&req->rq_pill, &RQF_OST_BRW_READ);
                 CDEBUG(D_INODE, "read\n");
                 /* req->rq_request_portal would be nice, if it was set */
-                if (req->rq_rqbd->rqbd_service->srv_req_portal !=OST_IO_PORTAL){
-                        CERROR("%s: deny read request from %s to portal %u\n",
-                               req->rq_export->exp_obd->obd_name,
-                               obd_export_nid2str(req->rq_export),
-                               req->rq_rqbd->rqbd_service->srv_req_portal);
+		if (ptlrpc_req2svc(req)->srv_req_portal != OST_IO_PORTAL) {
+			CERROR("%s: deny read request from %s to portal %u\n",
+			       req->rq_export->exp_obd->obd_name,
+			       obd_export_nid2str(req->rq_export),
+			       ptlrpc_req2svc(req)->srv_req_portal);
                         GOTO(out, rc = -EPROTO);
                 }
                 if (OBD_FAIL_CHECK(OBD_FAIL_OST_BRW_NET))
@@ -2392,7 +2426,6 @@ static int ost_thread_init(struct ptlrpc_thread *thread)
 
         LASSERT(thread != NULL);
         LASSERT(thread->t_data == NULL);
-        LASSERTF(thread->t_id <= OSS_THREADS_MAX, "%u\n", thread->t_id);
 
         OBD_ALLOC_PTR(tls);
         if (tls == NULL)
@@ -2403,14 +2436,15 @@ static int ost_thread_init(struct ptlrpc_thread *thread)
 
 #define OST_WATCHDOG_TIMEOUT (obd_timeout * 1000)
 
+static struct cfs_cpt_table	*ost_io_cptable;
+
 /* Sigh - really, this is an OSS, the _server_, not the _target_ */
 static int ost_setup(struct obd_device *obd, struct lustre_cfg* lcfg)
 {
 	static struct ptlrpc_service_conf	svc_conf;
 	struct ost_obd *ost = &obd->u.ost;
 	struct lprocfs_static_vars lvars;
-	int oss_min_threads = OSS_THREADS_MIN;
-	int oss_max_threads = OSS_THREADS_MAX;
+	nodemask_t		*mask;
 	int rc;
 	ENTRY;
 
@@ -2422,19 +2456,6 @@ static int ost_setup(struct obd_device *obd, struct lustre_cfg* lcfg)
         lprocfs_obd_setup(obd, lvars.obd_vars);
 
         cfs_mutex_init(&ost->ost_health_mutex);
-
-	if (oss_num_threads == 0) {
-		/* Base min threads on memory and cpus */
-		oss_min_threads =
-			cfs_num_online_cpus() * CFS_NUM_CACHEPAGES >>
-			(27 - CFS_PAGE_SHIFT);
-		if (oss_min_threads < OSS_THREADS_MIN)
-			oss_min_threads = OSS_THREADS_MIN;
-		/* Insure a 4x range for dynamic threads */
-		if (oss_min_threads > OSS_THREADS_MAX / 4)
-			oss_min_threads = OSS_THREADS_MAX / 4;
-		oss_max_threads = min(OSS_THREADS_MAX, oss_min_threads * 4 + 1);
-        }
 
 	svc_conf = (typeof(svc_conf)) {
 		.psc_name		= LUSTRE_OSS_NAME,
@@ -2449,14 +2470,21 @@ static int ost_setup(struct obd_device *obd, struct lustre_cfg* lcfg)
 		},
 		.psc_thr		= {
 			.tc_thr_name		= "ll_ost",
-			.tc_nthrs_min		= oss_min_threads,
-			.tc_nthrs_max		= oss_max_threads,
+			.tc_thr_factor		= OSS_THR_FACTOR,
+			.tc_nthrs_init		= OSS_NTHRS_INIT,
+			.tc_nthrs_base		= OSS_NTHRS_BASE,
+			.tc_nthrs_max		= OSS_NTHRS_MAX,
 			.tc_nthrs_user		= oss_num_threads,
+			.tc_cpu_affinity	= 1,
 			.tc_ctx_tags		= LCT_DT_THREAD,
+		},
+		.psc_cpt                = {
+			.cc_pattern             = oss_cpts,
 		},
 		.psc_ops		= {
 			.so_req_handler		= ost_handle,
 			.so_req_printer		= target_print_req,
+			.so_hpreq_handler	= ptlrpc_hpreq_handler,
 		},
 	};
 	ost->ost_service = ptlrpc_register_service(&svc_conf,
@@ -2481,14 +2509,21 @@ static int ost_setup(struct obd_device *obd, struct lustre_cfg* lcfg)
 		},
 		.psc_thr		= {
 			.tc_thr_name		= "ll_ost_create",
-			.tc_nthrs_min		= OSS_CR_THREADS_MIN,
-			.tc_nthrs_max		= OSS_CR_THREADS_MAX,
+			.tc_thr_factor		= OSS_CR_THR_FACTOR,
+			.tc_nthrs_init		= OSS_CR_NTHRS_INIT,
+			.tc_nthrs_base		= OSS_CR_NTHRS_BASE,
+			.tc_nthrs_max		= OSS_CR_NTHRS_MAX,
 			.tc_nthrs_user		= oss_num_create_threads,
+			.tc_cpu_affinity	= 1,
 			.tc_ctx_tags		= LCT_DT_THREAD,
+		},
+		.psc_cpt                = {
+			.cc_pattern             = oss_cpts,
 		},
 		.psc_ops		= {
 			.so_req_handler		= ost_handle,
 			.so_req_printer		= target_print_req,
+			.so_hpreq_handler	= NULL,
 		},
 	};
 	ost->ost_create_service = ptlrpc_register_service(&svc_conf,
@@ -2498,6 +2533,31 @@ static int ost_setup(struct obd_device *obd, struct lustre_cfg* lcfg)
 		CERROR("failed to start OST create service: %d\n", rc);
 		GOTO(out_service, rc);
         }
+
+	mask = cfs_cpt_table->ctb_nodemask;
+	/* event CPT feature is disabled in libcfs level by set partition
+	 * number to 1, we still want to set node affinity for io service */
+	if (cfs_cpt_number(cfs_cpt_table) == 1 && nodes_weight(*mask) > 1) {
+		int	cpt = 0;
+		int	i;
+
+		ost_io_cptable = cfs_cpt_table_alloc(nodes_weight(*mask));
+		for_each_node_mask(i, *mask) {
+			if (ost_io_cptable == NULL) {
+				CWARN("OSS failed to create CPT table\n");
+				break;
+			}
+
+			rc = cfs_cpt_set_node(ost_io_cptable, cpt++, i);
+			if (!rc) {
+				CWARN("OSS Failed to set node %d for"
+				      "IO CPT table\n", i);
+				cfs_cpt_table_free(ost_io_cptable);
+				ost_io_cptable = NULL;
+				break;
+			}
+		}
+	}
 
 	memset(&svc_conf, 0, sizeof(svc_conf));
 	svc_conf = (typeof(svc_conf)) {
@@ -2513,11 +2573,18 @@ static int ost_setup(struct obd_device *obd, struct lustre_cfg* lcfg)
 		},
 		.psc_thr		= {
 			.tc_thr_name		= "ll_ost_io",
-			.tc_nthrs_min		= oss_min_threads,
-			.tc_nthrs_max		= oss_max_threads,
+			.tc_thr_factor		= OSS_THR_FACTOR,
+			.tc_nthrs_init		= OSS_NTHRS_INIT,
+			.tc_nthrs_base		= OSS_NTHRS_BASE,
+			.tc_nthrs_max		= OSS_NTHRS_MAX,
 			.tc_nthrs_user		= oss_num_threads,
 			.tc_cpu_affinity	= 1,
 			.tc_ctx_tags		= LCT_DT_THREAD,
+		},
+		.psc_cpt		= {
+			.cc_cptable		= ost_io_cptable,
+			.cc_pattern		= ost_io_cptable == NULL ?
+						  oss_io_cpts : NULL,
 		},
 		.psc_ops		= {
 			.so_thr_init		= ost_thread_init,
@@ -2525,6 +2592,7 @@ static int ost_setup(struct obd_device *obd, struct lustre_cfg* lcfg)
 			.so_req_handler		= ost_handle,
 			.so_hpreq_handler	= ost_hpreq_handler,
 			.so_req_printer		= target_print_req,
+			.so_hpreq_handler	= NULL,
 		},
 	};
 	ost->ost_io_service = ptlrpc_register_service(&svc_conf,
@@ -2570,11 +2638,16 @@ static int ost_cleanup(struct obd_device *obd)
         ost->ost_create_service = NULL;
 	ost->ost_io_service = NULL;
 
-        cfs_mutex_unlock(&ost->ost_health_mutex);
+	cfs_mutex_unlock(&ost->ost_health_mutex);
 
-        lprocfs_obd_cleanup(obd);
+	lprocfs_obd_cleanup(obd);
 
-        RETURN(err);
+	if (ost_io_cptable != NULL) {
+		cfs_cpt_table_free(ost_io_cptable);
+		ost_io_cptable = NULL;
+	}
+
+	RETURN(err);
 }
 
 static int ost_health_check(const struct lu_env *env, struct obd_device *obd)

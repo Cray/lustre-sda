@@ -43,10 +43,6 @@
 
 lst_sid_t LST_INVALID_SID = {LNET_NID_ANY, -1};
 
-int brw_inject_errors = 0;
-CFS_MODULE_PARM(brw_inject_errors, "i", int, 0644,
-                "# data errors to inject randomly, zero by default");
-
 static int session_timeout = 100;
 CFS_MODULE_PARM(session_timeout, "i", int, 0444,
                 "test session timeout in seconds (100 by default, 0 == never)");
@@ -54,11 +50,6 @@ CFS_MODULE_PARM(session_timeout, "i", int, 0444,
 static int rpc_timeout = 64;
 CFS_MODULE_PARM(rpc_timeout, "i", int, 0644,
                 "rpc timeout in seconds (64 by default, 0 == never)");
-
-#define SFW_TEST_CONCURRENCY     1792
-#define SFW_EXTRA_TEST_BUFFERS   8 /* tolerate buggy peers with extra buffers */
-
-#define sfw_test_buffers(tsi)    ((tsi)->tsi_loop + SFW_EXTRA_TEST_BUFFERS)
 
 #define sfw_unpack_id(id)               \
 do {                                    \
@@ -285,7 +276,8 @@ sfw_session_expired (void *data)
 }
 
 static inline void
-sfw_init_session (sfw_session_t *sn, lst_sid_t sid, const char *name)
+sfw_init_session(sfw_session_t *sn, lst_sid_t sid,
+		 unsigned features, const char *name)
 {
         stt_timer_t *timer = &sn->sn_timer;
 
@@ -299,6 +291,7 @@ sfw_init_session (sfw_session_t *sn, lst_sid_t sid, const char *name)
 
         sn->sn_timer_active = 0;
         sn->sn_id           = sid;
+	sn->sn_features	    = features;
         sn->sn_timeout      = session_timeout;
         sn->sn_started      = cfs_time_current();
 
@@ -309,10 +302,10 @@ sfw_init_session (sfw_session_t *sn, lst_sid_t sid, const char *name)
 
 /* completion handler for incoming framework RPCs */
 void
-sfw_server_rpc_done (srpc_server_rpc_t *rpc)
+sfw_server_rpc_done(struct srpc_server_rpc *rpc)
 {
-        srpc_service_t *sv = rpc->srpc_service;
-        int             status = rpc->srpc_status;
+	struct srpc_service	*sv	= rpc->srpc_scd->scd_svc;
+	int			status	= rpc->srpc_status;
 
         CDEBUG (D_NET,
                 "Incoming framework RPC done: "
@@ -416,11 +409,8 @@ sfw_get_stats (srpc_stat_reqst_t *request, srpc_stat_reply_t *reply)
                 return 0;
         }
 
-        LNET_LOCK();
-        reply->str_lnet = the_lnet.ln_counters;
-        LNET_UNLOCK();
-
-        srpc_get_counters(&reply->str_rpc);
+	lnet_counters_get(&reply->str_lnet);
+	srpc_get_counters(&reply->str_rpc);
 
         /* send over the msecs since the session was started
          - with 32 bits to send, this is ~49 days */
@@ -444,9 +434,11 @@ sfw_get_stats (srpc_stat_reqst_t *request, srpc_stat_reply_t *reply)
 }
 
 int
-sfw_make_session (srpc_mksn_reqst_t *request, srpc_mksn_reply_t *reply)
+sfw_make_session(srpc_mksn_reqst_t *request, srpc_mksn_reply_t *reply)
 {
-        sfw_session_t *sn = sfw_data.fw_session;
+	sfw_session_t *sn = sfw_data.fw_session;
+	srpc_msg_t    *msg = container_of(request, srpc_msg_t,
+					  msg_body.mksn_reqst);
 
         if (request->mksn_sid.ses_nid == LNET_NID_ANY) {
                 reply->mksn_sid = (sn == NULL) ? LST_INVALID_SID : sn->sn_id;
@@ -471,6 +463,17 @@ sfw_make_session (srpc_mksn_reqst_t *request, srpc_mksn_reply_t *reply)
                 }
         }
 
+	/* reject the request if it requires unknown features
+	 * NB: old version will always accept all features because it's not
+	 * aware of srpc_msg_t::msg_ses_feats, it's a defect but it's also
+	 * harmless because it will return zero feature to console, and it's
+	 * console's responsibility to make sure all nodes in a session have
+	 * same feature mask. */
+	if ((msg->msg_ses_feats & ~LST_FEATS_MASK) != 0) {
+		reply->mksn_status = EPROTO;
+		return 0;
+	}
+
         /* brand new or create by force */
         LIBCFS_ALLOC(sn, sizeof(sfw_session_t));
         if (sn == NULL) {
@@ -478,7 +481,8 @@ sfw_make_session (srpc_mksn_reqst_t *request, srpc_mksn_reply_t *reply)
                 return -ENOMEM;
         }
 
-        sfw_init_session(sn, request->mksn_sid, &request->mksn_name[0]);
+	sfw_init_session(sn, request->mksn_sid,
+			 msg->msg_ses_feats, &request->mksn_name[0]);
 
         cfs_spin_lock(&sfw_data.fw_lock);
 
@@ -556,45 +560,66 @@ sfw_test_rpc_fini (srpc_client_rpc_t *rpc)
         cfs_list_add(&rpc->crpc_list, &tsi->tsi_free_rpcs);
 }
 
-int
-sfw_load_test (sfw_test_instance_t *tsi)
+static inline int
+sfw_test_buffers(sfw_test_instance_t *tsi)
 {
-        sfw_test_case_t *tsc = sfw_find_test_case(tsi->tsi_service);
-        int              nrequired = sfw_test_buffers(tsi);
-        int              nposted;
+	struct sfw_test_case	*tsc = sfw_find_test_case(tsi->tsi_service);
+	struct srpc_service	*svc = tsc->tsc_srv_service;
+	int			nbuf;
 
-        LASSERT (tsc != NULL);
+	nbuf = min(svc->sv_wi_total, tsi->tsi_loop) / svc->sv_ncpts;
+	return max(SFW_TEST_WI_MIN, nbuf + SFW_TEST_WI_EXTRA);
+}
 
-        if (tsi->tsi_is_client) {
-                tsi->tsi_ops = tsc->tsc_cli_ops;
-                return 0;
-        }
+int
+sfw_load_test(struct sfw_test_instance *tsi)
+{
+	struct sfw_test_case	*tsc = sfw_find_test_case(tsi->tsi_service);
+	struct srpc_service	*svc = tsc->tsc_srv_service;
+	int			nbuf = sfw_test_buffers(tsi);
+	int			rc;
 
-        nposted = srpc_service_add_buffers(tsc->tsc_srv_service, nrequired);
-        if (nposted != nrequired) {
-                CWARN ("Failed to reserve enough buffers: "
-                       "service %s, %d needed, %d reserved\n",
-                       tsc->tsc_srv_service->sv_name, nrequired, nposted);
-                srpc_service_remove_buffers(tsc->tsc_srv_service, nposted);
-                return -ENOMEM;
-        }
+	LASSERT(tsc != NULL);
 
-        CDEBUG (D_NET, "Reserved %d buffers for test %s\n",
-                nposted, tsc->tsc_srv_service->sv_name);
-        return 0;
+	if (tsi->tsi_is_client) {
+		tsi->tsi_ops = tsc->tsc_cli_ops;
+		return 0;
+	}
+
+	rc = srpc_service_add_buffers(svc, nbuf);
+	if (rc != 0) {
+		CWARN("Failed to reserve enough buffers: "
+		      "service %s, %d needed: %d\n", svc->sv_name, nbuf, rc);
+		/* NB: this error handler is not strictly correct, because
+		 * it may release more buffers than already allocated,
+		 * but it doesn't matter because request portal should
+		 * be lazy portal and will grow buffers if necessary. */
+		srpc_service_remove_buffers(svc, nbuf);
+		return -ENOMEM;
+	}
+
+	CDEBUG(D_NET, "Reserved %d buffers for test %s\n",
+	       nbuf * (srpc_serv_is_framework(svc) ?
+		       1 : cfs_cpt_number(cfs_cpt_table)), svc->sv_name);
+	return 0;
 }
 
 void
-sfw_unload_test (sfw_test_instance_t *tsi)
+sfw_unload_test(struct sfw_test_instance *tsi)
 {
-        sfw_test_case_t *tsc = sfw_find_test_case(tsi->tsi_service);
+	struct sfw_test_case *tsc = sfw_find_test_case(tsi->tsi_service);
 
-        LASSERT (tsc != NULL);
+	LASSERT(tsc != NULL);
 
-        if (!tsi->tsi_is_client)
-                srpc_service_remove_buffers(tsc->tsc_srv_service,
-                                            sfw_test_buffers(tsi));
-        return;
+	if (tsi->tsi_is_client)
+		return;
+
+	/* shrink buffers, because request portal is lazy portal
+	 * which can grow buffers at runtime so we may leave
+	 * some buffers behind, but never mind... */
+	srpc_service_remove_buffers(tsc->tsc_srv_service,
+				    sfw_test_buffers(tsi));
+	return;
 }
 
 void
@@ -671,7 +696,7 @@ sfw_destroy_session (sfw_session_t *sn)
 }
 
 void
-sfw_unpack_test_req (srpc_msg_t *msg)
+sfw_unpack_addtest_req(srpc_msg_t *msg)
 {
         srpc_test_reqst_t *req = &msg->msg_body.tes_reqst;
 
@@ -683,14 +708,25 @@ sfw_unpack_test_req (srpc_msg_t *msg)
 
         LASSERT (msg->msg_magic == __swab32(SRPC_MSG_MAGIC));
 
-        if (req->tsr_service == SRPC_SERVICE_BRW) {
-                test_bulk_req_t *bulk = &req->tsr_u.bulk;
+	if (req->tsr_service == SRPC_SERVICE_BRW) {
+		if ((msg->msg_ses_feats & LST_FEAT_BULK_LEN) == 0) {
+			test_bulk_req_t *bulk = &req->tsr_u.bulk_v0;
 
-                __swab32s(&bulk->blk_opc);
-                __swab32s(&bulk->blk_npg);
-                __swab32s(&bulk->blk_flags);
-                return;
-        }
+			__swab32s(&bulk->blk_opc);
+			__swab32s(&bulk->blk_npg);
+			__swab32s(&bulk->blk_flags);
+
+		} else {
+			test_bulk_req_v1_t *bulk = &req->tsr_u.bulk_v1;
+
+			__swab16s(&bulk->blk_opc);
+			__swab16s(&bulk->blk_flags);
+			__swab32s(&bulk->blk_offset);
+			__swab32s(&bulk->blk_len);
+		}
+
+		return;
+	}
 
         if (req->tsr_service == SRPC_SERVICE_PING) {
                 test_ping_req_t *ping = &req->tsr_u.ping;
@@ -757,9 +793,10 @@ sfw_add_test_instance (sfw_batch_t *tsb, srpc_server_rpc_t *rpc)
         LASSERT (bk->bk_pages != NULL);
 #endif
         LASSERT (bk->bk_niov * SFW_ID_PER_PAGE >= (unsigned int)ndest);
-        LASSERT ((unsigned int)bk->bk_len >= sizeof(lnet_process_id_t) * ndest);
+	LASSERT((unsigned int)bk->bk_len >=
+		sizeof(lnet_process_id_packed_t) * ndest);
 
-        sfw_unpack_test_req(msg);
+	sfw_unpack_addtest_req(msg);
         memcpy(&tsi->tsi_u, &req->tsr_u, sizeof(tsi->tsi_u));
 
         for (i = 0; i < ndest; i++) {
@@ -858,7 +895,7 @@ sfw_test_rpc_done (srpc_client_rpc_t *rpc)
         int                  done = 0;
 
         tsi->tsi_ops->tso_done_rpc(tsu, rpc);
-                      
+
         cfs_spin_lock(&tsi->tsi_lock);
 
         LASSERT (sfw_test_active(tsi));
@@ -887,8 +924,9 @@ sfw_test_rpc_done (srpc_client_rpc_t *rpc)
 }
 
 int
-sfw_create_test_rpc (sfw_test_unit_t *tsu, lnet_process_id_t peer,
-                     int nblk, int blklen, srpc_client_rpc_t **rpcpp)
+sfw_create_test_rpc(sfw_test_unit_t *tsu, lnet_process_id_t peer,
+		    unsigned features, int nblk, int blklen,
+		    srpc_client_rpc_t **rpcpp)
 {
         srpc_client_rpc_t   *rpc = NULL;
         sfw_test_instance_t *tsi = tsu->tsu_instance;
@@ -903,25 +941,29 @@ sfw_create_test_rpc (sfw_test_unit_t *tsu, lnet_process_id_t peer,
                                      srpc_client_rpc_t, crpc_list);
                 LASSERT (nblk == rpc->crpc_bulk.bk_niov);
                 cfs_list_del_init(&rpc->crpc_list);
-
-                srpc_init_client_rpc(rpc, peer, tsi->tsi_service, nblk,
-                                     blklen, sfw_test_rpc_done,
-                                     sfw_test_rpc_fini, tsu);
         }
 
         cfs_spin_unlock(&tsi->tsi_lock);
-        
-        if (rpc == NULL)
-                rpc = srpc_create_client_rpc(peer, tsi->tsi_service, nblk,
-                                             blklen, sfw_test_rpc_done, 
-                                             sfw_test_rpc_fini, tsu);
-        if (rpc == NULL) {
-                CERROR ("Can't create rpc for test %d\n", tsi->tsi_service);
-                return -ENOMEM;
-        }
 
-        *rpcpp = rpc;
-        return 0;
+	if (rpc == NULL) {
+		rpc = srpc_create_client_rpc(peer, tsi->tsi_service, nblk,
+					     blklen, sfw_test_rpc_done,
+					     sfw_test_rpc_fini, tsu);
+	} else {
+		srpc_init_client_rpc(rpc, peer, tsi->tsi_service, nblk,
+				     blklen, sfw_test_rpc_done,
+				     sfw_test_rpc_fini, tsu);
+	}
+
+	if (rpc == NULL) {
+		CERROR("Can't create rpc for test %d\n", tsi->tsi_service);
+		return -ENOMEM;
+	}
+
+	rpc->crpc_reqstmsg.msg_ses_feats = features;
+	*rpcpp = rpc;
+
+	return 0;
 }
 
 int
@@ -969,9 +1011,9 @@ test_done:
          * - my batch is still active; no one can run it again now.
          * Cancel pending schedules and prevent future schedule attempts:
          */
-        swi_kill_workitem(wi);
-        sfw_test_unit_done(tsu);
-        return 1;
+	swi_exit_workitem(wi);
+	sfw_test_unit_done(tsu);
+	return 1;
 }
 
 int
@@ -1002,8 +1044,9 @@ sfw_run_batch (sfw_batch_t *tsb)
                         cfs_atomic_inc(&tsi->tsi_nactive);
                         tsu->tsu_loop = tsi->tsi_loop;
                         wi = &tsu->tsu_worker;
-                        swi_init_workitem(wi, tsu, sfw_run_test,
-                                          CFS_WI_SCHED_ANY);
+			swi_init_workitem(wi, tsu, sfw_run_test,
+					  lst_sched_test[\
+					  lnet_cpt_of_nid(tsu->tsu_dest.nid)]);
                         swi_schedule_workitem(wi);
                 }
         }
@@ -1088,15 +1131,17 @@ sfw_free_pages (srpc_server_rpc_t *rpc)
 }
 
 int
-sfw_alloc_pages (srpc_server_rpc_t *rpc, int npages, int sink)
+sfw_alloc_pages(struct srpc_server_rpc *rpc, int cpt, int npages, int len,
+		int sink)
 {
-        LASSERT (rpc->srpc_bulk == NULL);
-        LASSERT (npages > 0 && npages <= LNET_MAX_IOV);
+	LASSERT(rpc->srpc_bulk == NULL);
+	LASSERT(npages > 0 && npages <= LNET_MAX_IOV);
 
-        rpc->srpc_bulk = srpc_alloc_bulk(npages, sink);
-        if (rpc->srpc_bulk == NULL) return -ENOMEM;
+	rpc->srpc_bulk = srpc_alloc_bulk(cpt, npages, len, sink);
+	if (rpc->srpc_bulk == NULL)
+		return -ENOMEM;
 
-        return 0;
+	return 0;
 }
 
 int
@@ -1132,7 +1177,7 @@ sfw_add_test (srpc_server_rpc_t *rpc)
         bat = sfw_bid2batch(request->tsr_bid);
         if (bat == NULL) {
                 CERROR ("Dropping RPC (%s) from %s under memory pressure.\n",
-                        rpc->srpc_service->sv_name,
+			rpc->srpc_scd->scd_svc->sv_name,
                         libcfs_id2str(rpc->srpc_peer));
                 return -ENOMEM;
         }
@@ -1143,9 +1188,19 @@ sfw_add_test (srpc_server_rpc_t *rpc)
         }
 
         if (request->tsr_is_client && rpc->srpc_bulk == NULL) {
-                /* rpc will be resumed later in sfw_bulk_ready */
-                return sfw_alloc_pages(rpc,
-                                       sfw_id_pages(request->tsr_ndest), 1);
+		/* rpc will be resumed later in sfw_bulk_ready */
+		int	npg = sfw_id_pages(request->tsr_ndest);
+		int	len;
+
+		if ((sn->sn_features & LST_FEAT_BULK_LEN) == 0) {
+			len = npg * CFS_PAGE_SIZE;
+
+		} else  {
+			len = sizeof(lnet_process_id_packed_t) *
+			      request->tsr_ndest;
+		}
+
+		return sfw_alloc_pages(rpc, CFS_CPT_ANY, npg, len, 1);
         }
 
         rc = sfw_add_test_instance(bat, rpc);
@@ -1201,12 +1256,13 @@ sfw_control_batch (srpc_batch_reqst_t *request, srpc_batch_reply_t *reply)
 }
 
 int
-sfw_handle_server_rpc (srpc_server_rpc_t *rpc)
+sfw_handle_server_rpc(struct srpc_server_rpc *rpc)
 {
-        srpc_service_t *sv = rpc->srpc_service;
-        srpc_msg_t     *reply = &rpc->srpc_replymsg;
-        srpc_msg_t     *request = &rpc->srpc_reqstbuf->buf_msg;
-        int             rc = 0;
+	struct srpc_service	*sv = rpc->srpc_scd->scd_svc;
+	srpc_msg_t     *reply	= &rpc->srpc_replymsg;
+	srpc_msg_t     *request	= &rpc->srpc_reqstbuf->buf_msg;
+	unsigned	features = LST_FEATS_MASK;
+	int		rc = 0;
 
         LASSERT (sfw_data.fw_active_srpc == NULL);
         LASSERT (sv->sv_id <= SRPC_FRAMEWORK_SERVICE_MAX_ID);
@@ -1231,6 +1287,31 @@ sfw_handle_server_rpc (srpc_server_rpc_t *rpc)
 
         sfw_unpack_message(request);
         LASSERT (request->msg_type == srpc_service2request(sv->sv_id));
+
+	/* rpc module should have checked this */
+	LASSERT(request->msg_version == SRPC_MSG_VERSION);
+
+	if (sv->sv_id != SRPC_SERVICE_MAKE_SESSION &&
+	    sv->sv_id != SRPC_SERVICE_DEBUG) {
+		sfw_session_t *sn = sfw_data.fw_session;
+
+		if (sn != NULL &&
+		    sn->sn_features != request->msg_ses_feats) {
+			CNETERR("Features of framework RPC don't match "
+				"features of current session: %x/%x\n",
+				request->msg_ses_feats, sn->sn_features);
+			reply->msg_body.reply.status = EPROTO;
+			reply->msg_body.reply.sid    = sn->sn_id;
+			goto out;
+		}
+
+	} else if ((request->msg_ses_feats & ~LST_FEATS_MASK) != 0) {
+		/* NB: at this point, old version will ignore features and
+		 * create new session anyway, so console should be able
+		 * to handle this */
+		reply->msg_body.reply.status = EPROTO;
+		goto out;
+	}
 
         switch(sv->sv_id) {
         default:
@@ -1265,6 +1346,10 @@ sfw_handle_server_rpc (srpc_server_rpc_t *rpc)
                 break;
         }
 
+	if (sfw_data.fw_session != NULL)
+		features = sfw_data.fw_session->sn_features;
+ out:
+	reply->msg_ses_feats = features;
         rpc->srpc_done = sfw_server_rpc_done;
         cfs_spin_lock(&sfw_data.fw_lock);
 
@@ -1282,10 +1367,10 @@ sfw_handle_server_rpc (srpc_server_rpc_t *rpc)
 }
 
 int
-sfw_bulk_ready (srpc_server_rpc_t *rpc, int status)
+sfw_bulk_ready(struct srpc_server_rpc *rpc, int status)
 {
-        srpc_service_t *sv = rpc->srpc_service;
-        int             rc;
+	struct srpc_service	*sv = rpc->srpc_scd->scd_svc;
+	int			rc;
 
         LASSERT (rpc->srpc_bulk != NULL);
         LASSERT (sv->sv_id == SRPC_SERVICE_TEST);
@@ -1335,11 +1420,11 @@ sfw_bulk_ready (srpc_server_rpc_t *rpc, int status)
 }
 
 srpc_client_rpc_t *
-sfw_create_rpc (lnet_process_id_t peer, int service,
-                int nbulkiov, int bulklen,
-                void (*done) (srpc_client_rpc_t *), void *priv)
+sfw_create_rpc(lnet_process_id_t peer, int service,
+	       unsigned features, int nbulkiov, int bulklen,
+	       void (*done)(srpc_client_rpc_t *), void *priv)
 {
-        srpc_client_rpc_t *rpc;
+	srpc_client_rpc_t *rpc = NULL;
 
         cfs_spin_lock(&sfw_data.fw_lock);
 
@@ -1350,19 +1435,25 @@ sfw_create_rpc (lnet_process_id_t peer, int service,
                 rpc = cfs_list_entry(sfw_data.fw_zombie_rpcs.next,
                                      srpc_client_rpc_t, crpc_list);
                 cfs_list_del(&rpc->crpc_list);
-                cfs_spin_unlock(&sfw_data.fw_lock);
 
                 srpc_init_client_rpc(rpc, peer, service, 0, 0,
                                      done, sfw_client_rpc_fini, priv);
-                return rpc;
         }
 
         cfs_spin_unlock(&sfw_data.fw_lock);
 
-        rpc = srpc_create_client_rpc(peer, service, nbulkiov, bulklen, done,
-                                     nbulkiov != 0 ? NULL : sfw_client_rpc_fini,
-                                     priv);
-        return rpc;
+	if (rpc == NULL) {
+		rpc = srpc_create_client_rpc(peer, service,
+					     nbulkiov, bulklen, done,
+					     nbulkiov != 0 ?  NULL :
+					     sfw_client_rpc_fini,
+					     priv);
+	}
+
+	if (rpc != NULL) /* "session" is concept in framework */
+		rpc->crpc_reqstmsg.msg_ses_feats = features;
+
+	return rpc;
 }
 
 void
@@ -1371,9 +1462,8 @@ sfw_unpack_message (srpc_msg_t *msg)
         if (msg->msg_magic == SRPC_MSG_MAGIC)
                 return; /* no flipping needed */
 
+	/* srpc module should guarantee I wouldn't get crap */
         LASSERT (msg->msg_magic == __swab32(SRPC_MSG_MAGIC));
-
-        __swab32s(&msg->msg_type);
 
         if (msg->msg_type == SRPC_MSG_STAT_REQST) {
                 srpc_stat_reqst_t *req = &msg->msg_body.stat_reqst;
@@ -1604,9 +1694,6 @@ sfw_startup (void)
         s = getenv("SESSION_TIMEOUT");
         session_timeout = s != NULL ? atoi(s) : session_timeout;
 
-        s = getenv("BRW_INJECT_ERRORS");
-        brw_inject_errors = s != NULL ? atoi(s) : brw_inject_errors;
-
         s = getenv("RPC_TIMEOUT");
         rpc_timeout = s != NULL ? atoi(s) : rpc_timeout;
 #endif
@@ -1655,7 +1742,6 @@ sfw_startup (void)
         cfs_list_for_each_entry_typed (tsc, &sfw_data.fw_tests,
                                        sfw_test_case_t, tsc_list) {
                 sv = tsc->tsc_srv_service;
-                sv->sv_concur = SFW_TEST_CONCURRENCY;
 
                 rc = srpc_add_service(sv);
                 LASSERT (rc != -EBUSY);
@@ -1672,7 +1758,7 @@ sfw_startup (void)
 
                 sv->sv_bulk_ready = NULL;
                 sv->sv_handler    = sfw_handle_server_rpc;
-                sv->sv_concur     = SFW_SERVICE_CONCURRENCY;
+		sv->sv_wi_total   = SFW_FRWK_WI_MAX;
                 if (sv->sv_id == SRPC_SERVICE_TEST)
                         sv->sv_bulk_ready = sfw_bulk_ready;
 
@@ -1687,13 +1773,13 @@ sfw_startup (void)
                 /* about to sfw_shutdown, no need to add buffer */
                 if (error) continue;
 
-                rc = srpc_service_add_buffers(sv, SFW_POST_BUFFERS);
-                if (rc != SFW_POST_BUFFERS) {
-                        CWARN ("Failed to reserve enough buffers: "
-                               "service %s, %d needed, %d reserved\n",
-                               sv->sv_name, SFW_POST_BUFFERS, rc);
-                        error = -ENOMEM;
-                }
+		rc = srpc_service_add_buffers(sv, sv->sv_wi_total);
+		if (rc != 0) {
+			CWARN("Failed to reserve enough buffers: "
+			      "service %s, %d needed: %d\n",
+			      sv->sv_name, sv->sv_wi_total, rc);
+			error = -ENOMEM;
+		}
         }
 
         if (error != 0)

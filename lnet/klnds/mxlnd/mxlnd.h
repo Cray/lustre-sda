@@ -39,16 +39,12 @@
  * Author: Scott Atchley <atchley at myri.com>
  */
 
-#ifndef AUTOCONF_INCLUDED
-#include <linux/config.h>
-#endif
 #include <linux/module.h>       /* module */
 #include <linux/kernel.h>       /* module */
 #include <linux/mm.h>
 #include <linux/string.h>
 #include <linux/stat.h>
 #include <linux/errno.h>
-#include <linux/smp_lock.h>
 #include <linux/unistd.h>
 #include <linux/uio.h>
 #include <linux/fs.h>

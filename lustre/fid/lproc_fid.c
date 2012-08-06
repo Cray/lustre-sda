@@ -33,6 +33,8 @@
  * This file is part of Lustre, http://www.lustre.org/
  * Lustre is a trademark of Sun Microsystems, Inc.
  *
+ * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ *
  * lustre/fid/lproc_fid.c
  *
  * Lustre Sequence Manager
@@ -92,8 +94,8 @@ seq_proc_read_common(char *page, char **start, off_t off,
 	ENTRY;
 
         *eof = 1;
-        rc = snprintf(page, count, "["LPX64" - "LPX64"]:%x:%x\n",
-                      PRANGE(range));
+	rc = snprintf(page, count, "["LPX64" - "LPX64"]:%x:%s\n",
+			PRANGE(range));
 	RETURN(rc);
 }
 
@@ -179,20 +181,20 @@ seq_server_proc_write_width(struct file *file, const char *buffer,
 
         LASSERT(seq != NULL);
 
-        cfs_mutex_lock(&seq->lss_mutex);
+	cfs_mutex_lock(&seq->lss_mutex);
 
-        rc = lprocfs_write_helper(buffer, count, &val);
-        if (rc)
-                RETURN(rc);
-
-        seq->lss_width = val;
-
-	if (rc == 0) {
-		CDEBUG(D_INFO, "%s: Width: "LPU64"\n",
-                       seq->lss_name, seq->lss_width);
+	rc = lprocfs_write_helper(buffer, count, &val);
+	if (rc != 0) {
+		CERROR("%s: invalid width.\n", seq->lss_name);
+		GOTO(out_unlock, rc);
 	}
 
-        cfs_mutex_unlock(&seq->lss_mutex);
+	seq->lss_width = val;
+
+	CDEBUG(D_INFO, "%s: Width: "LPU64"\n",
+	       seq->lss_name, seq->lss_width);
+out_unlock:
+	cfs_mutex_unlock(&seq->lss_mutex);
 
         RETURN(count);
 }

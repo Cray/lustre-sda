@@ -97,6 +97,29 @@ ldlm_mode_t mdt_dlm_lock_modes[] = {
  * Initialized in mdt_mod_init().
  */
 static unsigned long mdt_num_threads;
+CFS_MODULE_PARM(mdt_num_threads, "ul", ulong, 0444,
+		"number of mdt service threads to start");
+
+static char *mdt_cpts;
+CFS_MODULE_PARM(mdt_cpts, "c", charp, 0444,
+		"CPU partitions MDT threads should run on");
+
+static unsigned long mdt_rdpg_num_threads;
+CFS_MODULE_PARM(mdt_rdpg_num_threads, "ul", ulong, 0444,
+		"number of mdt readpage service threads to start");
+
+static char *mdt_rdpg_cpts;
+CFS_MODULE_PARM(mdt_rdpg_cpts, "c", charp, 0444,
+		"CPU partitions MDT readpage threads should run on");
+
+/* NB: these two should be removed along with setattr service in the future */
+static unsigned long mdt_attr_num_threads;
+CFS_MODULE_PARM(mdt_attr_num_threads, "ul", ulong, 0444,
+		"number of mdt setattr service threads to start");
+
+static char *mdt_attr_cpts;
+CFS_MODULE_PARM(mdt_attr_cpts, "c", charp, 0444,
+		"CPU partitions MDT setattr threads should run on");
 
 /* ptlrpc request handler for MDT. All handlers are
  * grouped into several slices - struct mdt_opc_slice,
@@ -336,20 +359,20 @@ static int mdt_getstatus(struct mdt_thread_info *info)
 
 static int mdt_statfs(struct mdt_thread_info *info)
 {
-        struct ptlrpc_request *req = mdt_info_req(info);
-        struct md_device      *next  = info->mti_mdt->mdt_child;
-        struct ptlrpc_service *svc;
-        struct obd_statfs     *osfs;
-        int                    rc;
+	struct ptlrpc_request		*req = mdt_info_req(info);
+	struct md_device		*next = info->mti_mdt->mdt_child;
+	struct ptlrpc_service_part	*svcpt;
+	struct obd_statfs		*osfs;
+	int				rc;
 
-        ENTRY;
+	ENTRY;
 
-        svc = info->mti_pill->rc_req->rq_rqbd->rqbd_service;
+	svcpt = info->mti_pill->rc_req->rq_rqbd->rqbd_svcpt;
 
-        /* This will trigger a watchdog timeout */
-        OBD_FAIL_TIMEOUT(OBD_FAIL_MDS_STATFS_LCW_SLEEP,
-                         (MDT_SERVICE_WATCHDOG_FACTOR *
-                          at_get(&svc->srv_at_estimate)) + 1);
+	/* This will trigger a watchdog timeout */
+	OBD_FAIL_TIMEOUT(OBD_FAIL_MDS_STATFS_LCW_SLEEP,
+			 (MDT_SERVICE_WATCHDOG_FACTOR *
+			  at_get(&svcpt->scp_at_estimate)) + 1);
 
         rc = mdt_check_ucred(info);
         if (rc)
@@ -579,20 +602,27 @@ static int mdt_getattr_internal(struct mdt_thread_info *info,
                         CERROR("readlink failed: %d\n", rc);
                         rc = -EFAULT;
                 } else {
-                        if (OBD_FAIL_CHECK(OBD_FAIL_MDS_READLINK_EPROTO))
-                                 rc -= 2;
-                        repbody->valid |= OBD_MD_LINKNAME;
-                        /* we need to report back size with NULL-terminator
-                         * because client expects that */
-                        repbody->eadatasize = rc + 1;
-                        if (repbody->eadatasize != reqbody->eadatasize)
-                                CERROR("Read shorter link %d than expected "
-                                       "%d\n", rc, reqbody->eadatasize - 1);
-                        /* NULL terminate */
-                        ((char*)ma->ma_lmm)[rc] = 0;
-                        CDEBUG(D_INODE, "symlink dest %s, len = %d\n",
-                               (char*)ma->ma_lmm, rc);
-                        rc = 0;
+			int print_limit = min_t(int, CFS_PAGE_SIZE - 128, rc);
+
+			if (OBD_FAIL_CHECK(OBD_FAIL_MDS_READLINK_EPROTO))
+				rc -= 2;
+			repbody->valid |= OBD_MD_LINKNAME;
+			/* we need to report back size with NULL-terminator
+			 * because client expects that */
+			repbody->eadatasize = rc + 1;
+			if (repbody->eadatasize != reqbody->eadatasize)
+				CERROR("Read shorter symlink %d, expected %d\n",
+				       rc, reqbody->eadatasize - 1);
+			/* NULL terminate */
+			((char *)ma->ma_lmm)[rc] = 0;
+
+			/* If the total CDEBUG() size is larger than a page, it
+			 * will print a warning to the console, avoid this by
+			 * printing just the last part of the symlink. */
+			CDEBUG(D_INODE, "symlink dest %s%.*s, len = %d\n",
+			       print_limit < rc ? "..." : "", print_limit,
+			       (char *)ma->ma_lmm + rc - print_limit, rc);
+			rc = 0;
                 }
         }
 
@@ -1279,8 +1309,13 @@ static int mdt_sendpage(struct mdt_thread_info *info,
         if (desc == NULL)
                 RETURN(-ENOMEM);
 
-        for (i = 0, tmpcount = nob;
-                i < rdpg->rp_npages && tmpcount > 0; i++, tmpcount -= tmpsize) {
+	if (!(exp->exp_connect_flags & OBD_CONNECT_BRW_SIZE))
+		/* old client requires reply size in it's PAGE_SIZE,
+ 		 * which is rdpg->rp_count */
+		nob = rdpg->rp_count;
+
+	for (i = 0, tmpcount = nob; i < rdpg->rp_npages && tmpcount > 0;
+	     i++, tmpcount -= tmpsize) {
                 tmpsize = min_t(int, tmpcount, CFS_PAGE_SIZE);
                 ptlrpc_prep_bulk_page(desc, rdpg->rp_pages[i], 0, tmpsize);
         }
@@ -3947,14 +3982,21 @@ static int mdt_start_ptlrpc_service(struct mdt_device *m)
 		 */
 		.psc_thr		= {
 			.tc_thr_name		= LUSTRE_MDT_NAME,
-			.tc_nthrs_min		= MDT_MIN_THREADS,
-			.tc_nthrs_max		= MDT_MAX_THREADS,
+			.tc_thr_factor		= MDT_THR_FACTOR,
+			.tc_nthrs_init		= MDT_NTHRS_INIT,
+			.tc_nthrs_base		= MDT_NTHRS_BASE,
+			.tc_nthrs_max		= MDT_NTHRS_MAX,
 			.tc_nthrs_user		= mdt_num_threads,
+			.tc_cpu_affinity	= 1,
 			.tc_ctx_tags		= LCT_MD_THREAD,
+		},
+		.psc_cpt		= {
+			.cc_pattern		= mdt_cpts,
 		},
 		.psc_ops		= {
 			.so_req_handler		= mdt_regular_handle,
 			.so_req_printer		= target_print_req,
+			.so_hpreq_handler	= ptlrpc_hpreq_handler,
 		},
 	};
 	m->mdt_regular_service = ptlrpc_register_service(&conf, procfs_entry);
@@ -3984,14 +4026,21 @@ static int mdt_start_ptlrpc_service(struct mdt_device *m)
 		},
 		.psc_thr		= {
 			.tc_thr_name		= "mdt_rdpg",
-			.tc_nthrs_min		= MDT_MIN_THREADS,
-			.tc_nthrs_max		= MDT_MAX_THREADS,
-			.tc_nthrs_user		= mdt_num_threads,
+			.tc_thr_factor		= MDT_RDPG_THR_FACTOR,
+			.tc_nthrs_init		= MDT_RDPG_NTHRS_INIT,
+			.tc_nthrs_base		= MDT_RDPG_NTHRS_BASE,
+			.tc_nthrs_max		= MDT_RDPG_NTHRS_MAX,
+			.tc_nthrs_user		= mdt_rdpg_num_threads,
+			.tc_cpu_affinity	= 1,
 			.tc_ctx_tags		= LCT_MD_THREAD,
+		},
+		.psc_cpt		= {
+			.cc_pattern		= mdt_rdpg_cpts,
 		},
 		.psc_ops		= {
 			.so_req_handler		= mdt_readpage_handle,
 			.so_req_printer		= target_print_req,
+			.so_hpreq_handler	= NULL,
 		},
 	};
 	m->mdt_readpage_service = ptlrpc_register_service(&conf, procfs_entry);
@@ -4024,14 +4073,21 @@ static int mdt_start_ptlrpc_service(struct mdt_device *m)
 		},
 		.psc_thr		= {
 			.tc_thr_name		= "mdt_attr",
-			.tc_nthrs_min		= MDT_MIN_THREADS,
-			.tc_nthrs_max		= MDT_MAX_THREADS,
-			.tc_nthrs_user		= mdt_num_threads,
+			.tc_thr_factor		= MDT_SETA_THR_FACTOR,
+			.tc_nthrs_init		= MDT_SETA_NTHRS_INIT,
+			.tc_nthrs_base		= MDT_SETA_NTHRS_BASE,
+			.tc_nthrs_max		= MDT_SETA_NTHRS_MAX,
+			.tc_nthrs_user		= mdt_attr_num_threads,
+			.tc_cpu_affinity	= 1,
 			.tc_ctx_tags		= LCT_MD_THREAD,
+		},
+		.psc_cpt		= {
+			.cc_pattern		= mdt_attr_cpts,
 		},
 		.psc_ops		= {
 			.so_req_handler		= mdt_regular_handle,
 			.so_req_printer		= target_print_req,
+			.so_hpreq_handler	= NULL,
 		},
 	};
 	m->mdt_setattr_service = ptlrpc_register_service(&conf, procfs_entry);
@@ -4060,14 +4116,14 @@ static int mdt_start_ptlrpc_service(struct mdt_device *m)
 		},
 		.psc_thr		= {
 			.tc_thr_name		= "mdt_mdsc",
-			.tc_nthrs_min		= MDT_MIN_THREADS,
-			.tc_nthrs_max		= MDT_MAX_THREADS,
-			.tc_nthrs_user		= mdt_num_threads,
+			.tc_nthrs_init		= MDT_OTHR_NTHRS_INIT,
+			.tc_nthrs_max		= MDT_OTHR_NTHRS_MAX,
 			.tc_ctx_tags		= LCT_MD_THREAD,
 		},
 		.psc_ops		= {
 			.so_req_handler		= mdt_mdsc_handle,
 			.so_req_printer		= target_print_req,
+			.so_hpreq_handler	= NULL,
 		},
 	};
 	m->mdt_mdsc_service = ptlrpc_register_service(&conf, procfs_entry);
@@ -4096,14 +4152,14 @@ static int mdt_start_ptlrpc_service(struct mdt_device *m)
 		},
 		.psc_thr		= {
 			.tc_thr_name		= "mdt_mdss",
-			.tc_nthrs_min		= MDT_MIN_THREADS,
-			.tc_nthrs_max		= MDT_MAX_THREADS,
-			.tc_nthrs_user		= mdt_num_threads,
+			.tc_nthrs_init		= MDT_OTHR_NTHRS_INIT,
+			.tc_nthrs_max		= MDT_OTHR_NTHRS_MAX,
 			.tc_ctx_tags		= LCT_MD_THREAD | LCT_DT_THREAD
 		},
 		.psc_ops		= {
 			.so_req_handler		= mdt_mdss_handle,
 			.so_req_printer		= target_print_req,
+			.so_hpreq_handler	= NULL,
 		},
         };
 	m->mdt_mdss_service = ptlrpc_register_service(&conf, procfs_entry);
@@ -4134,14 +4190,14 @@ static int mdt_start_ptlrpc_service(struct mdt_device *m)
 		},
 		.psc_thr		= {
 			.tc_thr_name		= "mdt_dtss",
-			.tc_nthrs_min		= MDT_MIN_THREADS,
-			.tc_nthrs_max		= MDT_MAX_THREADS,
-			.tc_nthrs_user		= mdt_num_threads,
+			.tc_nthrs_init		= MDT_OTHR_NTHRS_INIT,
+			.tc_nthrs_max		= MDT_OTHR_NTHRS_MAX,
 			.tc_ctx_tags		= LCT_MD_THREAD | LCT_DT_THREAD
 		},
 		.psc_ops		= {
 			.so_req_handler		= mdt_dtss_handle,
 			.so_req_printer		= target_print_req,
+			.so_hpreq_handler	= NULL,
 		},
         };
 	m->mdt_dtss_service = ptlrpc_register_service(&conf, procfs_entry);
@@ -4168,14 +4224,14 @@ static int mdt_start_ptlrpc_service(struct mdt_device *m)
 		},
 		.psc_thr		= {
 			.tc_thr_name		= "mdt_fld",
-			.tc_nthrs_min		= MDT_MIN_THREADS,
-			.tc_nthrs_max		= MDT_MAX_THREADS,
-			.tc_nthrs_user		= mdt_num_threads,
+			.tc_nthrs_init		= MDT_OTHR_NTHRS_INIT,
+			.tc_nthrs_max		= MDT_OTHR_NTHRS_MAX,
 			.tc_ctx_tags		= LCT_DT_THREAD | LCT_MD_THREAD
 		},
 		.psc_ops		= {
 			.so_req_handler		= mdt_fld_handle,
 			.so_req_printer		= target_print_req,
+			.so_hpreq_handler	= NULL,
 		},
 	};
 	m->mdt_fld_service = ptlrpc_register_service(&conf, procfs_entry);
@@ -4205,14 +4261,14 @@ static int mdt_start_ptlrpc_service(struct mdt_device *m)
 		},
 		.psc_thr		= {
 			.tc_thr_name		= "mdt_mds",
-			.tc_nthrs_min		= MDT_MIN_THREADS,
-			.tc_nthrs_max		= MDT_MAX_THREADS,
-			.tc_nthrs_user		= mdt_num_threads,
+			.tc_nthrs_init		= MDT_OTHR_NTHRS_INIT,
+			.tc_nthrs_max		= MDT_OTHR_NTHRS_MAX,
 			.tc_ctx_tags		= LCT_MD_THREAD,
 		},
 		.psc_ops		= {
 			.so_req_handler		= mdt_xmds_handle,
 			.so_req_printer		= target_print_req,
+			.so_hpreq_handler	= ptlrpc_hpreq_handler,
 		},
 	};
 	m->mdt_xmds_service = ptlrpc_register_service(&conf, procfs_entry);
@@ -4245,6 +4301,8 @@ static void mdt_stack_fini(const struct lu_env *env,
         info = lu_context_key_get(&env->le_ctx, &mdt_thread_key);
         LASSERT(info != NULL);
 
+	lu_dev_del_linkage(top->ld_site, top);
+
         bufs = &info->mti_u.bufs;
         /* process cleanup, pass mdt obd name to get obd umount flags */
         lustre_cfg_bufs_reset(bufs, obd->obd_name);
@@ -4258,7 +4316,6 @@ static void mdt_stack_fini(const struct lu_env *env,
                 CERROR("Cannot alloc lcfg!\n");
                 return;
         }
-
         LASSERT(top);
         top->ld_ops->ldo_process_config(env, top, lcfg);
         lustre_cfg_free(lcfg);
@@ -4318,10 +4375,7 @@ static struct lu_device *mdt_layer_setup(struct lu_env *env,
         lu_device_get(d);
         lu_ref_add(&d->ld_reference, "lu-stack", &lu_site_init);
 
-        cfs_spin_lock(&d->ld_site->ls_ld_lock);
-        cfs_list_add_tail(&d->ld_linkage, &d->ld_site->ls_ld_linkage);
-        cfs_spin_unlock(&d->ld_site->ls_ld_lock);
-
+	lu_dev_add_linkage(d->ld_site, d);
         RETURN(d);
 out_alloc:
         ldt->ldt_ops->ldto_device_free(env, d);
@@ -4814,6 +4868,15 @@ err_lmi:
         return (rc);
 }
 
+/* For interoperability between 1.8 and 2.0. */
+#define CFG_GROUP_UPCALL	"mdt.group_upcall"
+#define CFG_QUOTA_TYPE_OLD	"mdt.quota_type"
+#define CFG_QUOTA_TYPE_NEW	"mdd.quota_type"
+#define CFG_ROOT_SQUASH_OLD	"mdt.rootsquash"
+#define CFG_ROOT_SQUASH_NEW	"mdt.root_squash"
+#define CFG_NOSQUASH_NID_OLD	"mdt.nosquash_nid"
+#define CFG_NOSQUASH_NID_NEW	"mdt.nosquash_nids"
+
 /* used by MGS to process specific configurations */
 static int mdt_process_config(const struct lu_env *env,
                               struct lu_device *d, struct lustre_cfg *cfg)
@@ -4824,38 +4887,78 @@ static int mdt_process_config(const struct lu_env *env,
         int rc = 0;
         ENTRY;
 
-        switch (cfg->lcfg_command) {
-        case LCFG_PARAM: {
-                struct lprocfs_static_vars lvars;
-                struct obd_device *obd = d->ld_obd;
+	switch (cfg->lcfg_command) {
+	case LCFG_PARAM: {
+		struct lprocfs_static_vars  lvars;
+		struct obd_device	   *obd = d->ld_obd;
 
-                /*
-                 * For interoperability between 1.8 and 2.0,
-                 */
-                {
-                        /* Skip old "mdt.group_upcall" param. */
-                        char *param = lustre_cfg_string(cfg, 1);
-                        if (param && !strncmp("mdt.group_upcall", param, 16)) {
-                                CWARN("For 1.8 interoperability, skip this"
-                                       " mdt.group_upcall. It is obsolete\n");
-                                break;
-                        }
-                        /* Rename old "mdt.quota_type" to "mdd.quota_type. */
-                        if (param && !strncmp("mdt.quota_type", param, 14)) {
-                                CWARN("Found old param mdt.quota_type, changed"
-                                      " it to mdd.quota_type.\n");
-                                param[2] = 'd';
-                        }
-                }
+		/* For interoperability between 1.8 and 2.0. */
+		struct lustre_cfg	   *old_cfg = NULL;
+		char			   *param = NULL;
+		char			   *new_name = NULL;
 
-                lprocfs_mdt_init_vars(&lvars);
-                rc = class_process_proc_param(PARAM_MDT, lvars.obd_vars,
-                                              cfg, obd);
-                if (rc > 0 || rc == -ENOSYS)
-                        /* we don't understand; pass it on */
-                        rc = next->ld_ops->ldo_process_config(env, next, cfg);
-                break;
-        }
+		param = lustre_cfg_string(cfg, 1);
+		if (param == NULL) {
+			CERROR("param is empty\n");
+			rc = -EINVAL;
+			break;
+		}
+
+		/* Skip old "mdt.group_upcall" param. */
+		if (strncmp(param, CFG_GROUP_UPCALL,
+			    strlen(CFG_GROUP_UPCALL)) == 0) {
+			CWARN("For 1.8 interoperability, skip this %s."
+			      " It is obsolete.\n", CFG_GROUP_UPCALL);
+			break;
+		}
+
+		/* Rename old "mdt.quota_type" to "mdd.quota_type". */
+		if (strncmp(param, CFG_QUOTA_TYPE_OLD,
+			    strlen(CFG_QUOTA_TYPE_OLD)) == 0) {
+			CWARN("Found old param %s, changed it to %s.\n",
+			      CFG_QUOTA_TYPE_OLD, CFG_QUOTA_TYPE_NEW);
+			new_name = CFG_QUOTA_TYPE_NEW;
+
+		} else if (strncmp(param, CFG_ROOT_SQUASH_OLD,
+				   strlen(CFG_ROOT_SQUASH_OLD)) == 0) {
+			/* Rename old "mdt.rootsquash" to "mdt.root_squash". */
+			CWARN("Found old param %s, changed it to %s.\n",
+			      CFG_ROOT_SQUASH_OLD, CFG_ROOT_SQUASH_NEW);
+			new_name = CFG_ROOT_SQUASH_NEW;
+
+		} else if (strncmp(param, CFG_NOSQUASH_NID_OLD,
+				   strlen(CFG_NOSQUASH_NID_OLD)) == 0 &&
+			   param[strlen(CFG_NOSQUASH_NID_OLD)] != 's') {
+			/*
+			 * Rename old "mdt.nosquash_nid" to
+			 * "mdt.nosquash_nids".
+			 */
+			CWARN("Found old param %s, changed it to %s.\n",
+			      CFG_NOSQUASH_NID_OLD, CFG_NOSQUASH_NID_NEW);
+			new_name = CFG_NOSQUASH_NID_NEW;
+		}
+
+		if (new_name != NULL) {
+			old_cfg = cfg;
+			cfg = lustre_cfg_rename(old_cfg, new_name);
+			if (IS_ERR(cfg)) {
+				rc = PTR_ERR(cfg);
+				break;
+			}
+		}
+
+		lprocfs_mdt_init_vars(&lvars);
+		rc = class_process_proc_param(PARAM_MDT, lvars.obd_vars,
+					      cfg, obd);
+		if (rc > 0 || rc == -ENOSYS)
+			/* we don't understand; pass it on */
+			rc = next->ld_ops->ldo_process_config(env, next, cfg);
+
+		if (old_cfg != NULL)
+			lustre_cfg_free(cfg);
+
+		break;
+	}
         case LCFG_ADD_MDC:
                 /*
                  * Add mdc hook to get first MDT uuid and connect it to
@@ -5312,12 +5415,21 @@ static int mdt_init_export(struct obd_export *exp)
                 RETURN(0);
 
         rc = lut_client_alloc(exp);
-        if (rc == 0)
-                rc = ldlm_init_export(exp);
         if (rc)
-                CERROR("%s: Error %d while initializing export\n",
-                       exp->exp_obd->obd_name, rc);
+		GOTO(err, rc);
+
+	rc = ldlm_init_export(exp);
+	if (rc)
+		GOTO(err_free, rc);
+
         RETURN(rc);
+
+err_free:
+	lut_client_free(exp);
+err:
+	CERROR("%s: Failed to initialize export: rc = %d\n",
+	       exp->exp_obd->obd_name, rc);
+	return rc;
 }
 
 static int mdt_destroy_export(struct obd_export *exp)
@@ -5637,6 +5749,21 @@ static int mdt_iocontrol(unsigned int cmd, struct obd_export *exp, int len,
         case OBD_IOC_CHANGELOG_CLEAR:
                 rc = mdt_ioc_child(&env, mdt, cmd, len, karg);
                 break;
+	case OBD_IOC_START_LFSCK:
+	case OBD_IOC_STOP_LFSCK: {
+		struct md_device *next = mdt->mdt_child;
+		struct obd_ioctl_data *data = karg;
+
+		if (unlikely(data == NULL)) {
+			rc = -EINVAL;
+			break;
+		}
+
+		rc = next->md_ops->mdo_iocontrol(&env, next, cmd,
+						 data->ioc_inllen1,
+						 data->ioc_inlbuf1);
+		break;
+	}
         case OBD_IOC_GET_OBJ_VERSION: {
                 struct mdt_thread_info *mti;
                 mti = lu_context_key_get(&env.le_ctx, &mdt_thread_key);
@@ -6119,8 +6246,5 @@ static struct mdt_opc_slice mdt_fld_handlers[] = {
 MODULE_AUTHOR("Sun Microsystems, Inc. <http://www.lustre.org/>");
 MODULE_DESCRIPTION("Lustre Meta-data Target ("LUSTRE_MDT_NAME")");
 MODULE_LICENSE("GPL");
-
-CFS_MODULE_PARM(mdt_num_threads, "ul", ulong, 0444,
-                "number of mdt service threads to start");
 
 cfs_module(mdt, "0.2.0", mdt_mod_init, mdt_mod_exit);

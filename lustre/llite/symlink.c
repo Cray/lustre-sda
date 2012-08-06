@@ -37,7 +37,6 @@
 #include <linux/fs.h>
 #include <linux/mm.h>
 #include <linux/stat.h>
-#include <linux/smp_lock.h>
 #include <linux/version.h>
 #define DEBUG_SUBSYSTEM S_LLITE
 
@@ -56,11 +55,18 @@ static int ll_readlink_internal(struct inode *inode,
 
         *request = NULL;
 
-        if (lli->lli_symlink_name) {
-                *symname = lli->lli_symlink_name;
-                CDEBUG(D_INODE, "using cached symlink %s\n", *symname);
-                RETURN(0);
-        }
+	if (lli->lli_symlink_name) {
+		int print_limit = min_t(int, PAGE_SIZE - 128, symlen);
+
+		*symname = lli->lli_symlink_name;
+		/* If the total CDEBUG() size is larger than a page, it
+		 * will print a warning to the console, avoid this by
+		 * printing just the last part of the symlink. */
+		CDEBUG(D_INODE, "using cached symlink %s%.*s, len = %d\n",
+		       print_limit < symlen ? "..." : "", print_limit,
+		       (*symname) + symlen - print_limit, symlen);
+		RETURN(0);
+	}
 
         op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, symlen,
                                      LUSTRE_OPC_ANY, NULL);
@@ -121,7 +127,7 @@ static int ll_readlink(struct dentry *dentry, char *buffer, int buflen)
 
         CDEBUG(D_VFSTRACE, "VFS Op\n");
 
-        ll_inode_size_lock(inode, 0);
+	ll_inode_size_lock(inode);
         rc = ll_readlink_internal(inode, &request, &symname);
         if (rc)
                 GOTO(out, rc);
@@ -129,24 +135,17 @@ static int ll_readlink(struct dentry *dentry, char *buffer, int buflen)
         rc = vfs_readlink(dentry, buffer, buflen, symname);
  out:
         ptlrpc_req_finished(request);
-        ll_inode_size_unlock(inode, 0);
-        RETURN(rc);
+	ll_inode_size_unlock(inode);
+	RETURN(rc);
 }
 
-#ifdef HAVE_COOKIE_FOLLOW_LINK
-# define LL_FOLLOW_LINK_RETURN_TYPE void *
-#else
-# define LL_FOLLOW_LINK_RETURN_TYPE int
-#endif
-
-static LL_FOLLOW_LINK_RETURN_TYPE ll_follow_link(struct dentry *dentry,
-                                                 struct nameidata *nd)
+static void *ll_follow_link(struct dentry *dentry, struct nameidata *nd)
 {
-        struct inode *inode = dentry->d_inode;
-        struct ptlrpc_request *request = NULL;
-        int rc;
-        char *symname;
-        ENTRY;
+	struct inode *inode = dentry->d_inode;
+	struct ptlrpc_request *request = NULL;
+	int rc;
+	char *symname;
+	ENTRY;
 
         CDEBUG(D_VFSTRACE, "VFS Op\n");
         /* Limit the recursive symlink depth to 5 instead of default
@@ -157,9 +156,9 @@ static LL_FOLLOW_LINK_RETURN_TYPE ll_follow_link(struct dentry *dentry,
         } else if (THREAD_SIZE == 8192 && current->link_count >= 8) {
                 rc = -ELOOP;
         } else {
-                ll_inode_size_lock(inode, 0);
-                rc = ll_readlink_internal(inode, &request, &symname);
-                ll_inode_size_unlock(inode, 0);
+		ll_inode_size_lock(inode);
+		rc = ll_readlink_internal(inode, &request, &symname);
+		ll_inode_size_unlock(inode);
         }
         if (rc) {
                 cfs_path_put(nd); /* Kernel assumes that ->follow_link()
@@ -167,48 +166,30 @@ static LL_FOLLOW_LINK_RETURN_TYPE ll_follow_link(struct dentry *dentry,
                 GOTO(out, rc);
         }
 
-#ifdef HAVE_COOKIE_FOLLOW_LINK
-        nd_set_link(nd, symname);
-        /* @symname may contain a pointer to the request message buffer,
-           we delay request releasing until ll_put_link then. */
-        RETURN(request);
-#else
-        if (lli->lli_symlink_name == NULL) {
-                /* falling back to recursive follow link if the request
-                 * needs to be cleaned up still. */
-                rc = vfs_follow_link(nd, symname);
-                GOTO(out, rc);
-        }
-        nd_set_link(nd, symname);
-        RETURN(0);
-#endif
+	nd_set_link(nd, symname);
+	/* symname may contain a pointer to the request message buffer,
+	 * we delay request releasing until ll_put_link then.
+	 */
+	RETURN(request);
 out:
-        ptlrpc_req_finished(request);
-#ifdef HAVE_COOKIE_FOLLOW_LINK
-        RETURN(ERR_PTR(rc));
-#else
-        RETURN(rc);
-#endif
+	ptlrpc_req_finished(request);
+	RETURN(ERR_PTR(rc));
 }
 
-#ifdef HAVE_COOKIE_FOLLOW_LINK
 static void ll_put_link(struct dentry *dentry, struct nameidata *nd, void *cookie)
 {
-        ptlrpc_req_finished(cookie);
+	ptlrpc_req_finished(cookie);
 }
-#endif
 
 struct inode_operations ll_fast_symlink_inode_operations = {
-        .readlink       = ll_readlink,
-        .setattr        = ll_setattr,
-        .follow_link    = ll_follow_link,
-#ifdef HAVE_COOKIE_FOLLOW_LINK
-        .put_link       = ll_put_link,
-#endif
-        .getattr        = ll_getattr,
-        .permission     = ll_inode_permission,
-        .setxattr       = ll_setxattr,
-        .getxattr       = ll_getxattr,
-        .listxattr      = ll_listxattr,
-        .removexattr    = ll_removexattr,
+	.readlink	= ll_readlink,
+	.setattr	= ll_setattr,
+	.follow_link	= ll_follow_link,
+	.put_link	= ll_put_link,
+	.getattr	= ll_getattr,
+	.permission	= ll_inode_permission,
+	.setxattr	= ll_setxattr,
+	.getxattr	= ll_getxattr,
+	.listxattr	= ll_listxattr,
+	.removexattr	= ll_removexattr,
 };
