@@ -1124,11 +1124,19 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
 #define LRU_RESIZE_CONNECT_FLAG 0
 #endif
 
+// #define HAVE_ELC_SUPPORT
+
+#ifdef HAVE_ELC_SUPPORT
+#define ELC_CONNECT_FLAG OBD_CONNECT_CANCELSET
+#else
+#define ELC_CONNECT_FLAG 0
+#endif
+
 #define MDT_CONNECT_SUPPORTED  (OBD_CONNECT_RDONLY | OBD_CONNECT_VERSION | \
                                 OBD_CONNECT_ACL | OBD_CONNECT_XATTR | \
                                 OBD_CONNECT_IBITS | \
                                 OBD_CONNECT_NODEVOH | OBD_CONNECT_ATTRFID | \
-                                OBD_CONNECT_CANCELSET | OBD_CONNECT_AT | \
+                                ELC_CONNECT_FLAG | OBD_CONNECT_AT | \
                                 OBD_CONNECT_RMT_CLIENT | \
                                 OBD_CONNECT_RMT_CLIENT_FORCE | \
                                 OBD_CONNECT_BRW_SIZE | OBD_CONNECT_MDS_CAPA | \
@@ -1141,7 +1149,7 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
                                 OBD_CONNECT_REQPORTAL | OBD_CONNECT_VERSION | \
                                 OBD_CONNECT_TRUNCLOCK | OBD_CONNECT_INDEX | \
                                 OBD_CONNECT_BRW_SIZE | OBD_CONNECT_QUOTA64 | \
-                                OBD_CONNECT_CANCELSET | OBD_CONNECT_AT | \
+                                ELC_CONNECT_FLAG | OBD_CONNECT_AT | \
                                 LRU_RESIZE_CONNECT_FLAG | OBD_CONNECT_CKSUM | \
                                 OBD_CONNECT_CHANGE_QS | \
                                 OBD_CONNECT_OSS_CAPA  | OBD_CONNECT_RMT_CLIENT | \
