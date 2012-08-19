@@ -1393,7 +1393,7 @@ static int ptlrpc_server_allow_high(struct ptlrpc_service *svc, int force)
         }
 
         if (svc->srv_n_active_reqs >= running - 1)
-                return 0;
+                return 1;
 
         return cfs_list_empty(&svc->srv_request_queue) ||
                svc->srv_hpreq_count < svc->srv_hpreq_ratio;
