@@ -1519,6 +1519,7 @@ ptlrpc_server_handle_req_in(struct ptlrpc_service *svc)
         req = cfs_list_entry(svc->srv_req_in_queue.next,
                              struct ptlrpc_request, rq_list);
         cfs_list_del_init (&req->rq_list);
+        svc->srv_n_queued_reqs--;
         /* Consider this still a "queued" request as far as stats are
            concerned */
         cfs_spin_unlock(&svc->srv_lock);
@@ -1636,7 +1637,6 @@ err_req:
 	if (req->rq_export)
 		class_export_rpc_put(req->rq_export);
         cfs_spin_lock(&svc->srv_rq_lock);
-        svc->srv_n_queued_reqs--;
         svc->srv_n_active_reqs++;
         cfs_spin_unlock(&svc->srv_rq_lock);
         ptlrpc_server_finish_request(svc, req);
@@ -1697,7 +1697,6 @@ ptlrpc_server_handle_request(struct ptlrpc_service *svc,
         }
 
         cfs_list_del_init(&request->rq_list);
-        svc->srv_n_queued_reqs--;
         svc->srv_n_active_reqs++;
         if (request->rq_hp)
                 svc->srv_n_active_hpreq++;
@@ -2764,7 +2763,6 @@ int ptlrpc_unregister_service(struct ptlrpc_service *service)
 			class_export_rpc_put(req->rq_export);
 
                 cfs_list_del(&req->rq_list);
-                service->srv_n_queued_reqs--;
                 service->srv_n_active_reqs++;
                 ptlrpc_server_finish_request(service, req);
         }
