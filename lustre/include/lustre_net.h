@@ -132,7 +132,7 @@
 /** Absolute limits */
 #define MDT_MIN_THREADS 3UL     /* difficult replies, HPQ, others */
 #ifndef MDT_MAX_THREADS
-#define MDT_MAX_THREADS 512UL
+#define MDT_MAX_THREADS 2048UL
 #endif
 #define MDS_NBUFS       (64 * cfs_num_online_cpus())
 /**
