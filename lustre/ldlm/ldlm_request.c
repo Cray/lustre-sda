@@ -1008,9 +1008,6 @@ int ldlm_cli_cancel_req(struct obd_export *exp,
                 if (!req)
                         GOTO(out, rc = -ENOMEM);
 
-                req->rq_no_resend = 1;
-                req->rq_no_delay = 1;
-
                 req->rq_request_portal = LDLM_CANCEL_REQUEST_PORTAL;
                 req->rq_reply_portal = LDLM_CANCEL_REPLY_PORTAL;
                 ptlrpc_at_set_req_timeout(req);
