@@ -110,7 +110,7 @@
 #define LDLM_MAXREPSIZE (1024)
 
 /* Absolute limits */
-#define MDS_THREADS_MIN 2
+#define MDS_THREADS_MIN 3UL     /* difficult replies, HPQ, others */
 #define MDS_THREADS_MAX 512
 #define MDS_THREADS_MIN_READPAGE 2
 #define MDS_NBUFS       (64 * num_online_cpus())
@@ -895,6 +895,7 @@ void ptlrpc_save_lock (struct ptlrpc_request *req,
                        struct lustre_handle *lock, int mode);
 void ptlrpc_commit_replies (struct obd_export *exp);
 void ptlrpc_schedule_difficult_reply (struct ptlrpc_reply_state *rs);
+int ptlrpc_hpreq_handler(struct ptlrpc_request *req);
 struct ptlrpc_service *ptlrpc_init_svc(int nbufs, int bufsize, int max_req_size,
                                        int max_reply_size,
                                        int req_portal, int rep_portal,
