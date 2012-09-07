@@ -4,8 +4,7 @@ Index: linux-2.6.32-131.12.1.el6.x86_64/drivers/md/raid5.c
 ===================================================================
 --- linux-2.6.32-131.12.1.el6.x86_64.orig/drivers/md/raid5.c	2011-09-23 14:49:20.000000000 +0300
 +++ linux-2.6.32-131.12.1.el6.x86_64/drivers/md/raid5.c	2011-09-23 14:49:54.000000000 +0300
-@@ -193,6 +193,25 @@ static int stripe_operations_active(stru
- 	       test_bit(STRIPE_COMPUTE_RUN, &sh->state);
+@@ -193,5 +193,24 @@ static int stripe_operations_active(stru
  }
  
 +static struct page *zero_copy_data(struct bio *bio, sector_t sector)
@@ -27,7 +26,7 @@ Index: linux-2.6.32-131.12.1.el6.x86_64/drivers/md/raid5.c
 +	return NULL;
 +}
 +
- static void __release_stripe(raid5_conf_t *conf, struct stripe_head *sh)
+ static void __release_stripe(struct r5conf *conf, struct stripe_head *sh)
  {
  	if (atomic_dec_and_test(&sh->count)) {
 @@ -495,6 +514,26 @@ raid5_end_read_request(struct bio *bi, i
@@ -161,16 +160,20 @@ Index: linux-2.6.32-131.12.1.el6.x86_64/drivers/md/raid5.c
  				while (wbi && wbi->bi_sector <
  					dev->sector + STRIPE_SECTORS) {
  					wbi2 = r5_next_bio(wbi, dev->sector);
-@@ -3476,7 +3559,8 @@ static void handle_stripe6(struct stripe
- 			    (i == sh->pd_idx || i == qd_idx ||
- 			     dev->written)) {
- 				pr_debug("Writing block %d\n", i);
--				BUG_ON(!test_bit(R5_UPTODATE, &dev->flags));
-+				BUG_ON(!test_bit(R5_UPTODATE, &dev->flags) &&
-+				       !test_bit(R5_Direct, &dev->flags));
- 				set_bit(R5_Wantwrite, &dev->flags);
- 				if (!test_bit(R5_Insync, &dev->flags) ||
- 				    ((i == sh->pd_idx || i == qd_idx) &&
+@@ -3225,9 +3225,11 @@ static void handle_stripe(struct stripe_head *sh)
+ 		/* All the 'written' buffers and the parity block are ready to
+ 		 * be written back to disk
+ 		 */
+-		BUG_ON(!test_bit(R5_UPTODATE, &sh->dev[sh->pd_idx].flags));
++		BUG_ON(!test_bit(R5_UPTODATE, &sh->dev[sh->pd_idx].flags) &&
++		       !test_bit(R5_Direct, &sh->dev[sh->pd_idx].flags));
+ 		BUG_ON(sh->qd_idx >= 0 &&
+-		       !test_bit(R5_UPTODATE, &sh->dev[sh->qd_idx].flags));
++		       !test_bit(R5_UPTODATE, &sh->dev[sh->qd_idx].flags) &&
++		       !test_bit(R5_Direct, &sh->dev[sh->qd_idx].flags));
+ 		for (i = disks; i--; ) {
+ 			struct r5dev *dev = &sh->dev[i];
+ 			if (test_bit(R5_LOCKED, &dev->flags) &&
 @@ -5210,6 +5294,7 @@ static int run(mddev_t *mddev)
  
  		mddev->queue->backing_dev_info.congested_data = mddev;
@@ -192,13 +195,11 @@ Index: linux-2.6.32-131.12.1.el6.x86_64/drivers/md/raid5.h
  		struct bio	*toread, *read, *towrite, *written;
  		sector_t	sector;			/* sector of this page */
  		unsigned long	flags;
-@@ -276,6 +276,9 @@ struct r6_state {
- 				    */
- #define R5_Wantdrain	13 /* dev->towrite needs to be drained */
- #define R5_WantFUA	14	/* Write should be FUA */
-+
+@@ -275,6 +275,7 @@ struct stripe_head_state {
+ #define	R5_WantFUA	14	/* Write should be FUA */
+ #define	R5_WriteError	15	/* got a write error - need to record it */
+ #define	R5_MadeGood	16	/* A bad block has been fixed by writing to it*/
 +#define	R5_Direct	31	/* Use the pages in bio to do the write directly. */
-+
  /*
   * Write method
   */
