@@ -1,7 +1,6 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
+/*
+ * Copyright (C) 2009-2012 Cray, Inc.
  *
- * Copyright (C) 2009 Cray, Inc.
  *   Author: Nic Henke <nic@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
@@ -24,7 +23,7 @@
 
 void
 _kgnilnd_debug_msg(kgn_msg_t *msg, struct libcfs_debug_msg_data *msgdata, 
-                   const char *fmt, ... )
+                   const char *fmt, ...)
 {
         va_list args;
 
@@ -41,7 +40,7 @@ _kgnilnd_debug_msg(kgn_msg_t *msg, struct libcfs_debug_msg_data *msgdata,
 
 void
 _kgnilnd_debug_conn(kgn_conn_t *conn, struct libcfs_debug_msg_data *msgdata, 
-                    const char *fmt, ... )
+                    const char *fmt, ...)
 {
         va_list args;
 
@@ -72,7 +71,7 @@ _kgnilnd_debug_conn(kgn_conn_t *conn, struct libcfs_debug_msg_data *msgdata,
 
 void
 _kgnilnd_debug_tx(kgn_tx_t *tx, struct libcfs_debug_msg_data *msgdata, 
-                  const char *fmt, ... )
+                  const char *fmt, ...)
 {
         kgn_tx_ev_id_t  *id   = &tx->tx_id;
         char            *nid = "<?>";
@@ -96,7 +95,7 @@ _kgnilnd_debug_tx(kgn_tx_t *tx, struct libcfs_debug_msg_data *msgdata,
 
 void
 _kgnilnd_api_rc_lbug(const char* rcstr, int rc, struct libcfs_debug_msg_data *msgdata, 
-                        const char *fmt, ... )
+                        const char *fmt, ...)
 {
         va_list args;
 

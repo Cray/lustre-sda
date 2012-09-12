@@ -1,8 +1,8 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * Copyright (C) 2009-2012 Cray, Inc.
- *   Author: Nic Henke <nic@cray.com>, James Shimek <jshimek@cray.com>
+ *
+ *   Author: Nic Henke <nic@cray.com>
+ *   Author: James Shimek <jshimek@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
  *
@@ -82,7 +82,7 @@ kgnilnd_nid_to_nicaddrs(__u32 nid, int numnic, __u32 *nicaddr)
                         numnic);
                 return -EINVAL;
         }
-        for (i = 0;;i++) {
+        for (i = 0; ; i++) {
                 if (kgn_nid_table[i].nid == GNILND_MAX_NID_TABLE) {
                         CERROR("could not translate %u to a NIC "
                                "address\n", nid);
@@ -102,7 +102,7 @@ kgnilnd_nicaddr_to_nid(__u32 nicaddr, __u32 *nid)
 {
         int i;
         /* GNILND_RCA_NOT_HOME, so use hardcoded table for SimNow */
-        for (i = 0;;i++) {
+        for (i = 0; ; i++) {
                 if (kgn_nid_table[i].nicaddr == GNILND_MAX_NID_TABLE) {
                         CERROR("could not translate NIC address "
                                 "%u\n",

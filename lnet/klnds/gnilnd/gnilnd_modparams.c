@@ -1,8 +1,10 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * Copyright (C) 2004 Cluster File Systems, Inc.
- *   Author: Eric Barton <eric@bartonsoftware.com>
+ *
+ * Copyright (C) 2009-2012 Cray, Inc.
+ *
+ *   Derived from work by: Eric Barton <eric@bartonsoftware.com>
+ *   Author: Nic Henke <nic@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
  *
@@ -148,6 +150,14 @@ static int mdd_timeout = GNILND_MDD_TIMEOUT;
 CFS_MODULE_PARM(mdd_timeout, "i", int, 0644,
                 "maximum time (in minutes) for mdd to be held"); 
 
+static int sched_timeout = GNILND_SCHED_TIMEOUT;
+CFS_MODULE_PARM(sched_timeout, "i", int, 0644,
+		"scheduler aliveness in seconds max time");
+
+static int sched_nice = GNILND_SCHED_NICE;
+CFS_MODULE_PARM(sched_nice, "i", int, 0444,
+		"scheduler's nice setting, default compute 0 service -20");
+
 kgn_tunables_t kgnilnd_tunables = {
         .kgn_min_reconnect_interval = &min_reconnect_interval,
         .kgn_max_reconnect_interval = &max_reconnect_interval,
@@ -177,7 +187,9 @@ kgn_tunables_t kgnilnd_tunables = {
         .kgn_sched_threads          = &sched_threads,
         .kgn_net_hash_size          = &net_hash_size,
         .kgn_hardware_timeout       = &hardware_timeout,
-        .kgn_mdd_timeout            = &mdd_timeout
+	.kgn_mdd_timeout            = &mdd_timeout,
+	.kgn_sched_timeout	    = &sched_timeout,
+	.kgn_sched_nice		    = &sched_nice
 };
 
 #if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM
@@ -414,6 +426,22 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .mode     = 0444,
                 .proc_handler = &proc_dointvec
         },
+	{
+		INIT_CTL_NAME(32)
+		.procname = "sched_timeout",
+		.data	  = &sched_timeout,
+		.maxlen   = sizeof(int),
+		.mode	  = 0644,
+		.proc_handler = &proc_dointvec
+	},
+	{
+		INIT_CTL_NAME(33)
+		.procname = "sched_nice",
+		.data	  = &sched_nice,
+		.maxlen	  = sizeof(int),
+		.mode	  = 0444,
+		.proc_handler = &proc_dointvec
+	},
         {0}
 };
 

@@ -93,9 +93,6 @@
 #include <linux/blkdev.h>
 #include <linux/blkpg.h>
 #include <linux/init.h>
-#ifdef HAVE_LINUX_KERNEL_LOCK
-#include <linux/smp_lock.h>
-#endif
 #include <linux/swap.h>
 #include <linux/slab.h>
 #include <linux/suspend.h>

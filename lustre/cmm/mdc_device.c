@@ -42,9 +42,6 @@
  * Author: Mike Pershin <tappro@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
 #define DEBUG_SUBSYSTEM S_MDS
 
 #include <obd.h>

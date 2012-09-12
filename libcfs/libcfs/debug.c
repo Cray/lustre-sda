@@ -41,10 +41,6 @@
  *
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
-
 # define DEBUG_SUBSYSTEM S_LNET
 
 #include <libcfs/libcfs.h>
@@ -337,14 +333,16 @@ libcfs_debug_str2mask(int *mask, const char *str, int is_subsys)
  */
 void libcfs_debug_dumplog_internal(void *arg)
 {
+        static unsigned long log_num = 0;
+
         CFS_DECL_JOURNAL_DATA;
 
         CFS_PUSH_JOURNAL;
 
         if (strncmp(libcfs_debug_file_path_arr, "NONE", 4) != 0) {
                 snprintf(debug_file_name, sizeof(debug_file_name) - 1,
-                         "%s.%ld." LPLD, libcfs_debug_file_path_arr,
-                         cfs_time_current_sec(), (long_ptr_t)arg);
+                         "%s.%lu.%lu." LPLD, libcfs_debug_file_path_arr,
+                         cfs_time_current_sec(), log_num++, (long_ptr_t)arg);
                 printk(CFS_KERN_ALERT "LustreError: dumping log to %s\n",
                        debug_file_name);
                 cfs_tracefile_dump_all_pages(debug_file_name);

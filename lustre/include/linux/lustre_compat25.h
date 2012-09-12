@@ -891,7 +891,13 @@ static inline int ll_quota_off(struct super_block *sb, int off, int remount)
 #define ll_add_to_page_cache_lru(pg, mapping, off, gfp) \
         add_to_page_cache(pg, mapping, off, gfp)
 #define ll_pagevec_init(pv, cold)       pagevec_init(&lru_pvec, cold);
-#define ll_pagevec_add(pv, pg)          pagevec_add(pv, pg)
+#define ll_pagevec_add(pv, pg)					\
+({								\
+	int __ret;						\
+								\
+	page_cache_get(pg);					\
+	__ret = pagevec_add(pv, pg);				\
+})
 #define ll_pagevec_lru_add_file(pv)     pagevec_lru_add_file(pv)
 #endif
 
@@ -919,6 +925,13 @@ static inline int ll_quota_off(struct super_block *sb, int off, int remount)
 # define TIMES_SET_FLAGS (ATTR_MTIME_SET | ATTR_ATIME_SET | ATTR_TIMES_SET)
 #else
 # define TIMES_SET_FLAGS (ATTR_MTIME_SET | ATTR_ATIME_SET)
+#endif
+
+#ifndef HAVE_SELINUX_IS_ENABLED
+static inline bool selinux_is_enabled(void)
+{
+        return 0;
+}
 #endif
 
 #endif /* __KERNEL__ */

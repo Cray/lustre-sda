@@ -48,9 +48,6 @@
 #include <linux/init.h>
 #include <linux/fs.h>
 #include <linux/jbd.h>
-#ifdef HAVE_LINUX_KERNEL_LOCK
-#include <linux/smp_lock.h>
-#endif
 #include <linux/buffer_head.h>
 #include <linux/workqueue.h>
 #include <linux/mount.h>

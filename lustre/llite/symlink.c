@@ -39,9 +39,6 @@
 #include <linux/fs.h>
 #include <linux/mm.h>
 #include <linux/stat.h>
-#ifdef HAVE_LINUX_KERNEL_LOCK
-#include <linux/smp_lock.h>
-#endif
 #include <linux/version.h>
 #define DEBUG_SUBSYSTEM S_LLITE
 

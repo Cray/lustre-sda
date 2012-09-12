@@ -35,9 +35,7 @@
  * This file is part of Lustre, http://www.lustre.org/
  * Lustre is a trademark of Sun Microsystems, Inc.
  */
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
+
 #define DEBUG_SUBSYSTEM S_LQUOTA
 
 #ifdef __KERNEL__
@@ -47,9 +45,6 @@
 # include <linux/fs.h>
 # include <linux/jbd.h>
 # include <linux/quota.h>
-# ifdef HAVE_LINUX_KERNEL_LOCK
-# include <linux/smp_lock.h>
-# endif
 # include <linux/buffer_head.h>
 # include <linux/workqueue.h>
 # include <linux/mount.h>

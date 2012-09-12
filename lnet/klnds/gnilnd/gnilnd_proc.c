@@ -1,7 +1,6 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
+/*
+ * Copyright (C) 2009-2012 Cray, Inc.
  *
- * Copyright (C) 2009 Cray, Inc.
  *   Author: Nic Henke <nic@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
@@ -302,7 +301,7 @@ kgnilnd_proc_stats_write(struct file *file, const char *ubuffer,
         atomic_set(&kgnilnd_data.kgn_nkmap_short, 0);
         /* sampling is racy, but so is writing this file! */
         smp_wmb();
-        return (count);
+        return count;
 }
 
 typedef struct {
@@ -432,7 +431,7 @@ kgnilnd_mdd_seq_show (struct seq_file *s, void *iter)
         gni_mem_handle_t        hndl;
 
         if (gseq->gmdd_off == 0) {
-                seq_printf(s,"%s %22s %16s %8s %8s %37s\n",
+                seq_printf(s, "%s %22s %16s %8s %8s %37s\n",
                         "tx", "tx_id", "nob", "physnop",
                         "buftype", "mem handle"); 
                 return 0;
@@ -1093,11 +1092,12 @@ kgnilnd_peer_seq_show (struct seq_file *s, void *iter)
 
         read_unlock(&kgnilnd_data.kgn_peer_conn_lock);
 
-        seq_printf(s, "%p->%s [%d] NIC 0x%x q %d conn %c purg %d "
-                "last %d@%dms dgram %d@%dms "
-                "reconn %dms to %lus \n",
-                peer, libcfs_nid2str(peer->gnp_nid),
-                atomic_read(&peer->gnp_refcount), 
+	seq_printf(s, "%p->%s [%d] %s NIC 0x%x q %d conn %c purg %d "
+		"last %d@%dms dgram %d@%dms "
+		"reconn %dms to %lus \n",
+		peer, libcfs_nid2str(peer->gnp_nid),
+		atomic_read(&peer->gnp_refcount),
+		(peer->gnp_down == GNILND_RCA_NODE_DOWN) ? "down" : "up",
                 peer->gnp_host_id,
                 kgnilnd_count_list(&peer->gnp_tx_queue),
                 conn_str,

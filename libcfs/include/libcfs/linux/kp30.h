@@ -59,9 +59,6 @@
 #include <linux/highmem.h>
 #include <linux/module.h>
 #include <linux/version.h>
-#ifdef HAVE_LINUX_KERNEL_LOCK
-#include <linux/smp_lock.h>
-#endif
 #include <asm/atomic.h>
 #include <asm/uaccess.h>
 #include <linux/rwsem.h>
@@ -369,12 +366,6 @@ static inline void sg_set_page(struct scatterlist *sg, struct page *page,
 #else
 #define INIT_CTL_NAME(a)
 #define INIT_STRATEGY(a)
-#endif
-
-#ifndef HAVE_LINUX_KERNEL_LOCK
-#define lock_kernel()      do {} while (0)
-#define unlock_kernel()    do {} while (0)
-#define kernel_locked()    0
 #endif
 
 #endif

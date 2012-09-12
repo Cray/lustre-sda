@@ -41,18 +41,12 @@
  * Author: Scott Atchley <atchley at myri.com>
  */
 
-#ifndef EXPORT_SYMTAB
-#define EXPORT_SYMTAB
-#endif
 #include <linux/module.h>       /* module */
 #include <linux/kernel.h>       /* module */
 #include <linux/mm.h>
 #include <linux/string.h>
 #include <linux/stat.h>
 #include <linux/errno.h>
-#ifdef HAVE_LINUX_KERNEL_LOCK
-#include <linux/smp_lock.h>
-#endif
 #include <linux/unistd.h>
 #include <linux/uio.h>
 #include <linux/fs.h>

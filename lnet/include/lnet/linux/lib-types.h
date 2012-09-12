@@ -43,9 +43,6 @@
 
 #ifdef __KERNEL__
 # include <linux/uio.h>
-# ifdef HAVE_LINUX_KERNEL_LOCK
-# include <linux/smp_lock.h>
-# endif
 # include <linux/types.h>
 #else
 # define LNET_USE_LIB_FREELIST

@@ -48,9 +48,6 @@
 # include <linux/fs.h>
 # include <linux/sched.h>
 # include <linux/mm.h>
-# ifdef HAVE_LINUX_KERNEL_LOCK
-# include <linux/smp_lock.h>
-# endif
 # include <linux/quotaops.h>
 # include <linux/highmem.h>
 # include <linux/pagemap.h>

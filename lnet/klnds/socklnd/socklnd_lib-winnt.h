@@ -35,10 +35,6 @@
  */
 
 #define DEBUG_PORTAL_ALLOC
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
-
 #ifndef __WINNT_TDILND_LIB_H__
 #define __WINNT_TDILND_LIB_H__
 

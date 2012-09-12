@@ -40,10 +40,6 @@
 #ifndef __PARAMS_TREE_H__
 #define __PARAMS_TREE_H__
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
-
 #include <libcfs/libcfs.h>
 
 #undef LPROCFS

@@ -44,9 +44,6 @@
 #include <linux/pagemap.h>
 #include <linux/mm.h>
 #include <linux/version.h>
-#ifdef HAVE_LINUX_KERNEL_LOCK
-#include <linux/smp_lock.h>
-#endif
 #include <asm/uaccess.h>
 #include <linux/buffer_head.h>   // for wait_on_buffer
 #include <linux/pagevec.h>
@@ -249,7 +246,6 @@ static int ll_dir_readpage(struct file *file, struct page *page0)
                                                GFP_KERNEL);
                 if (ret == 0) {
                         unlock_page(page);
-                        page_cache_get(page);
                         if (ll_pagevec_add(&lru_pvec, page) == 0)
                                 ll_pagevec_lru_add_file(&lru_pvec);
                 } else {
@@ -1036,12 +1032,7 @@ out:
         RETURN(rc);
 }
 
-#ifdef HAVE_UNLOCKED_IOCTL
 static long ll_dir_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
-#else
-static int  ll_dir_ioctl(struct inode *unuse, struct file *file,
-                        unsigned int cmd, unsigned long arg)
-#endif
 {
         struct inode *inode = file->f_dentry->d_inode;
         struct ll_sb_info *sbi = ll_i2sbi(inode);
@@ -1621,10 +1612,6 @@ struct file_operations ll_dir_operations = {
         .release  = ll_dir_release,
         .read     = generic_read_dir,
         .readdir  = ll_readdir,
-#ifdef HAVE_UNLOCKED_IOCTL
         .unlocked_ioctl   = ll_dir_ioctl,
-#else
-        .ioctl          = ll_dir_ioctl,
-#endif
         .fsync    = ll_fsync,
 };

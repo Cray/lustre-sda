@@ -172,7 +172,7 @@ struct obd_statfs {
 
 #define MAX_OBD_NAME 128 /* If this changes, a NEW ioctl must be added */
 
-#define O_LOV_DELAY_CREATE 0100000000  /* hopefully this does not conflict */
+#define O_LOV_DELAY_CREATE 01000000000  /* hopefully this does not conflict */
 
 #define LL_FILE_IGNORE_LOCK     0x00000001
 #define LL_FILE_GROUP_LOCKED    0x00000002

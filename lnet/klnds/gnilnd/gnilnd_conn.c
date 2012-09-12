@@ -1,8 +1,6 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * Copyright (C) 2012 Cray, Inc.
- *   Author: Igor Gorodetsky <iogordet@cray.com>
+ *
  *   Author: Nic Henke <nic@cray.com>
  *   Author: James Shimek <jshimek@cray.com>
  *
@@ -887,7 +885,7 @@ kgnilnd_unpack_connreq(kgn_dgram_t *dgram)
 
         /* few more idiot software or configuration checks */
 
-        switch(connreq->gncr_type) {
+        switch (connreq->gncr_type) {
         case GNILND_CONNREQ_REQ:
                 /* wire up EP and SMSG block - this will check the incoming data
                  * and barf a NAK back if need to */
@@ -954,7 +952,7 @@ kgnilnd_process_dgram(kgn_dgram_t *dgram, gni_post_state_t post_state)
 {
         int rc = 0;
 
-        switch(post_state) {
+        switch (post_state) {
         case GNI_POST_COMPLETED:
                 /* normal state for dgrams that need actual processing */
                 /* GOTO to avoid processing dgram as canceled/done */
@@ -1183,7 +1181,7 @@ kgnilnd_post_dgram(kgn_device_t *dev, lnet_nid_t dstnid, kgn_connreq_type_t type
                 LBUG();
         }
 
-        rc = kgnilnd_alloc_dgram(&dgram,dev, dgtype);
+        rc = kgnilnd_alloc_dgram(&dgram, dev, dgtype);
         if (rc < 0) {
                 rc = -ENOMEM;
                 GOTO(post_failed, rc);
@@ -1229,7 +1227,7 @@ kgnilnd_post_dgram(kgn_device_t *dev, lnet_nid_t dstnid, kgn_connreq_type_t type
          */
 
         if (dstnid == LNET_NID_ANY) {
-                srcnid = LNET_MKNID(LNET_MKNET(GNILND,0), dev->gnd_nid);
+                srcnid = LNET_MKNID(LNET_MKNET(GNILND, 0), dev->gnd_nid);
         } else {
                 srcnid = LNET_MKNID(LNET_NIDNET(dstnid), dev->gnd_nid);
         }
@@ -1327,9 +1325,11 @@ kgnilnd_release_dgram(kgn_device_t *dev, kgn_dgram_t *dgram)
                         int     rerc;
 
                         rerc = kgnilnd_post_dgram(dev, LNET_NID_ANY, GNILND_CONNREQ_REQ, 0);
-                        LASSERTF(rerc == 0, 
-                                "error %d: dev %d could not repost wildcard datagram id 0x%p\n",
-                                rerc, dev->gnd_id, dgram);
+			if (rerc != 0) {
+				/* We failed to repost the WC dgram for some reason
+				 * mark it so the repost system attempts to repost */
+				kgnilnd_admin_addref(dev->gnd_nwcdgrams);
+			}
                 }
 
                 /* always free the old dgram */
@@ -1350,8 +1350,16 @@ kgnilnd_probe_for_dgram(kgn_device_t *dev, kgn_dgram_t **dgramp)
 
         ENTRY;
 
+        /* Probe with the lock held. That way if we get a dgram we dont have it canceled
+         * between finding the ready dgram and grabbing the lock to remove it from the 
+         * list. Otherwise we could be left in an inconsistent state. We own the dgram 
+         * once its off the list so we don't need to worry about others changing it at 
+         * that point. */
+        spin_lock(&dev->gnd_dgram_lock);
+
         grc = kgnilnd_postdata_probe_by_id(dev->gnd_handle, &readyid);
         if (grc != GNI_RC_SUCCESS) {
+                spin_unlock(&dev->gnd_dgram_lock);
                 /* return 0 to indicate nothing happened */
                 RETURN(0);
         }
@@ -1359,10 +1367,6 @@ kgnilnd_probe_for_dgram(kgn_device_t *dev, kgn_dgram_t **dgramp)
         CDEBUG(D_NET, "ready "LPX64" on device 0x%p\n",
                 readyid, dev);
 
-        /* get the lock for the list to pull the valid dgram from the
-         * list - we then own it and don't need to worry about others changing
-         * it underneath us */
-        spin_lock(&dev->gnd_dgram_lock);
         dgram = (kgn_dgram_t *)readyid;
 
         LASSERTF(dgram->gndg_magic == GNILND_DGRAM_MAGIC,
@@ -1437,7 +1441,7 @@ kgnilnd_probe_for_dgram(kgn_device_t *dev, kgn_dgram_t **dgramp)
 
 probe_for_out:
 
-        kgnilnd_release_dgram(dev,dgram);
+        kgnilnd_release_dgram(dev, dgram);
         RETURN(rc);
 }
 
@@ -1562,6 +1566,11 @@ kgnilnd_wait_for_canceled_dgrams(kgn_device_t *dev)
         /* use do while to get at least one check run to allow 
          * regression test for 762072 to hit bug if there */
 
+        /* This function races with the dgram mover during shutdown so it is possible for
+         * a dgram to be seen in kgnilnd_postdata_probe_wait_by_id but be handled in the
+         * dgram mover thread instead of inside of this function.
+         */
+
         /* This should only be called from within shutdown, baseshutdown, or stack reset.
          * there are no assertions here to verify since base_shutdown has nothing in it we can check
          * the net is gone by then. 
@@ -1569,7 +1578,7 @@ kgnilnd_wait_for_canceled_dgrams(kgn_device_t *dev)
 
         do {
                 i++;
-                CDEBUG(((i & (-i)) == i) ? D_WARNING: D_NET,
+                CDEBUG(((i & (-i)) == i) ? D_WARNING : D_NET,
                         "Waiting for %d canceled datagrams to clear on device %d\n",
                         atomic_read(&dev->gnd_canceled_dgrams), dev->gnd_id);
 
@@ -1584,14 +1593,11 @@ kgnilnd_wait_for_canceled_dgrams(kgn_device_t *dev)
                         readyid, dev->gnd_id, dev);
         
                 rc = kgnilnd_probe_for_dgram(dev, &dgram);
-                LASSERTF(rc != 0, "postdata_probe_wait_by_id said "LPX64" was"
-                         "ready, but we didn't find anything to process\n",
-                         readyid);
                 if (rc != 0) {
                         /* if we got a valid dgram or one that is now done, clean up */
                         kgnilnd_release_dgram(dev, dgram);
                 }
-        } while(atomic_read(&dev->gnd_canceled_dgrams));
+        } while (atomic_read(&dev->gnd_canceled_dgrams));
 }
 
 int
@@ -1636,7 +1642,7 @@ kgnilnd_start_connect (kgn_peer_t *peer)
          * die a quick death, so we check for state change and process accordingly */
         
         write_lock(&kgnilnd_data.kgn_peer_conn_lock);
-        if (!kgnilnd_peer_active(peer) || peer->gnp_connecting == GNILND_PEER_NEEDS_DEATH ) {
+        if (!kgnilnd_peer_active(peer) || peer->gnp_connecting == GNILND_PEER_NEEDS_DEATH) {
                 if (peer->gnp_connecting == GNILND_PEER_NEEDS_DEATH) {
                         peer->gnp_connecting = GNILND_PEER_KILL;
                 }
@@ -1738,6 +1744,12 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
                 }
         }
 
+	if (peer->gnp_down == GNILND_RCA_NODE_DOWN) {
+		CNETERR("Received connection request from %s that RCA thinks is"
+			" down.\n", libcfs_nid2str(her_nid));
+		peer->gnp_down = GNILND_RCA_NODE_UP;
+	}
+
         nstale = kgnilnd_close_stale_conns_locked(peer, conn);
 
         /* either way with peer (new or existing), we are ok with ref counts here as the
@@ -1820,7 +1832,7 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
         if (peer->gnp_pending_unlink) {
                 peer->gnp_pending_unlink = 0;
                 kgnilnd_admin_decref(kgnilnd_data.kgn_npending_unlink);
-                CDEBUG(D_NET,"Clearing peer unlink %p\n",peer);
+                CDEBUG(D_NET, "Clearing peer unlink %p\n",peer);
         } 
 
         /* add ref to make it hang around until after we drop the lock */
@@ -1835,10 +1847,6 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
          * This is a Cray extension to the "standard" LND behavior. */
         lnet_notify(peer->gnp_net->gnn_ni, peer->gnp_nid,
                      1, cfs_time_current());
-
-        /* schedule the conn to pick up any SMSG sent by peer before we could
-         * process this dgram */
-        kgnilnd_schedule_conn(conn);
 
         /* drop our 'hold' ref */
         kgnilnd_conn_decref(conn);
@@ -2168,13 +2176,13 @@ kgnilnd_dgram_waitq(void *arg)
         set_user_nice(current, *kgnilnd_tunables.kgn_nice);
 
         /* we dont shut down until the device shuts down ... */
-        while(!kgnilnd_data.kgn_shutdown) {
+        while (!kgnilnd_data.kgn_shutdown) {
                 /* to quiesce or to not quiesce, that is the question */
                 if (unlikely(kgnilnd_data.kgn_quiesce_trigger)) {
                         KGNILND_SPIN_QUIESCE;
                 }
 
-                while (CFS_FAIL_TIMEOUT(CFS_FAIL_GNI_PAUSE_DGRAM_COMP,1)) {}               
+                while (CFS_FAIL_TIMEOUT(CFS_FAIL_GNI_PAUSE_DGRAM_COMP, 1)) {}               
  
                 /* check once a second */
                 grc = kgnilnd_postdata_probe_wait_by_id(dev->gnd_handle, 
@@ -2296,6 +2304,28 @@ kgnilnd_start_outbound_dgrams(kgn_device_t *dev)
         RETURN(did_something);
 }
 
+int
+kgnilnd_repost_wc_dgrams(kgn_device_t *dev)
+{
+	int did_something = 0, to_repost, i;
+	to_repost = atomic_read(&dev->gnd_nwcdgrams);
+	ENTRY;
+
+	for (i = 0; i < to_repost; ++i) {
+		int	rerc;
+		rerc = kgnilnd_post_dgram(dev, LNET_NID_ANY, GNILND_CONNREQ_REQ, 0);
+		if (rerc == 0) {
+			kgnilnd_admin_decref(dev->gnd_nwcdgrams);
+			did_something += 1;
+		} else {
+			CDEBUG(D_NETERROR, "error %d: dev %d could not post wildcard datagram\n",
+				rerc, dev->gnd_id);
+		}
+	}
+
+	RETURN(did_something);
+}
+
 static void
 kgnilnd_dgram_poke_with_stick(unsigned long arg)
 {
@@ -2365,6 +2395,7 @@ kgnilnd_dgram_mover(void *arg)
                         next_purge_check = (long) jiffies + 
                                       cfs_time_seconds(kgnilnd_data.kgn_new_min_timeout / 4);
                 } 
+		did_something += kgnilnd_repost_wc_dgrams(dev);
 
                 /* careful with the jiffy wrap... */
                 timeout = (long)(next_purge_check - jiffies);

@@ -49,10 +49,6 @@
 # include <linux/fs.h>
 # include <linux/list.h>
 # include <linux/sched.h>  /* for struct task_struct, for current.h */
-# include <asm/current.h>  /* for smp_lock.h */
-# ifdef HAVE_LINUX_KERNEL_LOCK
-# include <linux/smp_lock.h>
-# endif
 # include <linux/proc_fs.h>
 # include <linux/mount.h>
 # include <linux/lustre_intent.h>

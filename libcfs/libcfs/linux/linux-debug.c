@@ -40,10 +40,6 @@
  * Author: Phil Schwan <phil@clusterfs.com>
  */
 
-#ifndef EXPORT_SYMTAB
-# define EXPORT_SYMTAB
-#endif
-
 #include <linux/module.h>
 #include <linux/kmod.h>
 #include <linux/notifier.h>
@@ -52,7 +48,7 @@
 #include <linux/string.h>
 #include <linux/stat.h>
 #include <linux/errno.h>
-#ifdef HAVE_LINUX_KERNEL_LOCK
+#ifdef HAVE_KERNEL_LOCKED
 #include <linux/smp_lock.h>
 #endif
 #include <linux/unistd.h>
@@ -318,9 +314,10 @@ static int panic_notifier(struct notifier_block *self, unsigned long unused1,
         if (in_interrupt()) {
                 cfs_trace_debug_print();
         } else {
-                while (current->lock_depth >= 0)
-                        unlock_kernel();
-
+# ifdef HAVE_KERNEL_LOCKED
+		while (kernel_locked())
+			unlock_kernel();
+# endif
                 libcfs_debug_dumplog_internal((void *)(long)cfs_curproc_pid());
         }
 #endif

@@ -1,10 +1,11 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * Copyright (C) 2004 Cluster File Systems, Inc.
- *   Author: Eric Barton <eric@bartonsoftware.com>
+ *
  * Copyright (C) 2009-2012 Cray, Inc.
- *   Author: Nic Henke <nic@cray.com>, James Shimek <jshimek@cray.com>
+ *
+ *   Derived from work by: Eric Barton <eric@bartonsoftware.com>
+ *   Author: Nic Henke <nic@cray.com>
+ *   Author: James Shimek <jshimek@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
  *
@@ -75,10 +76,11 @@
 /* tunables determined at compile time */
 #define GNILND_MIN_TIMEOUT         5             /* minimum timeout interval (seconds) */
 #define GNILND_TO2KA(t)            (((t)-1)/2)   /* timeout -> keepalive interval */
-#define GNILND_MIN_RECONNECT_TO    GNILND_BASE_TIMEOUT/4
+#define GNILND_MIN_RECONNECT_TO    (GNILND_BASE_TIMEOUT/4)
 #define GNILND_MAX_RECONNECT_TO    GNILND_BASE_TIMEOUT
 #define GNILND_HARDWARE_TIMEOUT    15            /* maximum time for data to travel between nodes */
 #define GNILND_MDD_TIMEOUT         15            /* MDD hold timeout in minutes */
+#define GNILND_SCHED_TIMEOUT       1
 #define GNILND_FAST_MAPPING_TRY   \
         *kgnilnd_tunables.kgn_max_retransmits   /* maximum number to attempt mapping of a tx */
 #define GNILND_MAP_RETRY_RATE      1            /* interval between mapping attempts in jiffies */
@@ -103,9 +105,13 @@
 #if defined(CONFIG_CRAY_COMPUTE)
 #define GNILND_SCHED_THREADS      1             /* default # of kgnilnd_scheduler threads */
 #define GNILND_FMABLK             64            /* default number of mboxes per fmablk */
+#define GNILND_SCHED_NICE         0		/* default nice value for scheduler threads */
+#define GNILND_COMPUTE            1             /* compute image */
 #else
 #define GNILND_SCHED_THREADS      3             /* default # of kgnilnd_scheduler threads */
 #define GNILND_FMABLK             1024          /* default number of mboxes per fmablk */
+#define GNILND_SCHED_NICE         -20		/* default nice value for scheduler threads */
+#define GNILND_COMPUTE            0             /* service image */
 #endif
 
 /* EXTRA_BITS are there to allow us to hide NOOP/CLOSE and anything else out of band */
@@ -222,6 +228,10 @@
 #define GNILND_DEL_PEER              1
 #define GNILND_CLEAR_PURGATORY       2
 
+#define GNILND_RCA_NODE_UP           0
+#define GNILND_RCA_NODE_DOWN         1
+#define GNILND_RCA_NODE_UNKNOWN      2
+
 typedef enum kgn_fmablk_state {
         GNILND_FMABLK_IDLE = 0, /* is allocated or ready to be freed */
         GNILND_FMABLK_PHYS,     /* allocated out of slab of physical memory */
@@ -258,8 +268,7 @@ typedef enum kgn_conn_state {
  * will result in dropped packets intead of NAKs. Adding to this is
  * acceptible without changing the CONNREQ_VERSION, but code should
  * be ready to handle NAKs on version mismatch  */
-typedef enum kgn_connreq_type
-{
+typedef enum kgn_connreq_type {
         GNILND_CONNREQ_REQ = 1,         /* how YOU doin' ? */
         GNILND_CONNREQ_NAK,             /* NO soup for you! */
         GNILND_CONNREQ_CLOSE,           /* we should see other people */
@@ -275,8 +284,7 @@ typedef enum kgn_dgram_state {
         GNILND_DGRAM_DONE,
 } kgn_dgram_state_t;
 
-typedef enum kgn_dgram_type
-{
+typedef enum kgn_dgram_type {
         GNILND_DGRAM_REQ = 1,         /* how YOU doin' ? */
         GNILND_DGRAM_WC_REQ,          /* you talkin' to ME? */
         GNILND_DGRAM_NAK,             /* NO soup for you! */
@@ -318,23 +326,20 @@ typedef enum kgn_dgram_type
 
 #define GNILND_CONNREQ_VERSION          2
 
-typedef struct kgn_gniparams
-{
+typedef struct kgn_gniparams {
         __u32            gnpr_host_id;          /* ph. host ID of the NIC */
         __u32            gnpr_cqid;             /* cqid I want peer to use when sending events to me */
         gni_smsg_attr_t  gnpr_smsg_attr;        /* my short msg. attributes */
 } WIRE_ATTR kgn_gniparams_t;
 
-typedef struct kgn_nak_data
-{
+typedef struct kgn_nak_data {
         __s32            gnnd_errno;            /* errno reason for NAK */
 
 } WIRE_ATTR kgn_nak_data_t;
 
 /* the first bits of the connreq struct CANNOT CHANGE FORM EVER
  * without breaking the ability for us to properly NAK someone */
-typedef struct kgn_connreq                      /* connection request/response */
-{                                               
+typedef struct kgn_connreq {                    /* connection request/response */
         __u32             gncr_magic;           /* I'm an gnilnd connreq */
         __u32             gncr_cksum;           /* checksum (0 == disabled) */
         __u16             gncr_type;            /* REQ, NAK, etc */
@@ -354,47 +359,40 @@ typedef struct kgn_connreq                      /* connection request/response *
         };
 } WIRE_ATTR kgn_connreq_t;
 
-typedef struct
-{
+typedef struct {
         gni_mem_handle_t  gnrd_key;
         __u64             gnrd_addr;
         __u32             gnrd_nob;
 } WIRE_ATTR kgn_rdma_desc_t;
 
-typedef struct
-{
+typedef struct {
         lnet_hdr_t        gnim_hdr;             /* LNet header */
         /* LNet payload is in FMA "Message Data" */
 } WIRE_ATTR kgn_immediate_msg_t;
 
-typedef struct
-{
+typedef struct {
         lnet_hdr_t        gnprm_hdr;            /* LNet header */
         __u64             gnprm_cookie;         /* opaque completion cookie */
 } WIRE_ATTR kgn_putreq_msg_t;
 
-typedef struct
-{
+typedef struct {
         __u64             gnpam_src_cookie;     /* reflected completion cookie */
         __u64             gnpam_dst_cookie;     /* opaque completion cookie */
         kgn_rdma_desc_t   gnpam_desc;           /* sender's sink buffer */
 } WIRE_ATTR kgn_putack_msg_t;
 
-typedef struct
-{
+typedef struct {
         lnet_hdr_t        gngm_hdr;             /* LNet header */
         __u64             gngm_cookie;          /* opaque completion cookie */
         kgn_rdma_desc_t   gngm_desc;            /* sender's sink buffer */
 } WIRE_ATTR kgn_get_msg_t;
 
-typedef struct
-{
+typedef struct {
         int               gncm_retval;          /* error on NAK, size on REQ */
         __u64             gncm_cookie;          /* reflected completion cookie */
 } WIRE_ATTR kgn_completion_msg_t;
 
-typedef struct                                  /* NB must fit in FMA "Prefix" */
-{
+typedef struct {                                /* NB must fit in FMA "Prefix" */
         __u32             gnm_magic;            /* I'm an gni message */
         __u16             gnm_version;          /* this is my version number */
         __u16             gnm_type;             /* msg type */
@@ -417,8 +415,7 @@ typedef struct                                  /* NB must fit in FMA "Prefix" *
  * runtime tunable data
  */
 
-typedef struct kgn_tunables
-{
+typedef struct kgn_tunables {
         int              *kgn_min_reconnect_interval; /* connreq starting timeout & retransmit interval */
         int              *kgn_max_reconnect_interval; /* ...exponentially increasing to this */
         int              *kgn_credits;          /* # concurrent sends */
@@ -448,13 +445,14 @@ typedef struct kgn_tunables
         int              *kgn_net_hash_size;    /* size of kgn_net_ht */
         int              *kgn_hardware_timeout; /* max time for a message to get across the network */
         int              *kgn_mdd_timeout;      /* max time for ghal to hold an mdd in minutes */
+	int		 *kgn_sched_timeout;    /* max time for scheduler to run before yielding */
+	int		 *kgn_sched_nice;	/* nice value for kgnilnd scheduler threads */
 #if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM
         cfs_sysctl_table_header_t *kgn_sysctl;  /* sysctl interface */
 #endif
 } kgn_tunables_t;
 
-typedef struct kgn_mbox_info
-{
+typedef struct kgn_mbox_info {
         lnet_nid_t mbx_prev_nid;
         unsigned long mbx_create_conn_memset;
         unsigned long mbx_add_purgatory;
@@ -463,8 +461,7 @@ typedef struct kgn_mbox_info
         unsigned long mbx_release_purg_active_dgram;
 } kgn_mbox_info_t;
 
-typedef struct kgn_fma_memblock
-{
+typedef struct kgn_fma_memblock {
         struct list_head    gnm_bufflist;                          /* memblock is part of device's  gnd_fma_buffs */
         kgn_fmablk_state_t  gnm_state;                             /* how this memory allocated & state of it */
         int                 gnm_hold_timeout;                      /* hold_timeout if used at unmap time */
@@ -481,8 +478,7 @@ typedef struct kgn_fma_memblock
         kgn_mbox_info_t    *gnm_mbox_info;                         /* array of mbox_information about each mbox */
 } kgn_fma_memblock_t;
 
-typedef struct kgn_device
-{
+typedef struct kgn_device {
         gni_nic_handle_t        gnd_handle;       /* device handle */
         gni_cdm_handle_t        gnd_domain;       /* GNI communication domain */
         gni_err_handle_t        gnd_err_handle;   /* device error handle */
@@ -512,6 +508,7 @@ typedef struct kgn_device
         int                     gnd_dgram_ready;  /* dgrams need movin' */
         struct list_head       *gnd_dgrams;       /* nid hash to dgrams */
         atomic_t                gnd_ndgrams;      /* # dgrams extant */
+	atomic_t		gnd_nwcdgrams;    /* # wildcard dgrams to post on device */
         spinlock_t              gnd_dgram_lock;   /* serialize gnd_dgrams */
         struct list_head        gnd_map_list;     /* list of all mapped regions */
         int                     gnd_map_version;  /* version flag for map list */
@@ -552,8 +549,7 @@ typedef struct kgn_device
         atomic_t                gnd_canceled_dgrams; /* # of outstanding cancels */
 } kgn_device_t;
 
-typedef struct kgn_net 
-{
+typedef struct kgn_net {
         struct list_head    gnn_list;           /* chain on kgni_data::kgn_nets */
         kgn_device_t       *gnn_dev;            /* device for this net */
         lnet_ni_t          *gnn_ni;             /* network interface instance */
@@ -608,8 +604,7 @@ typedef struct kgn_tx_ev_id {
         };
 } kgn_tx_ev_id_t;
 
-typedef struct kgn_dgram
-{
+typedef struct kgn_dgram {
         struct list_head     gndg_list;          /* on hash dev::gnd_dgrams */
         kgn_dgram_state_t    gndg_state;         /* state of this dgram */
         kgn_dgram_type_t     gndg_type;          /* REQ, NAK, etc */
@@ -620,8 +615,7 @@ typedef struct kgn_dgram
         kgn_connreq_t        gndg_conn_in;       /* connreq from remote node */
 } kgn_dgram_t;
 
-typedef struct kgn_tx                           /* message descriptor */
-{
+typedef struct kgn_tx {                         /* message descriptor */
         struct list_head          tx_list;      /* TX queues - peer, conn, rdma */
         kgn_tx_list_state_t       tx_list_state;/* where in state machine is this TX ? */
         struct list_head         *tx_list_p;    /* pointer to current list */
@@ -653,8 +647,7 @@ typedef struct kgn_tx                           /* message descriptor */
         };
 } kgn_tx_t;
 
-typedef struct kgn_conn
-{
+typedef struct kgn_conn {
         kgn_device_t       *gnc_device;         /* which device */
         struct kgn_peer    *gnc_peer;           /* owning peer */
         struct list_head    gnc_list;           /* stash on peer's conn list - or pending purgatory lists as we clear them */
@@ -692,7 +685,9 @@ typedef struct kgn_conn
         int                 gnc_peer_error;     /* errno peer sent us on CLOSE */
         kgn_conn_state_t    gnc_state;          /* connection state */
         int                 gnc_scheduled;      /* being attented to */
-        atomic_t            gnc_refcount;       /* # users */
+	char		    gnc_sched_caller[30]; /* what function last called schedule */
+	int		    gnc_sched_line;	/* what line # last called schedule */
+	atomic_t            gnc_refcount;       /* # users */
         spinlock_t          gnc_list_lock;      /* serialise tx lists, max_rx_age */
         gni_ep_handle_t     gnc_ephandle;       /* GNI endpoint */
         kgn_fma_memblock_t *gnc_fma_blk;        /* pointer to fma block for our mailbox */
@@ -704,16 +699,15 @@ typedef struct kgn_conn
         int                 gnc_mbox_id;        /* id of mbox in fma_blk                 */
         short               gnc_needs_detach;   /* flag set in detach_purgatory_all_locked so reaper will clear out purgatory */
         short               gnc_needs_closing;  /* flag set in del_conns when called from kgnilnd_del_peer_or_conn */
+	atomic_t	    gnc_tx_in_use;	/* # of tx's currently in use by another thread use kgnilnd_peer_conn_lock */
 } kgn_conn_t;
 
-typedef struct kgn_mdd_purgatory
-{
+typedef struct kgn_mdd_purgatory {
         gni_mem_handle_t    gmp_map_key;        /* mapping key */
         struct list_head    gmp_list;           /* entry point for purgatory list */
 } kgn_mdd_purgatory_t;
 
-typedef struct kgn_peer
-{
+typedef struct kgn_peer {
         struct list_head    gnp_list;                   /* stash on global peer list */
         struct list_head    gnp_connd_list;             /* schedule on kgn_connd_peers */
         struct list_head    gnp_conns;                  /* all active connections and all conns in purgatory for the peer */
@@ -731,13 +725,15 @@ typedef struct kgn_peer
         unsigned long       gnp_reconnect_time;         /* CURRENT_SECONDS when reconnect OK */
         unsigned long       gnp_reconnect_interval;     /* exponential backoff */
         atomic_t            gnp_dirty_eps;              /* # of old but yet to be destroyed EPs from conns */
+	int                 gnp_down;                   /* rca says peer down */
+	unsigned long       gnp_down_event_time;        /* time peer down */
+	unsigned long       gnp_up_event_time;          /* time peer back up */
 } kgn_peer_t;
 
 /* the kgn_rx_t is a struct for handing to LNET as the private pointer for things
  * like lnet_parse. It allows a single pointer to let us get enough
  * information in _recv and friends */
-typedef struct kgn_rx
-{
+typedef struct kgn_rx {
         kgn_conn_t              *grx_conn;      /* connection */
         kgn_msg_t               *grx_msg;       /* message */
         lnet_msg_t              *grx_lntmsg;    /* lnet msg for this rx (eager only) */
@@ -745,8 +741,7 @@ typedef struct kgn_rx
         struct timespec          grx_received;  /* time this msg received */
 } kgn_rx_t;
 
-typedef struct kgn_data
-{ 
+typedef struct kgn_data { 
         int                     kgn_init;             /* initialisation state */
         int                     kgn_shutdown;         /* shut down? */
         int                     kgn_wc_kill;          /* Should I repost the WC */
@@ -812,7 +807,8 @@ typedef struct kgn_data
         atomic_t                kgn_npending_unlink;  /* # of peers pending unlink */
         atomic_t                kgn_npending_conns;   /* # of conns with pending closes */
         atomic_t                kgn_npending_detach;  /* # of conns with a pending detach */
-
+	unsigned long		kgn_last_scheduled;   /* last time schedule was called in a sched thread */
+	unsigned long		kgn_last_condresched; /* last time cond_resched was called in a sched thread */
 } kgn_data_t;
 
 extern kgn_data_t         kgnilnd_data;
@@ -820,7 +816,18 @@ extern kgn_tunables_t     kgnilnd_tunables;
 
 extern void kgnilnd_destroy_peer(kgn_peer_t *peer);
 extern void kgnilnd_destroy_conn(kgn_conn_t *conn);
-extern void kgnilnd_schedule_conn (kgn_conn_t *conn);
+extern void _kgnilnd_schedule_conn(kgn_conn_t *conn, const char *caller, int line);
+
+/* Macro wrapper for _kgnilnd_schedule_conn. This will store the function
+ * and the line of the calling function to allow us to debug problematic
+ * schedule calls in the future without the programmer having to mark
+ * the location manually.
+ */
+#define kgnilnd_schedule_conn(conn)					\
+do {									\
+	_kgnilnd_schedule_conn(conn, __func__, __LINE__);		\
+} while (0)
+
 
 static inline int
 kgnilnd_thread_start (int(*fn)(void *arg), void *arg, char *name, int id)
@@ -1143,7 +1150,7 @@ do {                                                                    \
             (conn->gnc_ephandle != NULL) &&                             \
             (conn->gnc_state != GNILND_CONN_DESTROY_EP)) {              \
                 set_mb(conn->gnc_state, GNILND_CONN_DESTROY_EP);        \
-                kgnilnd_schedule_conn(conn);                            \
+		kgnilnd_schedule_conn(conn);                            \
         } else if (atomic_read(&conn->gnc_refcount) == 0) {             \
                 kgnilnd_destroy_conn(conn);                             \
         }                                                               \
@@ -1193,7 +1200,7 @@ kgnilnd_conn_clean_errno(int errno)
 {
         /*  - ESHUTDOWN - LND is unloading 
          *  - EUCLEAN - admin requested via "lctl del_peer"
-         *  - ENETRESET - admin requested via "lctl disconnect"
+	 *  - ENETRESET - admin requested via "lctl disconnect" or rca event
          *  - ENOTRECOVERABLE - stack reset 
          *  - EISCONN - cleared via "lctl push"
          *  not doing ESTALE - that isn't clean */
@@ -1255,25 +1262,25 @@ static inline struct list_head *
 kgnilnd_tx_state2list(kgn_peer_t *peer, kgn_conn_t *conn,
                         kgn_tx_list_state_t to_state) 
 {
-        switch(to_state) {
-                case GNILND_TX_PEERQ:
-                        return &peer->gnp_tx_queue;
-                case GNILND_TX_FMAQ:
-                        return &conn->gnc_fmaq;
-                case GNILND_TX_LIVE_FMAQ:
-                case GNILND_TX_LIVE_RDMAQ:
-                case GNILND_TX_DYING:
-                        return NULL;
-                case GNILND_TX_MAPQ:
-                        return &conn->gnc_device->gnd_map_tx;
-                case GNILND_TX_RDMAQ:
-                        return &conn->gnc_device->gnd_rdmaq;
-                default:
-                        /* IDLE, FREED or ALLOCD is not valid "on list" state */
-                        CERROR("invalid state requested: %s\n", 
-                                kgnilnd_tx_state2str(to_state));
-                        LBUG();
-                        break;
+        switch (to_state) {
+        case GNILND_TX_PEERQ:
+                return &peer->gnp_tx_queue;
+        case GNILND_TX_FMAQ:
+                return &conn->gnc_fmaq;
+        case GNILND_TX_LIVE_FMAQ:
+        case GNILND_TX_LIVE_RDMAQ:
+        case GNILND_TX_DYING:
+                return NULL;
+        case GNILND_TX_MAPQ:
+                return &conn->gnc_device->gnd_map_tx;
+        case GNILND_TX_RDMAQ:
+                return &conn->gnc_device->gnd_rdmaq;
+        default:
+                /* IDLE, FREED or ALLOCD is not valid "on list" state */
+                CERROR("invalid state requested: %s\n", 
+                        kgnilnd_tx_state2str(to_state));
+                LBUG();
+                break;
         }
 }
 
@@ -1301,39 +1308,39 @@ kgnilnd_tx_add_state_locked(kgn_tx_t *tx, kgn_peer_t *peer,
 
         /* add refcount */
         switch (state) {
-                case GNILND_TX_PEERQ:
-                        kgnilnd_peer_addref(peer);
-                        break;
-                case GNILND_TX_ALLOCD:
-                        /* no refs needed */
-                        break;
-                case GNILND_TX_FMAQ:
-                        kgnilnd_conn_addref(conn);
-                        break;
-                case GNILND_TX_MAPQ:
-                        atomic_inc(&conn->gnc_device->gnd_nq_map);
-                        kgnilnd_conn_addref(conn);
-                        break;
-                case GNILND_TX_LIVE_FMAQ:
-                        atomic_inc(&conn->gnc_nlive_fma);
-                        kgnilnd_conn_addref(conn);
-                        break;
-                case GNILND_TX_LIVE_RDMAQ:
-                        atomic_inc(&conn->gnc_nlive_rdma);
-                        kgnilnd_conn_addref(conn);
-                        break;
-                case GNILND_TX_RDMAQ:
-                        atomic_inc(&conn->gnc_nq_rdma);
-                        kgnilnd_conn_addref(conn);
-                        break;
-                case GNILND_TX_DYING:
-                        kgnilnd_conn_addref(conn);
-                        break;
-                default:
-                        CERROR("invalid state requested: %s\n", 
-                                kgnilnd_tx_state2str(state));
-                        LBUG();
-                        break;;
+        case GNILND_TX_PEERQ:
+                kgnilnd_peer_addref(peer);
+                break;
+        case GNILND_TX_ALLOCD:
+                /* no refs needed */
+                break;
+        case GNILND_TX_FMAQ:
+                kgnilnd_conn_addref(conn);
+                break;
+        case GNILND_TX_MAPQ:
+                atomic_inc(&conn->gnc_device->gnd_nq_map);
+                kgnilnd_conn_addref(conn);
+                break;
+        case GNILND_TX_LIVE_FMAQ:
+                atomic_inc(&conn->gnc_nlive_fma);
+                kgnilnd_conn_addref(conn);
+                break;
+        case GNILND_TX_LIVE_RDMAQ:
+                atomic_inc(&conn->gnc_nlive_rdma);
+                kgnilnd_conn_addref(conn);
+                break;
+        case GNILND_TX_RDMAQ:
+                atomic_inc(&conn->gnc_nq_rdma);
+                kgnilnd_conn_addref(conn);
+                break;
+        case GNILND_TX_DYING:
+                kgnilnd_conn_addref(conn);
+                break;
+        default:
+                CERROR("invalid state requested: %s\n", 
+                        kgnilnd_tx_state2str(state));
+                LBUG();
+                break;;
         }
 
         /* if this changes, change kgnilnd_alloc_tx */
@@ -1377,36 +1384,36 @@ kgnilnd_tx_del_state_locked(kgn_tx_t *tx, kgn_peer_t *peer,
 
         /* drop refcount */
         switch (tx->tx_list_state) {
-                case GNILND_TX_PEERQ:
-                        kgnilnd_peer_decref(peer);
-                        break;
-                case GNILND_TX_FREED:
-                case GNILND_TX_IDLE:
-                case GNILND_TX_ALLOCD:
-                        /* no refs needed */
-                        break;
-                case GNILND_TX_DYING:
-                        kgnilnd_conn_decref(conn);
-                        break;
-                case GNILND_TX_FMAQ:
-                        kgnilnd_conn_decref(conn);
-                        break;
-                case GNILND_TX_MAPQ:
-                        atomic_dec(&conn->gnc_device->gnd_nq_map);
-                        kgnilnd_conn_decref(conn);
-                        break;
-                case GNILND_TX_LIVE_FMAQ:
-                        atomic_dec(&conn->gnc_nlive_fma);
-                        kgnilnd_conn_decref(conn);
-                        break;
-                case GNILND_TX_LIVE_RDMAQ:
-                        atomic_dec(&conn->gnc_nlive_rdma);
-                        kgnilnd_conn_decref(conn);
-                        break;
-                case GNILND_TX_RDMAQ:
-                        atomic_dec(&conn->gnc_nq_rdma);
-                        kgnilnd_conn_decref(conn);
-                /* don't need to assert on default, already did in set */
+        case GNILND_TX_PEERQ:
+                kgnilnd_peer_decref(peer);
+                break;
+        case GNILND_TX_FREED:
+        case GNILND_TX_IDLE:
+        case GNILND_TX_ALLOCD:
+                /* no refs needed */
+                break;
+        case GNILND_TX_DYING:
+                kgnilnd_conn_decref(conn);
+                break;
+        case GNILND_TX_FMAQ:
+                kgnilnd_conn_decref(conn);
+                break;
+        case GNILND_TX_MAPQ:
+                atomic_dec(&conn->gnc_device->gnd_nq_map);
+                kgnilnd_conn_decref(conn);
+                break;
+        case GNILND_TX_LIVE_FMAQ:
+                atomic_dec(&conn->gnc_nlive_fma);
+                kgnilnd_conn_decref(conn);
+                break;
+        case GNILND_TX_LIVE_RDMAQ:
+                atomic_dec(&conn->gnc_nlive_rdma);
+                kgnilnd_conn_decref(conn);
+                break;
+        case GNILND_TX_RDMAQ:
+                atomic_dec(&conn->gnc_nq_rdma);
+                kgnilnd_conn_decref(conn);
+        /* don't need to assert on default, already did in set */
         }
 
         /* for ALLOCD, this might already be true, but no harm doing it again */
@@ -1499,6 +1506,7 @@ kgnilnd_validate_tx_ev_id (kgn_tx_ev_id_t *ev_id, kgn_tx_t **txp, kgn_conn_t **c
         }
         /* just insurance */
         kgnilnd_conn_addref(conn);
+	kgnilnd_admin_addref(conn->gnc_tx_in_use);
         read_unlock(&kgnilnd_data.kgn_peer_conn_lock);
 
         /* we know this is safe - as the TX won't be reused until AFTER
@@ -1513,6 +1521,7 @@ kgnilnd_validate_tx_ev_id (kgn_tx_ev_id_t *ev_id, kgn_tx_t **txp, kgn_conn_t **c
          * lctl disconnect or del_peer. */
         if (tx == NULL) {
                 CNETERR("txe_idx %d is gone, ignoring event\n", ev_id->txe_idx);
+		kgnilnd_admin_decref(conn->gnc_tx_in_use);
                 kgnilnd_conn_decref(conn);
                 return;
         }
@@ -1645,11 +1654,11 @@ void kgnilnd_release_purgatory_list(struct list_head *conn_list);
 
 void kgnilnd_update_reaper_timeout (long timeout);
 void kgnilnd_unmap_buffer (kgn_tx_t *tx, int error);
-kgn_tx_t * kgnilnd_new_tx_msg (int type, lnet_nid_t source);
+kgn_tx_t *kgnilnd_new_tx_msg (int type, lnet_nid_t source);
 void kgnilnd_tx_done (kgn_tx_t *tx, int completion);
 void kgnilnd_txlist_done(struct list_head *txlist, int error);
 void kgnilnd_unlink_peer_locked (kgn_peer_t *peer);
-void kgnilnd_schedule_conn (kgn_conn_t *conn);
+void _kgnilnd_schedule_conn(kgn_conn_t *conn, const char *caller, int line);
 void kgnilnd_schedule_process_conn(kgn_conn_t *conn, int sched_intent);
 
 void kgnilnd_schedule_dgram (kgn_device_t *dev);
@@ -1673,12 +1682,13 @@ void kgnilnd_schedule_device_timer(unsigned long arg);
 int kgnilnd_reaper (void *arg);
 int kgnilnd_scheduler (void *arg);
 int kgnilnd_dgram_mover(void *arg);
+int kgnilnd_rca(void *arg);
 
 int kgnilnd_create_conn(kgn_conn_t **connp, kgn_device_t *dev);
 int kgnilnd_conn_isdup_locked(kgn_peer_t *peer, kgn_conn_t *newconn);
-kgn_conn_t * kgnilnd_find_conn_locked (kgn_peer_t *peer);
+kgn_conn_t *kgnilnd_find_conn_locked (kgn_peer_t *peer);
 int kgnilnd_get_conn(kgn_conn_t **connp, kgn_peer_t);
-kgn_conn_t * kgnilnd_find_or_create_conn_locked(kgn_peer_t *peer);
+kgn_conn_t *kgnilnd_find_or_create_conn_locked(kgn_peer_t *peer);
 void kgnilnd_peer_cancel_tx_queue(kgn_peer_t *peer);
 void kgnilnd_cancel_peer_connect_locked(kgn_peer_t *peer, struct list_head *zombies);
 int kgnilnd_close_stale_conns_locked (kgn_peer_t *peer, kgn_conn_t *newconn);
@@ -1690,6 +1700,9 @@ void kgnilnd_complete_closed_conn(kgn_conn_t *conn);
 void kgnilnd_destroy_conn_ep(kgn_conn_t *conn);
 
 int kgnilnd_close_peer_conns_locked (kgn_peer_t *peer, int why);
+int kgnilnd_report_node_state(lnet_nid_t nid, int down);
+void kgnilnd_wakeup_rca_thread(void);
+int kgnilnd_start_rca_thread(void);
 
 int kgnilnd_tunables_init(void);
 void kgnilnd_tunables_fini(void);
@@ -1736,16 +1749,15 @@ static inline const char *
 kgnilnd_fmablk_state2str(kgn_fmablk_state_t state)
 {
         /* Only want single char string for this */
-        switch(state)
-        {
-                case GNILND_FMABLK_IDLE:
-                        return "I";
-                case GNILND_FMABLK_PHYS:
-                        return "P";
-                case GNILND_FMABLK_VIRT:
-                        return "V";
-                case GNILND_FMABLK_FREED:
-                        return "F";
+        switch (state) {
+        case GNILND_FMABLK_IDLE:
+                return "I";
+        case GNILND_FMABLK_PHYS:
+                return "P";
+        case GNILND_FMABLK_VIRT:
+                return "V";
+        case GNILND_FMABLK_FREED:
+                return "F";
         }
         return "<unknown state>";
 }
@@ -1753,8 +1765,7 @@ kgnilnd_fmablk_state2str(kgn_fmablk_state_t state)
 static inline const char *
 kgnilnd_msgtype2str(int type)
 {
-        switch(type)
-        {
+        switch (type) {
                 DO_TYPE(GNILND_MSG_NONE);
                 DO_TYPE(GNILND_MSG_NOOP);
                 DO_TYPE(GNILND_MSG_IMMEDIATE);
@@ -1773,8 +1784,7 @@ kgnilnd_msgtype2str(int type)
 static inline const char *
 kgnilnd_tx_state2str(kgn_tx_list_state_t state)
 {
-        switch(state)
-        {
+        switch (state) {
                 DO_TYPE(GNILND_TX_IDLE);
                 DO_TYPE(GNILND_TX_ALLOCD);
                 DO_TYPE(GNILND_TX_PEERQ);
@@ -1793,8 +1803,7 @@ static inline const char *
 kgnilnd_conn_state2str(kgn_conn_t *conn)
 {
         kgn_conn_state_t state = conn->gnc_state;
-        switch(state)
-        {
+        switch (state) {
                 DO_TYPE(GNILND_CONN_DUMMY);
                 DO_TYPE(GNILND_CONN_LISTEN);
                 DO_TYPE(GNILND_CONN_CONNECTING);
@@ -1812,8 +1821,7 @@ kgnilnd_connreq_type2str(kgn_connreq_t *connreq)
 {
         kgn_connreq_type_t type = connreq->gncr_type;
 
-        switch(type)
-        {
+        switch (type) {
                 DO_TYPE(GNILND_CONNREQ_REQ);
                 DO_TYPE(GNILND_CONNREQ_NAK);
                 DO_TYPE(GNILND_CONNREQ_CLOSE);
@@ -1826,8 +1834,7 @@ kgnilnd_dgram_state2str(kgn_dgram_t *dgram)
 {
         kgn_dgram_state_t state = dgram->gndg_state;
 
-        switch(state)
-        {
+        switch (state) {
                 DO_TYPE(GNILND_DGRAM_USED);
                 DO_TYPE(GNILND_DGRAM_POSTING);
                 DO_TYPE(GNILND_DGRAM_POSTED);
@@ -1843,8 +1850,7 @@ kgnilnd_dgram_type2str(kgn_dgram_t *dgram)
 {
         kgn_dgram_type_t type = dgram->gndg_type;
 
-        switch(type)
-        {
+        switch (type) {
                 DO_TYPE(GNILND_DGRAM_REQ);
                 DO_TYPE(GNILND_DGRAM_WC_REQ);
                 DO_TYPE(GNILND_DGRAM_NAK);

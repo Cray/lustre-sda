@@ -38,9 +38,6 @@
 
 #include <linux/fs.h>
 #include <linux/sched.h>
-#ifdef HAVE_LINUX_KERNEL_LOCK
-#include <linux/smp_lock.h>
-#endif
 #include <linux/quotaops.h>
 
 #define DEBUG_SUBSYSTEM S_LLITE
