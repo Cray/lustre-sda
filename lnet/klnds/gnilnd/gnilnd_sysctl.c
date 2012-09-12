@@ -1,8 +1,8 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * Copyright (C) 2012 Cray, Inc.
+ *
  *   Author: Nic Henke <nic@cray.com>
+ *   Author: James Shimek <jshimek@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
  *
@@ -26,8 +26,7 @@
 
 #include "gnilnd.h"
 
-typedef struct kgn_sysctl_data 
-{
+typedef struct kgn_sysctl_data {
         int                     ksd_pause_trigger;
         int                     ksd_quiesce_secs;
         int                     ksd_rdmaq_override;
@@ -137,7 +136,7 @@ int LL_PROC_PROTO(proc_trigger_stack_reset)
        while (kgnilnd_data.kgn_needs_reset != 0) {
                i++;
                LCONSOLE((((i) & (-i)) == i) ? D_WARNING : D_NET,
-                               "Waiting forstack reset request to clear\n");
+                               "Waiting for stack reset request to clear\n");
                cfs_pause(cfs_time_seconds(1 * i));
        }
 

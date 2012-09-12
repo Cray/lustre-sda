@@ -111,7 +111,17 @@ extern int cfs_race_state;
 #define CFS_FAIL_GNI_NET_LOOKUP         0xf040
 #define CFS_FAIL_GNI_RECV_TIMEOUT       0xf041
 #define CFS_FAIL_GNI_SEND_TIMEOUT       0xf042
- 
+#define CFS_FAIL_GNI_ONLY_NOOP          0xf043
+#define CFS_FAIL_GNI_FINISH_PURG2       0xf044
+#define CFS_FAIL_GNI_RACE_RESET         0xf045
+#define CFS_FAIL_GNI_GNP_CONNECTING1    0xf046
+#define CFS_FAIL_GNI_GNP_CONNECTING2    0xf047
+#define CFS_FAIL_GNI_GNP_CONNECTING3    0xf048
+#define CFS_FAIL_GNI_SCHEDULE_COMPLETE  0xf049
+#define CFS_FAIL_GNI_PUT_ACK_AGAIN      0xf050
+#define CFS_FAIL_GNI_GET_REQ_AGAIN      0xf051
+#define CFS_FAIL_GNI_SCHED_DEADLINE	0xf052
+
 /* Failure injection control */
 #define CFS_FAIL_MASK_SYS    0x0000FF00
 #define CFS_FAIL_MASK_LOC   (0x000000FF | CFS_FAIL_MASK_SYS)

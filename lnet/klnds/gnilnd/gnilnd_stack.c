@@ -1,8 +1,6 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * Copyright (C) 2012 Cray, Inc.
- *   Author: Igor Gorodetsky <iogordet@cray.com>
+ *
  *   Author: Nic Henke <nic@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
@@ -75,7 +73,7 @@ kgnilnd_bump_timeouts(__u32 nap_time, char *reason)
                                  * we'll back it up and schedule the conn to trigger
                                  * a NOOP */
                                 conn->gnc_last_tx = jiffies - timeout;
-                                kgnilnd_schedule_conn(conn);
+				kgnilnd_schedule_conn(conn);
                         }
                 }
         }
@@ -140,6 +138,7 @@ kgnilnd_quiesce_wait(char *reason)
                  * ensure that there is no traffic until quiesce is over ?*/
         } else {
                 /* GO! GO! GO! */
+
                 for (i = 0; i < kgnilnd_data.kgn_ndevs; i++) {
                         kgn_device_t *dev = &kgnilnd_data.kgn_devices[i];
                         kgnilnd_schedule_dgram(dev);
@@ -173,6 +172,9 @@ kgnilnd_reset_stack(void)
         __u32            seconds;
         unsigned long    start, end;
         ENTRY;
+        
+        /* Race with del_peer and its atomics */
+        CFS_RACE(CFS_FAIL_GNI_RACE_RESET);
 
         if (kgnilnd_data.kgn_init != GNILND_INIT_ALL) {
                 CERROR("can't reset the stack, gnilnd is not initialized\n");
@@ -206,7 +208,7 @@ kgnilnd_reset_stack(void)
         for (i = 0; i < *kgnilnd_tunables.kgn_net_hash_size; i++) {
                 list_for_each_entry(net, &kgnilnd_data.kgn_nets[i], gnn_list) {
                         rc = kgnilnd_cancel_net_dgrams(net);
-                        LASSERTF(rc == 0, "couldn't cleanup datagrams: %d\n",rc);
+                        LASSERTF(rc == 0, "couldn't cleanup datagrams: %d\n", rc);
                 }
         }
 
@@ -272,7 +274,11 @@ kgnilnd_reset_stack(void)
         /* don't let the little weasily purgatory conns hide from us */
         for (i = 0; i < *kgnilnd_tunables.kgn_peer_hash_size; i++) {
                 list_for_each_entry_safe(peer, peerN, &kgnilnd_data.kgn_peers[i], gnp_list) {
-                        kgnilnd_detach_purgatory_locked(peer, &souls);
+                        kgn_conn_t       *conn, *connN;
+
+                        list_for_each_entry_safe(conn, connN, &peer->gnp_conns, gnc_list) {
+                                kgnilnd_detach_purgatory_locked(conn, &souls);
+                        }
                 }
         }
 
@@ -284,6 +290,11 @@ kgnilnd_reset_stack(void)
         /* validate we are now clean */
         for (i = 0; i < kgnilnd_data.kgn_ndevs; i++) {
                 kgn_device_t    *dev = &kgnilnd_data.kgn_devices[i];
+
+                /* now all the cons/mboxes should be cleaned up, including purgatory
+                 * so go through and release the MDDs for our persistent PHYS fma_blks
+                 */
+                kgnilnd_unmap_phys_fmablk(dev);
 
                 LASSERTF(atomic_read(&dev->gnd_nfmablk) == 0,
                         "reset failed: fma blocks still live %d\n",
@@ -318,9 +329,12 @@ kgnilnd_reset_stack(void)
         
         /* only reset our known devs */
         for (i = 0; i < kgnilnd_data.kgn_ndevs; i++) {
-                rc = kgnilnd_dev_init(&kgnilnd_data.kgn_devices[i]);
+                kgn_device_t    *dev = &kgnilnd_data.kgn_devices[i];
+                rc = kgnilnd_dev_init(dev);
                 LASSERTF(rc == 0, "dev_init failed for dev %d\n", i);
-                rc = kgnilnd_setup_wildcard_dgram(&kgnilnd_data.kgn_devices[i]);
+                kgnilnd_map_phys_fmablk(dev);
+                LASSERTF(rc == 0, "map_phys_fmablk failed for dev %d\n", i);
+                rc = kgnilnd_setup_wildcard_dgram(dev);
                 LASSERTF(rc == 0, "couldnt setup datagrams on dev %d: %d\n",
                         i, rc);
         }
@@ -466,8 +480,7 @@ kgnilnd_pause_threads(void)
                 kgnilnd_data.kgn_needs_pause = 1;
 
                 wake_up(&kgnilnd_data.kgn_ruhroh_waitq);
-        }
-        else {
+        } else {
             CDEBUG(D_NET, "thread pause already underway\n");
         }
 }
@@ -497,8 +510,7 @@ kgnilnd_check_hw_quiesce(void)
         if (!kgnilnd_data.kgn_ruhroh_shutdown) {
                 CDEBUG(D_NET, "initiating thread pause\n");
                 kgnilnd_pause_threads();
-        }
-        else {
+        } else {
                 CDEBUG(D_NET, "thread pause bypassed because of shutdown\n");
         }
 
@@ -530,8 +542,7 @@ kgnilnd_quiesce_end_callback(gni_nic_handle_t nic_handle, uint64_t msecs)
                 set_mb(kgnilnd_data.kgn_quiesce_secs, msecs / MSEC_PER_SEC);
                 set_mb(kgnilnd_data.kgn_bump_info_rdy, 1);
                 kgnilnd_pause_threads();
-        }
-        else {
+        } else {
                 CDEBUG(D_NET, "timeout bump bypassed because of shutdown\n");
         }
 }
@@ -547,8 +558,7 @@ kgnilnd_critical_error(struct gni_err *err_handle)
                 CDEBUG(D_NET, "requesting stack reset\n");
                 kgnilnd_data.kgn_needs_reset = 1;
                 wake_up(&kgnilnd_data.kgn_ruhroh_waitq);
-        }
-        else {
+        } else {
                 CDEBUG(D_NET, "stack reset bypassed because of shutdown\n");
         }
 }

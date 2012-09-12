@@ -986,14 +986,13 @@ AC_SUBST(RALND)
 # check whether to use the Gemini Network Interface lnd
 #
 AC_DEFUN([LN_CONFIG_GNILND],
-[#### Gemini Network Interface
-AC_MSG_CHECKING([whether to enable GNI])
+[AC_MSG_CHECKING([to enable GNI lnd])
 AC_ARG_ENABLE([gni],
 	AC_HELP_STRING([--enable-gni],
 			[enable GNI lnd]),
        [],[enable_gni='no'])
 AC_MSG_RESULT([$enable_gni])
-GNILND=""
+
 if test x$enable_gni = xyes ; then
   AC_MSG_CHECKING([if GNI kernel headers are present])
   # placeholder
@@ -1003,12 +1002,37 @@ if test x$enable_gni = xyes ; then
   LB_LINUX_TRY_COMPILE([
 	#include <linux/types.h>
 	#include <gni_pub.h>
-	#include <krca_lib.h>
   ],[
-	gni_cdm_handle_t 	*kgni_domain;
-	gni_return_t 		rc;
-	int 			rrc;
-	__u32 			nid = 0, nic_addr;
+	gni_cdm_handle_t        kgni_domain;
+	gni_return_t            rc;
+        int                     rrc;
+
+	rc = gni_cdm_create(0, 1, 1, 0, &kgni_domain);
+
+	rrc = (rc == GNI_RC_SUCCESS) ? 0 : 1;
+
+        return rrc;
+
+  ],[
+	AC_MSG_RESULT([yes])
+	GNILND="gnilnd"
+  ],[
+	AC_MSG_RESULT([no])
+	GNILND=""
+	AC_MSG_ERROR([can't compile gnilnd with given GNICPPFLAGS: $GNICPPFLAGS])
+  ])
+  # at this point, we have gnilnd basic support, now check for extra features
+  AC_MSG_CHECKING([to use RCA in gnilnd])
+  LB_LINUX_TRY_COMPILE([
+	#include <linux/types.h>
+	#include <gni_pub.h>
+        #include <krca_lib.h>
+  ],[
+	gni_cdm_handle_t        kgni_domain;
+	gni_return_t            rc;
+	krca_ticket_t		ticket = KRCA_NULL_TICKET;
+        int                     rrc;
+        __u32                   nid = 0, nic_addr;
 
 	rc = gni_cdm_create(0, 1, 1, 0, &kgni_domain);
 
@@ -1016,18 +1040,20 @@ if test x$enable_gni = xyes ; then
 
 	rrc += krca_nid_to_nicaddrs(nid, 1, &nic_addr);
 
-	return rrc;
+	rrc += krca_register(&ticket, RCA_MAKE_SERVICE_INDEX(RCA_IO_CLASS, 9), 99, 0);
 
+        return rrc;
   ],[
 	AC_MSG_RESULT([yes])
-	GNILND="gnilnd"
+	GNICPPFLAGS="$GNICPPFLAGS -DGNILND_USE_RCA=1"
+	GNILNDRCA="gnilndrca"
   ],[
 	AC_MSG_RESULT([no])
-	AC_MSG_ERROR([can't compile gnilnd with given GNICPPFLAGS: $GNICPPFLAGS])
   ])
   EXTRA_KCFLAGS="$EXTRA_KCFLAGS_save"
 fi
 AC_SUBST(GNICPPFLAGS)
+AC_SUBST(GNILNDRCA)
 AC_SUBST(GNILND)
 ])
 
@@ -1837,6 +1863,7 @@ AM_CONDITIONAL(BUILD_IIBLND, test x$IIBLND = "xiiblnd")
 AM_CONDITIONAL(BUILD_VIBLND, test x$VIBLND = "xviblnd")
 AM_CONDITIONAL(BUILD_RALND, test x$RALND = "xralnd")
 AM_CONDITIONAL(BUILD_GNILND, test x$GNILND = "xgnilnd")
+AM_CONDITIONAL(BUILD_GNILND_RCA, test x$GNILNDRCA = "xgnilndrca")
 AM_CONDITIONAL(BUILD_PTLLND, test x$PTLLND = "xptllnd")
 AM_CONDITIONAL(BUILD_UPTLLND, test x$UPTLLND = "xptllnd")
 AM_CONDITIONAL(BUILD_USOCKLND, test x$USOCKLND = "xusocklnd")

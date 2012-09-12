@@ -1,8 +1,10 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * Copyright (C) 2004 Cluster File Systems, Inc.
- *   Author: Eric Barton <eric@bartonsoftware.com>
+ *
+ * Copyright (C) 2009-2012 Cray, Inc.
+ *
+ *   Derived from work by: Eric Barton <eric@bartonsoftware.com>
+ *   Author: Nic Henke <nic@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
  *
@@ -29,7 +31,14 @@ CFS_MODULE_PARM(credits, "i", int, 0444,
 
 static int peer_credits = 16;
 CFS_MODULE_PARM(peer_credits, "i", int, 0444,
-                "# concurrent sends to 1 peer");
+                "# LNet peer credits");
+
+/* NB - we'll not actually limit sends to this, we just size the mailbox buffer
+ * such that at most we'll have concurrent_sends * max_immediate messages
+ * in the mailbox */
+static int concurrent_sends = 0;
+CFS_MODULE_PARM(concurrent_sends, "i", int, 0444,
+                "# concurrent HW sends to 1 peer");
 
 /* default for 2k nodes @ 16 peer credits */
 static int fma_cq_size = 32768;
@@ -57,11 +66,7 @@ static int max_immediate = (2<<10);
 CFS_MODULE_PARM(max_immediate, "i", int, 0644,
                 "immediate/RDMA breakpoint");
 
-#ifdef CONFIG_CRAY_GEMINI
-static int checksum = 3;
-#else
-static int checksum = 0;
-#endif
+static int checksum = GNILND_CHECKSUM_DEFAULT;
 CFS_MODULE_PARM(checksum, "i", int, 0644,
                 "0: None, 1: headers, 2: short msg, 3: all traffic");
 
@@ -86,7 +91,7 @@ CFS_MODULE_PARM(ptag, "i", int, 0444,
                 "ptag for Gemini CDM");
 
 static int max_retransmits = 1024;
-CFS_MODULE_PARM(max_retransmits, "i", int, 0644,
+CFS_MODULE_PARM(max_retransmits, "i", int, 0444,
                 "max retransmits for FMA");
 
 static int nwildcard = 4;
@@ -117,9 +122,13 @@ static int vmap_cksum = 0;
 CFS_MODULE_PARM(vmap_cksum, "i", int, 0644,
                 "use vmap for all kiov checksumming, default off");
 
-static int mbox_per_block = GNILND_FMABLK_MAX;
+static int mbox_per_block = GNILND_FMABLK;
 CFS_MODULE_PARM(mbox_per_block, "i", int, 0644,
                 "mailboxes per block");
+
+static int nphys_mbox = 0;
+CFS_MODULE_PARM(nphys_mbox, "i", int, 0444,
+                "# mbox to preallocate from physical memory, default 0");
 
 static int mbox_credits = GNILND_MBOX_CREDITS;
 CFS_MODULE_PARM(mbox_credits, "i", int, 0644,
@@ -137,11 +146,24 @@ static int hardware_timeout = GNILND_HARDWARE_TIMEOUT;
 CFS_MODULE_PARM(hardware_timeout, "i", int, 0444,
                 "maximum time for traffic to get from one node to another");
 
+static int mdd_timeout = GNILND_MDD_TIMEOUT;
+CFS_MODULE_PARM(mdd_timeout, "i", int, 0644,
+                "maximum time (in minutes) for mdd to be held"); 
+
+static int sched_timeout = GNILND_SCHED_TIMEOUT;
+CFS_MODULE_PARM(sched_timeout, "i", int, 0644,
+		"scheduler aliveness in seconds max time");
+
+static int sched_nice = GNILND_SCHED_NICE;
+CFS_MODULE_PARM(sched_nice, "i", int, 0444,
+		"scheduler's nice setting, default compute 0 service -20");
+
 kgn_tunables_t kgnilnd_tunables = {
         .kgn_min_reconnect_interval = &min_reconnect_interval,
         .kgn_max_reconnect_interval = &max_reconnect_interval,
         .kgn_credits                = &credits,
         .kgn_peer_credits           = &peer_credits,
+        .kgn_concurrent_sends       = &concurrent_sends,
         .kgn_fma_cq_size            = &fma_cq_size,
         .kgn_timeout                = &timeout,
         .kgn_max_immediate          = &max_immediate,
@@ -160,10 +182,14 @@ kgn_tunables_t kgnilnd_tunables = {
         .kgn_peer_health            = &peer_health,
         .kgn_vmap_cksum             = &vmap_cksum,
         .kgn_mbox_per_block         = &mbox_per_block,
+        .kgn_nphys_mbox             = &nphys_mbox,
         .kgn_mbox_credits           = &mbox_credits,
         .kgn_sched_threads          = &sched_threads,
         .kgn_net_hash_size          = &net_hash_size,
-        .kgn_hardware_timeout       = &hardware_timeout
+        .kgn_hardware_timeout       = &hardware_timeout,
+	.kgn_mdd_timeout            = &mdd_timeout,
+	.kgn_sched_timeout	    = &sched_timeout,
+	.kgn_sched_nice		    = &sched_nice
 };
 
 #if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM
@@ -368,6 +394,54 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .mode     = 0444,
                 .proc_handler = &proc_dointvec
         },
+        {
+                .ctl_name = 28,
+                .procname = "mdd_timeout",
+                .data     = &mdd_timeout,
+                .maxlen   = sizeof(int),
+                .mode     = 0644,
+                .proc_handler = &proc_dointvec
+        },
+        {
+                .ctl_name = 29,
+                .procname = "max_retransmits"
+                .data     = &max_retransmits,
+                .maxlen   = sizeof(int),
+                .mode     = 0444,
+                .proc_handler = &proc_dointvec
+        },
+        {
+                .ctl_name = 30,
+                .procname = "concurrent_sends",
+                .data     = &concurrent_sends,
+                .maxlen   = sizeof(int),
+                .mode     = 0444,
+                .proc_handler = &proc_dointvec
+        },
+        {
+                .ctl_name = 31,
+                .procname = "nphys_mbox",
+                .data     = &nphys_mbox,
+                .maxlen   = sizeof(int),
+                .mode     = 0444,
+                .proc_handler = &proc_dointvec
+        },
+	{
+		.ctl_name = 32,
+		.procname = "sched_timeout",
+		.data	  = &sched_timeout,
+		.maxlen   = sizeof(int),
+		.mode	  = 0644,
+		.proc_handler = &proc_dointvec
+	},
+	{
+		.ctl_name = 33,
+		.procname = "sched_nice",
+		.data	  = &sched_nice,
+		.maxlen	  = sizeof(int),
+		.mode	  = 0444,
+		.proc_handler = &proc_dointvec
+	},
         {0}
 };
 

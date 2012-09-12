@@ -1,7 +1,6 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
+/*
+ * Copyright (C) 2009-2012 Cray, Inc.
  *
- * Copyright (C) 2009 Cray, Inc.
  *   Author: Nic Henke <nic@cray.com>
  *
  *   This file is part of Lustre, http://www.lustre.org.
@@ -26,7 +25,7 @@
 /* helper macros */
 extern void
 _kgnilnd_api_rc_lbug(const char *rcstr, int rc, struct libcfs_debug_msg_data *data, 
-                        const char *fmt, ... );
+                        const char *fmt, ...);
 
 #define kgnilnd_api_rc_lbug(cdls, rc, file, func, line, fmt, a...)            \
 do {                                                                          \
@@ -36,14 +35,14 @@ do {                                                                          \
         /* we don't mask this - it is always at D_ERROR */                    \
         _kgnilnd_api_rc_lbug(kgnilnd_api_rc2str(rc), (rc), &_msg_dbg_data,    \
                              fmt, ##a);                 \
-} while(0)
+} while (0)
 
 #define DO_RETCODE(x) case x: return #x;
 static inline const char *
 kgnilnd_api_rc2str(gni_return_t rrc)
 {
 
-        switch(rrc) {
+        switch (rrc) {
                 DO_RETCODE(GNI_RC_SUCCESS)
                 DO_RETCODE(GNI_RC_NOT_DONE);
                 DO_RETCODE(GNI_RC_INVALID_PARAM);
@@ -77,7 +76,7 @@ kgnilnd_api_rc2str(gni_return_t rrc)
 do {                                                                            \
         kgnilnd_api_rc_lbug(NULL, rrc, __FILE__, __func__, __LINE__,            \
                 apick_fn"("apick_fmt")", ##args);                               \
-} while(0)
+} while (0)
 
 #define GNILND_API_SWBUG(args...)                                               \
 do {                                                                            \
@@ -143,7 +142,7 @@ static inline gni_return_t kgnilnd_cdm_create(
 
         /* Error injection */
         if (CFS_FAIL_CHECK(CFS_FAIL_GNI_CDM_CREATE)) {
-                rrc = cfs_fail_val ? cfs_fail_val: GNI_RC_INVALID_PARAM;
+                rrc = cfs_fail_val ? cfs_fail_val : GNI_RC_INVALID_PARAM;
         } else {
                 rrc = gni_cdm_create(inst_id, ptag, cookie, modes, cdm_hndl);
         }
@@ -183,7 +182,7 @@ static inline gni_return_t kgnilnd_cdm_attach(
 
         /* Error injection */
         if (CFS_FAIL_CHECK(CFS_FAIL_GNI_CDM_ATTACH)) {
-                rrc = cfs_fail_val ? cfs_fail_val: GNI_RC_INVALID_PARAM;
+                rrc = cfs_fail_val ? cfs_fail_val : GNI_RC_INVALID_PARAM;
         } else {
                 rrc = gni_cdm_attach(cdm_hndl, device_id, local_addr, nic_hndl);
         }
@@ -223,7 +222,7 @@ static inline gni_return_t kgnilnd_cdm_destroy(
 
         /* Error injection */
         if (CFS_FAIL_CHECK(CFS_FAIL_GNI_CQ_DESTROY)) {
-                rrc = cfs_fail_val ? cfs_fail_val: GNI_RC_INVALID_PARAM;
+                rrc = cfs_fail_val ? cfs_fail_val : GNI_RC_INVALID_PARAM;
         } else {
                 rrc = gni_cdm_destroy(
                         cdm_hndl);
@@ -263,7 +262,7 @@ static inline gni_return_t kgnilnd_subscribe_errors (
 
         /* Error injection */
         if (CFS_FAIL_CHECK(CFS_FAIL_GNI_ERR_SUBSCRIBE)) {
-                rrc = cfs_fail_val ? cfs_fail_val: GNI_RC_INVALID_PARAM;
+                rrc = cfs_fail_val ? cfs_fail_val : GNI_RC_INVALID_PARAM;
         } else {
                 rrc = gni_subscribe_errors(
                         nic_handle, mask, EEQ_size, EQ_new_event, app_crit_err,
@@ -336,7 +335,7 @@ static inline gni_return_t kgnilnd_set_quiesce_callback (
 
         /* Error injection */
         if (CFS_FAIL_CHECK(CFS_FAIL_GNI_REG_QUIESCE)) {
-                rrc = cfs_fail_val ? cfs_fail_val: GNI_RC_INVALID_PARAM;
+                rrc = cfs_fail_val ? cfs_fail_val : GNI_RC_INVALID_PARAM;
         } else {
                 rrc = gni_set_quiesce_callback(
                         nic_handle, qsce_func);
@@ -412,7 +411,7 @@ static inline gni_return_t kgnilnd_cq_create(
 
         /* Error injection */
         if (CFS_FAIL_CHECK(CFS_FAIL_GNI_CQ_CREATE)) {
-                rrc = cfs_fail_val ? cfs_fail_val: GNI_RC_INVALID_PARAM;
+                rrc = cfs_fail_val ? cfs_fail_val : GNI_RC_INVALID_PARAM;
         } else {
                 rrc = gni_cq_create(
                        nic_hndl, entry_count, delay_index, event_handler,
@@ -455,7 +454,7 @@ static inline gni_return_t kgnilnd_cq_destroy(
 
         /* Error injection */
         if (CFS_FAIL_CHECK(CFS_FAIL_GNI_CQ_DESTROY)) {
-                rrc = cfs_fail_val ? cfs_fail_val: GNI_RC_INVALID_PARAM;
+                rrc = cfs_fail_val ? cfs_fail_val : GNI_RC_INVALID_PARAM;
         } else {
 
                 rrc = gni_cq_destroy(
@@ -1148,8 +1147,7 @@ static inline gni_return_t kgnilnd_get_completed(
         gni_return_t rrc;
 
 
-        rrc = gni_get_completed(
-                cq_hndl,event_data,post_descr);
+        rrc = gni_get_completed(cq_hndl, event_data, post_descr);
 
         switch (rrc)  {
         case GNI_RC_TRANSACTION_ERROR:
@@ -1157,13 +1155,10 @@ static inline gni_return_t kgnilnd_get_completed(
                 break;
         case GNI_RC_DESCRIPTOR_ERROR:
         case GNI_RC_INVALID_PARAM:
-                GNILND_API_SWBUG(
-                        cq_hndl,event_data,post_descr);
+                GNILND_API_SWBUG(cq_hndl, event_data, post_descr);
                 break;
         default:  
-                GNILND_API_RC_LBUG(
-                        cq_hndl,event_data,post_descr);
-
+                GNILND_API_RC_LBUG(cq_hndl, event_data, post_descr);
                 /* LBUG never returns, but just for style and consistency */
                 break;
         }
