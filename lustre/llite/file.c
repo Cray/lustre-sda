@@ -2581,7 +2581,6 @@ struct file_operations ll_file_operations_noflock = {
 
 struct inode_operations ll_file_inode_operations = {
         .setattr        = ll_setattr,
-        .truncate       = ll_truncate,
         .getattr        = ll_getattr,
         .permission     = ll_inode_permission,
         .setxattr       = ll_setxattr,

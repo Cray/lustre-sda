@@ -1349,8 +1349,10 @@ int ll_setattr_raw(struct dentry *dentry, struct iattr *attr)
         int rc = 0, rc1 = 0;
         ENTRY;
 
-        CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu valid %x\n", inode->i_ino,
-               attr->ia_valid);
+ 	CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu (%p) to %llu, valid %x\n",
+ 		inode->i_ino,
+ 		inode,i_size_read(inode),
+ 		attr->ia_valid);
         ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_SETATTR, 1);
 
         if (ia_valid & ATTR_SIZE) {
