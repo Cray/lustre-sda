@@ -273,10 +273,22 @@ fi
 # remove_from_page_cache() was exported between 2.6.35 and 2.6.38
 # delete_from_page_cache() is exported from 2.6.39
 AC_DEFUN([LC_EXPORT_TRUNCATE_COMPLETE],
-         [LB_CHECK_SYMBOL_EXPORT([truncate_complete_page],
-                                 [mm/truncate.c],
-                                 [AC_DEFINE(HAVE_TRUNCATE_COMPLETE_PAGE, 1,
-                                            [kernel export truncate_complete_page])])
+[AC_MSG_CHECKING([if Linux was built with symbol truncate_complete_page exported])
+LB_LINUX_TRY_COMPILE([
+        #include <linux/mm.h>
+        #include <linux/fs.h>
+],[
+        struct address_space *mapping;
+        struct page *page;
+
+        truncate_complete_page(mapping, page);
+],[
+        AC_MSG_RESULT([yes])
+        AC_DEFINE(HAVE_TRUNCATE_COMPLETE_PAGE, 1,
+                        [kernel export truncate_complete_page])
+],[
+        AC_MSG_RESULT([no])
+])
           LB_CHECK_SYMBOL_EXPORT([remove_from_page_cache],
                                  [mm/filemap.c],
                                  [AC_DEFINE(HAVE_REMOVE_FROM_PAGE_CACHE, 1,
@@ -285,7 +297,7 @@ AC_DEFUN([LC_EXPORT_TRUNCATE_COMPLETE],
                                  [mm/filemap.c],
                                  [AC_DEFINE(HAVE_DELETE_FROM_PAGE_CACHE, 1,
                                             [kernel export delete_from_page_cache])])
-         ])
+])
 
 AC_DEFUN([LC_EXPORT_TRUNCATE_RANGE],
 [LB_CHECK_SYMBOL_EXPORT([truncate_inode_pages_range],

@@ -171,11 +171,7 @@ static int dio_complete_routine(struct bio *bio, unsigned int done, int error)
         }
 
         /* the check is outside of the cycle for performance reason -bzzz */
-#ifdef CONFIG_LUSTRE_PATCH	/* hack to recognize SLES11SP2 */
-        if (!(bio->bi_rw & REQ_WRITE))
-#else
         if (!cfs_test_bit(BIO_RW, &bio->bi_rw))
-#endif
 						{
                 bio_for_each_segment(bvl, bio, i) {
                         if (likely(error == 0))
