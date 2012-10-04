@@ -711,6 +711,11 @@ static int vvp_io_fault_start(const struct lu_env *env,
 
         /* must return locked page */
         if (fio->ft_mkwrite) {
+        	/* we grab alloc_sem to exclude truncate case.
+        	* Otherwise, we could add dirty pages into osc cache
+        	* while truncate is on-going. */
+        	DOWN_READ_I_ALLOC_SEM(inode);
+
                 LASSERT(cfio->ft_vmpage != NULL);
                 lock_page(cfio->ft_vmpage);
         } else {
@@ -734,6 +739,38 @@ static int vvp_io_fault_start(const struct lu_env *env,
                  * and retry. */
                 GOTO(out, result = +1);
         }
+
+
+	if (fio->ft_mkwrite ) {
+		pgoff_t last_index;
+		/*
+		 * Capture the size while holding the i_alloc_sem from above
+		 * we want to make sure that we complete the mkwrite action
+		 * while holding this lock. We need to make sure that we
+		 * are still using the same memory, and that we are
+		 * not past the end of the file.
+		 */
+		last_index = cl_index(obj, i_size_read(inode) - 1);
+		if ( (vmpage->mapping != inode->i_mapping ||
+				last_index < fio->ft_index)) {
+			CDEBUG(D_PAGE,
+				"llite: mkwrite and truncate race happened: "
+				"%p: 0x%lx 0x%lx\n",
+				vmpage->mapping,fio->ft_index,last_index);
+			/*
+			 * We need to return if we are
+			 * passed the end of the file. This will propagate
+			 * up the call stack to ll_page_mkwrite where
+			 * we will return VM_FAULT_NOPAGE. Any non-negative
+			 * value returned here will be silently
+			 * converted to 0. If the vmpage->mapping is null
+			 * the error code would be converted back to ENODATA
+			 * in ll_page_mkwrite0. Thus we return -ENODATA
+			 * to handle both cases
+			 */
+			GOTO(out, result = -ENODATA);
+		}
+	}
 
         page = cl_page_find(env, obj, fio->ft_index, vmpage, CPT_CACHEABLE);
         if (IS_ERR(page))
@@ -770,7 +807,13 @@ static int vvp_io_fault_start(const struct lu_env *env,
 
         size = i_size_read(inode);
         last = cl_index(obj, size - 1);
-        LASSERT(fio->ft_index <= last);
+        /*
+         * The ft_index is only used in the case of
+         * a mkwrite action. We need to check
+         * our assertions are correct, since
+         * we should have caught this above
+         */
+        LASSERT(!fio->ft_mkwrite || fio->ft_index <= last);
         if (fio->ft_index == last)
                 /*
                  * Last page is mapped partially.
@@ -786,6 +829,8 @@ static int vvp_io_fault_start(const struct lu_env *env,
 out:
         /* return unlocked vmpage to avoid deadlocking */
         unlock_page(vmpage);
+	if (fio->ft_mkwrite)
+		UP_READ_I_ALLOC_SEM(inode);
 #ifdef HAVE_VM_OP_FAULT
         cfio->fault.ft_flags &= ~VM_FAULT_LOCKED;
 #endif
