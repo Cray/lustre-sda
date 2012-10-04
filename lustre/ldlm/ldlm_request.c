@@ -709,7 +709,7 @@ int ldlm_prep_elc_req(struct obd_export *exp, struct ptlrpc_request *req,
 
         if (cancels == NULL)
                 cancels = &head;
-        if (exp_connect_cancelset(exp)) {
+	if (ns_connect_cancelset(ns)) {
                 /* Estimate the amount of available space in the request. */
                 req_capsule_filled_sizes(pill, RCL_CLIENT);
                 avail = ldlm_capsule_handles_avail(pill, RCL_CLIENT, canceloff);
@@ -739,7 +739,7 @@ int ldlm_prep_elc_req(struct obd_export *exp, struct ptlrpc_request *req,
                 RETURN(rc);
         }
 
-        if (exp_connect_cancelset(exp)) {
+	if (ns_connect_cancelset(ns)) {
                 if (canceloff) {
                         dlm = req_capsule_client_get(pill, &RMF_DLM_REQ);
                         LASSERT(dlm);
@@ -1138,8 +1138,6 @@ int ldlm_cli_cancel_req(struct obd_export *exp, cfs_list_t *cancels,
                         ptlrpc_request_free(req);
                         GOTO(out, rc);
                 }
-                req->rq_no_resend = 1;
-                req->rq_no_delay = 1;
 
                 req->rq_request_portal = LDLM_CANCEL_REQUEST_PORTAL;
                 req->rq_reply_portal = LDLM_CANCEL_REPLY_PORTAL;
