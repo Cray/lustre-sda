@@ -659,6 +659,12 @@ subscribe_retry:
 				continue;
 			}
 
+			/* Only care about compute and service nodes not GPUs */
+			if (RSN_GET_FLD(event.ev_gen.svid_node.rs_node_flat,
+					TYPE) != rt_node) {
+				continue;
+			}
+
 			switch (event.ev_id) {
 			case ec_node_available:
 				CDEBUG(D_INFO, "ec_node_available\n");
