@@ -2221,6 +2221,9 @@ kgnilnd_recv (lnet_ni_t *ni, void *private, lnet_msg_t *lntmsg,
 
         switch (rxmsg->gnm_type) {
         default:
+		GNIDBG_MSG(D_NETERROR, rxmsg, "conn %p, rx %p, rxmsg %p, lntmsg %p"
+		" niov=%d kiov=%p iov=%p offset=%d mlen=%d rlen=%d",
+		conn, rx, rxmsg, lntmsg, niov, kiov, iov, offset, mlen, rlen);
                 LBUG();
 
         case GNILND_MSG_IMMEDIATE:
