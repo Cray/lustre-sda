@@ -74,13 +74,9 @@ static int checksum_dump = 0;
 CFS_MODULE_PARM(checksum_dump, "i", int, 0644,
                 "0: None, 1: dump log on failure, 2: payload data to D_INFO log");
 
-static int bte_hash = 1;
-CFS_MODULE_PARM(bte_hash, "i", int, 0644,
+static int bte_dlvr_mode = GNILND_RDMA_DLVR_OPTION;
+CFS_MODULE_PARM(bte_dlvr_mode, "i", int, 0644,
                 "enable hashing for BTE (RDMA) transfers");
-
-static int bte_adapt = 1;
-CFS_MODULE_PARM(bte_adapt, "i", int, 0644,
-                "enable adaptive request and response for BTE (RDMA) transfers");
 
 static int bte_relaxed_ordering = 1;
 CFS_MODULE_PARM(bte_relaxed_ordering, "i", int, 0644,
@@ -169,8 +165,7 @@ kgn_tunables_t kgnilnd_tunables = {
         .kgn_max_immediate          = &max_immediate,
         .kgn_checksum               = &checksum,
         .kgn_checksum_dump          = &checksum_dump,
-        .kgn_bte_hash               = &bte_hash,
-        .kgn_bte_adapt              = &bte_adapt,
+	.kgn_bte_dlvr_mode          = &bte_dlvr_mode,
         .kgn_bte_relaxed_ordering   = &bte_relaxed_ordering,
         .kgn_ptag                   = &ptag,
         .kgn_max_retransmits        = &max_retransmits,
@@ -260,16 +255,8 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
         },
         {
                 INIT_CTL_NAME(11)
-                .procname = "bte_hash",
-                .data     = &bte_hash,
-                .maxlen   = sizeof(int),
-                .mode     = 0644,
-                .proc_handler = &proc_dointvec
-        },
-        {
-                INIT_CTL_NAME(12)
-                .procname = "bte_adapt",
-                .data     = &bte_adapt,
+		.procname = "bte_dlvr_mode",
+		.data     = &bte_dlvr_mode,
                 .maxlen   = sizeof(int),
                 .mode     = 0644,
                 .proc_handler = &proc_dointvec
@@ -281,7 +268,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .maxlen   = sizeof(int),
                 .mode     = 0444,
                 .proc_handler = &proc_dointvec
-        },
+
         {
                 INIT_CTL_NAME(14)
                 .procname = "nwildcard",

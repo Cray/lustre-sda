@@ -1781,11 +1781,8 @@ kgnilnd_rdma(kgn_tx_t *tx, int type,
         tx->tx_rdma_desc.remote_addr = sink->gnrd_addr;
         tx->tx_rdma_desc.remote_mem_hndl = sink->gnrd_key;
         tx->tx_rdma_desc.length = nob;
-        if (!*kgnilnd_tunables.kgn_bte_hash)
-                tx->tx_rdma_desc.dlvr_mode |= GNI_DLVMODE_NO_HASH;        
-        if (!*kgnilnd_tunables.kgn_bte_adapt)
-                tx->tx_rdma_desc.dlvr_mode |= (GNI_DLVMODE_NO_ADAPT | GNI_DLVMODE_NO_RADAPT); 
-
+	if (*kgnilnd_tunables.kgn_bte_dlvr_mode)
+		tx->tx_rdma_desc.dlvr_mode = *kgnilnd_tunables.kgn_bte_dlvr_mode;
         /* prep final completion message */
         kgnilnd_init_msg(&tx->tx_msg, type, tx->tx_msg.gnm_srcnid);
         tx->tx_msg.gnm_u.completion.gncm_cookie = cookie;

@@ -36,6 +36,12 @@
 #define GNILND_BASE_TIMEOUT        TIMEOUT_SECS(TO_GNILND_timeout)
 #define GNILND_CHECKSUM_DEFAULT    0            /* all off for Aries */
 
+#if defined(CONFIG_CRAY_COMPUTE)
+#define GNILND_RDMA_DLVR_OPTION    GNI_DLVMODE_PERFORMANCE
+#else
+#define GNILND_RDMA_DLVR_OPTION    GNI_DLVMODE_PERFORMANCE
+#endif
+
 /* plug in our functions for use on the simulator */
 #if !defined(GNILND_USE_RCA)
 
