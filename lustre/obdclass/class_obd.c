@@ -76,16 +76,20 @@ unsigned int obd_max_dirty_pages = 256;
 unsigned int obd_timeout = OBD_TIMEOUT_DEFAULT;   /* seconds */
 unsigned int ldlm_timeout = LDLM_TIMEOUT_DEFAULT; /* seconds */
 /* Adaptive timeout defs here instead of ptlrpc module for /proc/sys/ access */
-#ifdef CRAY_XT3
+#if defined(CONFIG_CRAY_GEMINI)
 /*
  * For Gemini, a minimum of 70s to handle a gnilnd timeout of 60s. The gnilnd 
  * timeout can creep up to 65s depending on system load and how often the 
  * reaper thread runs, so 70s should give us some head room.
  */
 unsigned int at_min = 70;
+#elif defined(CONFIG_CRAY_ARIES)
+/* For Aries, use Aries Timer project data */
+#include <aries/aries_timeouts_gpl.h>
+unsigned int at_min = TIMEOUT_SECS(TO_Lustre_adaptive_timeout);
 #else
 unsigned int at_min = 0;
-#endif  /* CRAY_XT3 */
+#endif  /* CONFIG_CRAY_GEMINI */
 unsigned int at_max = 600;
 unsigned int at_history = 600;
 int at_early_margin = 5;

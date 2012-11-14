@@ -110,22 +110,23 @@ int obd_alloc_fail(const void *ptr, const char *name, const char *type,
 
 /* Timeout definitions */
 #define OBD_TIMEOUT_DEFAULT             100
-#ifdef CRAY_XT3
+#if defined(CONFIG_CRAY_GEMINI)
 /*
- * Ideally, these values should be longer than the LND timeout.  These should
- * be suitable for both Gemini and Portals.  For Portals, the values are
- * shorter than the LND timeout, but we can't make them too long.
- *
  * For Gemini, a minimum of 70s to handle a gnilnd timeout of 60s. The gnilnd 
  * timeout can creep up to 65s depending on system load and how often the 
  * reaper thread runs, so 70s should give us some head room.
  */
 #define LDLM_TIMEOUT_DEFAULT            70
 #define MDS_LDLM_TIMEOUT_DEFAULT        70
+#elif defined (CONFIG_CRAY_ARIES)
+/* For Aries, use Aries Timer project data */
+#include <aries/aries_timeouts_gpl.h>
+#define LDLM_TIMEOUT_DEFAULT            TIMEOUT_SECS(TO_Lustre_ldlm_timeout)
+#define MDS_LDLM_TIMEOUT_DEFAULT        TIMEOUT_SECS(TO_Lustre_ldlm_timeout)
 #else
 #define LDLM_TIMEOUT_DEFAULT            20
 #define MDS_LDLM_TIMEOUT_DEFAULT        6
-#endif /* CRAY_XT3 */
+#endif /* CONFIG_CRAY_GEMINI */
 /* Time to wait for all clients to reconnect during recovery (hard limit) */
 #define OBD_RECOVERY_TIME_HARD          (obd_timeout * 9)
 /* Time to wait for all clients to reconnect during recovery (soft limit) */
