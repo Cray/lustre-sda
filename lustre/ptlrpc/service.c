@@ -1505,8 +1505,7 @@ int ptlrpc_hpreq_handler(struct ptlrpc_request *req)
 
 	/* Check for export to let only reconnects for not yet evicted
 	 * export to become a HP rpc. */
-	if ((req->rq_export != NULL) &&
-	    (opc == OBD_PING || opc == MDS_CONNECT || opc == OST_CONNECT))
+        if (opc == OBD_PING || opc == MDS_CONNECT || opc == OST_CONNECT)
 		req->rq_ops = &ptlrpc_hpreq_common;
 
 	return 0;
