@@ -547,6 +547,7 @@ typedef struct kgn_device {
         atomic_t                gnd_n_yield;
         atomic_t                gnd_n_schedule;
         atomic_t                gnd_canceled_dgrams; /* # of outstanding cancels */
+	struct rw_semaphore     gnd_conn_sem;       /* serialize connection changes/data movement */
 } kgn_device_t;
 
 typedef struct kgn_net {
