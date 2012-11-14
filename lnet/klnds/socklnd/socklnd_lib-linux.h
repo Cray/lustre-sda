@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -50,6 +50,7 @@
 #include <net/sock.h>
 #include <net/tcp.h>
 #include <linux/uio.h>
+#include <linux/if.h>
 
 #include <asm/system.h>
 #include <asm/uaccess.h>
@@ -84,59 +85,8 @@ static inline __u32 ksocknal_csum(__u32 crc, unsigned char const *p, size_t len)
 #define SOCKNAL_WSPACE(sk)       sk_stream_wspace(sk)
 #define SOCKNAL_MIN_WSPACE(sk)   sk_stream_min_wspace(sk)
 
-#ifndef CONFIG_SMP
-static inline
-int ksocknal_nsched(void)
-{
-        return 1;
-}
-#else
-#include <linux/lustre_version.h>
-# if !(defined(CONFIG_X86) && (LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,21))) || defined(CONFIG_X86_64) || ((LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0)) && !defined(CONFIG_X86_HT))
-static inline int
-ksocknal_nsched(void)
-{
-        return num_online_cpus();
-}
-
-static inline int
-ksocknal_sched2cpu(int i)
-{
-        return i;
-}
-
-static inline int
-ksocknal_irqsched2cpu(int i)
-{
-        return i;
-}
-# else
-static inline int
-ksocknal_nsched(void)
-{
-        if (smp_num_siblings == 1)
-                return (num_online_cpus());
-
-        /* We need to know if this assumption is crap */
-        LASSERT (smp_num_siblings == 2);
-        return (num_online_cpus()/2);
-}
-
-static inline int
-ksocknal_sched2cpu(int i)
-{
-        if (smp_num_siblings == 1)
-                return i;
-
-        return (i * 2);
-}
-
-static inline int
-ksocknal_irqsched2cpu(int i)
-{
-        return (ksocknal_sched2cpu(i) + 1);
-}
-# endif
-#endif
+/* assume one thread for each connection type */
+#define SOCKNAL_NSCHEDS		3
+#define SOCKNAL_NSCHEDS_HIGH	(SOCKNAL_NSCHEDS << 1)
 
 #endif

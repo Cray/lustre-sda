@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -49,12 +49,8 @@
  *
  * Implemented in portals/include/libcfs/<os>/
  */
-uid_t  cfs_curproc_uid(void);
-gid_t  cfs_curproc_gid(void);
 uid_t  cfs_curproc_euid(void);
 gid_t  cfs_curproc_egid(void);
-uid_t  cfs_curproc_fsuid(void);
-gid_t  cfs_curproc_fsgid(void);
 pid_t  cfs_curproc_pid(void);
 int    cfs_curproc_groups_nr(void);
 int    cfs_curproc_is_in_groups(gid_t group);
@@ -76,6 +72,11 @@ char  *cfs_curproc_comm(void);
 /* check if task is running in compat mode.*/
 int cfs_curproc_is_32bit(void);
 #endif
+uid_t  cfs_curproc_uid(void);
+gid_t  cfs_curproc_gid(void);
+uid_t  cfs_curproc_fsuid(void);
+gid_t  cfs_curproc_fsgid(void);
+int cfs_get_environ(const char *key, char *value, int *val_len);
 
 typedef __u32 cfs_cap_t;
 

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -885,13 +885,6 @@ enum sptlrpc_bulk_hash_alg {
         BULK_HASH_ALG_MAX
 };
 
-struct sptlrpc_hash_type {
-        char           *sht_name;
-        char           *sht_tfm_name;
-        unsigned int    sht_size;
-};
-
-const struct sptlrpc_hash_type *sptlrpc_get_hash_type(__u8 hash_alg);
 const char * sptlrpc_get_hash_name(__u8 hash_alg);
 __u8 sptlrpc_get_hash_alg(const char *algname);
 
@@ -1119,12 +1112,14 @@ int sptlrpc_cli_unwrap_bulk_read(struct ptlrpc_request *req,
                                  int nob);
 int sptlrpc_cli_unwrap_bulk_write(struct ptlrpc_request *req,
                                   struct ptlrpc_bulk_desc *desc);
+#ifdef HAVE_SERVER_SUPPORT
 int sptlrpc_svc_prep_bulk(struct ptlrpc_request *req,
                           struct ptlrpc_bulk_desc *desc);
 int sptlrpc_svc_wrap_bulk(struct ptlrpc_request *req,
                           struct ptlrpc_bulk_desc *desc);
 int sptlrpc_svc_unwrap_bulk(struct ptlrpc_request *req,
                             struct ptlrpc_bulk_desc *desc);
+#endif
 
 /* bulk helpers (internal use only by policies) */
 int sptlrpc_get_bulk_checksum(struct ptlrpc_bulk_desc *desc, __u8 alg,

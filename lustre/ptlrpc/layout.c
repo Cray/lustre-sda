@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -453,17 +451,6 @@ static const struct req_msg_field *mds_setattr_server[] = {
         &RMF_CAPA2
 };
 
-static const struct req_msg_field *llog_catinfo_client[] = {
-        &RMF_PTLRPC_BODY,
-        &RMF_NAME,
-        &RMF_STRING
-};
-
-static const struct req_msg_field *llog_catinfo_server[] = {
-        &RMF_PTLRPC_BODY,
-        &RMF_STRING
-};
-
 static const struct req_msg_field *llog_origin_handle_create_client[] = {
         &RMF_PTLRPC_BODY,
         &RMF_LLOGD_BODY,
@@ -627,7 +614,6 @@ static struct req_format *req_formats[] = {
         &RQF_LDLM_INTENT_CREATE,
         &RQF_LDLM_INTENT_UNLINK,
         &RQF_LOG_CANCEL,
-        &RQF_LLOG_CATINFO,
         &RQF_LLOG_ORIGIN_HANDLE_CREATE,
         &RQF_LLOG_ORIGIN_HANDLE_DESTROY,
         &RQF_LLOG_ORIGIN_HANDLE_NEXT_BLOCK,
@@ -877,7 +863,7 @@ struct req_msg_field RMF_LDLM_INTENT =
 EXPORT_SYMBOL(RMF_LDLM_INTENT);
 
 struct req_msg_field RMF_DLM_LVB =
-        DEFINE_MSGF("dlm_lvb", 0, sizeof(struct ost_lvb), lustre_swab_ost_lvb,
+        DEFINE_MSGF("dlm_lvb", 0, sizeof(union ldlm_wire_lvb), lustre_swab_lvb,
         NULL);
 EXPORT_SYMBOL(RMF_DLM_LVB);
 
@@ -1241,11 +1227,6 @@ struct req_format RQF_MDS_IS_SUBDIR =
         DEFINE_REQ_FMT0("MDS_IS_SUBDIR",
                         mdt_body_only, mdt_body_only);
 EXPORT_SYMBOL(RQF_MDS_IS_SUBDIR);
-
-struct req_format RQF_LLOG_CATINFO =
-        DEFINE_REQ_FMT0("LLOG_CATINFO",
-                        llog_catinfo_client, llog_catinfo_server);
-EXPORT_SYMBOL(RQF_LLOG_CATINFO);
 
 struct req_format RQF_LLOG_ORIGIN_HANDLE_CREATE =
         DEFINE_REQ_FMT0("LLOG_ORIGIN_HANDLE_CREATE",
@@ -2084,5 +2065,67 @@ void req_capsule_shrink(struct req_capsule *pill,
 }
 EXPORT_SYMBOL(req_capsule_shrink);
 
+int req_capsule_server_grow(struct req_capsule *pill,
+                            const struct req_msg_field *field,
+                            unsigned int newlen)
+{
+        struct ptlrpc_reply_state *rs = pill->rc_req->rq_reply_state, *nrs;
+        char *from, *to;
+        int offset, len, rc;
+
+        LASSERT(pill->rc_fmt != NULL);
+        LASSERT(__req_format_is_sane(pill->rc_fmt));
+        LASSERT(req_capsule_has_field(pill, field, RCL_SERVER));
+        LASSERT(req_capsule_field_present(pill, field, RCL_SERVER));
+
+        len = req_capsule_get_size(pill, field, RCL_SERVER);
+        offset = __req_capsule_offset(pill, field, RCL_SERVER);
+        if (pill->rc_req->rq_repbuf_len >=
+            lustre_packed_msg_size(pill->rc_req->rq_repmsg) - len + newlen)
+                CERROR("Inplace repack might be done\n");
+
+        pill->rc_req->rq_reply_state = NULL;
+        req_capsule_set_size(pill, field, RCL_SERVER, newlen);
+        rc = req_capsule_server_pack(pill);
+        if (rc) {
+                /* put old rs back, the caller will decide what to do */
+                pill->rc_req->rq_reply_state = rs;
+                return rc;
+        }
+        nrs = pill->rc_req->rq_reply_state;
+        /* Now we need only buffers, copy first chunk */
+        to = lustre_msg_buf(nrs->rs_msg, 0, 0);
+        from = lustre_msg_buf(rs->rs_msg, 0, 0);
+        len = (char *)lustre_msg_buf(rs->rs_msg, offset, 0) - from;
+        memcpy(to, from, len);
+        /* check if we have tail and copy it too */
+        if (rs->rs_msg->lm_bufcount > offset + 1) {
+                to = lustre_msg_buf(nrs->rs_msg, offset + 1, 0);
+                from = lustre_msg_buf(rs->rs_msg, offset + 1, 0);
+                offset = rs->rs_msg->lm_bufcount - 1;
+                len = (char *)lustre_msg_buf(rs->rs_msg, offset, 0) +
+                      cfs_size_round(rs->rs_msg->lm_buflens[offset]) - from;
+                memcpy(to, from, len);
+        }
+        /* drop old reply if everything is fine */
+        if (rs->rs_difficult) {
+                /* copy rs data */
+                int i;
+
+                nrs->rs_difficult = 1;
+                nrs->rs_no_ack = rs->rs_no_ack;
+                for (i = 0; i < rs->rs_nlocks; i++) {
+                        nrs->rs_locks[i] = rs->rs_locks[i];
+                        nrs->rs_modes[i] = rs->rs_modes[i];
+                        nrs->rs_nlocks++;
+                }
+                rs->rs_nlocks = 0;
+                rs->rs_difficult = 0;
+                rs->rs_no_ack = 0;
+        }
+        ptlrpc_rs_decref(rs);
+        return 0;
+}
+EXPORT_SYMBOL(req_capsule_server_grow);
 /* __REQ_LAYOUT_USER__ */
 #endif

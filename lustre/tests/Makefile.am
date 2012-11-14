@@ -2,9 +2,9 @@
 AM_CPPFLAGS = $(LLCPPFLAGS) -I/opt/lam/include -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 -DLUSTRE_UTILS
 AM_CFLAGS = $(LLCFLAGS)
 # LDADD = -lldap
-# LDADD := -lreadline -ltermcap # -lefence
+# LDADD = -lreadline -ltermcap # -lefence
 
-DIST_SUBDIRS := mpi
+DIST_SUBDIRS = mpi
 
 noinst_DATA = disk1_8.tar.bz2
 noinst_SCRIPTS = leak_finder.pl llmount.sh llmountcleanup.sh functions.sh
@@ -26,8 +26,9 @@ noinst_SCRIPTS += recovery-random-scale.sh parallel-scale.sh metadata-updates.sh
 noinst_SCRIPTS += lustre-rsync-test.sh ost-pools.sh rpc.sh yaml.sh liblustre.sh
 noinst_SCRIPTS += lnet-selftest.sh obdfilter-survey.sh mmp.sh mmp_mark.sh
 noinst_SCRIPTS += sgpdd-survey.sh maloo_upload.sh auster setup-nfs.sh
-noinst_SCRIPTS += mds-survey.sh
+noinst_SCRIPTS += mds-survey.sh parallel-scale-nfs.sh
 noinst_SCRIPTS += parallel-scale-nfsv3.sh parallel-scale-nfsv4.sh
+noinst_SCRIPTS += posix.sh sanity-scrub.sh scrub-performance.sh
 nobase_noinst_SCRIPTS = cfg/local.sh
 nobase_noinst_SCRIPTS += test-groups/regression test-groups/regression-mpi
 nobase_noinst_SCRIPTS += acl/make-tree acl/run cfg/ncli.sh
@@ -35,6 +36,7 @@ nobase_noinst_SCRIPTS += racer/dir_create.sh racer/file_create.sh racer/file_lis
 nobase_noinst_SCRIPTS += racer/file_rm.sh racer/racer.sh racer/file_concat.sh racer/file_exec.sh
 nobase_noinst_SCRIPTS += racer/file_link.sh racer/file_rename.sh racer/file_symlink.sh
 nobase_noinst_SCRIPTS += rmtacl/make-tree rmtacl/run
+nobase_noinst_SCRIPTS += posix/posix.cfg
 nobase_noinst_DATA = acl/cp.test acl/getfacl-noacl.test acl/inheritance.test
 nobase_noinst_DATA += acl/misc.test acl/permissions.test acl/setfacl.test
 nobase_noinst_DATA += rmtacl/misc.test rmtacl/permissions.test

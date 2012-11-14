@@ -1,9 +1,7 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  *
  *   Author: Zach Brown <zab@zabbo.net>
  *   Author: Peter J. Braam <braam@clusterfs.com>
@@ -1390,22 +1388,31 @@ ksocknal_sched_cansleep(ksock_sched_t *sched)
         return (rc);
 }
 
-int ksocknal_scheduler (void *arg)
+int ksocknal_scheduler(void *arg)
 {
-        ksock_sched_t     *sched = (ksock_sched_t *)arg;
-        ksock_conn_t      *conn;
-        ksock_tx_t        *tx;
-        int                rc;
-        int                nloops = 0;
-        int                id = (int)(sched - ksocknal_data.ksnd_schedulers);
-        char               name[16];
+	struct ksock_sched_info	*info;
+	ksock_sched_t		*sched;
+	ksock_conn_t		*conn;
+	ksock_tx_t		*tx;
+	int			rc;
+	int			nloops = 0;
+	char			name[20];
+	long			id = (long)arg;
 
-        snprintf (name, sizeof (name),"socknal_sd%02d", id);
-        cfs_daemonize (name);
-        cfs_block_allsigs ();
+	info = ksocknal_data.ksnd_sched_info[KSOCK_THREAD_CPT(id)];
+	sched = &info->ksi_scheds[KSOCK_THREAD_SID(id)];
 
-        if (ksocknal_lib_bind_thread_to_cpu(id))
-                CERROR ("Can't set CPU affinity for %s to %d\n", name, id);
+	snprintf(name, sizeof(name), "socknal_sd%02d_%02d",
+		 info->ksi_cpt, (int)(sched - &info->ksi_scheds[0]));
+
+	cfs_daemonize(name);
+	cfs_block_allsigs();
+
+	rc = cfs_cpt_bind(lnet_cpt_table(), info->ksi_cpt);
+	if (rc != 0) {
+		CERROR("Can't set CPT affinity for %s to %d: %d\n",
+		       name, info->ksi_cpt, rc);
+	}
 
         cfs_spin_lock_bh (&sched->kss_lock);
 

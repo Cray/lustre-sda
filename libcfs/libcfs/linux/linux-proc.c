@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -91,6 +89,7 @@ enum {
         PSDEV_CONSOLE_BACKOFF,    /* delay increase factor */
         PSDEV_DEBUG_PATH,         /* crashdump log location */
         PSDEV_DEBUG_DUMP_PATH,    /* crashdump tracelog location */
+	PSDEV_CPT_TABLE,	  /* information about cpu partitions */
         PSDEV_LNET_UPCALL,        /* User mode upcall script  */
         PSDEV_LNET_MEMUSED,       /* bytes currently PORTAL_ALLOCated */
         PSDEV_LNET_CATASTROPHE,   /* if we have LBUGged or panic'd */
@@ -115,6 +114,7 @@ enum {
 #define PSDEV_CONSOLE_BACKOFF           CTL_UNNUMBERED
 #define PSDEV_DEBUG_PATH                CTL_UNNUMBERED
 #define PSDEV_DEBUG_DUMP_PATH           CTL_UNNUMBERED
+#define PSDEV_CPT_TABLE			CTL_UNNUMBERED
 #define PSDEV_LNET_UPCALL               CTL_UNNUMBERED
 #define PSDEV_LNET_MEMUSED              CTL_UNNUMBERED
 #define PSDEV_LNET_CATASTROPHE          CTL_UNNUMBERED
@@ -176,8 +176,10 @@ static int __proc_dobitmasks(void *data, int write,
                 }
         } else {
                 rc = cfs_trace_copyin_string(tmpstr, tmpstrlen, buffer, nob);
-                if (rc < 0)
-                        return rc;
+		if (rc < 0) {
+			cfs_trace_free_string_buffer(tmpstr, tmpstrlen);
+			return rc;
+		}
 
                 rc = libcfs_debug_str2mask(mask, tmpstr, is_subsys);
                 /* Always print LBUG/LASSERT to console, so keep this mask */
@@ -350,6 +352,48 @@ int LL_PROC_PROTO(proc_fail_loc)
         return rc;
 }
 
+static int __proc_cpt_table(void *data, int write,
+			    loff_t pos, void *buffer, int nob)
+{
+	char *buf = NULL;
+	int   len = 4096;
+	int   rc  = 0;
+
+	if (write)
+		return -EPERM;
+
+	LASSERT(cfs_cpt_table != NULL);
+
+	while (1) {
+		LIBCFS_ALLOC(buf, len);
+		if (buf == NULL)
+			return -ENOMEM;
+
+		rc = cfs_cpt_table_print(cfs_cpt_table, buf, len);
+		if (rc >= 0)
+			break;
+
+		LIBCFS_FREE(buf, len);
+		if (rc == -EFBIG) {
+			len <<= 1;
+			continue;
+		}
+		goto out;
+	}
+
+	if (pos >= rc) {
+		rc = 0;
+		goto out;
+	}
+
+	rc = cfs_trace_copyout_string(buffer, nob, buf + pos, NULL);
+ out:
+	if (buf != NULL)
+		LIBCFS_FREE(buf, len);
+	return rc;
+}
+DECLARE_PROC_HANDLER(proc_cpt_table)
+
 static cfs_sysctl_table_t lnet_table[] = {
         /*
          * NB No .strategy entries have been provided since sysctl(8) prefers
@@ -417,6 +461,14 @@ static cfs_sysctl_table_t lnet_table[] = {
                 .mode     = 0644,
                 .proc_handler = &proc_dostring,
         },
+
+	{
+		INIT_CTL_NAME(PSDEV_CPT_TABLE)
+		.procname = "cpu_partition_table",
+		.maxlen   = 128,
+		.mode     = 0444,
+		.proc_handler = &proc_cpt_table,
+	},
 
         {
                 INIT_CTL_NAME(PSDEV_LNET_UPCALL)

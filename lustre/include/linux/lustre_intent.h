@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -38,8 +36,6 @@
 
 #ifndef LUSTRE_INTENT_H
 #define LUSTRE_INTENT_H
-
-#include <linux/lustre_version.h>
 
 /* intent IT_XXX are defined in lustre/include/obd.h */
 struct lustre_intent_data {

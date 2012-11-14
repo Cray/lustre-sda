@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -64,29 +62,29 @@ int filter_log_sz_change(struct llog_handle *cathandle,
         struct ost_filterdata *ofd;
         ENTRY;
 
-        LOCK_INODE_MUTEX(inode);
-        ofd = INODE_PRIVATE_DATA(inode);
+	mutex_lock(&inode->i_mutex);
+	ofd = inode->i_private;
 
-        if (ofd && ofd->ofd_epoch >= ioepoch) {
-                if (ofd->ofd_epoch > ioepoch)
-                        CERROR("client sent old epoch %d for obj ino %ld\n",
-                               ioepoch, inode->i_ino);
-                UNLOCK_INODE_MUTEX(inode);
-                RETURN(0);
-        }
+	if (ofd && ofd->ofd_epoch >= ioepoch) {
+		if (ofd->ofd_epoch > ioepoch)
+			CERROR("client sent old epoch %d for obj ino %ld\n",
+			       ioepoch, inode->i_ino);
+		mutex_unlock(&inode->i_mutex);
+		RETURN(0);
+	}
 
-        if (ofd && ofd->ofd_epoch < ioepoch) {
-                ofd->ofd_epoch = ioepoch;
-        } else if (!ofd) {
-                OBD_ALLOC(ofd, sizeof(*ofd));
-                if (!ofd)
-                        GOTO(out, rc = -ENOMEM);
-                igrab(inode);
-                INODE_PRIVATE_DATA(inode) = ofd;
-                ofd->ofd_epoch = ioepoch;
-        }
-        /* the decision to write a record is now made, unlock */
-        UNLOCK_INODE_MUTEX(inode);
+	if (ofd && ofd->ofd_epoch < ioepoch) {
+		ofd->ofd_epoch = ioepoch;
+	} else if (!ofd) {
+		OBD_ALLOC(ofd, sizeof(*ofd));
+		if (!ofd)
+			GOTO(out, rc = -ENOMEM);
+		igrab(inode);
+		inode->i_private = ofd;
+		ofd->ofd_epoch = ioepoch;
+	}
+	/* the decision to write a record is now made, unlock */
+	mutex_unlock(&inode->i_mutex);
 
         OBD_ALLOC(lsc, sizeof(*lsc));
         if (lsc == NULL)
@@ -179,11 +177,12 @@ static int filter_recov_log_unlink_cb(struct llog_ctxt *ctxt,
         if (oa->o_seq > FID_SEQ_OST_MAX) {
                 CERROR("%s: invalid group number "LPU64" > MAX_CMD_GROUP %u\n",
                         exp->exp_obd->obd_name, oa->o_seq, FID_SEQ_OST_MAX);
+		OBDO_FREE(oa);
                 RETURN(-EINVAL);
         }
 
         while (count > 0) {
-                rc = filter_destroy(exp, oa, NULL, NULL, NULL, NULL);
+                rc = filter_destroy(NULL, exp, oa, NULL, NULL, NULL, NULL);
                 if (rc == 0)
                         CDEBUG(D_RPCTRACE, "object "LPU64" is destroyed\n",
                                oid);
@@ -239,7 +238,7 @@ static int filter_recov_log_setattr_cb(struct llog_ctxt *ctxt,
         oinfo.oi_oa->o_lcookie = *cookie;
         oid = oinfo.oi_oa->o_id;
 
-        rc = filter_setattr(exp, &oinfo, NULL);
+        rc = filter_setattr(NULL, exp, &oinfo, NULL);
         OBDO_FREE(oinfo.oi_oa);
 
         if (rc == -ENOENT) {

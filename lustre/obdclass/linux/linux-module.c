@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -81,7 +79,6 @@
 #include <lustre_ver.h>
 #include <lustre/lustre_build_version.h>
 #ifdef __KERNEL__
-#include <linux/lustre_version.h>
 
 int proc_version;
 
@@ -162,6 +159,7 @@ int obd_ioctl_getdata(char **buf, int *len, void *arg)
         EXIT;
         return 0;
 }
+EXPORT_SYMBOL(obd_ioctl_getdata);
 
 int obd_ioctl_popdata(void *arg, void *data, int len)
 {
@@ -172,8 +170,6 @@ int obd_ioctl_popdata(void *arg, void *data, int len)
                 err = -EFAULT;
         return err;
 }
-
-EXPORT_SYMBOL(obd_ioctl_getdata);
 EXPORT_SYMBOL(obd_ioctl_popdata);
 
 /*  opening /dev/obd */
@@ -291,7 +287,7 @@ static int obd_proc_read_health(char *page, char **start, off_t off,
                 class_incref(obd, __FUNCTION__, cfs_current());
                 cfs_read_unlock(&obd_dev_lock);
 
-                if (obd_health_check(obd)) {
+                if (obd_health_check(NULL, obd)) {
                         rc += snprintf(page + rc, count - rc,
                                        "device %s reported unhealthy\n",
                                        obd->obd_name);
@@ -308,14 +304,35 @@ static int obd_proc_read_health(char *page, char **start, off_t off,
         return rc;
 }
 
+static int obd_proc_rd_jobid_var(char *page, char **start, off_t off,
+				int count, int *eof, void *data)
+{
+	return snprintf(page, count, "%s\n", obd_jobid_var);
+}
+
+static int obd_proc_wr_jobid_var(struct file *file, const char *buffer,
+				unsigned long count, void *data)
+{
+	if (!count || count > JOBSTATS_JOBID_VAR_MAX_LEN)
+		return -EINVAL;
+
+	memset(obd_jobid_var, 0, JOBSTATS_JOBID_VAR_MAX_LEN + 1);
+	/* Trim the trailing '\n' if any */
+	memcpy(obd_jobid_var, buffer, count - (buffer[count - 1] == '\n'));
+	return count;
+}
+
 /* Root for /proc/fs/lustre */
 struct proc_dir_entry *proc_lustre_root = NULL;
+EXPORT_SYMBOL(proc_lustre_root);
 
 struct lprocfs_vars lprocfs_base[] = {
-        { "version", obd_proc_read_version, NULL, NULL },
-        { "pinger", obd_proc_read_pinger, NULL, NULL },
-        { "health_check", obd_proc_read_health, NULL, NULL },
-        { 0 }
+	{ "version", obd_proc_read_version, NULL, NULL },
+	{ "pinger", obd_proc_read_pinger, NULL, NULL },
+	{ "health_check", obd_proc_read_health, NULL, NULL },
+	{ "jobid_var", obd_proc_rd_jobid_var,
+		       obd_proc_wr_jobid_var, NULL },
+	{ 0 }
 };
 #else
 #define lprocfs_base NULL
@@ -429,18 +446,4 @@ int class_procfs_clean(void)
         }
         RETURN(0);
 }
-
-
-/* Check that we're building against the appropriate version of the Lustre
- * kernel patch */
-#include <linux/lustre_version.h>
-#ifdef LUSTRE_KERNEL_VERSION
-#define LUSTRE_MIN_VERSION 45
-#define LUSTRE_MAX_VERSION 47
-#if (LUSTRE_KERNEL_VERSION < LUSTRE_MIN_VERSION)
-# error Cannot continue: Your Lustre kernel patch is older than the sources
-#elif (LUSTRE_KERNEL_VERSION > LUSTRE_MAX_VERSION)
-# error Cannot continue: Your Lustre sources are older than the kernel patch
-#endif
-#endif
 #endif

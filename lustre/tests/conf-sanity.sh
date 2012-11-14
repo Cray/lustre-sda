@@ -1,6 +1,4 @@
 #!/bin/bash
-# -*- mode: Bash; tab-width: 4; indent-tabs-mode: t; -*-
-# vim:autoindent:shiftwidth=4:tabstop=4:
 
 # FIXME - there is no reason to use all of these different
 #   return codes, espcially when most of them are mapped to something
@@ -29,6 +27,7 @@ PTLDEBUG=${PTLDEBUG:--1}
 SAVE_PWD=$PWD
 LUSTRE=${LUSTRE:-`dirname $0`/..}
 RLUSTRE=${RLUSTRE:-$LUSTRE}
+export MULTIOP=${MULTIOP:-multiop}
 
 . $LUSTRE/tests/test-framework.sh
 init_test_env $@
@@ -50,18 +49,9 @@ if [ -n "$MDSSIZE" ]; then
 fi
 
 # pass "-E lazy_itable_init" to mke2fs to speed up the formatting time
-for facet in MGS MDS OST; do
-    opts=${facet}_MKFS_OPTS
-    if [[ ${!opts} != *lazy_itable_init* ]]; then
-        eval SAVED_${facet}_MKFS_OPTS=\"${!opts}\"
-        if [[ ${!opts} != *mkfsoptions* ]]; then
-            eval ${facet}_MKFS_OPTS=\"${!opts} --mkfsoptions='\\\"-E lazy_itable_init\\\"'\"
-        else
-            val=${!opts//--mkfsoptions=\\\"/--mkfsoptions=\\\"-E lazy_itable_init }
-            eval ${facet}_MKFS_OPTS='${val}'
-        fi
-    fi
-done
+if [[ "$LDISKFS_MKFS_OPTS" != *lazy_itable_init* ]]; then
+	LDISKFS_MKFS_OPTS=$(csa_add "$LDISKFS_MKFS_OPTS" -E lazy_itable_init)
+fi
 
 init_logging
 
@@ -591,7 +581,10 @@ test_17() {
 run_test 17 "Verify failed mds_postsetup won't fail assertion (2936) (should return errs)"
 
 test_18() {
-        [ "$FSTYPE" != "ldiskfs" ] && skip "not needed for FSTYPE=$FSTYPE" && return
+	if [ $(facet_fstype $SINGLEMDS) != ldiskfs ]; then
+		skip "Only applicable to ldiskfs-based MDTs"
+		return
+	fi
 
         local MDSDEV=$(mdsdevname ${SINGLEMDS//mds/})
 
@@ -625,15 +618,9 @@ test_18() {
 
 
         echo "mount mds with large journal..."
-        local OLD_MDS_MKFS_OPTS=$MDS_MKFS_OPTS
 
-        local opts="--mdt --fsname=$FSNAME --device-size=$myMDSSIZE --param sys.timeout=$TIMEOUT $MDSOPT"
-
-        if combined_mgs_mds ; then
-            MDS_MKFS_OPTS="--mgs $opts"
-        else
-            MDS_MKFS_OPTS="--mgsnode=$MGSNID $opts"
-        fi
+	local OLD_MDSSIZE=$MDSSIZE
+	MDSSIZE=$myMDSSIZE
 
         reformat_and_config
         echo "mount lustre system..."
@@ -650,8 +637,8 @@ test_18() {
 
         cleanup || return $?
 
-        MDS_MKFS_OPTS=$OLD_MDS_MKFS_OPTS
-        reformat_and_config
+	MDSSIZE=$OLD_MDSSIZE
+	reformat_and_config
 }
 run_test 18 "check mkfs creates large journals"
 
@@ -847,6 +834,10 @@ run_test 23b "Simulate -EINTR during mount"
 fs2mds_HOST=$mds_HOST
 fs2ost_HOST=$ost_HOST
 
+MDSDEV1_2=$fs2mds_DEV
+OSTDEV1_2=$fs2ost_DEV
+OSTDEV2_2=$fs3ost_DEV
+
 cleanup_24a() {
 	trap 0
 	echo "umount $MOUNT2 ..."
@@ -867,14 +858,18 @@ test_24a() {
 
 	[ -n "$ost1_HOST" ] && fs2ost_HOST=$ost1_HOST
 
-	local fs2mdsdev=${fs2mds_DEV:-${MDSDEV}_2}
-	local fs2ostdev=${fs2ost_DEV:-$(ostdevname 1)_2}
+	local fs2mdsdev=$(mdsdevname 1_2)
+	local fs2ostdev=$(ostdevname 1_2)
+	local fs2mdsvdev=$(mdsvdevname 1_2)
+	local fs2ostvdev=$(ostvdevname 1_2)
 
 	# test 8-char fsname as well
 	local FSNAME2=test1234
-	add fs2mds $MDS_MKFS_OPTS --fsname=${FSNAME2} --nomgs --mgsnode=$MGSNID --reformat $fs2mdsdev || exit 10
+	add fs2mds $(mkfs_opts mds1) --nomgs --mgsnode=$MGSNID \
+		--fsname=${FSNAME2} --reformat $fs2mdsdev $fs2mdsvdev || exit 10
 
-	add fs2ost $OST_MKFS_OPTS --fsname=${FSNAME2} --reformat $fs2ostdev || exit 10
+	add fs2ost $(mkfs_opts ost1) --fsname=${FSNAME2} --reformat \
+		$fs2ostdev $fs2ostvdev || exit 10
 
 	setup
 	start fs2mds $fs2mdsdev $MDS_MOUNT_OPTS && trap cleanup_24a EXIT INT
@@ -917,9 +912,11 @@ test_24b() {
 		skip_env "mixed loopback and real device not working" && return
 	fi
 
-	local fs2mdsdev=${fs2mds_DEV:-${MDSDEV}_2}
+	local fs2mdsdev=$(mdsdevname 1_2)
+	local fs2mdsvdev=$(mdsvdevname 1_2)
 
-	add fs2mds $MDS_MKFS_OPTS --fsname=${FSNAME}2 --mgs --reformat $fs2mdsdev || exit 10
+	add fs2mds $(mkfs_opts mds1) --mgs --fsname=${FSNAME}2 --reformat \
+		$fs2mdsdev $fs2mdsvdev || exit 10
 	setup
 	start fs2mds $fs2mdsdev $MDS_MOUNT_OPTS && return 2
 	cleanup || return 6
@@ -1277,11 +1274,13 @@ test_32b() {
 		{ skip_env "Cannot untar $DISK1_8" && return ; }
 
 	load_modules
-	$LCTL set_param debug="config"
+	$LCTL set_param debug="+config"
 	local NEWNAME=lustre
 
 	# writeconf will cause servers to register with their current nids
-	$TUNEFS --writeconf --fsname=$NEWNAME $tmpdir/mds || error "tunefs failed"
+	$TUNEFS --writeconf --erase-params \
+        --param mdt.identity_upcall=$L_GETIDENTITY \
+        --fsname=$NEWNAME $tmpdir/mds || error "tunefs failed"
 	combined_mgs_mds || stop mgs
 
 	start32 mds1 $tmpdir/mds "-o loop" && \
@@ -1291,7 +1290,8 @@ test_32b() {
 	echo MDS uuid $UUID
 	[ "$UUID" == "${NEWNAME}-MDT0000_UUID" ] || error "UUID is wrong: $UUID"
 
-	$TUNEFS --mgsnode=$HOSTNAME --writeconf --fsname=$NEWNAME $tmpdir/ost1 ||\
+	$TUNEFS  --writeconf --erase-params \
+        --mgsnode=$HOSTNAME --fsname=$NEWNAME $tmpdir/ost1 ||\
 	    error "tunefs failed"
 	start32 ost1 $tmpdir/ost1 "-o loop" || return 5
 	UUID=$($LCTL get_param -n obdfilter.${NEWNAME}-OST0000.uuid)
@@ -1341,6 +1341,7 @@ test_33a() { # bug 12333, was test_33
         local rc=0
         local FSNAME2=test-123
         local MDSDEV=$(mdsdevname ${SINGLEMDS//mds/})
+	local mkfsoptions
 
         [ -n "$ost1_HOST" ] && fs2ost_HOST=$ost1_HOST
 
@@ -1351,12 +1352,19 @@ test_33a() { # bug 12333, was test_33
                 skip_env "mixed loopback and real device not working" && return
         fi
 
-        combined_mgs_mds || mkfs_opts="$mkfs_opts --nomgs"
+	local fs2mdsdev=$(mdsdevname 1_2)
+	local fs2ostdev=$(ostdevname 1_2)
+	local fs2mdsvdev=$(mdsvdevname 1_2)
+	local fs2ostvdev=$(ostvdevname 1_2)
 
-        local fs2mdsdev=${fs2mds_DEV:-${MDSDEV}_2}
-        local fs2ostdev=${fs2ost_DEV:-$(ostdevname 1)_2}
-        add fs2mds $MDS_MKFS_OPTS --mkfsoptions='\"-J size=8\"' --fsname=${FSNAME2} --reformat $fs2mdsdev || exit 10
-        add fs2ost $OST_MKFS_OPTS --fsname=${FSNAME2} --index=8191 --mgsnode=$MGSNID --reformat $fs2ostdev || exit 10
+	if [ $(facet_fstype mds1) == ldiskfs ]; then
+		mkfsoptions="--mkfsoptions=\\\"-J size=8\\\"" # See bug 17931.
+	fi
+
+	add fs2mds $(mkfs_opts mds1) --fsname=${FSNAME2} --reformat \
+		$mkfsoptions $fs2mdsdev $fs2mdsvdev || exit 10
+	add fs2ost $(mkfs_opts ost1) --mgsnode=$MGSNID --fsname=${FSNAME2} \
+		--index=8191 --reformat $fs2ostdev $fs2ostvdev || exit 10
 
         start fs2mds $fs2mdsdev $MDS_MOUNT_OPTS && trap cleanup_24a EXIT INT
         start fs2ost $fs2ostdev $OST_MOUNT_OPTS
@@ -1371,7 +1379,6 @@ test_33a() { # bug 12333, was test_33
         umount -d $MOUNT2
         stop fs2ost -f
         stop fs2mds -f
-        rm -rf $MOUNT2 $fs2mdsdev $fs2ostdev
         cleanup_nocli || rc=6
         return $rc
 }
@@ -1584,14 +1591,21 @@ test_36() { # 12743
 		skip_env "mixed loopback and real device not working" && return
         fi
 
-        local fs2mdsdev=${fs2mds_DEV:-${MDSDEV}_2}
-        local fs2ostdev=${fs2ost_DEV:-$(ostdevname 1)_2}
-        local fs3ostdev=${fs3ost_DEV:-$(ostdevname 2)_2}
-        add fs2mds $MDS_MKFS_OPTS --fsname=${FSNAME2} --reformat $fs2mdsdev || exit 10
-        # XXX after we support non 4K disk blocksize, change following --mkfsoptions with
-        # other argument
-        add fs2ost $OST_MKFS_OPTS --mkfsoptions='-b4096' --fsname=${FSNAME2} --mgsnode=$MGSNID --reformat $fs2ostdev || exit 10
-        add fs3ost $OST_MKFS_OPTS --mkfsoptions='-b4096' --fsname=${FSNAME2} --mgsnode=$MGSNID --reformat $fs3ostdev || exit 10
+	local fs2mdsdev=$(mdsdevname 1_2)
+	local fs2ostdev=$(ostdevname 1_2)
+	local fs3ostdev=$(ostdevname 2_2)
+	local fs2mdsvdev=$(mdsvdevname 1_2)
+	local fs2ostvdev=$(ostvdevname 1_2)
+	local fs3ostvdev=$(ostvdevname 2_2)
+
+	add fs2mds $(mkfs_opts mds1) --fsname=${FSNAME2} --reformat \
+		$fs2mdsdev $fs2mdsvdev || exit 10
+	# XXX after we support non 4K disk blocksize in ldiskfs, specify a
+	#     different one than the default value here.
+	add fs2ost $(mkfs_opts ost1) --mgsnode=$MGSNID --fsname=${FSNAME2} \
+		--reformat $fs2ostdev $fs2ostvdev || exit 10
+	add fs3ost $(mkfs_opts ost1) --mgsnode=$MGSNID --fsname=${FSNAME2} \
+		--reformat $fs3ostdev $fs3ostvdev || exit 10
 
         start fs2mds $fs2mdsdev $MDS_MOUNT_OPTS
         start fs2ost $fs2ostdev $OST_MOUNT_OPTS
@@ -1634,7 +1648,6 @@ test_36() { # 12743
         stop fs3ost -f || return 200
         stop fs2ost -f || return 201
         stop fs2mds -f || return 202
-        rm -rf $MOUNT2 $fs2mdsdev $fs2ostdev $fs3ostdev
         unload_modules_conf || return 203
         return $rc
 }
@@ -1644,6 +1657,13 @@ test_37() {
 	local mntpt=$(facet_mntpt $SINGLEMDS)
 	local mdsdev=$(mdsdevname ${SINGLEMDS//mds/})
 	local mdsdev_sym="$TMP/sym_mdt.img"
+	local opts=$MDS_MOUNT_OPTS
+	local rc=0
+
+	if [ $(facet_fstype $SINGLEMDS) != ldiskfs ]; then
+		skip "Currently only applicable to ldiskfs-based MDTs"
+		return
+	fi
 
 	echo "MDS :     $mdsdev"
 	echo "SYMLINK : $mdsdev_sym"
@@ -1653,8 +1673,11 @@ test_37() {
 
 	echo "mount symlink device - $mdsdev_sym"
 
-	local rc=0
-	mount_op=$(do_facet $SINGLEMDS mount -v -t lustre $MDS_MOUNT_OPTS  $mdsdev_sym $mntpt 2>&1 )
+	if ! do_facet $SINGLEMDS test -b $mdsdev; then
+		opts=$(csa_add "$opts" -o loop)
+	fi
+	mount_op=$(do_facet $SINGLEMDS mount -v -t lustre $opts \
+		$mdsdev_sym $mntpt 2>&1)
 	rc=${PIPESTATUS[0]}
 
 	echo mount_op=$mount_op
@@ -1747,7 +1770,11 @@ test_40() { # bug 15759
 run_test 40 "race during service thread startup"
 
 test_41a() { #bug 14134
-        echo $MDS_MOUNT_OPTS | grep "loop" && skip " loop devices does not work with nosvc option" && return
+	if [ $(facet_fstype $SINGLEMDS) == ldiskfs ] &&
+	   ! do_facet $SINGLEMDS test -b $(mdsdevname 1); then
+		skip "Loop devices does not work with nosvc option"
+		return
+	fi
 
         local rc
         local MDSDEV=$(mdsdevname ${SINGLEMDS//mds/})
@@ -1772,7 +1799,11 @@ test_41a() { #bug 14134
 run_test 41a "mount mds with --nosvc and --nomgs"
 
 test_41b() {
-        echo $MDS_MOUNT_OPTS | grep "loop" && skip " loop devices does not work with nosvc option" && return
+	if [ $(facet_fstype $SINGLEMDS) == ldiskfs ] &&
+	   ! do_facet $SINGLEMDS test -b $(mdsdevname 1); then
+		skip "Loop devices does not work with nosvc option"
+		return
+	fi
 
         ! combined_mgs_mds && skip "needs combined mgs device" && return 0
 
@@ -1993,7 +2024,7 @@ test_46a() {
 	#second client see all ost's
 
 	mount_client $MOUNT2 || return 8
-	$LFS setstripe $MOUNT2 -c -1 || return 9
+	$LFS setstripe -c -1 $MOUNT2 || return 9
 	$LFS getstripe $MOUNT2 || return 10
 
 	echo "ok" > $MOUNT2/widestripe
@@ -2061,9 +2092,9 @@ cleanup_48() {
 test_48() { # bug 17636
 	reformat
 	setup_noconfig
-        check_mount || return 2
+	check_mount || return 2
 
-	$LFS setstripe $MOUNT -c -1 || return 9
+	$LFS setstripe -c -1 $MOUNT || return 9
 	$LFS getstripe $MOUNT || return 10
 
 	echo "ok" > $MOUNT/widestripe
@@ -2085,12 +2116,12 @@ run_test 48 "too many acls on file"
 
 # check PARAM_SYS_LDLM_TIMEOUT option of MKFS.LUSTRE
 test_49() { # bug 17710
-	local OLD_MDS_MKFS_OPTS=$MDS_MKFS_OPTS
-	local OLD_OST_MKFS_OPTS=$OST_MKFS_OPTS
+	local timeout_orig=$TIMEOUT
+	local ldlm_timeout_orig=$LDLM_TIMEOUT
 	local LOCAL_TIMEOUT=20
 
-
-	OST_MKFS_OPTS="--ost --fsname=$FSNAME --device-size=$OSTSIZE --mgsnode=$MGSNID --param sys.timeout=$LOCAL_TIMEOUT --param sys.ldlm_timeout=$LOCAL_TIMEOUT $MKFSOPT $OSTOPT"
+	LDLM_TIMEOUT=$LOCAL_TIMEOUT
+	TIMEOUT=$LOCAL_TIMEOUT
 
 	reformat
 	setup_noconfig
@@ -2113,7 +2144,7 @@ test_49() { # bug 17710
 	stop_ost || return 2
 	stop_mds || return 3
 
-	OST_MKFS_OPTS="--ost --fsname=$FSNAME --device-size=$OSTSIZE --mgsnode=$MGSNID --param sys.timeout=$LOCAL_TIMEOUT --param sys.ldlm_timeout=$((LOCAL_TIMEOUT - 1)) $MKFSOPT $OSTOPT"
+	LDLM_TIMEOUT=$((LOCAL_TIMEOUT - 1))
 
 	reformat
 	setup_noconfig
@@ -2133,8 +2164,8 @@ test_49() { # bug 17710
 
 	cleanup || return $?
 
-	MDS_MKFS_OPTS=$OLD_MDS_MKFS_OPTS
-	OST_MKFS_OPTS=$OLD_OST_MKFS_OPTS
+	LDLM_TIMEOUT=$ldlm_timeout_orig
+	TIMEOUT=$timeout_orig
 }
 run_test 49 "check PARAM_SYS_LDLM_TIMEOUT option of MKFS.LUSTRE"
 
@@ -2425,6 +2456,7 @@ test_52() {
 	local ost1mnt=$(facet_mntpt ost1)
 	local ost1node=$(facet_active_host ost1)
 	local ost1tmp=$TMP/conf52
+	local loop
 
 	mkdir -p $DIR/$tdir
 	[ $? -eq 0 ] || { error "Unable to create tdir"; return 4; }
@@ -2436,7 +2468,7 @@ test_52() {
 	[ $? -eq 0 ] || { error "Unable to create temporary file"; return 6; }
 	sleep 1
 
-	$LFS setstripe $DIR/$tdir -c -1 -s 1M
+	$LFS setstripe -c -1 -S 1M $DIR/$tdir
 	[ $? -eq 0 ] || { error "lfs setstripe failed"; return 7; }
 
 	for (( i=0; i < nrfiles; i++ )); do
@@ -2460,7 +2492,11 @@ test_52() {
 	echo mount ost1 as ldiskfs
 	do_node $ost1node mkdir -p $ost1mnt
 	[ $? -eq 0 ] || { error "Unable to create $ost1mnt"; return 23; }
-	do_node $ost1node mount -t $FSTYPE $ost1_dev $ost1mnt $OST_MOUNT_OPTS
+	if ! do_node $ost1node test -b $ost1_dev; then
+		loop="-o loop"
+	fi
+	do_node $ost1node mount -t $(facet_fstype ost1) $loop $ost1_dev \
+		$ost1mnt
 	[ $? -eq 0 ] || { error "Unable to mount ost1 as ldiskfs"; return 12; }
 
 	# backup objects
@@ -2511,6 +2547,7 @@ thread_sanity() {
         local facet=$2
         local parampat=$3
         local opts=$4
+	local basethr=$5
         local tmin
         local tmin2
         local tmax
@@ -2518,6 +2555,8 @@ thread_sanity() {
         local tstarted
         local paramp
         local msg="Insane $modname thread counts"
+	local ncpts=$(check_cpt_number $facet)
+	local nthrs
         shift 4
 
         setup
@@ -2539,13 +2578,23 @@ thread_sanity() {
         tstarted=$(do_facet $facet "lctl get_param -n ${paramp}.threads_started" || echo 0)
         lassert 23 "$msg (PDSH problems?)" '(($tstarted && $tmin && $tmax))' || return $?
         lassert 24 "$msg" '(($tstarted >= $tmin && $tstarted <= $tmax ))' || return $?
+	nthrs=$(expr $tmax - $tmin)
+	if [ $nthrs -lt $ncpts ]; then
+		nthrs=0
+	else
+		nthrs=$ncpts
+	fi
+
+	[ $tmin -eq $tmax -a $tmin -eq $tstarted ] &&
+		skip_env "module parameter forced $facet thread count" &&
+		tmin=3 && tmax=$((3 * tmax))
 
         # Check that we can change min/max
-        do_facet $facet "lctl set_param ${paramp}.threads_min=$((tmin + 1))"
-        do_facet $facet "lctl set_param ${paramp}.threads_max=$((tmax - 1))"
-        tmin2=$(do_facet $facet "lctl get_param -n ${paramp}.threads_min" || echo 0)
-        tmax2=$(do_facet $facet "lctl get_param -n ${paramp}.threads_max" || echo 0)
-        lassert 25 "$msg" '(($tmin2 == ($tmin + 1) && $tmax2 == ($tmax -1)))' || return $?
+	do_facet $facet "lctl set_param ${paramp}.threads_min=$((tmin + nthrs))"
+	do_facet $facet "lctl set_param ${paramp}.threads_max=$((tmax - nthrs))"
+	tmin2=$(do_facet $facet "lctl get_param -n ${paramp}.threads_min" || echo 0)
+	tmax2=$(do_facet $facet "lctl get_param -n ${paramp}.threads_max" || echo 0)
+	lassert 25 "$msg" '(($tmin2 == ($tmin + $nthrs) && $tmax2 == ($tmax - $nthrs)))' || return $?
 
         # Check that we can set min/max to the same value
         tmin=$(do_facet $facet "lctl get_param -n ${paramp}.threads_min" || echo 0)
@@ -2565,7 +2614,8 @@ thread_sanity() {
         LOAD_MODULES_REMOTE=true
         cleanup
         local oldvalue
-        setmodopts -a $modname "$opts" oldvalue
+	local newvalue="${opts}=$(expr $basethr \* $ncpts)"
+	setmodopts -a $modname "$newvalue" oldvalue
 
         load_modules
         setup
@@ -2590,12 +2640,12 @@ thread_sanity() {
 }
 
 test_53a() {
-        thread_sanity OST ost1 'ost.*.ost' 'oss_num_threads=64'
+	thread_sanity OST ost1 'ost.*.ost' 'oss_num_threads' '16'
 }
 run_test 53a "check OSS thread count params"
 
 test_53b() {
-        thread_sanity MDT $SINGLEMDS 'mdt.*.*.' 'mdt_num_threads=64'
+	thread_sanity MDT $SINGLEMDS 'mdt.*.*.' 'mdt_num_threads' '16'
 }
 run_test 53b "check MDT thread count params"
 
@@ -2622,19 +2672,19 @@ lov_objid_size()
 
 test_55() {
 	local mdsdev=$(mdsdevname 1)
-	local ostdev=$(ostdevname 1)
-	local saved_opts=$OST_MKFS_OPTS
+	local mdsvdev=$(mdsvdevname 1)
 
 	for i in 1023 2048
 	do
-		OST_MKFS_OPTS="$saved_opts --index $i"
-		reformat
-
+		add mds1 $(mkfs_opts mds1) --reformat $mdsdev $mdsvdev ||
+			exit 10
+		add ost1 $(mkfs_opts ost1) --index=$i --reformat \
+			$(ostdevname 1) $(ostvdevname 1)
 		setup_noconfig
 		stopall
-
 		setup_noconfig
 		sync
+
 		echo checking size of lov_objid for ost index $i
 		LOV_OBJID_SIZE=$(do_facet mds1 "$DEBUGFS -R 'stat lov_objid' $mdsdev 2>/dev/null" | grep ^User | awk '{print $6}')
 		if [ "$LOV_OBJID_SIZE" != $(lov_objid_size $i) ]; then
@@ -2645,15 +2695,19 @@ test_55() {
 		stopall
 	done
 
-	OST_MKFS_OPTS=$saved_opts
 	reformat
 }
 run_test 55 "check lov_objid size"
 
 test_56() {
-	add mds1 $MDS_MKFS_OPTS --mkfsoptions='\"-J size=16\"' --reformat $(mdsdevname 1)
-	add ost1 $OST_MKFS_OPTS --index=1000 --reformat $(ostdevname 1)
-	add ost2 $OST_MKFS_OPTS --index=10000 --reformat $(ostdevname 2)
+	local mds_journal_size_orig=$MDSJOURNALSIZE
+
+	MDSJOURNALSIZE=16
+	add mds1 $(mkfs_opts mds1) --reformat $(mdsdevname 1) $(mdsvdevname 1)
+	add ost1 $(mkfs_opts ost1) --index=1000 --reformat \
+		$(ostdevname 1) $(ostvdevname 1)
+	add ost2 $(mkfs_opts ost2) --index=10000 --reformat \
+		$(ostdevname 2) $(ostvdevname 2)
 
 	start_mgsmds
 	start_ost
@@ -2663,6 +2717,7 @@ test_56() {
 	$LFS osts
 	[ -n "$ENABLE_QUOTA" ] && { $LFS quotacheck -ug $MOUNT || error "quotacheck has failed" ; }
 	stopall
+	MDSJOURNALSIZE=$mds_journal_size_orig
 	reformat
 }
 run_test 56 "check big indexes"
@@ -2692,7 +2747,10 @@ count_osts() {
 }
 
 test_58() { # bug 22658
-	[ "$FSTYPE" != "ldiskfs" ] && skip "not supported for $FSTYPE" && return
+	if [ $(facet_fstype mds) == zfs ]; then
+		skip "Does not work with ZFS-based MDTs yet"
+		return
+	fi
 	setup_noconfig
 	mkdir -p $DIR/$tdir
 	createmany -o $DIR/$tdir/$tfile-%d 100
@@ -2746,7 +2804,14 @@ test_59() {
 run_test 59 "writeconf mount option"
 
 test_60() { # LU-471
-	add mds1 $MDS_MKFS_OPTS --mkfsoptions='\" -E stride=64 -O ^uninit_bg\"' --reformat $(mdsdevname 1)
+	if [ $(facet_fstype $SINGLEMDS) != ldiskfs ]; then
+		skip "Only applicable to ldiskfs-based MDTs"
+		return
+	fi
+
+	add mds1 $(mkfs_opts mds1) \
+		--mkfsoptions='\" -E stride=64 -O ^uninit_bg\"' --reformat \
+		$(mdsdevname 1) $(mdsvdevname 1) || exit 10
 
 	dump=$(do_facet $SINGLEMDS dumpe2fs $(mdsdevname 1))
 	rc=${PIPESTATUS[0]}
@@ -2763,14 +2828,19 @@ test_60() { # LU-471
 run_test 60 "check mkfs.lustre --mkfsoptions -E -O options setting"
 
 test_61() { # LU-80
-    local reformat=false
+	local reformat=false
 
-    if ! large_xattr_enabled; then
-        reformat=true
-        local mds_dev=$(mdsdevname ${SINGLEMDS//mds/})
-        add $SINGLEMDS $MDS_MKFS_OPTS --mkfsoptions='\"-O large_xattr\"' \
-            --reformat $mds_dev || error "reformatting $mds_dev failed"
-    fi
+	[ $(lustre_version_code $SINGLEMDS) -ge $(version_code 2.1.53) ] ||
+		{ skip "Need MDS version at least 2.1.53"; return 0; }
+
+	if [ $(facet_fstype $SINGLEMDS) == ldiskfs ] &&
+	   ! large_xattr_enabled; then
+		reformat=true
+		local mds_dev=$(mdsdevname ${SINGLEMDS//mds/})
+		LDISKFS_MKFS_OPTS+=" -O large_xattr"
+		add $SINGLEMDS $(mkfs_opts $SINGLEMDS) --reformat $mds_dev ||
+			error "reformatting $mds_dev failed"
+	fi
 
     setup_noconfig || error "setting up the filesystem failed"
     client_up || error "starting client failed"
@@ -2817,23 +2887,57 @@ test_61() { # LU-80
 
     rm -f $file
     stopall
-    $reformat && reformat
+	if $reformat; then
+		LDISKFS_MKFS_OPTS=${LDISKFS_MKFS_OPTS% -O large_xattr}
+		reformat
+	fi
 }
 run_test 61 "large xattr"
+
+test_62() {
+	# MRP-118
+	local mdsdev=$(mdsdevname 1)
+	local ostdev=$(ostdevname 1)
+
+	[[ $(lustre_version_code $SINGLEMDS) -ge $(version_code 2.2.51) ]] ||
+		{ skip "Need MDS version at least 2.2.51"; return 0; }
+
+	echo "disable journal for mds"
+	do_facet mds tune2fs -O ^has_journal $mdsdev || error "tune2fs failed"
+	start_mds && error "MDT start should fail"
+	echo "disable journal for ost"
+	do_facet ost1 tune2fs -O ^has_journal $ostdev || error "tune2fs failed"
+	start_ost && error "OST start should fail"
+	cleanup || return $?
+	reformat_and_config
+}
+run_test 62 "start with disabled journal"
+
+test_63() {
+	if [ $(facet_fstype $SINGLEMDS) != ldiskfs ]; then
+		skip "Only applicable to ldiskfs-based MDTs"
+		return
+	fi
+
+	local inode_slab=$(do_facet $SINGLEMDS \
+		"awk '/ldiskfs_inode_cache/ { print \\\$5 }' /proc/slabinfo")
+	if [ -z "$inode_slab" ]; then
+		skip "ldiskfs module has not been loaded"
+		return
+	fi
+
+	echo "$inode_slab ldisk inodes per page"
+	[ "$inode_slab" -ge "3" ] ||
+		error "ldisk inode size is too big, $inode_slab objs per page"
+	return
+}
+run_test 63 "Verify each page can at least hold 3 ldisk inodes"
 
 if ! combined_mgs_mds ; then
 	stop mgs
 fi
 
 cleanup_gss
-
-# restore the ${facet}_MKFS_OPTS variables
-for facet in MGS MDS OST; do
-    opts=SAVED_${facet}_MKFS_OPTS
-    if [[ -n ${!opts} ]]; then
-        eval ${facet}_MKFS_OPTS=\"${!opts}\"
-    fi
-done
 
 complete $(basename $0) $SECONDS
 exit_status

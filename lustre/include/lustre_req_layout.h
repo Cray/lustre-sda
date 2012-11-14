@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -128,7 +126,9 @@ void req_capsule_shrink(struct req_capsule *pill,
                         const struct req_msg_field *field,
                         unsigned int newlen,
                         enum req_location loc);
-
+int req_capsule_server_grow(struct req_capsule *pill,
+                            const struct req_msg_field *field,
+                            unsigned int newlen);
 int  req_layout_init(void);
 void req_layout_fini(void);
 
@@ -218,7 +218,6 @@ extern struct req_format RQF_LDLM_BL_CALLBACK;
 extern struct req_format RQF_LDLM_GL_CALLBACK;
 /* LOG req_format */
 extern struct req_format RQF_LOG_CANCEL;
-extern struct req_format RQF_LLOG_CATINFO;
 extern struct req_format RQF_LLOG_ORIGIN_HANDLE_CREATE;
 extern struct req_format RQF_LLOG_ORIGIN_HANDLE_DESTROY;
 extern struct req_format RQF_LLOG_ORIGIN_HANDLE_NEXT_BLOCK;

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -159,7 +157,9 @@ int mgs_fs_setup(struct obd_device *obd, struct vfsmount *mnt)
         mgs->mgs_vfsmnt = mnt;
         mgs->mgs_sb = mnt->mnt_root->d_inode->i_sb;
 
-        fsfilt_setup(obd, mgs->mgs_sb);
+        rc = fsfilt_setup(obd, mgs->mgs_sb);
+        if (rc)
+                RETURN(rc);
 
         OBD_SET_CTXT_MAGIC(&obd->obd_lvfs_ctxt);
         obd->obd_lvfs_ctxt.pwdmnt = mnt;

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -100,6 +98,7 @@ extern int llapi_file_lookup(int dirfd, const char *name);
 #define VERBOSE_DETAIL     0x10
 #define VERBOSE_OBJID      0x20
 #define VERBOSE_GENERATION 0x40
+#define VERBOSE_MDTINDEX   0x80
 #define VERBOSE_ALL        (VERBOSE_COUNT | VERBOSE_SIZE | VERBOSE_OFFSET | \
                             VERBOSE_POOL | VERBOSE_OBJID | VERBOSE_GENERATION)
 
@@ -108,39 +107,41 @@ struct find_param {
         time_t  atime;
         time_t  mtime;
         time_t  ctime;
-        int     asign;
-        int     csign;
+        int     asign;  /* cannot be bitfields due to using pointers to */
+        int     csign;  /* access them during argument parsing. */
         int     msign;
         int     type;
+        int             size_sign:2,        /* these need to be signed values */
+                        stripesize_sign:2,
+                        stripecount_sign:2;
         unsigned long long size;
-        int     size_sign;
         unsigned long long size_units;
         uid_t uid;
         gid_t gid;
 
         unsigned long   zeroend:1,
                         recursive:1,
-                        got_uuids:1,
-                        obds_printed:1,
                         exclude_pattern:1,
                         exclude_type:1,
                         exclude_obd:1,
                         exclude_mdt:1,
-                        have_fileinfo:1,
                         exclude_gid:1,
                         exclude_uid:1,
-                        check_gid:1,
-                        check_uid:1,
-                        check_pool:1,
-                        check_size:1,
+                        check_gid:1,            /* group ID */
+                        check_uid:1,            /* user ID */
+                        check_pool:1,           /* LOV pool name */
+                        check_size:1,           /* file size */
                         exclude_pool:1,
                         exclude_size:1,
                         exclude_atime:1,
                         exclude_mtime:1,
                         exclude_ctime:1,
-                        get_mdt_index:1,
-                        get_lmv:1,
-                        raw:1;
+                        get_lmv:1,              /* get MDT list from LMV */
+                        raw:1,                  /* do not fill in defaults */
+                        check_stripesize:1,     /* LOV stripe size */
+                        exclude_stripesize:1,
+                        check_stripecount:1,    /* LOV stripe count */
+                        exclude_stripecount:1;
 
         int     verbose;
         int     quiet;
@@ -166,11 +167,18 @@ struct find_param {
         int     lumlen;
         struct  lov_user_mds_data *lmd;
 
-        /* In-precess parameters. */
-        unsigned int depth;
-        dev_t   st_dev;
-
         char poolname[LOV_MAXPOOLNAME + 1];
+
+        unsigned long long stripesize;
+        unsigned long long stripesize_units;
+        unsigned long long stripecount;
+
+        /* In-process parameters. */
+        unsigned long   got_uuids:1,
+                        obds_printed:1,
+                        have_fileinfo:1;        /* file attrs and LOV xattr */
+        unsigned int    depth;
+        dev_t           st_dev;
 };
 
 extern int llapi_ostlist(char *path, struct find_param *param);
@@ -184,7 +192,6 @@ extern int llapi_obd_statfs(char *path, __u32 type, __u32 index,
                      struct obd_uuid *uuid_buf);
 extern int llapi_ping(char *obd_type, char *obd_name);
 extern int llapi_target_check(int num_types, char **obd_types, char *dir);
-extern int llapi_catinfo(char *dir, char *keyword, char *node_name);
 extern int llapi_file_get_lov_uuid(const char *path, struct obd_uuid *lov_uuid);
 extern int llapi_file_fget_lov_uuid(int fd, struct obd_uuid *lov_uuid);
 extern int llapi_lov_get_uuids(int fd, struct obd_uuid *uuidp, int *ost_count);
@@ -223,6 +230,8 @@ extern int llapi_fid2path(const char *device, const char *fidstr, char *path,
 extern int llapi_path2fid(const char *path, lustre_fid *fid);
 extern int llapi_get_version(char *buffer, int buffer_size, char **version);
 
+extern int llapi_get_data_version(int fd, __u64 *data_version, __u64 flags);
+
 /* Changelog interface.  priv is private state, managed internally
    by these functions */
 #define CHANGELOG_FLAG_FOLLOW 0x01   /* Not yet implemented */
@@ -230,11 +239,16 @@ extern int llapi_get_version(char *buffer, int buffer_size, char **version);
    slow user parsing of the records, but it also prevents us from cleaning
    up if the records are not consumed. */
 
+/* Records received are in extentded format now, though most of them are still
+ * written in disk in changelog_rec format (to save space and time), it's
+ * converted to extented format in liblustre to ease changelog analysis. */
+#define HAVE_CHANGELOG_EXTEND_REC 1
+
 extern int llapi_changelog_start(void **priv, int flags, const char *mdtname,
                                  long long startrec);
 extern int llapi_changelog_fini(void **priv);
-extern int llapi_changelog_recv(void *priv, struct changelog_rec **rech);
-extern int llapi_changelog_free(struct changelog_rec **rech);
+extern int llapi_changelog_recv(void *priv, struct changelog_ext_rec **rech);
+extern int llapi_changelog_free(struct changelog_ext_rec **rech);
 /* Allow records up to endrec to be destroyed; requires registered id. */
 extern int llapi_changelog_clear(const char *mdtname, const char *idstr,
                                  long long endrec);

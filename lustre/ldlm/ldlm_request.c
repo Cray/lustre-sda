@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2010, 2011, Whamcloud, Inc.
+ * Copyright (c) 2010, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -174,7 +172,6 @@ int ldlm_completion_ast_async(struct ldlm_lock *lock, int flags, void *data)
 
         LDLM_DEBUG(lock, "client-side enqueue returned a blocked lock, "
                    "going forward");
-        ldlm_lock_dump(D_OTHER, lock, 0);
         ldlm_reprocess_all(lock->l_resource);
         RETURN(0);
 }
@@ -224,7 +221,6 @@ int ldlm_completion_ast(struct ldlm_lock *lock, int flags, void *data)
 
         LDLM_DEBUG(lock, "client-side enqueue returned a blocked lock, "
                    "sleeping");
-        ldlm_lock_dump(D_OTHER, lock, 0);
 
 noreproc:
 
@@ -709,7 +705,7 @@ int ldlm_prep_elc_req(struct obd_export *exp, struct ptlrpc_request *req,
 
         if (cancels == NULL)
                 cancels = &head;
-	if (ns_connect_cancelset(ns)) {
+        if (exp_connect_cancelset(exp)) {
                 /* Estimate the amount of available space in the request. */
                 req_capsule_filled_sizes(pill, RCL_CLIENT);
                 avail = ldlm_capsule_handles_avail(pill, RCL_CLIENT, canceloff);
@@ -739,7 +735,7 @@ int ldlm_prep_elc_req(struct obd_export *exp, struct ptlrpc_request *req,
                 RETURN(rc);
         }
 
-	if (ns_connect_cancelset(ns)) {
+        if (exp_connect_cancelset(exp)) {
                 if (canceloff) {
                         dlm = req_capsule_client_get(pill, &RMF_DLM_REQ);
                         LASSERT(dlm);
@@ -832,6 +828,11 @@ int ldlm_cli_enqueue(struct obd_export *exp, struct ptlrpc_request **reqp,
                 LDLM_DEBUG(lock, "client-side enqueue START");
         }
 
+	lock->l_conn_export = exp;
+	lock->l_export = NULL;
+	lock->l_blocking_ast = einfo->ei_cb_bl;
+	lock->l_flags |= (*flags & LDLM_FL_NO_LRU);
+
         /* lock not sent to server yet */
 
         if (reqp == NULL || *reqp == NULL) {
@@ -856,11 +857,6 @@ int ldlm_cli_enqueue(struct obd_export *exp, struct ptlrpc_request **reqp,
                 LASSERTF(len >= sizeof(*body), "buflen[%d] = %d, not %d\n",
                          DLM_LOCKREQ_OFF, len, (int)sizeof(*body));
         }
-
-        lock->l_conn_export = exp;
-        lock->l_export = NULL;
-        lock->l_blocking_ast = einfo->ei_cb_bl;
-        lock->l_flags |= (*flags & LDLM_FL_NO_LRU);
 
         /* Dump lock data into the request buffer */
         body = req_capsule_client_get(&req->rq_pill, &RMF_DLM_REQ);
@@ -1138,6 +1134,8 @@ int ldlm_cli_cancel_req(struct obd_export *exp, cfs_list_t *cancels,
                         ptlrpc_request_free(req);
                         GOTO(out, rc);
                 }
+                req->rq_no_resend = 1;
+                req->rq_no_delay = 1;
 
                 req->rq_request_portal = LDLM_CANCEL_REQUEST_PORTAL;
                 req->rq_reply_portal = LDLM_CANCEL_REPLY_PORTAL;

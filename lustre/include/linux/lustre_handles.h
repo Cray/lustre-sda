@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -49,10 +47,8 @@
 #include <linux/spinlock.h>
 #include <linux/types.h>
 
-# ifdef HAVE_RCU
-#  include <linux/rcupdate.h> /* for rcu_head{} */
+#include <linux/rcupdate.h> /* for rcu_head{} */
 typedef struct rcu_head cfs_rcu_head_t;
-# endif
 
 #endif /* ifdef __KERNEL__ */
 

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, Whamcloud, Inc.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -233,7 +231,7 @@ int llog_setup(struct obd_device *obd,  struct obd_llog_group *olg,
 }
 EXPORT_SYMBOL(llog_setup);
 
-int llog_sync(struct llog_ctxt *ctxt, struct obd_export *exp)
+int llog_sync(struct llog_ctxt *ctxt, struct obd_export *exp, int flags)
 {
         int rc = 0;
         ENTRY;
@@ -242,7 +240,7 @@ int llog_sync(struct llog_ctxt *ctxt, struct obd_export *exp)
                 RETURN(0);
 
         if (CTXTP(ctxt, sync))
-                rc = CTXTP(ctxt, sync)(ctxt, exp);
+		rc = CTXTP(ctxt, sync)(ctxt, exp, flags);
 
         RETURN(rc);
 }
@@ -312,9 +310,9 @@ static int cat_cancel_cb(struct llog_handle *cathandle,
 
         rc = llog_cat_id2handle(cathandle, &loghandle, &lir->lid_id);
         if (rc) {
-                CERROR("Cannot find handle for log "LPX64"\n",
-                       lir->lid_id.lgl_oid);
-                if (rc == -ENOENT) {
+                CERROR("Cannot find handle for log "LPX64": %d\n",
+                       lir->lid_id.lgl_oid, rc);
+                if (rc == -ENOENT || rc == -ESTALE) {
                         index = rec->lrh_index;
                         goto cat_cleanup;
                 }

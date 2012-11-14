@@ -1,9 +1,7 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  *
  *   Author: Eric Barton <eric@bartonsoftware.com>
  *
@@ -42,6 +40,12 @@ CFS_MODULE_PARM(peer_buffer_credits, "i", int, 0444,
 static int peer_timeout = 180;
 CFS_MODULE_PARM(peer_timeout, "i", int, 0444,
                 "Seconds without aliveness news to declare peer dead (<=0 to disable)");
+
+/* Number of daemons in each thread pool which is percpt,
+ * we will estimate reasonable value based on CPUs if it's not set. */
+static unsigned int nscheds;
+CFS_MODULE_PARM(nscheds, "i", int, 0444,
+		"# scheduler daemons in each pool while starting");
 
 static int nconnds = 4;
 CFS_MODULE_PARM(nconnds, "i", int, 0444,
@@ -174,6 +178,7 @@ int ksocknal_tunables_init(void)
 
         /* initialize ksocknal_tunables structure */
         ksocknal_tunables.ksnd_timeout            = &sock_timeout;
+	ksocknal_tunables.ksnd_nscheds		  = &nscheds;
         ksocknal_tunables.ksnd_nconnds            = &nconnds;
         ksocknal_tunables.ksnd_nconnds_max        = &nconnds_max;
         ksocknal_tunables.ksnd_min_reconnectms    = &min_reconnectms;
@@ -201,6 +206,12 @@ int ksocknal_tunables_init(void)
         ksocknal_tunables.ksnd_zc_recv_min_nfrags = &zc_recv_min_nfrags;
 
 #ifdef CPU_AFFINITY
+	if (enable_irq_affinity) {
+		CWARN("irq_affinity is removed from socklnd because modern "
+		      "computer always has fast CPUs and more cores than "
+		      "# NICs, although you still can set irq_affinity by "
+		      "another way, please check manual for details.\n");
+	}
         ksocknal_tunables.ksnd_irq_affinity       = &enable_irq_affinity;
 #endif
 

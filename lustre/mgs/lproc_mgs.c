@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -50,13 +48,14 @@
 static int lprocfs_mgs_rd_mntdev(char *page, char **start, off_t off, int count,
                                  int *eof, void *data)
 {
-        struct obd_device* obd = (struct obd_device *)data;
+	struct obd_device *obd = (struct obd_device *)data;
 
-        LASSERT(obd != NULL);
-        LASSERT(obd->u.mgs.mgs_vfsmnt->mnt_devname);
-        *eof = 1;
+	LASSERT(obd != NULL);
+	LASSERT(mnt_get_devname(obd->u.mgs.mgs_vfsmnt));
+	*eof = 1;
 
-        return snprintf(page, count, "%s\n",obd->u.mgs.mgs_vfsmnt->mnt_devname);
+	return snprintf(page, count, "%s\n",
+			mnt_get_devname(obd->u.mgs.mgs_vfsmnt));
 }
 
 static int mgs_fs_seq_show(struct seq_file *seq, void *v)

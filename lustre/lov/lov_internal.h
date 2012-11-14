@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -40,6 +38,7 @@
 #define LOV_INTERNAL_H
 
 #include <obd_class.h>
+#include <obd_lov.h>
 #include <lustre/lustre_user.h>
 
 struct lov_lock_handles {
@@ -66,51 +65,29 @@ struct lov_request {
 };
 
 struct lov_request_set {
-        struct ldlm_enqueue_info*set_ei;
-        struct obd_info         *set_oi;
-        cfs_atomic_t             set_refcount;
-        struct obd_export       *set_exp;
-        /* XXX: There is @set_exp already, however obd_statfs gets obd_device
-           only. */
-        struct obd_device       *set_obd;
-        int                      set_count;
-        cfs_atomic_t             set_completes;
-        cfs_atomic_t             set_success;
-        struct llog_cookie      *set_cookies;
-        int                      set_cookie_sent;
-        struct obd_trans_info   *set_oti;
-        obd_count                set_oabufs;
-        struct brw_page         *set_pga;
-        struct lov_lock_handles *set_lockh;
-        cfs_list_t               set_list;
-        cfs_waitq_t              set_waitq;
-        cfs_spinlock_t           set_lock;
+	struct ldlm_enqueue_info	*set_ei;
+	struct obd_info			*set_oi;
+	cfs_atomic_t			set_refcount;
+	struct obd_export		*set_exp;
+	/* XXX: There is @set_exp already, however obd_statfs gets obd_device
+	   only. */
+	struct obd_device		*set_obd;
+	int				set_count;
+	cfs_atomic_t			set_completes;
+	cfs_atomic_t			set_success;
+	cfs_atomic_t			set_finish_checked;
+	struct llog_cookie		*set_cookies;
+	int				set_cookie_sent;
+	struct obd_trans_info		*set_oti;
+	obd_count			set_oabufs;
+	struct brw_page			*set_pga;
+	struct lov_lock_handles		*set_lockh;
+	cfs_list_t			set_list;
+	cfs_waitq_t			set_waitq;
+	cfs_spinlock_t			set_lock;
 };
 
 extern cfs_mem_cache_t *lov_oinfo_slab;
-
-static inline void lov_llh_addref(void *llhp)
-{
-        struct lov_lock_handles *llh = llhp;
-        cfs_atomic_inc(&llh->llh_refcount);
-        CDEBUG(D_INFO, "GETting llh %p : new refcount %d\n", llh,
-               cfs_atomic_read(&llh->llh_refcount));
-}
-
-static inline struct lov_lock_handles *lov_llh_new(struct lov_stripe_md *lsm)
-{
-        struct lov_lock_handles *llh;
-
-        OBD_ALLOC(llh, sizeof *llh +
-                  sizeof(*llh->llh_handles) * lsm->lsm_stripe_count);
-        if (llh == NULL)
-                return NULL;
-        cfs_atomic_set(&llh->llh_refcount, 2);
-        llh->llh_stripe_count = lsm->lsm_stripe_count;
-        CFS_INIT_LIST_HEAD(&llh->llh_handle.h_link);
-        class_handle_hash(&llh->llh_handle, lov_llh_addref);
-        return llh;
-}
 
 void lov_finish_set(struct lov_request_set *set);
 
@@ -157,7 +134,7 @@ static inline void lov_llh_put(struct lov_lock_handles *llh)
         (char *)((lv)->lov_tgts[index]->ltd_uuid.uuid)
 
 /* lov_merge.c */
-void lov_merge_attrs(struct obdo *tgt, struct obdo *src, obd_flag valid,
+void lov_merge_attrs(struct obdo *tgt, struct obdo *src, obd_valid valid,
                      struct lov_stripe_md *lsm, int stripeno, int *set);
 int lov_merge_lvb(struct obd_export *exp, struct lov_stripe_md *lsm,
                   struct ost_lvb *lvb, int kms_only);
@@ -192,7 +169,7 @@ int qos_remedy_create(struct lov_request_set *set, struct lov_request *req);
 
 /* lov_request.c */
 void lov_set_add_req(struct lov_request *req, struct lov_request_set *set);
-int lov_finished_set(struct lov_request_set *set);
+int lov_set_finished(struct lov_request_set *set, int idempotent);
 void lov_update_set(struct lov_request_set *set,
                     struct lov_request *req, int rc);
 int lov_update_common_set(struct lov_request_set *set,
@@ -289,7 +266,7 @@ int lov_getstripe(struct obd_export *exp,
                   struct lov_stripe_md *lsm, struct lov_user_md *lump);
 int lov_alloc_memmd(struct lov_stripe_md **lsmp, __u16 stripe_count,
                     int pattern, int magic);
-void lov_free_memmd(struct lov_stripe_md **lsmp);
+int lov_free_memmd(struct lov_stripe_md **lsmp);
 
 void lov_dump_lmm_v1(int level, struct lov_mds_md_v1 *lmm);
 void lov_dump_lmm_v3(int level, struct lov_mds_md_v3 *lmm);
@@ -334,34 +311,11 @@ struct pool_desc *lov_find_pool(struct lov_obd *lov, char *poolname);
 int lov_check_index_in_pool(__u32 idx, struct pool_desc *pool);
 void lov_pool_putref(struct pool_desc *pool);
 
-#if BITS_PER_LONG == 64
-# define ll_do_div64(n,base) ({                                 \
-        uint64_t __base = (base);                               \
-        uint64_t __rem;                                         \
-        __rem = ((uint64_t)(n)) % __base;                       \
-        (n) = ((uint64_t)(n)) / __base;                         \
-        __rem;                                                  \
-  })
-#elif BITS_PER_LONG == 32
-# define ll_do_div64(n,base) ({                                 \
-        uint64_t __rem;                                         \
-        if ((sizeof(base) > 4) && (((base)&0xffffffff00000000ULL) != 0)) { \
-                int __remainder;                                \
-                LASSERTF(!((base) & (LOV_MIN_STRIPE_SIZE - 1)), "64 bit lov "\
-                          "division %llu / %llu\n", (n), (base)); \
-                __remainder = (n) & (LOV_MIN_STRIPE_SIZE - 1);  \
-                (n) >>= LOV_MIN_STRIPE_BITS;                    \
-                (base) >>= LOV_MIN_STRIPE_BITS;                 \
-                __rem = do_div(n, base);                        \
-                __rem <<= LOV_MIN_STRIPE_BITS;                  \
-                __rem += __remainder;                           \
-        } else {                                                \
-                __rem = do_div(n, base);                        \
-        }                                                       \
-        __rem;                                                  \
-  })
-#else
-#error Unsupported architecture.
-#endif
+static inline struct lov_stripe_md *lsm_addref(struct lov_stripe_md *lsm)
+{
+	LASSERT(cfs_atomic_read(&lsm->lsm_refc) > 0);
+	cfs_atomic_inc(&lsm->lsm_refc);
+	return lsm;
+}
 
 #endif

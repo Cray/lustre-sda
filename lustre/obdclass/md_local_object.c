@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -88,7 +88,7 @@ LU_KEY_INIT(llod_global, struct llo_thread_info);
 LU_KEY_FINI(llod_global, struct llo_thread_info);
 
 static struct lu_context_key llod_key = {
-        .lct_tags = LCT_MD_THREAD | LCT_DT_THREAD,
+        .lct_tags = LCT_MD_THREAD,
         .lct_init = llod_global_key_init,
         .lct_fini = llod_global_key_fini
 };

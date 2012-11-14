@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -573,7 +573,6 @@ write_sysStatus(int      action,
             size_t   name_len)
 {
   static long *long_ret;
-  int size;
   int new_value;
 
 
@@ -599,7 +598,6 @@ write_sysStatus(int      action,
 
 
         case RESERVE2:
-          size = var_val_len;
           long_ret = (long *) var_val;
 
 

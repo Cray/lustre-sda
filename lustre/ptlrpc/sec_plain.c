@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -272,15 +270,18 @@ int plain_ctx_verify(struct ptlrpc_cli_ctx *ctx, struct ptlrpc_request *req)
         }
 
         if (unlikely(req->rq_early)) {
-                cksum = crc32_le(!(__u32) 0,
-                                 lustre_msg_buf(msg, PLAIN_PACK_MSG_OFF, 0),
-                                 lustre_msg_buflen(msg, PLAIN_PACK_MSG_OFF));
-                if (cksum != msg->lm_cksum) {
-                        CDEBUG(D_SEC,
-                               "early reply checksum mismatch: %08x != %08x\n",
-                               cpu_to_le32(cksum), msg->lm_cksum);
-                        RETURN(-EINVAL);
-                }
+		unsigned int hsize = 4;
+
+		cfs_crypto_hash_digest(CFS_HASH_ALG_CRC32,
+				lustre_msg_buf(msg, PLAIN_PACK_MSG_OFF, 0),
+				lustre_msg_buflen(msg, PLAIN_PACK_MSG_OFF),
+				NULL, 0, (unsigned char *)&cksum, &hsize);
+		if (cksum != msg->lm_cksum) {
+			CDEBUG(D_SEC,
+			       "early reply checksum mismatch: %08x != %08x\n",
+			       cpu_to_le32(cksum), msg->lm_cksum);
+			RETURN(-EINVAL);
+		}
         } else {
                 /* whether we sent with bulk or not, we expect the same
                  * in reply, except for early reply */
@@ -894,10 +895,13 @@ int plain_authorize(struct ptlrpc_request *req)
                 else
                         req->rq_reply_off = 0;
         } else {
-                msg->lm_cksum = crc32_le(!(__u32) 0,
-                                lustre_msg_buf(msg, PLAIN_PACK_MSG_OFF, 0),
-                                lustre_msg_buflen(msg, PLAIN_PACK_MSG_OFF));
-                req->rq_reply_off = 0;
+		unsigned int hsize = 4;
+
+		cfs_crypto_hash_digest(CFS_HASH_ALG_CRC32,
+			lustre_msg_buf(msg, PLAIN_PACK_MSG_OFF, 0),
+			lustre_msg_buflen(msg, PLAIN_PACK_MSG_OFF),
+			NULL, 0, (unsigned char *)&msg->lm_cksum, &hsize);
+			req->rq_reply_off = 0;
         }
 
         RETURN(0);

@@ -1,4 +1,6 @@
 #!/bin/bash
+# -*- mode: Bash; tab-width: 4; indent-tabs-mode: t; -*-
+# vim:shiftwidth=4:softtabstop=4:tabstop=4:
 
 set -e
 
@@ -10,6 +12,7 @@ LUSTRE=${LUSTRE:-$(cd $(dirname $0)/..; echo $PWD)}
 SETUP=${SETUP:-}
 CLEANUP=${CLEANUP:-}
 MOUNT_2=${MOUNT_2:-"yes"}
+export MULTIOP=${MULTIOP:-multiop}
 . $LUSTRE/tests/test-framework.sh
 init_test_env $@
 . ${CONFIG:=$LUSTRE/tests/cfg/$NAME.sh}
@@ -55,7 +58,7 @@ rmultiop_start() {
     # /tmp/multiop_bg.pid file
 
     local pid_file=$TMP/multiop_bg.pid.$$
-    do_node $client "MULTIOP_PID_FILE=$pid_file LUSTRE= sh runmultiop_bg_pause $file $cmds" &
+    do_node $client "MULTIOP_PID_FILE=$pid_file LUSTRE= runmultiop_bg_pause $file $cmds" &
     local pid=$!
     sleep 3
     local multiop_pid
@@ -143,7 +146,7 @@ test_1b() { # former test_0b
 
     client_evicted $CLIENT1 || error "$CLIENT1 not evicted"
     if ! do_node $CLIENT1 $CHECKSTAT -a $DIR/$tdir/$tfile; then
-        error "open succeeded unexpectedly"
+		error_and_remount "open succeeded unexpectedly"
     fi
 }
 run_test 1b "open (O_CREAT) checks version of parent"
@@ -230,7 +233,7 @@ test_2b() { # former test_0e
 
     client_evicted $CLIENT1 || error "$CLIENT1 not evicted"
     if ! do_node $CLIENT1 $CHECKSTAT -a $DIR/$tdir/$tfile; then
-        error "create succeeded unexpectedly"
+		error_and_remount "create succeeded unexpectedly"
     fi
 }
 run_test 2b "create checks version of parent"
@@ -267,7 +270,7 @@ test_3b() { # former test_0g
 
     client_evicted $CLIENT1 || error "$CLIENT1 not evicted"
     if do_node $CLIENT1 $CHECKSTAT -a $DIR/$tdir/$tfile; then
-        error "unlink succeeded unexpectedly"
+		error_and_remount "unlink succeeded unexpectedly"
     fi
 }
 run_test 3b "unlink checks version of parent"
@@ -320,7 +323,7 @@ test_4c() { # former test_0j
 
     client_evicted $CLIENT1 || error "$CLIENT1 not evicted"
     if ! do_node $CLIENT1 $CHECKSTAT -u \\\#$UID $file; then
-        error "setattr of UID succeeded unexpectedly"
+		error_and_remount "setattr of UID succeeded unexpectedly"
     fi
 }
 run_test 4c "setattr of UID checks versions"
@@ -343,7 +346,7 @@ test_4d() { # former test_0k
 
     client_evicted $CLIENT1 || error "$CLIENT1 not evicted"
     if ! do_node $CLIENT1 $CHECKSTAT -g \\\#$UID $file; then
-        error "setattr of GID succeeded unexpectedly"
+		error_and_remount "setattr of GID succeeded unexpectedly"
     fi
 }
 run_test 4d "setattr of GID checks versions"
@@ -381,7 +384,7 @@ test_4f() { # former test_0m
 
     client_evicted $CLIENT1 || error "$CLIENT1 not evicted"
     if ! do_node $CLIENT1 $CHECKSTAT -p 0644 $file; then
-        error "setattr of permission succeeded unexpectedly"
+		error_and_remount "setattr of permission succeeded unexpectedly"
     fi
 }
 run_test 4f "setattr of permission checks versions"
@@ -510,7 +513,7 @@ test_4k() { # former test_0r
         error "time not changed: pre $mtime_pre, post $mtime_post"
     fi
     if ! do_node $CLIENT1 $CHECKSTAT -s 1 $file; then
-        error "setattr of size failed"
+		error_and_remount "setattr of size failed"
     fi
     mtime=$(do_node $CLIENT1 stat --format=%Y $file)
     if (($mtime != $mtime_post)); then
@@ -559,7 +562,7 @@ test_5b() { # former test_0t
 
     client_evicted $CLIENT1 || error "$CLIENT1 not evicted"
     if ! do_node $CLIENT1 $CHECKSTAT -a $DIR/$tdir/$tfile; then
-        error "link should fail"
+		error_and_remount "link should fail"
     fi
 }
 run_test 5b "link checks version of target parent"
@@ -582,7 +585,7 @@ test_5c() { # former test_0u
 
     client_evicted $CLIENT1 || error "$CLIENT1 not evicted"
     if ! do_node $CLIENT1 $CHECKSTAT -a $DIR/$tdir/$tfile; then
-        error "link should fail"
+		error_and_remount "link should fail"
     fi
 }
 run_test 5c "link checks version of source"
@@ -641,7 +644,7 @@ test_6c() { # former test_0x
 
     client_evicted $CLIENT1 || error "$CLIENT1 not evicted"
     if do_node $CLIENT1 $CHECKSTAT -a $DIR/$tfile; then
-        error "rename should fail"
+		error_and_remount "rename should fail"
     fi
 }
 run_test 6c "rename checks version of source parent"
@@ -664,7 +667,7 @@ test_6d() { # former test_0y
 
     client_evicted $CLIENT1 || error "$CLIENT1 not evicted"
     if do_node $CLIENT1 $CHECKSTAT -a $DIR/$tfile; then
-        error "rename should fail"
+		error_and_remount "rename should fail"
     fi
 }
 run_test 6d "rename checks version of target parent"

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, Whamcloud, Inc.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -56,6 +54,7 @@ struct osc_brw_async_args {
         struct brw_page  **aa_ppga;
         struct client_obd *aa_cli;
         cfs_list_t         aa_oaps;
+	cfs_list_t         aa_exts;
         struct obd_capa   *aa_ocapa;
         struct cl_req     *aa_clerq;
 };
@@ -69,6 +68,12 @@ struct osc_setattr_args {
         struct obdo         *sa_oa;
         obd_enqueue_update_f sa_upcall;
         void                *sa_cookie;
+};
+
+struct osc_fsync_args {
+	struct obd_info     *fa_oi;
+	obd_enqueue_update_f fa_upcall;
+	void                *fa_cookie;
 };
 
 struct osc_enqueue_args {

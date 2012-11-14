@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -56,17 +54,6 @@
 
 /* 512byte block min */
 #define MAX_BLOCKS_PER_PAGE (CFS_PAGE_SIZE / 512)
-struct filter_iobuf {
-        cfs_atomic_t       dr_numreqs;  /* number of reqs being processed */
-        cfs_waitq_t        dr_wait;
-        int                dr_max_pages;
-        int                dr_npages;
-        int                dr_error;
-        struct page      **dr_pages;
-        unsigned long     *dr_blocks;
-        unsigned int       dr_ignore_quota:1;
-        struct filter_obd *dr_filter;
-};
 
 static void record_start_io(struct filter_iobuf *iobuf, int rw, int size,
                             struct obd_export *exp)
@@ -171,8 +158,7 @@ static int dio_complete_routine(struct bio *bio, unsigned int done, int error)
         }
 
         /* the check is outside of the cycle for performance reason -bzzz */
-        if (!cfs_test_bit(BIO_RW, &bio->bi_rw))
-						{
+        if (!cfs_test_bit(BIO_RW, &bio->bi_rw)) {
                 bio_for_each_segment(bvl, bio, i) {
                         if (likely(error == 0))
                                 SetPageUptodate(bvl->bv_page);
@@ -233,6 +219,7 @@ struct filter_iobuf *filter_alloc_iobuf(struct filter_obd *filter,
         if (iobuf->dr_blocks == NULL)
                 goto failed_2;
 
+	CFS_INIT_HLIST_NODE(&iobuf->dr_hlist);
         iobuf->dr_filter = filter;
         cfs_waitq_init(&iobuf->dr_wait);
         cfs_atomic_set(&iobuf->dr_numreqs, 0);
@@ -260,10 +247,11 @@ static void filter_clear_iobuf(struct filter_iobuf *iobuf)
 
 void filter_free_iobuf(struct filter_iobuf *iobuf)
 {
-        int num_pages = iobuf->dr_max_pages;
+	int num_pages = iobuf->dr_max_pages;
 
-        filter_clear_iobuf(iobuf);
+	filter_clear_iobuf(iobuf);
 
+	LASSERT(cfs_hlist_unhashed(&iobuf->dr_hlist));
         OBD_FREE(iobuf->dr_blocks,
                  MAX_BLOCKS_PER_PAGE * num_pages * sizeof(*iobuf->dr_blocks));
         OBD_FREE(iobuf->dr_pages,
@@ -282,9 +270,6 @@ void filter_iobuf_put(struct filter_obd *filter, struct filter_iobuf *iobuf,
                 return;
         }
 
-        LASSERTF(filter->fo_iobuf_pool[thread_id] == iobuf,
-                 "iobuf mismatch for thread %d: pool %p iobuf %p\n",
-                 thread_id, filter->fo_iobuf_pool[thread_id], iobuf);
         filter_clear_iobuf(iobuf);
 }
 
@@ -411,6 +396,7 @@ int filter_do_bio(struct obd_export *exp, struct inode *inode,
 
                         bio->bi_bdev = inode->i_sb->s_bdev;
                         bio->bi_sector = sector;
+			bio->bi_rw = (rw == OBD_BRW_READ ? READ : WRITE);
                         bio->bi_end_io = dio_complete_routine;
                         bio->bi_private = iobuf;
 
@@ -523,7 +509,7 @@ int filter_direct_io(int rw, struct dentry *dchild, struct filter_iobuf *iobuf,
                                             oti->oti_handle, attr, 0);
                 }
 
-                UNLOCK_INODE_MUTEX(inode);
+		mutex_unlock(&inode->i_mutex);
 
                 /* Force commit to make the just-deleted blocks
                  * reusable. LU-456 */
@@ -691,25 +677,28 @@ int filter_commitrw_write(struct obd_export *exp, struct obdo *oa,
         if (rc == -ENOTCONN)
                 GOTO(cleanup, rc);
 
+        if (OBD_FAIL_CHECK(OBD_FAIL_OST_DQACQ_NET))
+                GOTO(cleanup, rc = -EINPROGRESS);
+
         push_ctxt(&saved, &obd->obd_lvfs_ctxt, NULL);
         cleanup_phase = 2;
 
         fsfilt_check_slow(obd, now, "quota init");
 
 retry:
-        LOCK_INODE_MUTEX(inode);
-        fsfilt_check_slow(obd, now, "i_mutex");
-        oti->oti_handle = fsfilt_brw_start(obd, objcount, &fso, niocount, res,
-                                           oti);
-        if (IS_ERR(oti->oti_handle)) {
-                UNLOCK_INODE_MUTEX(inode);
-                rc = PTR_ERR(oti->oti_handle);
-                CDEBUG(rc == -ENOSPC ? D_INODE : D_ERROR,
-                       "error starting transaction: rc = %d\n", rc);
-                oti->oti_handle = NULL;
-                GOTO(cleanup, rc);
-        }
-        /* have to call fsfilt_commit() from this point on */
+	mutex_lock(&inode->i_mutex);
+	fsfilt_check_slow(obd, now, "i_mutex");
+	oti->oti_handle = fsfilt_brw_start(obd, objcount, &fso, niocount, res,
+					   oti);
+	if (IS_ERR(oti->oti_handle)) {
+		mutex_unlock(&inode->i_mutex);
+		rc = PTR_ERR(oti->oti_handle);
+		CDEBUG(rc == -ENOSPC ? D_INODE : D_ERROR,
+		       "error starting transaction: rc = %d\n", rc);
+		oti->oti_handle = NULL;
+		GOTO(cleanup, rc);
+	}
+	/* have to call fsfilt_commit() from this point on */
 
         fsfilt_check_slow(obd, now, "brw_start");
 
@@ -755,6 +744,11 @@ retry:
                 iattr.ia_valid = save & ~(ATTR_UID | ATTR_GID);
         }
 
+	CDEBUG(D_INODE, "FID "DFID" to write: s="LPU64" m="LPU64" a="LPU64
+			" c="LPU64" b="LPU64"\n",
+			oa->o_id, (__u32)oa->o_seq, (__u32)oa->o_seq,
+			oa->o_size, oa->o_mtime, oa->o_atime, oa->o_ctime,
+			oa->o_blocks);
         /* filter_direct_io drops i_mutex */
         rc = filter_direct_io(OBD_BRW_WRITE, res->dentry, iobuf, exp, &iattr,
                               oti, sync_journal_commit ? &wait_handle : NULL);
@@ -766,9 +760,14 @@ retry:
                 goto retry;
         }
 
-        obdo_from_inode(oa, inode, NULL, rc == 0 ? FILTER_VALID_FLAGS : 0 |
-                                                   OBD_MD_FLUID |OBD_MD_FLGID);
+        obdo_from_inode(oa, inode, (rc == 0 ? FILTER_VALID_FLAGS : 0) |
+                                   OBD_MD_FLUID | OBD_MD_FLGID);
 
+	CDEBUG(D_INODE, "FID "DFID" after write: s="LPU64" m="LPU64" a="LPU64
+			" c="LPU64" b="LPU64"\n",
+			oa->o_id, (__u32)oa->o_seq, (__u32)oa->o_seq,
+			oa->o_size, oa->o_mtime, oa->o_atime, oa->o_ctime,
+			oa->o_blocks);
         lquota_getflag(filter_quota_interface_ref, obd, oa);
 
         fsfilt_check_slow(obd, now, "direct_io");

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -162,18 +162,6 @@ ksocknal_lib_tunables_fini ()
  * 5. Increase kern.ipc.maxsockbuf
  */
 #define KSOCKNAL_MAX_BUFFER        (1152*1024)
-
-void
-ksocknal_lib_bind_irq (unsigned int irq)
-{
-        return;
-}
-
-unsigned int
-ksocknal_lib_sock_irq (cfs_socket_t *sock)
-{
-        return 0;
-}
 
 int
 ksocknal_lib_get_conn_addrs (ksock_conn_t *conn)

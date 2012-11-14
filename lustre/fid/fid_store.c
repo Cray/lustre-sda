@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -78,13 +76,16 @@ struct seq_update_callback {
 };
 
 void seq_update_cb(struct lu_env *env, struct thandle *th,
-                   struct dt_txn_commit_cb *cb, int err)
+		   struct dt_txn_commit_cb *cb, int err)
 {
-        struct seq_update_callback *ccb;
-        ccb = container_of0(cb, struct seq_update_callback, suc_cb);
-        ccb->suc_seq->lss_need_sync = 0;
-        cfs_list_del(&ccb->suc_cb.dcb_linkage);
-        OBD_FREE_PTR(ccb);
+	struct seq_update_callback *ccb;
+
+	ccb = container_of0(cb, struct seq_update_callback, suc_cb);
+
+	LASSERT(ccb->suc_seq != NULL);
+
+	ccb->suc_seq->lss_need_sync = 0;
+	OBD_FREE_PTR(ccb);
 }
 
 struct thandle *seq_store_trans_create(struct lu_server_seq *seq,
@@ -109,20 +110,27 @@ int seq_store_trans_start(struct lu_server_seq *seq, const struct lu_env *env,
 
 int seq_update_cb_add(struct thandle *th, struct lu_server_seq *seq)
 {
-        struct seq_update_callback *ccb;
-        int rc;
-        OBD_ALLOC_PTR(ccb);
-        if (ccb == NULL)
-                return -ENOMEM;
+	struct seq_update_callback *ccb;
+	struct dt_txn_commit_cb	   *dcb;
+	int			   rc;
 
-        ccb->suc_cb.dcb_func = seq_update_cb;
-        CFS_INIT_LIST_HEAD(&ccb->suc_cb.dcb_linkage);
-        ccb->suc_seq = seq;
-        seq->lss_need_sync = 1;
-        rc = dt_trans_cb_add(th, &ccb->suc_cb);
-        if (rc)
-                OBD_FREE_PTR(ccb);
-        return rc;
+	OBD_ALLOC_PTR(ccb);
+	if (ccb == NULL)
+		return -ENOMEM;
+
+	ccb->suc_seq	   = seq;
+	seq->lss_need_sync = 1;
+
+	dcb	       = &ccb->suc_cb;
+	dcb->dcb_func  = seq_update_cb;
+	CFS_INIT_LIST_HEAD(&dcb->dcb_linkage);
+	strncpy(dcb->dcb_name, "seq_update_cb", MAX_COMMIT_CB_STR_LEN);
+	dcb->dcb_name[MAX_COMMIT_CB_STR_LEN - 1] = '\0';
+
+	rc = dt_trans_cb_add(th, dcb);
+	if (rc)
+		OBD_FREE_PTR(ccb);
+	return rc;
 }
 
 int seq_declare_store_write(struct lu_server_seq *seq,

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -50,8 +48,12 @@
 #include <asm/system.h>
 #include <asm/uaccess.h>
 
-#include <linux/fs.h>
+#ifdef HAVE_MIGRATE_H
 #include <linux/migrate.h>
+#elif defined(HAVE_MIGRATE_MODE_H)
+#include <linux/migrate_mode.h>
+#endif
+#include <linux/fs.h>
 #include <linux/buffer_head.h>
 #include <linux/writeback.h>
 #include <linux/stat.h>
@@ -75,14 +77,13 @@
  * aligned truncate). Lustre leaves partially truncated page in the cache,
  * relying on struct inode::i_size to limit further accesses.
  */
-static int cl_invalidatepage(struct page *vmpage, unsigned long offset)
+static void ll_invalidatepage(struct page *vmpage, unsigned long offset)
 {
         struct inode     *inode;
         struct lu_env    *env;
         struct cl_page   *page;
         struct cl_object *obj;
 
-        int result;
         int refcheck;
 
         LASSERT(PageLocked(vmpage));
@@ -93,7 +94,6 @@ static int cl_invalidatepage(struct page *vmpage, unsigned long offset)
          * below because they are run with page locked and all our io is
          * happening with locked page too
          */
-        result = 0;
         if (offset == 0) {
                 env = cl_env_get(&refcheck);
                 if (!IS_ERR(env)) {
@@ -105,7 +105,6 @@ static int cl_invalidatepage(struct page *vmpage, unsigned long offset)
                                         lu_ref_add(&page->cp_reference,
                                                    "delete", vmpage);
                                         cl_page_delete(env, page);
-                                        result = 1;
                                         lu_ref_del(&page->cp_reference,
                                                    "delete", vmpage);
                                         cl_page_put(env, page);
@@ -115,34 +114,58 @@ static int cl_invalidatepage(struct page *vmpage, unsigned long offset)
                         cl_env_put(env, &refcheck);
                 }
         }
-        return result;
 }
-
-#ifdef HAVE_INVALIDATEPAGE_RETURN_INT
-static int ll_invalidatepage(struct page *page, unsigned long offset)
-{
-        return cl_invalidatepage(page, offset);
-}
-#else /* !HAVE_INVALIDATEPAGE_RETURN_INT */
-static void ll_invalidatepage(struct page *page, unsigned long offset)
-{
-        cl_invalidatepage(page, offset);
-}
-#endif
 
 #ifdef HAVE_RELEASEPAGE_WITH_INT
 #define RELEASEPAGE_ARG_TYPE int
 #else
 #define RELEASEPAGE_ARG_TYPE gfp_t
 #endif
-static int ll_releasepage(struct page *page, RELEASEPAGE_ARG_TYPE gfp_mask)
+static int ll_releasepage(struct page *vmpage, RELEASEPAGE_ARG_TYPE gfp_mask)
 {
-        void *cookie;
+        struct cl_env_nest nest;
+        struct lu_env     *env;
+        struct cl_object  *obj;
+        struct cl_page    *page;
+        struct address_space *mapping;
+        int result;
 
-        cookie = cl_env_reenter();
-        ll_invalidatepage(page, 0);
-        cl_env_reexit(cookie);
-        return 1;
+        LASSERT(PageLocked(vmpage));
+        if (PageWriteback(vmpage) || PageDirty(vmpage))
+                return 0;
+
+        mapping = vmpage->mapping;
+        if (mapping == NULL)
+                return 1;
+
+        obj = ll_i2info(mapping->host)->lli_clob;
+        if (obj == NULL)
+                return 1;
+
+        /* 1 for page allocator, 1 for cl_page and 1 for page cache */
+        if (page_count(vmpage) > 3)
+                return 0;
+
+        /* TODO: determine what gfp should be used by @gfp_mask. */
+        env = cl_env_nested_get(&nest);
+        if (IS_ERR(env))
+                /* If we can't allocate an env we won't call cl_page_put()
+                 * later on which further means it's impossible to drop
+                 * page refcount by cl_page, so ask kernel to not free
+                 * this page. */
+                return 0;
+
+        page = cl_vmpage_page(vmpage, obj);
+        result = page == NULL;
+        if (page != NULL) {
+                if (cfs_atomic_read(&page->cp_ref) == 1) {
+                        result = 1;
+                        cl_page_delete(env, page);
+                }
+                cl_page_put(env, page);
+        }
+        cl_env_nested_put(&nest, env);
+        return result;
 }
 
 static int ll_set_page_dirty(struct page *vmpage)
@@ -309,7 +332,7 @@ ssize_t ll_direct_rw_pages(const struct lu_env *env, struct cl_io *io,
         if (rc == 0 && io_pages) {
                 rc = cl_io_submit_sync(env, io,
                                        rw == READ ? CRT_READ : CRT_WRITE,
-                                       queue, CRP_NORMAL, 0);
+				       queue, 0);
         }
         if (rc == 0)
                 rc = pv->ldp_size;
@@ -362,13 +385,12 @@ static ssize_t ll_direct_IO_26(int rw, struct kiocb *iocb,
         long count = iov_length(iov, nr_segs);
         long tot_bytes = 0, result = 0;
         struct ll_inode_info *lli = ll_i2info(inode);
-        struct lov_stripe_md *lsm = lli->lli_smd;
         unsigned long seg = 0;
         long size = MAX_DIO_SIZE;
         int refcheck;
         ENTRY;
 
-        if (!lli->lli_smd || !lli->lli_smd->lsm_object_id)
+	if (!lli->lli_has_smd)
                 RETURN(-EBADF);
 
         /* FIXME: io smaller than PAGE_SIZE is broken on ia64 ??? */
@@ -393,11 +415,12 @@ static ssize_t ll_direct_IO_26(int rw, struct kiocb *iocb,
         io = ccc_env_io(env)->cui_cl.cis_io;
         LASSERT(io != NULL);
 
-        /* 0. Need locking between buffered and direct access. and race with
-         *    size changing by concurrent truncates and writes.
-         * 1. Need inode sem to operate transient pages. */
-        if (rw == READ)
-                LOCK_INODE_MUTEX(inode);
+	/* 0. Need locking between buffered and direct access. and race with
+	 *    size changing by concurrent truncates and writes.
+	 * 1. Need inode mutex to operate transient pages.
+	 */
+	if (rw == READ)
+		mutex_lock(&inode->i_mutex);
 
         LASSERT(obj->cob_transient_pages == 0);
         for (seg = 0; seg < nr_segs; seg++) {
@@ -459,20 +482,25 @@ static ssize_t ll_direct_IO_26(int rw, struct kiocb *iocb,
                 }
         }
 out:
-        LASSERT(obj->cob_transient_pages == 0);
-        if (rw == READ)
-                UNLOCK_INODE_MUTEX(inode);
+	LASSERT(obj->cob_transient_pages == 0);
+	if (rw == READ)
+		mutex_unlock(&inode->i_mutex);
 
         if (tot_bytes > 0) {
                 if (rw == WRITE) {
-                        lov_stripe_lock(lsm);
-                        obd_adjust_kms(ll_i2dtexp(inode), lsm, file_offset, 0);
-                        lov_stripe_unlock(lsm);
-                }
-        }
+			struct lov_stripe_md *lsm;
 
-        cl_env_put(env, &refcheck);
-        RETURN(tot_bytes ? : result);
+			lsm = ccc_inode_lsm_get(inode);
+			LASSERT(lsm != NULL);
+			lov_stripe_lock(lsm);
+			obd_adjust_kms(ll_i2dtexp(inode), lsm, file_offset, 0);
+			lov_stripe_unlock(lsm);
+			ccc_inode_lsm_put(inode, lsm);
+		}
+	}
+
+	cl_env_put(env, &refcheck);
+	RETURN(tot_bytes ? : result);
 }
 
 #if defined(HAVE_KERNEL_WRITE_BEGIN_END) || defined(MS_HAS_NEW_AOPS)
@@ -517,11 +545,11 @@ static int ll_write_end(struct file *file, struct address_space *mapping,
 
 #ifdef CONFIG_MIGRATION
 int ll_migratepage(struct address_space *mapping,
+		struct page *newpage, struct page *page
 #ifdef HAVE_MIGRATEPAGE_4ARGS
-                   struct page *newpage, struct page *page, enum migrate_mode mode)
-#else
-                   struct page *newpage, struct page *page)
+		, enum migrate_mode mode
 #endif
+		)
 {
         /* Always fail page migration until we have a proper implementation */
         return -EIO;
@@ -534,7 +562,7 @@ struct address_space_operations ll_aops = {
 //        .readpages      = ll_readpages,
         .direct_IO      = ll_direct_IO_26,
         .writepage      = ll_writepage,
-        .writepages     = generic_writepages,
+	.writepages     = ll_writepages,
         .set_page_dirty = ll_set_page_dirty,
 #ifdef HAVE_KERNEL_WRITE_BEGIN_END
         .write_begin    = ll_write_begin,
@@ -556,7 +584,7 @@ struct address_space_operations_ext ll_aops = {
 //        .orig_aops.readpages      = ll_readpages,
         .orig_aops.direct_IO      = ll_direct_IO_26,
         .orig_aops.writepage      = ll_writepage,
-        .orig_aops.writepages     = generic_writepages,
+	.orig_aops.writepages     = ll_writepages,
         .orig_aops.set_page_dirty = ll_set_page_dirty,
         .orig_aops.prepare_write  = ll_prepare_write,
         .orig_aops.commit_write   = ll_commit_write,

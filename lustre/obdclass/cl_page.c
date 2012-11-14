@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -1360,13 +1358,6 @@ void cl_page_completion(const struct lu_env *env,
                 pg->cp_sync_io = NULL;
                 cl_sync_io_note(anchor, ioret);
         }
-
-        /* Don't assert the page writeback bit here because the lustre file
-         * may be as a backend of swap space. in this case, the page writeback
-         * is set by VM, and obvious we shouldn't clear it at all. Fortunately
-         * this type of pages are all TRANSIENT pages. */
-        KLASSERT(ergo(pg->cp_type == CPT_CACHEABLE,
-                      !PageWriteback(cl_page_vmpage(env, pg))));
         EXIT;
 }
 EXPORT_SYMBOL(cl_page_completion);
@@ -1408,30 +1399,59 @@ EXPORT_SYMBOL(cl_page_make_ready);
  * its queues.
  *
  * \pre  cl_page_is_owned(pg, io)
- * \post ergo(result == 0,
- *            pg->cp_state == CPS_PAGEIN || pg->cp_state == CPS_PAGEOUT)
+ * \post cl_page_is_owned(pg, io)
  *
  * \see cl_page_operations::cpo_cache_add()
  */
 int cl_page_cache_add(const struct lu_env *env, struct cl_io *io,
                       struct cl_page *pg, enum cl_req_type crt)
 {
-        int result;
+	const struct cl_page_slice *scan;
+	int result = 0;
 
-        PINVRNT(env, pg, crt < CRT_NR);
-        PINVRNT(env, pg, cl_page_is_owned(pg, io));
-        PINVRNT(env, pg, cl_page_invariant(pg));
+	PINVRNT(env, pg, crt < CRT_NR);
+	PINVRNT(env, pg, cl_page_is_owned(pg, io));
+	PINVRNT(env, pg, cl_page_invariant(pg));
 
-        ENTRY;
-        result = cl_page_invoke(env, io, pg, CL_PAGE_OP(io[crt].cpo_cache_add));
-        if (result == 0) {
-                cl_page_owner_clear(pg);
-                cl_page_state_set(env, pg, CPS_CACHED);
-        }
-        CL_PAGE_HEADER(D_TRACE, env, pg, "%d %d\n", crt, result);
-        RETURN(result);
+	ENTRY;
+
+	cfs_list_for_each_entry(scan, &pg->cp_layers, cpl_linkage) {
+		if (scan->cpl_ops->io[crt].cpo_cache_add == NULL)
+			continue;
+
+		result = scan->cpl_ops->io[crt].cpo_cache_add(env, scan, io);
+		if (result != 0)
+			break;
+	}
+	CL_PAGE_HEADER(D_TRACE, env, pg, "%d %d\n", crt, result);
+	RETURN(result);
 }
 EXPORT_SYMBOL(cl_page_cache_add);
+
+/**
+ * Called if a pge is being written back by kernel's intention.
+ *
+ * \pre  cl_page_is_owned(pg, io)
+ * \post ergo(result == 0, pg->cp_state == CPS_PAGEOUT)
+ *
+ * \see cl_page_operations::cpo_flush()
+ */
+int cl_page_flush(const struct lu_env *env, struct cl_io *io,
+		  struct cl_page *pg)
+{
+	int result;
+
+	PINVRNT(env, pg, cl_page_is_owned(pg, io));
+	PINVRNT(env, pg, cl_page_invariant(pg));
+
+	ENTRY;
+
+	result = cl_page_invoke(env, io, pg, CL_PAGE_OP(cpo_flush));
+
+	CL_PAGE_HEADER(D_TRACE, env, pg, "%d\n", result);
+	RETURN(result);
+}
+EXPORT_SYMBOL(cl_page_flush);
 
 /**
  * Checks whether page is protected by any extent lock is at least required
@@ -1486,6 +1506,7 @@ int cl_pages_prune(const struct lu_env *env, struct cl_object *clobj)
          * function, we just make cl_page_list functions happy. -jay
          */
         io->ci_obj = obj;
+	io->ci_ignore_layout = 1;
         result = cl_io_init(env, io, CIT_MISC, obj);
         if (result != 0) {
                 cl_io_fini(env, io);

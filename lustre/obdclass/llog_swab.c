@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -165,6 +165,13 @@ void lustre_swab_llog_rec(struct llog_rec_hdr *rec, struct llog_rec_tail *tail)
                 __swab64s(&cr->cr.cr_time);
                 lustre_swab_lu_fid(&cr->cr.cr_tfid);
                 lustre_swab_lu_fid(&cr->cr.cr_pfid);
+		if (CHANGELOG_REC_EXTENDED(&cr->cr)) {
+			struct llog_changelog_ext_rec *ext =
+				(struct llog_changelog_ext_rec *)rec;
+
+			lustre_swab_lu_fid(&ext->cr.cr_sfid);
+			lustre_swab_lu_fid(&ext->cr.cr_spfid);
+		}
                 break;
         }
 

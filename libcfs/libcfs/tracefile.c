@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -795,6 +795,7 @@ int cfs_trace_copyin_string(char *knl_buffer, int knl_buffer_nob,
         knl_buffer[nob + 1] = 0;                /* terminate */
         return 0;
 }
+EXPORT_SYMBOL(cfs_trace_copyin_string);
 
 int cfs_trace_copyout_string(char *usr_buffer, int usr_buffer_nob,
                              const char *knl_buffer, char *append)
@@ -931,15 +932,17 @@ int cfs_trace_set_debug_mb(int mb)
         struct cfs_trace_cpu_data *tcd;
 
         if (mb < cfs_num_possible_cpus()) {
-                printk(KERN_ERR "Cannot set debug_mb to %d, the value should be >= %d\n",
-                       mb, cfs_num_possible_cpus());
-                return -EINVAL;
+                printk(CFS_KERN_WARNING
+                       "Lustre: %d MB is too small for debug buffer size, "
+                       "setting it to %d MB.\n", mb, cfs_num_possible_cpus());
+                mb = cfs_num_possible_cpus();
         }
 
         if (mb > limit) {
-                printk(CFS_KERN_ERR "Lustre: Refusing to set debug buffer size "
-                       "to %dMB - limit is %d\n", mb, limit);
-                return -EINVAL;
+                printk(CFS_KERN_WARNING
+                       "Lustre: %d MB is too large for debug buffer size, "
+                       "setting it to %d MB.\n", mb, limit);
+                mb = limit;
         }
 
         mb /= cfs_num_possible_cpus();
@@ -1063,7 +1066,7 @@ static int tracefiled(void *arg)
                         printk(CFS_KERN_ERR "total cpus(%d): ",
                                cfs_num_possible_cpus());
                         for (i = 0; i < cfs_num_possible_cpus(); i++)
-                                if (cfs_cpu_online(i))
+                                if (cpu_online(i))
                                         printk(CFS_KERN_ERR "%d(on) ", i);
                                 else
                                         printk(CFS_KERN_ERR "%d(off) ", i);

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -45,24 +43,15 @@
 #define DEBUG_SUBSYSTEM S_MDS
 
 #include <linux/module.h>
-#ifdef HAVE_EXT4_LDISKFS
 #include <ldiskfs/ldiskfs_jbd2.h>
-#else
-#include <linux/jbd.h>
-#endif
 #include <obd.h>
 #include <obd_class.h>
 #include <lustre_ver.h>
 #include <obd_support.h>
 #include <lprocfs_status.h>
 
-#include <lustre_disk.h>
 #include <lustre_fid.h>
-#ifdef HAVE_EXT4_LDISKFS
 #include <ldiskfs/ldiskfs.h>
-#else
-#include <linux/ldiskfs_fs.h>
-#endif
 #include <lustre_mds.h>
 #include <lustre/lustre_idl.h>
 #include <lustre_disk.h>      /* for changelogs */
@@ -123,6 +112,7 @@ static void mdd_device_shutdown(const struct lu_env *env,
                                 struct mdd_device *m, struct lustre_cfg *cfg)
 {
         ENTRY;
+	mdd_lfsck_cleanup(env, m);
         mdd_changelog_fini(env, m);
         dt_txn_callback_del(m->mdd_child, &m->mdd_txn_cb);
         if (m->mdd_dot_lustre_objs.mdd_obf)
@@ -335,6 +325,42 @@ int mdd_changelog_llog_write(struct mdd_device         *mdd,
         return rc;
 }
 
+/** Add a changelog_ext entry \a rec to the changelog llog
+ * \param mdd
+ * \param rec
+ * \param handle - currently ignored since llogs start their own transaction;
+ *		this will hopefully be fixed in llog rewrite
+ * \retval 0 ok
+ */
+int mdd_changelog_ext_llog_write(struct mdd_device *mdd,
+				 struct llog_changelog_ext_rec *rec,
+				 struct thandle *handle)
+{
+	struct obd_device *obd = mdd2obd_dev(mdd);
+	struct llog_ctxt *ctxt;
+	int rc;
+
+	rec->cr_hdr.lrh_len = llog_data_len(sizeof(*rec) + rec->cr.cr_namelen);
+	/* llog_lvfs_write_rec sets the llog tail len */
+	rec->cr_hdr.lrh_type = CHANGELOG_REC;
+	rec->cr.cr_time = cl_time();
+	cfs_spin_lock(&mdd->mdd_cl.mc_lock);
+	/* NB: I suppose it's possible llog_add adds out of order wrt cr_index,
+	 * but as long as the MDD transactions are ordered correctly for e.g.
+	 * rename conflicts, I don't think this should matter. */
+	rec->cr.cr_index = ++mdd->mdd_cl.mc_index;
+	cfs_spin_unlock(&mdd->mdd_cl.mc_lock);
+	ctxt = llog_get_context(obd, LLOG_CHANGELOG_ORIG_CTXT);
+	if (ctxt == NULL)
+		return -ENXIO;
+
+	/* nested journal transaction */
+	rc = llog_add(ctxt, &rec->cr_hdr, NULL, NULL, 0);
+	llog_ctxt_put(ctxt);
+
+	return rc;
+}
+
 /** Remove entries with indicies up to and including \a endrec from the
  *  changelog
  * \param mdd
@@ -440,7 +466,7 @@ static int create_dot_lustre_dir(const struct lu_env *env, struct mdd_device *m)
                 rc = PTR_ERR(mdo);
                 CERROR("creating obj [%s] fid = "DFID" rc = %d\n",
                         dot_lustre_name, PFID(fid), rc);
-                RETURN(rc);
+		return rc;
         }
 
         if (!IS_ERR(mdo))
@@ -459,21 +485,6 @@ static int dot_lustre_mdd_permission(const struct lu_env *env,
                 return -EPERM;
         else
                 return 0;
-}
-
-static int dot_lustre_mdd_attr_get(const struct lu_env *env,
-                                   struct md_object *obj, struct md_attr *ma)
-{
-        struct mdd_object *mdd_obj = md2mdd_obj(obj);
-
-        return mdd_attr_get_internal_locked(env, mdd_obj, ma);
-}
-
-static int dot_lustre_mdd_attr_set(const struct lu_env *env,
-                                   struct md_object *obj,
-                                   const struct md_attr *ma)
-{
-        return -EPERM;
 }
 
 static int dot_lustre_mdd_xattr_get(const struct lu_env *env,
@@ -583,8 +594,8 @@ static int dot_file_unlock(const struct lu_env *env, struct md_object *obj,
 
 static struct md_object_operations mdd_dot_lustre_obj_ops = {
         .moo_permission    = dot_lustre_mdd_permission,
-        .moo_attr_get      = dot_lustre_mdd_attr_get,
-        .moo_attr_set      = dot_lustre_mdd_attr_set,
+	.moo_attr_get      = mdd_attr_get,
+	.moo_attr_set      = mdd_attr_set,
         .moo_xattr_get     = dot_lustre_mdd_xattr_get,
         .moo_xattr_list    = dot_lustre_mdd_xattr_list,
         .moo_xattr_set     = dot_lustre_mdd_xattr_set,
@@ -725,8 +736,7 @@ static int obf_attr_get(const struct lu_env *env, struct md_object *obj,
                 /* "fid" is a virtual object and hence does not have any "real"
                  * attributes. So we reuse attributes of .lustre for "fid" dir */
                 ma->ma_need |= MA_INODE;
-                rc = dot_lustre_mdd_attr_get(env, &mdd->mdd_dot_lustre->mod_obj,
-                                             ma);
+		rc = mdd_attr_get(env, &mdd->mdd_dot_lustre->mod_obj, ma);
                 if (rc)
                         return rc;
                 ma->ma_valid |= MA_INODE;
@@ -762,11 +772,32 @@ static int obf_attr_set(const struct lu_env *env, struct md_object *obj,
         return -EPERM;
 }
 
+static int obf_xattr_list(const struct lu_env *env,
+			  struct md_object *obj, struct lu_buf *buf)
+{
+	return 0;
+}
+
 static int obf_xattr_get(const struct lu_env *env,
                          struct md_object *obj, struct lu_buf *buf,
                          const char *name)
 {
         return 0;
+}
+
+static int obf_xattr_set(const struct lu_env *env,
+			 struct md_object *obj,
+			 const struct lu_buf *buf, const char *name,
+			 int fl)
+{
+	return -EPERM;
+}
+
+static int obf_xattr_del(const struct lu_env *env,
+			 struct md_object *obj,
+			 const char *name)
+{
+	return -EPERM;
 }
 
 static int obf_mdd_open(const struct lu_env *env, struct md_object *obj,
@@ -807,13 +838,16 @@ static int obf_path(const struct lu_env *env, struct md_object *obj,
 }
 
 static struct md_object_operations mdd_obf_obj_ops = {
-        .moo_attr_get   = obf_attr_get,
-        .moo_attr_set   = obf_attr_set,
-        .moo_xattr_get  = obf_xattr_get,
-        .moo_open       = obf_mdd_open,
-        .moo_close      = obf_mdd_close,
-        .moo_readpage   = obf_mdd_readpage,
-        .moo_path       = obf_path
+	.moo_attr_get    = obf_attr_get,
+	.moo_attr_set    = obf_attr_set,
+	.moo_xattr_list  = obf_xattr_list,
+	.moo_xattr_get   = obf_xattr_get,
+	.moo_xattr_set   = obf_xattr_set,
+	.moo_xattr_del   = obf_xattr_del,
+	.moo_open        = obf_mdd_open,
+	.moo_close       = obf_mdd_close,
+	.moo_readpage    = obf_mdd_readpage,
+	.moo_path        = obf_path
 };
 
 /**
@@ -834,10 +868,18 @@ static int obf_lookup(const struct lu_env *env, struct md_object *p,
 
         sscanf(name, SFID, RFID(f));
         if (!fid_is_sane(f)) {
-                CWARN("bad FID format [%s], should be "DFID"\n", lname->ln_name,
-                      (__u64)1, 2, 0);
+		CWARN("%s: bad FID format [%s], should be "DFID"\n",
+		      mdd->mdd_obd_dev->obd_name, lname->ln_name,
+		      (__u64)FID_SEQ_NORMAL, 1, 0);
                 GOTO(out, rc = -EINVAL);
         }
+
+	if (!fid_is_norm(f)) {
+		CWARN("%s: "DFID" is invalid, sequence should be "
+		      ">= "LPX64"\n", mdd->mdd_obd_dev->obd_name, PFID(f),
+		      (__u64)FID_SEQ_NORMAL);
+		GOTO(out, rc = -EINVAL);
+	}
 
         /* Check if object with this fid exists */
         child = mdd_object_find(env, mdd, f);
@@ -989,6 +1031,7 @@ static int mdd_process_config(const struct lu_env *env,
                 mdd_changelog_init(env, m);
                 break;
         case LCFG_CLEANUP:
+		lu_dev_del_linkage(d->ld_site, d);
                 mdd_device_shutdown(env, m, cfg);
         default:
                 rc = next->ld_ops->ldo_process_config(env, next, cfg);
@@ -1104,13 +1147,16 @@ static int mdd_prepare(const struct lu_env *env,
         /* we use capa file to declare llog changes,
          * will be fixed with new llog in 2.3 */
         root = dt_store_open(env, mdd->mdd_child, "", CAPA_KEYS, &fid);
-        if (!IS_ERR(root))
-                mdd->mdd_capa = root;
-        else
-                rc = PTR_ERR(root);
+	if (IS_ERR(root))
+		GOTO(out, rc = PTR_ERR(root));
+
+	mdd->mdd_capa = root;
+	rc = mdd_lfsck_setup(env, mdd);
+
+	GOTO(out, rc);
 
 out:
-        RETURN(rc);
+	return rc;
 }
 
 const struct lu_device_operations mdd_lu_ops = {
@@ -1137,7 +1183,7 @@ static int mdd_root_get(const struct lu_env *env,
  * No permission check is needed.
  */
 static int mdd_statfs(const struct lu_env *env, struct md_device *m,
-                      cfs_kstatfs_t *sfs)
+                      struct obd_statfs *sfs)
 {
         struct mdd_device *mdd = lu2mdd_dev(&m->md_lu_dev);
         int rc;
@@ -1193,8 +1239,8 @@ static int mdd_update_capa_key(const struct lu_env *env,
         int rc;
         ENTRY;
 
-        rc = obd_set_info_async(lov_exp, sizeof(KEY_CAPA_KEY), KEY_CAPA_KEY,
-                                sizeof(info), &info, NULL);
+        rc = obd_set_info_async(env, lov_exp, sizeof(KEY_CAPA_KEY),
+                                KEY_CAPA_KEY, sizeof(info), &info, NULL);
         RETURN(rc);
 }
 
@@ -1438,7 +1484,7 @@ static int mdd_changelog_user_purge_cb(struct llog_handle *llh,
                         RETURN(-ENOMEM);
                 }
 
-                rc = mdd_declare_llog_cancel(mcud->mcud_env, mdd, th); 
+		rc = mdd_declare_llog_cancel(mcud->mcud_env, mdd, th);
                 if (rc)
                         GOTO(stop, rc);
 
@@ -1558,6 +1604,20 @@ static int mdd_iocontrol(const struct lu_env *env, struct md_device *m,
                 *mntopts = mdd->mdd_dt_conf.ddp_mntopts;
                 RETURN(0);
         }
+	case OBD_IOC_START_LFSCK: {
+		struct lfsck_start *start = karg;
+		struct md_lfsck *lfsck = &mdd->mdd_lfsck;
+
+		/* Return the kernel service version. */
+		/* XXX: version can be used for compatibility in the future. */
+		start->ls_version = lfsck->ml_version;
+		rc = mdd_lfsck_start(env, lfsck, start);
+		RETURN(rc);
+	}
+	case OBD_IOC_STOP_LFSCK: {
+		rc = mdd_lfsck_stop(env, &mdd->mdd_lfsck);
+		RETURN(rc);
+	}
         }
 
         /* Below ioctls use obd_ioctl_data */
@@ -1679,26 +1739,34 @@ static struct lu_local_obj_desc llod_mdd_root = {
         .llod_feat      = &dt_directory_features,
 };
 
+static struct lu_local_obj_desc llod_lfsck_bookmark = {
+	.llod_name      = lfsck_bookmark_name,
+	.llod_oid       = LFSCK_BOOKMARK_OID,
+	.llod_is_index  = 0,
+};
+
 static int __init mdd_mod_init(void)
 {
-        struct lprocfs_static_vars lvars;
-        lprocfs_mdd_init_vars(&lvars);
+	struct lprocfs_static_vars lvars;
+	lprocfs_mdd_init_vars(&lvars);
 
-        llo_local_obj_register(&llod_capa_key);
-        llo_local_obj_register(&llod_mdd_orphan);
-        llo_local_obj_register(&llod_mdd_root);
+	llo_local_obj_register(&llod_capa_key);
+	llo_local_obj_register(&llod_mdd_orphan);
+	llo_local_obj_register(&llod_mdd_root);
+	llo_local_obj_register(&llod_lfsck_bookmark);
 
-        return class_register_type(&mdd_obd_device_ops, NULL, lvars.module_vars,
-                                   LUSTRE_MDD_NAME, &mdd_device_type);
+	return class_register_type(&mdd_obd_device_ops, NULL, lvars.module_vars,
+				   LUSTRE_MDD_NAME, &mdd_device_type);
 }
 
 static void __exit mdd_mod_exit(void)
 {
-        llo_local_obj_unregister(&llod_capa_key);
-        llo_local_obj_unregister(&llod_mdd_orphan);
-        llo_local_obj_unregister(&llod_mdd_root);
+	llo_local_obj_unregister(&llod_capa_key);
+	llo_local_obj_unregister(&llod_mdd_orphan);
+	llo_local_obj_unregister(&llod_mdd_root);
+	llo_local_obj_unregister(&llod_lfsck_bookmark);
 
-        class_unregister_type(LUSTRE_MDD_NAME);
+	class_unregister_type(LUSTRE_MDD_NAME);
 }
 
 MODULE_AUTHOR("Sun Microsystems, Inc. <http://www.lustre.org/>");

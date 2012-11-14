@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -38,20 +38,28 @@
 
 #include "selftest.h"
 
-
-#define LST_INIT_NONE           0
-#define LST_INIT_RPC            1
-#define LST_INIT_FW             2
-#define LST_INIT_CONSOLE        3
+enum {
+	LST_INIT_NONE		= 0,
+	LST_INIT_WI_SERIAL,
+	LST_INIT_WI_TEST,
+	LST_INIT_RPC,
+	LST_INIT_FW,
+	LST_INIT_CONSOLE
+};
 
 extern int lstcon_console_init(void);
 extern int lstcon_console_fini(void);
 
 static int lst_init_step = LST_INIT_NONE;
 
+struct cfs_wi_sched *lst_sched_serial;
+struct cfs_wi_sched **lst_sched_test;
+
 void
-lnet_selftest_fini (void)
+lnet_selftest_fini(void)
 {
+	int	i;
+
         switch (lst_init_step) {
 #ifdef __KERNEL__
                 case LST_INIT_CONSOLE:
@@ -61,6 +69,21 @@ lnet_selftest_fini (void)
                         sfw_shutdown();
                 case LST_INIT_RPC:
                         srpc_shutdown();
+		case LST_INIT_WI_TEST:
+			for (i = 0;
+			     i < cfs_cpt_number(lnet_cpt_table()); i++) {
+				if (lst_sched_test[i] == NULL)
+					continue;
+				cfs_wi_sched_destroy(lst_sched_test[i]);
+			}
+			LIBCFS_FREE(lst_sched_test,
+				    sizeof(lst_sched_test[0]) *
+				    cfs_cpt_number(lnet_cpt_table()));
+			lst_sched_test = NULL;
+
+		case LST_INIT_WI_SERIAL:
+			cfs_wi_sched_destroy(lst_sched_serial);
+			lst_sched_serial = NULL;
                 case LST_INIT_NONE:
                         break;
                 default:
@@ -68,7 +91,6 @@ lnet_selftest_fini (void)
         }
         return;
 }
-
 
 void
 lnet_selftest_structure_assertion(void)
@@ -82,9 +104,39 @@ lnet_selftest_structure_assertion(void)
 }
 
 int
-lnet_selftest_init (void)
+lnet_selftest_init(void)
 {
-        int	rc;
+	int	nscheds;
+	int	rc;
+	int	i;
+
+	rc = cfs_wi_sched_create("lst_s", lnet_cpt_table(), CFS_CPT_ANY,
+				 1, &lst_sched_serial);
+	if (rc != 0) {
+		CERROR("Failed to create serial WI scheduler for LST\n");
+		return rc;
+	}
+	lst_init_step = LST_INIT_WI_SERIAL;
+
+	nscheds = cfs_cpt_number(lnet_cpt_table());
+	LIBCFS_ALLOC(lst_sched_test, sizeof(lst_sched_test[0]) * nscheds);
+	if (lst_sched_test == NULL)
+		goto error;
+
+	lst_init_step = LST_INIT_WI_TEST;
+	for (i = 0; i < nscheds; i++) {
+		int nthrs = cfs_cpt_weight(lnet_cpt_table(), i);
+
+		/* reserve at least one CPU for LND */
+		nthrs = max(nthrs - 1, 1);
+		rc = cfs_wi_sched_create("lst_t", lnet_cpt_table(), i,
+					 nthrs, &lst_sched_test[i]);
+		if (rc != 0) {
+			CERROR("Failed to create CPT affinity WI scheduler "
+			       "%d for LST\n", i);
+			goto error;
+		}
+	}
 
         rc = srpc_startup();
         if (rc != 0) {
@@ -106,13 +158,12 @@ lnet_selftest_init (void)
                 CERROR("LST can't startup console\n");
                 goto error;
         }
-        lst_init_step = LST_INIT_CONSOLE;  
+	lst_init_step = LST_INIT_CONSOLE;
 #endif
-
-        return 0;
+	return 0;
 error:
-        lnet_selftest_fini();
-        return rc;
+	lnet_selftest_fini();
+	return rc;
 }
 
 #ifdef __KERNEL__

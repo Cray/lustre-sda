@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -264,11 +262,10 @@ static void ptlrpc_pinger_process_import(struct obd_import *imp,
 
 static int ptlrpc_pinger_main(void *arg)
 {
-        struct ptlrpc_svc_data *data = (struct ptlrpc_svc_data *)arg;
-        struct ptlrpc_thread *thread = data->thread;
-        ENTRY;
+        struct ptlrpc_thread *thread = (struct ptlrpc_thread *)arg;
+	ENTRY;
 
-        cfs_daemonize(data->name);
+        cfs_daemonize(thread->t_name);
 
         /* Record that the thread is running */
         thread_set_flags(thread, SVC_RUNNING);
@@ -345,7 +342,6 @@ static struct ptlrpc_thread *pinger_thread = NULL;
 int ptlrpc_start_pinger(void)
 {
         struct l_wait_info lwi = { 0 };
-        struct ptlrpc_svc_data d;
         int rc;
 #ifndef ENABLE_PINGER
         return 0;
@@ -361,12 +357,12 @@ int ptlrpc_start_pinger(void)
         cfs_waitq_init(&pinger_thread->t_ctl_waitq);
         cfs_waitq_init(&suspend_timeouts_waitq);
 
-        d.name = "ll_ping";
-        d.thread = pinger_thread;
+	strcpy(pinger_thread->t_name, "ll_ping");
 
-        /* CLONE_VM and CLONE_FILES just avoid a needless copy, because we
-         * just drop the VM and FILES in cfs_daemonize_ctxt() right away. */
-        rc = cfs_create_thread(ptlrpc_pinger_main, &d, CFS_DAEMON_FLAGS);
+	/* CLONE_VM and CLONE_FILES just avoid a needless copy, because we
+	 * just drop the VM and FILES in cfs_daemonize_ctxt() right away. */
+        rc = cfs_create_thread(ptlrpc_pinger_main,
+			       pinger_thread, CFS_DAEMON_FLAGS);
         if (rc < 0) {
                 CERROR("cannot start thread: %d\n", rc);
                 OBD_FREE(pinger_thread, sizeof(*pinger_thread));
@@ -411,6 +407,7 @@ void ptlrpc_pinger_sending_on_import(struct obd_import *imp)
 {
         ptlrpc_update_next_ping(imp, 0);
 }
+EXPORT_SYMBOL(ptlrpc_pinger_sending_on_import);
 
 void ptlrpc_pinger_commit_expected(struct obd_import *imp)
 {
@@ -438,6 +435,7 @@ int ptlrpc_pinger_add_import(struct obd_import *imp)
 
         RETURN(0);
 }
+EXPORT_SYMBOL(ptlrpc_pinger_add_import);
 
 int ptlrpc_pinger_del_import(struct obd_import *imp)
 {
@@ -455,6 +453,7 @@ int ptlrpc_pinger_del_import(struct obd_import *imp)
         cfs_mutex_unlock(&pinger_mutex);
         RETURN(0);
 }
+EXPORT_SYMBOL(ptlrpc_pinger_del_import);
 
 /**
  * Register a timeout callback to the pinger list, and the callback will
@@ -528,6 +527,7 @@ int ptlrpc_add_timeout_client(int time, enum timeout_event event,
         cfs_mutex_unlock(&pinger_mutex);
         return 0;
 }
+EXPORT_SYMBOL(ptlrpc_add_timeout_client);
 
 int ptlrpc_del_timeout_client(cfs_list_t *obd_list,
                               enum timeout_event event)
@@ -556,6 +556,7 @@ int ptlrpc_del_timeout_client(cfs_list_t *obd_list,
         cfs_mutex_unlock(&pinger_mutex);
         return 0;
 }
+EXPORT_SYMBOL(ptlrpc_del_timeout_client);
 
 int ptlrpc_pinger_remove_timeouts(void)
 {
@@ -587,7 +588,7 @@ static int               pet_refcount = 0;
 static int               pet_state;
 static cfs_waitq_t       pet_waitq;
 CFS_LIST_HEAD(pet_list);
-static cfs_spinlock_t    pet_lock = CFS_SPIN_LOCK_UNLOCKED(pet_lock);
+static DEFINE_SPINLOCK(pet_lock);
 
 int ping_evictor_wake(struct obd_export *exp)
 {

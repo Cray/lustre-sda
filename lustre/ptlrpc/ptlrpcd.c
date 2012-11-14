@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -105,6 +103,7 @@ void ptlrpcd_wake(struct ptlrpc_request *req)
 
         cfs_waitq_signal(&rq_set->set_waitq);
 }
+EXPORT_SYMBOL(ptlrpcd_wake);
 
 static struct ptlrpcd_ctl *
 ptlrpcd_select_pc(struct ptlrpc_request *req, pdl_policy_t policy, int index)
@@ -240,6 +239,9 @@ void ptlrpcd_add_req(struct ptlrpc_request *req, pdl_policy_t policy, int idx)
 {
         struct ptlrpcd_ctl *pc;
 
+	if (req->rq_reqmsg)
+		lustre_msg_set_jobid(req->rq_reqmsg, NULL);
+
         cfs_spin_lock(&req->rq_lock);
         if (req->rq_invalid_rqset) {
                 struct l_wait_info lwi = LWI_TIMEOUT(cfs_time_seconds(5),
@@ -270,6 +272,7 @@ void ptlrpcd_add_req(struct ptlrpc_request *req, pdl_policy_t policy, int idx)
 
         ptlrpc_set_add_new_req(pc, req);
 }
+EXPORT_SYMBOL(ptlrpcd_add_req);
 
 static inline void ptlrpc_reqset_get(struct ptlrpc_request_set *set)
 {
@@ -413,7 +416,7 @@ static int ptlrpcd(void *arg)
                 int index = pc->pc_index;
 
                 if (index >= 0 && index < cfs_num_possible_cpus()) {
-                        while (!cfs_cpu_online(index)) {
+                        while (!cpu_online(index)) {
                                 if (++index >= cfs_num_possible_cpus())
                                         index = 0;
                         }
@@ -523,6 +526,11 @@ static int ptlrpcd_bind(int index, int max)
 {
         struct ptlrpcd_ctl *pc;
         int rc = 0;
+#if defined(CONFIG_NUMA) && defined(HAVE_NODE_TO_CPUMASK)
+        struct ptlrpcd_ctl *ppc;
+        int node, i, pidx;
+        cpumask_t mask;
+#endif
         ENTRY;
 
         LASSERT(index <= max - 1);
@@ -540,8 +548,17 @@ static int ptlrpcd_bind(int index, int max)
                 pc->pc_npartners = 1;
                 break;
         case PDB_POLICY_NEIGHBOR:
+#if defined(CONFIG_NUMA) && defined(HAVE_NODE_TO_CPUMASK)
+                node = cpu_to_node(index);
+                mask = node_to_cpumask(node);
+                for (i = max; i < cfs_num_online_cpus(); i++)
+                        cpu_clear(i, mask);
+                pc->pc_npartners = cpus_weight(mask) - 1;
+                cfs_set_bit(LIOD_BIND, &pc->pc_flags);
+#else
                 LASSERT(max >= 3);
                 pc->pc_npartners = 2;
+#endif
                 break;
         default:
                 CERROR("unknown ptlrpcd bind policy %d\n", ptlrpcd_bind_policy);
@@ -555,12 +572,10 @@ static int ptlrpcd_bind(int index, int max)
                         pc->pc_npartners = 0;
                         rc = -ENOMEM;
                 } else {
-                        if (index & 0x1)
-                                cfs_set_bit(LIOD_BIND, &pc->pc_flags);
-
                         switch (ptlrpcd_bind_policy) {
                         case PDB_POLICY_PAIR:
                                 if (index & 0x1) {
+                                        cfs_set_bit(LIOD_BIND, &pc->pc_flags);
                                         pc->pc_partners[0] = &ptlrpcds->
                                                 pd_threads[index - 1];
                                         ptlrpcds->pd_threads[index - 1].
@@ -568,6 +583,25 @@ static int ptlrpcd_bind(int index, int max)
                                 }
                                 break;
                         case PDB_POLICY_NEIGHBOR:
+#if defined(CONFIG_NUMA) && defined(HAVE_NODE_TO_CPUMASK)
+                                /* partners are cores in the same NUMA node.
+                                 * setup partnership only with ptlrpcd threads
+                                 * that are already initialized
+                                 */
+                                for (pidx = 0, i = 0; i < index; i++) {
+                                        if (cpu_isset(i, mask)) {
+                                                ppc = &ptlrpcds->pd_threads[i];
+                                                pc->pc_partners[pidx++] = ppc;
+                                                ppc->pc_partners[ppc->
+                                                          pc_npartners++] = pc;
+                                        }
+                                }
+                                /* adjust number of partners to the number
+                                 * of partnership really setup */
+                                pc->pc_npartners = pidx;
+#else
+                                if (index & 0x1)
+                                        cfs_set_bit(LIOD_BIND, &pc->pc_flags);
                                 if (index > 0) {
                                         pc->pc_partners[0] = &ptlrpcds->
                                                 pd_threads[index - 1];
@@ -580,6 +614,7 @@ static int ptlrpcd_bind(int index, int max)
                                                 pc_partners[0] = pc;
                                         }
                                 }
+#endif
                                 break;
                         }
                 }
@@ -845,6 +880,7 @@ int ptlrpcd_addref(void)
         cfs_mutex_unlock(&ptlrpcd_mutex);
         RETURN(rc);
 }
+EXPORT_SYMBOL(ptlrpcd_addref);
 
 void ptlrpcd_decref(void)
 {
@@ -853,4 +889,5 @@ void ptlrpcd_decref(void)
                 ptlrpcd_fini();
         cfs_mutex_unlock(&ptlrpcd_mutex);
 }
+EXPORT_SYMBOL(ptlrpcd_decref);
 /** @} ptlrpcd */

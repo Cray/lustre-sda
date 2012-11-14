@@ -1,7 +1,7 @@
 .\" -*- nroff -*-
 .\" Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
 .\"
-.\" Copyright (c) 2012, Whamcloud, Inc.
+.\" Copyright (c) 2012, Intel Corporation.
 .\"
 .\" This file may be copied under the terms of the GNU Public License v2.
 .\"
@@ -87,6 +87,19 @@ manual page.
 .TP
 .BI noacl
 Disable Access Control List support.
+.TP
+.BI verbose
+Enable mount/umount console messages.
+.TP
+.BI noverbose
+Disable mount/umount console messages.
+.TP
+.BI user_fid2path
+Enable FID to path translation by regular users.
+.TP
+.BI nouser_fid2path
+Disable FID to path translation by regular users.  Root and process with
+CAP_DAC_READ_SEARCH can still perform FID to path translation.
 .PP
 In addition to the standard mount options and backing disk type
 (e.g. ext3) options listed in

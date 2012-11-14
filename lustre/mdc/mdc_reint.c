@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, Whamcloud, Inc.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -76,21 +74,11 @@ int mdc_resource_get_unused(struct obd_export *exp, struct lu_fid *fid,
                             cfs_list_t *cancels, ldlm_mode_t mode,
                             __u64 bits)
 {
-	struct ldlm_namespace *ns = exp->exp_obd->obd_namespace;
         ldlm_policy_data_t policy = {{0}};
         struct ldlm_res_id res_id;
         struct ldlm_resource *res;
         int count;
         ENTRY;
-
-	/* Return, i.e. cancel nothing, only if ELC is supported (flag in
-	 * export) but disabled through procfs (flag in NS).
-	 *
-	 * This distinguishes from a case when ELC is not supported originally,
-	 * when we still want to cancel locks in advance and just cancel them
-	 * locally, without sending any RPC. */
-	if (exp_connect_cancelset(exp) && !ns_connect_cancelset(ns))
-		RETURN(0);
 
         fid_build_reg_res_name(fid, &res_id);
         res = ldlm_resource_get(exp->exp_obd->obd_namespace,
@@ -226,7 +214,9 @@ int mdc_create(struct obd_export *exp, struct md_op_data *op_data,
 {
         struct ptlrpc_request *req;
         int level, rc;
-        int count = 0;
+        int count, resends = 0;
+        struct obd_import *import = exp->exp_obd->u.cli.cl_import;
+        int generation = import->imp_generation;
         CFS_LIST_HEAD(cancels);
         ENTRY;
 
@@ -243,6 +233,8 @@ int mdc_create(struct obd_export *exp, struct md_op_data *op_data,
                 }
         }
 
+rebuild:
+        count = 0;
         if ((op_data->op_flags & MF_MDC_CANCEL_FID1) &&
             (fid_is_sane(&op_data->op_fid1)))
                 count = mdc_resource_get_unused(exp, &op_data->op_fid1,
@@ -276,6 +268,11 @@ int mdc_create(struct obd_export *exp, struct md_op_data *op_data,
 
         ptlrpc_request_set_replen(req);
 
+        if (resends) {
+                req->rq_generation_set = 1;
+                req->rq_import_generation = generation;
+                req->rq_sent = cfs_time_current_sec() + resends;
+        }
         level = LUSTRE_IMP_FULL;
  resend:
         rc = mdc_reint(req, exp->exp_obd->u.cli.cl_rpc_lock, level);
@@ -284,6 +281,22 @@ int mdc_create(struct obd_export *exp, struct md_op_data *op_data,
         if (rc == -ERESTARTSYS) {
                 level = LUSTRE_IMP_RECOVER;
                 goto resend;
+        } else if (rc == -EINPROGRESS) {
+                /* Retry create infinitely until succeed or get other
+                 * error code. */
+                ptlrpc_req_finished(req);
+                resends++;
+
+                CDEBUG(D_HA, "%s: resend:%d create on "DFID"/"DFID"\n",
+                       exp->exp_obd->obd_name, resends,
+                       PFID(&op_data->op_fid1), PFID(&op_data->op_fid2));
+
+                if (generation == import->imp_generation) {
+                        goto rebuild;
+                } else {
+                        CDEBUG(D_HA, "resend cross eviction\n");
+                        RETURN(-EIO);
+                }
         } else if (rc == 0) {
                 struct mdt_body *body;
                 struct lustre_capa *capa;

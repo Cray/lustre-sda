@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2001, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -1098,9 +1096,11 @@ restart_bulk:
         RETURN(0);
 }
 
-static int mdc_statfs(struct obd_device *obd, struct obd_statfs *osfs,
+static int mdc_statfs(const struct lu_env *env,
+                      struct obd_export *exp, struct obd_statfs *osfs,
                       __u64 max_age, __u32 flags)
 {
+        struct obd_device     *obd = class_exp2obd(exp);
         struct ptlrpc_request *req;
         struct obd_statfs     *msfs;
         struct obd_import     *imp = NULL;
@@ -1180,7 +1180,7 @@ static int mdc_ioc_fid2path(struct obd_export *exp, struct getinfo_fid2path *gf)
         /* Val is struct getinfo_fid2path result plus path */
         vallen = sizeof(*gf) + gf->gf_pathlen;
 
-        rc = obd_get_info(exp, keylen, key, &vallen, gf, NULL);
+        rc = obd_get_info(NULL, exp, keylen, key, &vallen, gf, NULL);
         if (rc)
                 GOTO(out, rc);
 
@@ -1244,14 +1244,14 @@ static int changelog_show_cb(struct llog_handle *llh, struct llog_rec_hdr *hdr,
                 RETURN(0);
         }
 
-        CDEBUG(D_CHANGELOG, LPU64" %02d%-5s "LPU64" 0x%x t="DFID" p="DFID
-               " %.*s\n", rec->cr.cr_index, rec->cr.cr_type,
-               changelog_type2str(rec->cr.cr_type), rec->cr.cr_time,
-               rec->cr.cr_flags & CLF_FLAGMASK,
-               PFID(&rec->cr.cr_tfid), PFID(&rec->cr.cr_pfid),
-               rec->cr.cr_namelen, rec->cr.cr_name);
+	CDEBUG(D_CHANGELOG, LPU64" %02d%-5s "LPU64" 0x%x t="DFID" p="DFID
+		" %.*s\n", rec->cr.cr_index, rec->cr.cr_type,
+		changelog_type2str(rec->cr.cr_type), rec->cr.cr_time,
+		rec->cr.cr_flags & CLF_FLAGMASK,
+		PFID(&rec->cr.cr_tfid), PFID(&rec->cr.cr_pfid),
+		rec->cr.cr_namelen, changelog_rec_name(&rec->cr));
 
-        len = sizeof(*lh) + sizeof(rec->cr) + rec->cr.cr_namelen;
+	len = sizeof(*lh) + changelog_rec_size(&rec->cr) + rec->cr.cr_namelen;
 
         /* Set up the message */
         lh = changelog_kuc_hdr(cs->cs_buf, len, cs->cs_flags);
@@ -1465,7 +1465,7 @@ static int mdc_iocontrol(unsigned int cmd, struct obd_export *exp, int len,
                 struct ioc_changelog *icc = karg;
                 struct changelog_setinfo cs =
                         {.cs_recno = icc->icc_recno, .cs_id = icc->icc_id};
-                rc = obd_set_info_async(exp, strlen(KEY_CHANGELOG_CLEAR),
+                rc = obd_set_info_async(NULL, exp, strlen(KEY_CHANGELOG_CLEAR),
                                         KEY_CHANGELOG_CLEAR, sizeof(cs), &cs,
                                         NULL);
                 GOTO(out, rc);
@@ -1522,7 +1522,7 @@ static int mdc_iocontrol(unsigned int cmd, struct obd_export *exp, int len,
                                          (int) sizeof(struct obd_uuid))))
                         GOTO(out, rc = -EFAULT);
 
-                rc = mdc_statfs(obd, &stat_buf,
+                rc = mdc_statfs(NULL, obd->obd_self_export, &stat_buf,
                                 cfs_time_shift_64(-OBD_STATFS_CACHE_SECONDS),
                                 0);
                 if (rc != 0)
@@ -1718,7 +1718,8 @@ static int mdc_hsm_copytool_send(int len, void *val)
         RETURN(rc);
 }
 
-int mdc_set_info_async(struct obd_export *exp,
+int mdc_set_info_async(const struct lu_env *env,
+                       struct obd_export *exp,
                        obd_count keylen, void *key,
                        obd_count vallen, void *val,
                        struct ptlrpc_request_set *set)
@@ -1775,8 +1776,9 @@ int mdc_set_info_async(struct obd_export *exp,
         RETURN(rc);
 }
 
-int mdc_get_info(struct obd_export *exp, __u32 keylen, void *key,
-                 __u32 *vallen, void *val, struct lov_stripe_md *lsm)
+int mdc_get_info(const struct lu_env *env, struct obd_export *exp,
+                 __u32 keylen, void *key, __u32 *vallen, void *val,
+                 struct lov_stripe_md *lsm)
 {
         int rc = -EINVAL;
 
@@ -2070,18 +2072,6 @@ static int mdc_cancel_for_recovery(struct ldlm_lock *lock)
         RETURN(1);
 }
 
-static int mdc_resource_inode_free(struct ldlm_resource *res)
-{
-        if (res->lr_lvb_inode)
-                res->lr_lvb_inode = NULL;
-
-        return 0;
-}
-
-struct ldlm_valblock_ops inode_lvbo = {
-        lvbo_free: mdc_resource_inode_free
-};
-
 static int mdc_setup(struct obd_device *obd, struct lustre_cfg *cfg)
 {
         struct client_obd *cli = &obd->u.cli;
@@ -2110,8 +2100,6 @@ static int mdc_setup(struct obd_device *obd, struct lustre_cfg *cfg)
         ptlrpc_lprocfs_register_obd(obd);
 
         ns_register_cancel(obd->obd_namespace, mdc_cancel_for_recovery);
-
-        obd->obd_namespace->ns_lvbo = &inode_lvbo;
 
         rc = obd_llog_init(obd, &obd->obd_olg, obd, NULL);
         if (rc) {

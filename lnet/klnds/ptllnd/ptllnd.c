@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -775,7 +773,6 @@ kptllnd_base_startup (void)
 
         cfs_rwlock_init(&kptllnd_data.kptl_peer_rw_lock);
         cfs_waitq_init(&kptllnd_data.kptl_watchdog_waitq);
-        cfs_atomic_set(&kptllnd_data.kptl_needs_ptltrace, 0);
         CFS_INIT_LIST_HEAD(&kptllnd_data.kptl_closing_peers);
         CFS_INIT_LIST_HEAD(&kptllnd_data.kptl_zombie_peers);
 

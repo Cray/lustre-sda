@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -59,21 +59,25 @@ typedef struct proc_dir_entry           cfs_proc_dir_entry_t;
  * Just present a single processor until will add thread support.
  */
 #ifndef smp_processor_id
-#define cfs_smp_processor_id() 0
+# define cfs_smp_processor_id() 0
 #else
-#define cfs_smp_processor_id() smp_processor_id()
+# define cfs_smp_processor_id() smp_processor_id()
 #endif
 #ifndef num_online_cpus
-#define cfs_num_online_cpus() 1
+# define cfs_num_online_cpus() 1
 #else
-#define cfs_num_online_cpus() num_online_cpus()
+# define cfs_num_online_cpus() num_online_cpus()
 #endif
 #ifndef num_possible_cpus
-#define cfs_num_possible_cpus() 1
+# define cfs_num_possible_cpus() 1
 #else
-#define cfs_num_possible_cpus() num_possible_cpus()
+# define cfs_num_possible_cpus() num_possible_cpus()
 #endif
-
+#ifndef num_present_cpus
+# define cfs_num_present_cpus() 1
+#else
+# define cfs_num_present_cpus() num_present_cpus()
+#endif
 /*
  * Wait Queue.
  */
@@ -96,8 +100,10 @@ typedef long cfs_task_state_t;
 #define CFS_TASK_UNINT          (1)
 #define CFS_TASK_RUNNING        (2)
 
+static inline void cfs_schedule(void)			{}
+static inline void cfs_schedule_timeout(int64_t t)	{}
 
-/* 
+/*
  * Lproc
  */
 typedef int (cfs_read_proc_t)(char *page, char **start, off_t off,
@@ -145,6 +151,8 @@ static inline int cfs_psdev_deregister(cfs_psdev_t *foo)
 
 #define CFS_DAEMON_FLAGS                0
 
+#define CFS_L1_CACHE_ALIGN(x)		(x)
+
 #ifdef HAVE_LIBPTHREAD
 typedef int (*cfs_thread_t)(void *);
 int cfs_create_thread(cfs_thread_t func, void *arg, unsigned long flags);
@@ -156,6 +164,10 @@ uid_t cfs_curproc_uid(void);
 gid_t cfs_curproc_gid(void);
 uid_t cfs_curproc_fsuid(void);
 gid_t cfs_curproc_fsgid(void);
+
+#ifndef HAVE_STRLCPY /* not in glibc for RHEL 5.x, remove when obsolete */
+size_t strlcpy(char *tgt, const char *src, size_t tgt_len);
+#endif
 
 #define LIBCFS_REALLOC(ptr, size) realloc(ptr, size)
 

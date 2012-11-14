@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, Whamcloud, Inc.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -47,6 +45,8 @@
 #include <lustre/lustre_idl.h>
 #include <lustre_dlm.h>
 #include <lustre_cfg.h>
+
+#define MAX_IOC_BUFLEN 8192
 
 /* obd.c */
 int do_disconnect(char *func, int verbose);
@@ -134,5 +134,9 @@ int jt_blockdev_info(int argc, char **argv);
 int jt_pool_cmd(int argc, char **argv);
 int jt_changelog_register(int argc, char **argv);
 int jt_changelog_deregister(int argc, char **argv);
+
+/* lustre_lfsck.c */
+int jt_lfsck_start(int argc, char **argv);
+int jt_lfsck_stop(int argc, char **argv);
 
 #endif

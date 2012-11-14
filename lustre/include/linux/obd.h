@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 1999, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -54,6 +52,12 @@
 # include <linux/lustre_intent.h>
 #endif
 
+struct ll_iattr {
+	struct iattr	iattr;
+	unsigned int	ia_attr_flags;
+};
+
+#define CLIENT_OBD_LIST_LOCK_DEBUG 1
 typedef struct {
         cfs_spinlock_t          lock;
 

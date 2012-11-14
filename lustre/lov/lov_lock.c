@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -271,8 +269,10 @@ static int lov_subresult(int result, int rc)
 
         ENTRY;
 
-        LASSERT(result <= 0 || result == CLO_REPEAT || result == CLO_WAIT);
-        LASSERT(rc <= 0 || rc == CLO_REPEAT || rc == CLO_WAIT);
+	LASSERTF(result <= 0 || result == CLO_REPEAT || result == CLO_WAIT,
+		 "result = %d", result);
+	LASSERTF(rc <= 0 || rc == CLO_REPEAT || rc == CLO_WAIT,
+		 "rc = %d\n", rc);
         CLASSERT(CLO_WAIT < CLO_REPEAT);
 
         /* calculate ranks in the ordering above */
@@ -318,7 +318,7 @@ static int lov_lock_sub_init(const struct lu_env *env,
                  * XXX for wide striping smarter algorithm is desirable,
                  * breaking out of the loop, early.
                  */
-                if (lov_stripe_intersects(r0->lo_lsm, i,
+		if (lov_stripe_intersects(loo->lo_lsm, i,
                                           file_start, file_end, &start, &end))
                         nr++;
         }
@@ -336,7 +336,7 @@ static int lov_lock_sub_init(const struct lu_env *env,
          * top-lock.
          */
         for (i = 0, nr = 0; i < r0->lo_nr; ++i) {
-                if (lov_stripe_intersects(r0->lo_lsm, i,
+		if (lov_stripe_intersects(loo->lo_lsm, i,
                                           file_start, file_end, &start, &end)) {
                         struct cl_lock_descr *descr;
 
@@ -526,10 +526,13 @@ static int lov_lock_enqueue_one(const struct lu_env *env, struct lov_lock *lck,
 
         /* first, try to enqueue a sub-lock ... */
         result = cl_enqueue_try(env, sublock, io, enqflags);
-        if ((sublock->cll_state == CLS_ENQUEUED) && !(enqflags & CEF_AGL))
-                /* if it is enqueued, try to `wait' on it---maybe it's already
-                 * granted */
-                result = cl_wait_try(env, sublock);
+	if ((sublock->cll_state == CLS_ENQUEUED) && !(enqflags & CEF_AGL)) {
+		/* if it is enqueued, try to `wait' on it---maybe it's already
+		 * granted */
+		result = cl_wait_try(env, sublock);
+		if (result == CLO_REENQUEUED)
+			result = CLO_WAIT;
+	}
         /*
          * If CEF_ASYNC flag is set, then all sub-locks can be enqueued in
          * parallel, otherwise---enqueue has to wait until sub-lock is granted
@@ -921,7 +924,7 @@ static int lock_lock_multi_match()
                 if (sub->sub_lock == NULL)
                         continue;
                 subobj = sub->sub_descr.cld_obj;
-                if (!lov_stripe_intersects(r0->lo_lsm, sub->sub_stripe,
+		if (!lov_stripe_intersects(loo->lo_lsm, sub->sub_stripe,
                                            fstart, fend, &start, &end))
                         continue;
                 subneed->cld_start = cl_index(subobj, start);
@@ -945,7 +948,7 @@ static int lov_lock_stripe_is_matching(const struct lu_env *env,
                                        const struct cl_lock_descr *child,
                                        const struct cl_lock_descr *descr)
 {
-        struct lov_stripe_md *lsm = lov_r0(lov)->lo_lsm;
+	struct lov_stripe_md *lsm = lov->lo_lsm;
         obd_off start;
         obd_off end;
         int result;

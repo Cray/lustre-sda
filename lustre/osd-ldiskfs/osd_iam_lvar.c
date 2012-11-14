@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2009, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -573,6 +573,15 @@ static void lvar_rec_set(struct iam_leaf *l, const struct iam_rec *r)
         assert_inv(n_invariant(l));
 }
 
+static int lvar_rec_eq(const struct iam_leaf *l, const struct iam_rec *r)
+{
+	struct iam_rec *rec = e_rec(n_cur(l));
+
+	if (rec_size(rec) != rec_size(r))
+		return 0;
+	return !memcmp(rec, r, rec_size(r));
+}
+
 static void lvar_rec_get(const struct iam_leaf *l, struct iam_rec *r)
 {
         struct iam_rec *rec;
@@ -756,6 +765,11 @@ static void lvar_split(struct iam_leaf *leaf, struct buffer_head **bh,
         assert_inv(n_invariant(leaf));
 }
 
+static int lvar_leaf_empty(struct iam_leaf *leaf)
+{
+	return h_used(n_head(leaf)) == sizeof(struct lvar_leaf_header);
+}
+
 static struct iam_leaf_operations lvar_leaf_ops = {
         .init           = lvar_init,
         .init_new       = lvar_init_new,
@@ -770,6 +784,7 @@ static struct iam_leaf_operations lvar_leaf_ops = {
         .key_eq         = lvar_key_eq,
         .key_size       = lvar_key_size,
         .rec_set        = lvar_rec_set,
+	.rec_eq         = lvar_rec_eq,
         .rec_get        = lvar_rec_get,
         .lookup         = lvar_lookup,
         .ilookup        = lvar_ilookup,
@@ -777,7 +792,8 @@ static struct iam_leaf_operations lvar_leaf_ops = {
         .rec_add        = lvar_rec_add,
         .rec_del        = lvar_rec_del,
         .can_add        = lvar_can_add,
-        .split          = lvar_split
+	.split          = lvar_split,
+	.leaf_empty	= lvar_leaf_empty,
 };
 
 /*
@@ -928,11 +944,22 @@ static void lvar_root(void *buf,
                                         sizeof (lvar_hash_t) + ptrsize)
         };
 
-        entry = root + 1;
-        /*
-         * Skip over @limit.
-         */
-        entry += isize;
+	/* To guarantee that the padding "keysize + ptrsize"
+	 * covers the "dx_countlimit" and the "idle_blocks". */
+	LASSERT((keysize + ptrsize) >=
+		(sizeof(struct dx_countlimit) + sizeof(__u32)));
+
+	entry = (void *)(limit + 1);
+	/* Put "idle_blocks" just after the limit. There was padding after
+	 * the limit, the "idle_blocks" re-uses part of the padding, so no
+	 * compatibility issues with old layout.
+	 */
+	*(__u32 *)entry = 0;
+
+	/*
+	 * Skip over @limit.
+	 */
+	entry = (void *)(root + 1) + isize;
 
         /*
          * Entry format is <key> followed by <ptr>. In the minimal tree
@@ -1044,11 +1071,14 @@ static int lvar_guess(struct iam_container *c)
                         descr->id_node_gap  = 0;
                         descr->id_ops       = &lvar_ops;
                         descr->id_leaf_ops  = &lvar_leaf_ops;
-                } else
-                        result = -EBADF;
-                brelse(bh);
-        }
-        return result;
+
+			c->ic_root_bh = bh;
+		} else {
+			result = -EBADF;
+			brelse(bh);
+		}
+	}
+	return result;
 }
 
 static struct iam_format lvar_format = {

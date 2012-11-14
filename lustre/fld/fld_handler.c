@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -494,7 +492,14 @@ static int fld_server_proc_init(struct lu_server_fld *fld)
                 RETURN(rc);
         }
 
-        RETURN(rc);
+	rc = lprocfs_seq_create(fld->lsf_proc_dir, "fldb", 0444,
+				&fld_proc_seq_fops, fld);
+	if (rc) {
+		lprocfs_remove(&fld->lsf_proc_dir);
+		fld->lsf_proc_dir = NULL;
+	}
+
+	RETURN(rc);
 }
 
 static void fld_server_proc_fini(struct lu_server_fld *fld)

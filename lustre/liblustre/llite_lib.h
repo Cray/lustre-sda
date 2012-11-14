@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, Whamcloud, Inc.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -67,7 +65,7 @@
 
 /* This should not be "optimized" use ~0ULL because page->index is a long and
  * 32-bit systems are therefore limited to 16TB in a mapping */
-#define PAGE_CACHE_MAXBYTES ((__u64)(~0UL) << CFS_PAGE_SHIFT)
+#define MAX_LFS_FILESIZE ((__u64)(~0UL) << CFS_PAGE_SHIFT)
 struct ll_file_data {
         struct obd_client_handle fd_mds_och;
         __u32 fd_flags;
@@ -101,7 +99,6 @@ struct llu_inode_info {
         struct llu_sb_info     *lli_sbi;
         struct lu_fid           lli_fid;
 
-        struct lov_stripe_md   *lli_smd;
         char                   *lli_symlink_name;
         __u64                   lli_maxbytes;
         unsigned long           lli_flags;
@@ -120,6 +117,7 @@ struct llu_inode_info {
          * was opened several times without close, we track an
          * open_count here */
         struct ll_file_data    *lli_file_data;
+	bool                    lli_has_smd;
         int                     lli_open_flags;
         int                     lli_open_count;
 
@@ -297,7 +295,6 @@ int llu_iop_lookup(struct pnode *pnode,
                    struct intent *intnt,
                    const char *path);
 void unhook_stale_inode(struct pnode *pno);
-struct inode *llu_inode_from_resource(struct ldlm_lock *lock);
 struct inode *llu_inode_from_lock(struct ldlm_lock *lock);
 int llu_md_blocking_ast(struct ldlm_lock *lock,
                         struct ldlm_lock_desc *desc,
@@ -404,11 +401,17 @@ static inline struct slp_io *slp_env_io(const struct lu_env *env)
 #define cl_isize_write(inode,kms)        do{llu_i2stat(inode)->st_size = kms;}while(0)
 #define cl_isize_write_nolock(inode,kms) cl_isize_write(inode,kms)
 
-static inline void cl_isize_lock(struct inode *inode, int lsmlock)
+static inline struct ll_file_data *cl_iattr2fd(struct inode *inode,
+                                               const struct iattr *attr)
+{
+        return llu_i2info(inode)->lli_file_data;
+}
+
+static inline void cl_isize_lock(struct inode *inode)
 {
 }
 
-static inline void cl_isize_unlock(struct inode *inode, int lsmlock)
+static inline void cl_isize_unlock(struct inode *inode)
 {
 }
 

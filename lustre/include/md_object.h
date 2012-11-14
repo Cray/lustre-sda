@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -182,6 +180,7 @@ struct md_attr {
         struct lustre_capa     *ma_capa;
         struct md_som_data     *ma_som;
         int                     ma_lmm_size;
+        int                     ma_big_lmm_used:1;
         int                     ma_lmv_size;
         int                     ma_acl_size;
         int                     ma_cookie_size;
@@ -364,7 +363,7 @@ struct md_device_operations {
                                int *md_size, int *cookie_size);
 
         int (*mdo_statfs)(const struct lu_env *env, struct md_device *m,
-                          cfs_kstatfs_t *sfs);
+                          struct obd_statfs *sfs);
 
         int (*mdo_init_capa_ctxt)(const struct lu_env *env, struct md_device *m,
                                   int mode, unsigned long timeout, __u32 alg,
@@ -806,8 +805,8 @@ static inline int mdo_create(const struct lu_env *env,
                              struct md_op_spec *spc,
                              struct md_attr *at)
 {
-        LASSERT(c->mo_dir_ops->mdo_create);
-        return c->mo_dir_ops->mdo_create(env, p, lchild_name, c, spc, at);
+	LASSERT(p->mo_dir_ops->mdo_create);
+	return p->mo_dir_ops->mdo_create(env, p, lchild_name, c, spc, at);
 }
 
 static inline int mdo_create_data(const struct lu_env *env,

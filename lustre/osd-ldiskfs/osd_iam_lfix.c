@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2009, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -358,6 +358,18 @@ static void iam_lfix_rec_set(struct iam_leaf *l, const struct iam_rec *r)
         memcpy(iam_lfix_rec(l), r, iam_leaf_descr(l)->id_rec_size);
 }
 
+static inline int lfix_reccmp(const struct iam_container *c,
+			      const struct iam_rec *r1,
+			      const struct iam_rec *r2)
+{
+	return memcmp(r1, r2, c->ic_descr->id_rec_size);
+}
+
+static int iam_lfix_rec_eq(const struct iam_leaf *l, const struct iam_rec *r)
+{
+	return !lfix_reccmp(iam_leaf_container(l), iam_lfix_rec(l), r);
+}
+
 static void iam_lfix_rec_get(const struct iam_leaf *l, struct iam_rec *r)
 {
         assert_corr(iam_leaf_at_rec(l));
@@ -472,7 +484,7 @@ static void iam_lfix_split(struct iam_leaf *l, struct buffer_head **bh,
         pivot = (const struct iam_ikey *)iam_leaf_key_at(start);
 
         memmove(iam_entries(new_leaf), start, finis - start);
-        hdr->ill_count = count - split;
+	hdr->ill_count = cpu_to_le16(count - split);
         lentry_count_set(l, split);
         if ((void *)l->il_at >= start) {
                 /*
@@ -499,6 +511,11 @@ static void iam_lfix_split(struct iam_leaf *l, struct buffer_head **bh,
         iam_insert_key_lock(path, path->ip_frame, pivot, new_blknr);
 }
 
+static int iam_lfix_leaf_empty(struct iam_leaf *leaf)
+{
+	return lentry_count_get(leaf) == 0;
+}
+
 static struct iam_leaf_operations iam_lfix_leaf_ops = {
         .init           = iam_lfix_init,
         .init_new       = iam_lfix_init_new,
@@ -513,6 +530,7 @@ static struct iam_leaf_operations iam_lfix_leaf_ops = {
         .key_eq         = iam_lfix_key_eq,
         .key_size       = iam_lfix_key_size,
         .rec_set        = iam_lfix_rec_set,
+	.rec_eq         = iam_lfix_rec_eq,
         .rec_get        = iam_lfix_rec_get,
         .lookup         = iam_lfix_lookup,
         .ilookup        = iam_lfix_ilookup,
@@ -520,7 +538,8 @@ static struct iam_leaf_operations iam_lfix_leaf_ops = {
         .rec_add        = iam_lfix_rec_add,
         .rec_del        = iam_lfix_rec_del,
         .can_add        = iam_lfix_can_add,
-        .split          = iam_lfix_split
+	.split          = iam_lfix_split,
+	.leaf_empty	= iam_lfix_leaf_empty,
 };
 
 /*
@@ -682,11 +701,14 @@ static int iam_lfix_guess(struct iam_container *c)
                         descr->id_node_gap  = 0;
                         descr->id_ops       = &iam_lfix_ops;
                         descr->id_leaf_ops  = &iam_lfix_leaf_ops;
-                } else
-                        result = -EBADF;
-                brelse(bh);
-        }
-        return result;
+
+			c->ic_root_bh = bh;
+		} else {
+			result = -EBADF;
+			brelse(bh);
+		}
+	}
+	return result;
 }
 
 static struct iam_format iam_lfix_format = {
@@ -772,32 +794,45 @@ static void lfix_root(void *buf,
                                         blocksize, keysize + ptrsize)
         };
 
-        entry = root + 1;
-        /*
-         * Skip over @limit.
-         */
-        entry += keysize + ptrsize;
+	/* To guarantee that the padding "keysize + ptrsize"
+	 * covers the "dx_countlimit" and the "idle_blocks". */
+	LASSERT((keysize + ptrsize) >=
+		(sizeof(struct dx_countlimit) + sizeof(__u32)));
 
-        /*
-         * Entry format is <key> followed by <ptr>. In the minimal tree
-         * consisting of a root and single node, <key> is a minimal possible
-         * key.
-         *
-         * XXX: this key is hard-coded to be a sequence of 0's.
-         */
+	entry = (void *)(limit + 1);
+	/* Put "idle_blocks" just after the limit. There was padding after
+	 * the limit, the "idle_blocks" re-uses part of the padding, so no
+	 * compatibility issues with old layout.
+	 */
+	*(__u32 *)entry = 0;
 
-        entry += keysize;
-        /* now @entry points to <ptr> */
-        if (ptrsize == 4)
-                STORE_UNALIGNED(cpu_to_le32(1), (u_int32_t *)entry);
-        else
-                STORE_UNALIGNED(cpu_to_le64(1), (u_int64_t *)entry);
+	/*
+	 * Skip over @limit.
+	 */
+	entry = (void *)(root + 1) + keysize + ptrsize;
+
+	/*
+	 * Entry format is <key> followed by <ptr>. In the minimal tree
+	 * consisting of a root and single node, <key> is a minimal possible
+	 * key.
+	 *
+	 * XXX: this key is hard-coded to be a sequence of 0's.
+	 */
+
+	memset(entry, 0, keysize);
+	entry += keysize;
+	/* now @entry points to <ptr> */
+	if (ptrsize == 4)
+		STORE_UNALIGNED(cpu_to_le32(1), (u_int32_t *)entry);
+	else
+		STORE_UNALIGNED(cpu_to_le64(1), (u_int64_t *)entry);
 }
 
 static void lfix_leaf(void *buf,
-                      int blocksize, int keysize, int ptrsize, int recsize)
+		      int blocksize, int keysize, int ptrsize, int recsize)
 {
-        struct iam_leaf_head *head;
+	struct iam_leaf_head *head;
+	void *entry;
 
         /* form leaf */
         head = buf;
@@ -809,6 +844,9 @@ static void lfix_leaf(void *buf,
                  */
                 .ill_count = cpu_to_le16(1),
         };
+
+	entry = (void *)(head + 1);
+	memset(entry, 0, keysize + recsize);
 }
 
 int iam_lfix_create(struct inode *obj,

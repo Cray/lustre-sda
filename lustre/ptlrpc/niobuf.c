@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -42,6 +42,7 @@
 #include <lustre_net.h>
 #include <lustre_lib.h>
 #include <obd.h>
+#include <obd_class.h>
 #include "ptlrpc_internal.h"
 
 /**
@@ -99,6 +100,41 @@ static int ptl_send_buf (lnet_handle_md_t *mdh, void *base, int len,
 
         RETURN (0);
 }
+
+#ifdef HAVE_SERVER_SUPPORT
+/**
+ * Prepare bulk descriptor for specified incoming request \a req that
+ * can fit \a npages * pages. \a type is bulk type. \a portal is where
+ * the bulk to be sent. Used on server-side after request was already
+ * received.
+ * Returns pointer to newly allocatrd initialized bulk descriptor or NULL on
+ * error.
+ */
+struct ptlrpc_bulk_desc *ptlrpc_prep_bulk_exp(struct ptlrpc_request *req,
+                                              int npages, int type, int portal)
+{
+        struct obd_export *exp = req->rq_export;
+        struct ptlrpc_bulk_desc *desc;
+
+        ENTRY;
+        LASSERT(type == BULK_PUT_SOURCE || type == BULK_GET_SINK);
+
+        desc = new_bulk(npages, type, portal);
+        if (desc == NULL)
+                RETURN(NULL);
+
+        desc->bd_export = class_export_get(exp);
+        desc->bd_req = req;
+
+        desc->bd_cbid.cbid_fn  = server_bulk_callback;
+        desc->bd_cbid.cbid_arg = desc;
+
+        /* NB we don't assign rq_bulk here; server-side requests are
+         * re-used, and the handler frees the bulk desc explicitly. */
+
+        return desc;
+}
+EXPORT_SYMBOL(ptlrpc_prep_bulk_exp);
 
 /**
  * Starts bulk transfer for descriptor \a desc
@@ -170,6 +206,7 @@ int ptlrpc_start_bulk_transfer(struct ptlrpc_bulk_desc *desc)
 
         RETURN(0);
 }
+EXPORT_SYMBOL(ptlrpc_start_bulk_transfer);
 
 /**
  * Server side bulk abort. Idempotent. Not thread-safe (i.e. only
@@ -211,6 +248,8 @@ void ptlrpc_abort_bulk(struct ptlrpc_bulk_desc *desc)
                 CWARN("Unexpectedly long timeout: desc %p\n", desc);
         }
 }
+EXPORT_SYMBOL(ptlrpc_abort_bulk);
+#endif /* HAVE_SERVER_SUPPORT */
 
 /**
  * Register bulk for later transfer
@@ -292,6 +331,7 @@ int ptlrpc_register_bulk(struct ptlrpc_request *req)
                req->rq_xid, desc->bd_portal);
         RETURN(0);
 }
+EXPORT_SYMBOL(ptlrpc_register_bulk);
 
 /**
  * Disconnect a bulk desc from the network. Idempotent. Not
@@ -358,10 +398,12 @@ int ptlrpc_unregister_bulk(struct ptlrpc_request *req, int async)
         }
         RETURN(0);
 }
+EXPORT_SYMBOL(ptlrpc_unregister_bulk);
 
 static void ptlrpc_at_set_reply(struct ptlrpc_request *req, int flags)
 {
-        struct ptlrpc_service *svc = req->rq_rqbd->rqbd_service;
+	struct ptlrpc_service_part	*svcpt = req->rq_rqbd->rqbd_svcpt;
+	struct ptlrpc_service		*svc = svcpt->scp_service;
         int service_time = max_t(int, cfs_time_current_sec() -
                                  req->rq_arrival_time.tv_sec, 1);
 
@@ -373,12 +415,14 @@ static void ptlrpc_at_set_reply(struct ptlrpc_request *req, int flags)
                MSG_REQ_REPLAY_DONE | MSG_LOCK_REPLAY_DONE))) {
                 /* early replies, errors and recovery requests don't count
                  * toward our service time estimate */
-                int oldse = at_measured(&svc->srv_at_estimate, service_time);
-                if (oldse != 0)
-                        DEBUG_REQ(D_ADAPTTO, req,
-                                  "svc %s changed estimate from %d to %d",
-                                  svc->srv_name, oldse,
-                                  at_get(&svc->srv_at_estimate));
+		int oldse = at_measured(&svcpt->scp_at_estimate, service_time);
+
+		if (oldse != 0) {
+			DEBUG_REQ(D_ADAPTTO, req,
+				  "svc %s changed estimate from %d to %d",
+				  svc->srv_name, oldse,
+				  at_get(&svcpt->scp_at_estimate));
+		}
         }
         /* Report actual service time for client latency calc */
         lustre_msg_set_service_time(req->rq_repmsg, service_time);
@@ -390,7 +434,7 @@ static void ptlrpc_at_set_reply(struct ptlrpc_request *req, int flags)
                 lustre_msg_set_timeout(req->rq_repmsg, 0);
         else
                 lustre_msg_set_timeout(req->rq_repmsg,
-                                       at_get(&svc->srv_at_estimate));
+				       at_get(&svcpt->scp_at_estimate));
 
         if (req->rq_reqmsg &&
             !(lustre_msghdr_get_flags(req->rq_reqmsg) & MSGHDR_AT_SUPPORT)) {
@@ -410,7 +454,6 @@ static void ptlrpc_at_set_reply(struct ptlrpc_request *req, int flags)
  */
 int ptlrpc_send_reply(struct ptlrpc_request *req, int flags)
 {
-        struct ptlrpc_service     *svc = req->rq_rqbd->rqbd_service;
         struct ptlrpc_reply_state *rs = req->rq_reply_state;
         struct ptlrpc_connection  *conn;
         int                        rc;
@@ -441,6 +484,16 @@ int ptlrpc_send_reply(struct ptlrpc_request *req, int flags)
                 CDEBUG(D_HA, "sending ENODEV from failed obd %d\n",
                        req->rq_export->exp_obd->obd_minor);
         }
+
+	/* In order to keep interoprability with the client (< 2.3) which
+	 * doesn't have pb_jobid in ptlrpc_body, We have to shrink the
+	 * ptlrpc_body in reply buffer to ptlrpc_body_v2, otherwise, the
+	 * reply buffer on client will be overflow.
+	 *
+	 * XXX Remove this whenver we drop the interoprability with such client.
+	 */
+	req->rq_replen = lustre_shrink_msg(req->rq_repmsg, 0,
+					   sizeof(struct ptlrpc_body_v2), 1);
 
         if (req->rq_type != PTL_RPC_MSG_ERR)
                 req->rq_type = PTL_RPC_MSG_REPLY;
@@ -474,7 +527,8 @@ int ptlrpc_send_reply(struct ptlrpc_request *req, int flags)
         rc = ptl_send_buf (&rs->rs_md_h, rs->rs_repbuf, rs->rs_repdata_len,
                            (rs->rs_difficult && !rs->rs_no_ack) ?
                            LNET_ACK_REQ : LNET_NOACK_REQ,
-                           &rs->rs_cb_id, conn, svc->srv_rep_portal,
+			   &rs->rs_cb_id, conn,
+			   ptlrpc_req2svc(req)->srv_rep_portal,
                            req->rq_xid, req->rq_reply_off);
 out:
         if (unlikely(rc != 0))
@@ -482,6 +536,7 @@ out:
         ptlrpc_connection_put(conn);
         return rc;
 }
+EXPORT_SYMBOL(ptlrpc_send_reply);
 
 int ptlrpc_reply (struct ptlrpc_request *req)
 {
@@ -490,6 +545,7 @@ int ptlrpc_reply (struct ptlrpc_request *req)
         else
                 return (ptlrpc_send_reply(req, 0));
 }
+EXPORT_SYMBOL(ptlrpc_reply);
 
 /**
  * For request \a req send an error reply back. Create empty
@@ -509,16 +565,21 @@ int ptlrpc_send_error(struct ptlrpc_request *req, int may_be_difficult)
                         RETURN(rc);
         }
 
-        req->rq_type = PTL_RPC_MSG_ERR;
+	if (req->rq_status != -ENOSPC && req->rq_status != -EACCES &&
+	    req->rq_status != -EPERM && req->rq_status != -ENOENT &&
+	    req->rq_status != -EINPROGRESS)
+                req->rq_type = PTL_RPC_MSG_ERR;
 
         rc = ptlrpc_send_reply(req, may_be_difficult);
         RETURN(rc);
 }
+EXPORT_SYMBOL(ptlrpc_send_error);
 
 int ptlrpc_error(struct ptlrpc_request *req)
 {
         return ptlrpc_send_error(req, 0);
 }
+EXPORT_SYMBOL(ptlrpc_error);
 
 /**
  * Send request \a request.
@@ -710,15 +771,16 @@ int ptl_send_rpc(struct ptlrpc_request *request, int noreply)
                 cfs_memory_pressure_restore(mpflag);
         return rc;
 }
+EXPORT_SYMBOL(ptl_send_rpc);
 
 /**
  * Register request buffer descriptor for request receiving.
  */
 int ptlrpc_register_rqbd(struct ptlrpc_request_buffer_desc *rqbd)
 {
-        struct ptlrpc_service   *service = rqbd->rqbd_service;
-        static lnet_process_id_t  match_id = {LNET_NID_ANY, LNET_PID_ANY};
-        int                      rc;
+	struct ptlrpc_service	  *service = rqbd->rqbd_svcpt->scp_service;
+	static lnet_process_id_t  match_id = {LNET_NID_ANY, LNET_PID_ANY};
+	int			  rc;
         lnet_md_t                 md;
         lnet_handle_me_t          me_h;
 
@@ -728,8 +790,13 @@ int ptlrpc_register_rqbd(struct ptlrpc_request_buffer_desc *rqbd)
         if (OBD_FAIL_CHECK(OBD_FAIL_PTLRPC_RQBD))
                 return (-ENOMEM);
 
-        rc = LNetMEAttach(service->srv_req_portal,
-                          match_id, 0, ~0, LNET_UNLINK, LNET_INS_AFTER, &me_h);
+	/* NB: CPT affinity service should use new LNet flag LNET_INS_LOCAL,
+	 * which means buffer can only be attached on local CPT, and LND
+	 * threads can find it by grabbing a local lock */
+	rc = LNetMEAttach(service->srv_req_portal,
+			  match_id, 0, ~0, LNET_UNLINK,
+			  rqbd->rqbd_svcpt->scp_cpt >= 0 ?
+			  LNET_INS_LOCAL : LNET_INS_AFTER, &me_h);
         if (rc != 0) {
                 CERROR("LNetMEAttach failed: %d\n", rc);
                 return (-ENOMEM);

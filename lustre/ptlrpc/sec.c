@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -2110,7 +2108,7 @@ int sptlrpc_svc_alloc_rs(struct ptlrpc_request *req, int msglen)
         rc = policy->sp_sops->alloc_rs(req, msglen);
         if (unlikely(rc == -ENOMEM)) {
                 /* failed alloc, try emergency pool */
-                rs = lustre_get_emerg_rs(req->rq_rqbd->rqbd_service);
+		rs = lustre_get_emerg_rs(req->rq_rqbd->rqbd_svcpt);
                 if (rs == NULL)
                         RETURN(-ENOMEM);
 
@@ -2298,6 +2296,7 @@ int sptlrpc_cli_unwrap_bulk_write(struct ptlrpc_request *req,
 }
 EXPORT_SYMBOL(sptlrpc_cli_unwrap_bulk_write);
 
+#ifdef HAVE_SERVER_SUPPORT
 /**
  * Performe transformation upon outgoing bulk read.
  */
@@ -2378,6 +2377,8 @@ int sptlrpc_svc_prep_bulk(struct ptlrpc_request *req,
         return 0;
 }
 EXPORT_SYMBOL(sptlrpc_svc_prep_bulk);
+
+#endif /* HAVE_SERVER_SUPPORT */
 
 /****************************************
  * user descriptor helpers              *

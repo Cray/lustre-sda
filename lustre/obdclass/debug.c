@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, Whamcloud, Inc.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -63,13 +61,15 @@ EXPORT_SYMBOL(dump_lniobuf);
 
 void dump_lsm(int level, struct lov_stripe_md *lsm)
 {
-        CDEBUG(level, "lsm %p, objid "LPX64", maxbytes "LPX64", magic 0x%08X, "
-               "stripe_size %u, stripe_count %u, "
-               "layout_gen %u, pool ["LOV_POOLNAMEF"]\n", lsm,
-               lsm->lsm_object_id, lsm->lsm_maxbytes, lsm->lsm_magic,
-               lsm->lsm_stripe_size, lsm->lsm_stripe_count,
-               lsm->lsm_layout_gen, lsm->lsm_pool_name);
+	CDEBUG(level, "lsm %p, objid "LPX64", maxbytes "LPX64", magic 0x%08X, "
+	       "stripe_size %u, stripe_count %u, refc: %d, "
+	       "layout_gen %u, pool ["LOV_POOLNAMEF"]\n", lsm,
+	       lsm->lsm_object_id, lsm->lsm_maxbytes, lsm->lsm_magic,
+	       lsm->lsm_stripe_size, lsm->lsm_stripe_count,
+	       cfs_atomic_read(&lsm->lsm_refc), lsm->lsm_layout_gen,
+	       lsm->lsm_pool_name);
 }
+EXPORT_SYMBOL(dump_lsm);
 
 #define LPDS sizeof(__u64)
 int block_debug_setup(void *addr, int len, __u64 off, __u64 id)
@@ -87,6 +87,7 @@ int block_debug_setup(void *addr, int len, __u64 off, __u64 id)
 
         return 0;
 }
+EXPORT_SYMBOL(block_debug_setup);
 
 int block_debug_check(char *who, void *addr, int end, __u64 off, __u64 id)
 {
@@ -122,9 +123,5 @@ int block_debug_check(char *who, void *addr, int end, __u64 off, __u64 id)
 
         return err;
 }
-#undef LPDS
-
-//EXPORT_SYMBOL(dump_req);
-EXPORT_SYMBOL(dump_lsm);
-EXPORT_SYMBOL(block_debug_setup);
 EXPORT_SYMBOL(block_debug_check);
+#undef LPDS

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -179,7 +177,7 @@ static void ll_invalidate_negative_children(struct inode *dir)
 
 			list_for_each_entry_safe(child, tmp_subdir,
 						 &dentry->d_subdirs,
-						 d_child) {
+						 d_u.d_child) {
 				if (child->d_inode == NULL)
 					d_lustre_invalidate(child);
 			}
@@ -206,23 +204,21 @@ int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
                 }
                 break;
         case LDLM_CB_CANCELING: {
-                struct inode *inode = ll_inode_from_resource(lock);
+                struct inode *inode = ll_inode_from_lock(lock);
                 struct ll_inode_info *lli;
                 __u64 bits = lock->l_policy_data.l_inodebits.bits;
                 struct lu_fid *fid;
                 ldlm_mode_t mode = lock->l_req_mode;
-
-                /* Inode is set to lock->l_resource->lr_lvb_inode
-                 * for mdc - bug 24555 */
-                LASSERT( lock->l_ast_data == NULL);
 
                 /* Invalidate all dentries associated with this inode */
                 if (inode == NULL)
                         break;
 
                 LASSERT(lock->l_flags & LDLM_FL_CANCELING);
-                /* For OPEN locks we differentiate between lock modes - CR, CW. PR - bug 22891 */
-                if (bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_UPDATE))
+                /* For OPEN locks we differentiate between lock modes
+		 * LCK_CR, LCK_CW, LCK_PR - bug 22891 */
+		if (bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_UPDATE |
+			    MDS_INODELOCK_LAYOUT))
                         ll_have_md_lock(inode, &bits, LCK_MINMODE);
 
                 if (bits & MDS_INODELOCK_OPEN)
@@ -256,7 +252,15 @@ int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
                         ll_md_real_close(inode, flags);
                 }
 
-                lli = ll_i2info(inode);
+		lli = ll_i2info(inode);
+		if (bits & MDS_INODELOCK_LAYOUT) {
+			struct cl_object_conf conf = { .coc_inode = inode,
+						       .coc_invalidate = true };
+			rc = ll_layout_conf(inode, &conf);
+			if (rc)
+				CDEBUG(D_INODE, "invaliding layout %d.\n", rc);
+		}
+
                 if (bits & MDS_INODELOCK_UPDATE)
                         lli->lli_flags &= ~LLIF_MDS_SIZE_LOCK;
 
@@ -564,14 +568,6 @@ struct lookup_intent *ll_convert_intent(struct open_intent *oit,
                 it->it_op = IT_GETATTR;
         }
 
-#ifndef HAVE_FILE_IN_STRUCT_INTENT
-                /* Since there is no way to pass our intent to ll_file_open,
-                 * just check the file is there. Actual open will be done
-                 * in ll_file_open */
-                if (it->it_op & IT_OPEN)
-                        it->it_op = IT_LOOKUP;
-#endif
-
         return it;
 }
 
@@ -584,13 +580,6 @@ static struct dentry *ll_lookup_nd(struct inode *parent, struct dentry *dentry,
         if (nd && !(nd->flags & (LOOKUP_CONTINUE|LOOKUP_PARENT))) {
                 struct lookup_intent *it;
 
-#if defined(HAVE_FILE_IN_STRUCT_INTENT) && (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,17))
-                /* Did we came here from failed revalidate just to propagate
-                 * its error? */
-                if (nd->flags & LOOKUP_OPEN)
-                        if (IS_ERR(nd->intent.open.file))
-                                RETURN((struct dentry *)nd->intent.open.file);
-#endif
                 if (ll_d2d(dentry) && ll_d2d(dentry)->lld_it) {
                         it = ll_d2d(dentry)->lld_it;
                         ll_d2d(dentry)->lld_it = NULL;
@@ -614,7 +603,6 @@ static struct dentry *ll_lookup_nd(struct inode *parent, struct dentry *dentry,
                 if ((nd->flags & LOOKUP_OPEN) && !IS_ERR(dentry)) { /* Open */
                         if (dentry->d_inode &&
                             it_disposition(it, DISP_OPEN_OPEN)) { /* nocreate */
-#ifdef HAVE_FILE_IN_STRUCT_INTENT
                                 if (S_ISFIFO(dentry->d_inode->i_mode)) {
                                         // We cannot call open here as it would
                                         // deadlock.
@@ -634,11 +622,6 @@ static struct dentry *ll_lookup_nd(struct inode *parent, struct dentry *dentry,
 						de = (struct dentry *)filp;
 					}
                                 }
-#else /* HAVE_FILE_IN_STRUCT_INTENT */
-                                /* Release open handle as we have no way to
-                                 * pass it to ll_file_open */
-                                ll_release_openhandle(dentry, it);
-#endif /* HAVE_FILE_IN_STRUCT_INTENT */
                         } else if (it_disposition(it, DISP_OPEN_CREATE)) {
                                 // XXX This can only reliably work on assumption
                                 // that there are NO hashed negative dentries.
@@ -824,6 +807,10 @@ static int ll_mknod_generic(struct inode *dir, struct qstr *name, int mode,
         default:
                 err = -EINVAL;
         }
+
+        if (!err)
+                ll_stats_ops_tally(ll_i2sbi(dir), LPROC_LL_MKNOD, 1);
+
         RETURN(err);
 }
 
@@ -845,7 +832,6 @@ static int ll_create_nd(struct inode *dir, struct dentry *dentry,
         }
 
         rc = ll_create_it(dir, dentry, mode, it);
-#ifdef HAVE_FILE_IN_STRUCT_INTENT
         if (nd && (nd->flags & LOOKUP_OPEN) && dentry->d_inode) { /* Open */
 		struct file *filp;
 
@@ -854,13 +840,13 @@ static int ll_create_nd(struct inode *dir, struct dentry *dentry,
 		if (IS_ERR(filp))
 			rc = PTR_ERR(filp);
         }
-#else
-        ll_release_openhandle(dentry,it);
-#endif
 
 out:
         ll_intent_release(it);
         OBD_FREE(it, sizeof(*it));
+
+        if (!rc)
+                ll_stats_ops_tally(ll_i2sbi(dir), LPROC_LL_CREATE, 1);
 
         return rc;
 }
@@ -877,6 +863,10 @@ static int ll_symlink_generic(struct inode *dir, struct qstr *name,
 
         err = ll_new_node(dir, name, (char *)tgt, S_IFLNK | S_IRWXUGO,
                           0, dchild, LUSTRE_OPC_SYMLINK);
+
+        if (!err)
+                ll_stats_ops_tally(ll_i2sbi(dir), LPROC_LL_SYMLINK, 1);
+
         RETURN(err);
 }
 
@@ -905,6 +895,7 @@ static int ll_link_generic(struct inode *src,  struct inode *dir,
                 GOTO(out, err);
 
         ll_update_times(request, dir);
+        ll_stats_ops_tally(sbi, LPROC_LL_LINK, 1);
         EXIT;
 out:
         ptlrpc_req_finished(request);
@@ -923,6 +914,9 @@ static int ll_mkdir_generic(struct inode *dir, struct qstr *name,
 
         mode = (mode & (S_IRWXUGO|S_ISVTX) & ~cfs_curproc_umask()) | S_IFDIR;
         err = ll_new_node(dir, name, NULL, mode, 0, dchild, LUSTRE_OPC_MKDIR);
+
+        if (!err)
+                ll_stats_ops_tally(ll_i2sbi(dir), LPROC_LL_MKDIR, 1);
 
         RETURN(err);
 }
@@ -965,8 +959,11 @@ static int ll_rmdir_generic(struct inode *dir, struct dentry *dparent,
         ll_get_child_fid(dir, name, &op_data->op_fid3);
         rc = md_unlink(ll_i2sbi(dir)->ll_md_exp, op_data, &request);
         ll_finish_md_op_data(op_data);
-        if (rc == 0)
+        if (rc == 0) {
                 ll_update_times(request, dir);
+                ll_stats_ops_tally(ll_i2sbi(dir), LPROC_LL_RMDIR, 1);
+        }
+
         ptlrpc_req_finished(request);
         RETURN(rc);
 }
@@ -1035,7 +1032,8 @@ int ll_objects_destroy(struct ptlrpc_request *request, struct inode *dir)
                         GOTO(out_free_memmd, rc);
         }
 
-        rc = obd_destroy(ll_i2dtexp(dir), oa, lsm, &oti, ll_i2mdexp(dir), oc);
+        rc = obd_destroy(NULL, ll_i2dtexp(dir), oa, lsm, &oti,
+                         ll_i2mdexp(dir), oc);
         capa_put(oc);
         OBDO_FREE(oa);
         if (rc)
@@ -1080,6 +1078,7 @@ static int ll_unlink_generic(struct inode *dir, struct dentry *dparent,
                 GOTO(out, rc);
 
         ll_update_times(request, dir);
+        ll_stats_ops_tally(ll_i2sbi(dir), LPROC_LL_UNLINK, 1);
 
         rc = ll_objects_destroy(request, dir);
  out:
@@ -1120,6 +1119,7 @@ static int ll_rename_generic(struct inode *src, struct dentry *src_dparent,
         if (!err) {
                 ll_update_times(request, src);
                 ll_update_times(request, tgt);
+                ll_stats_ops_tally(sbi, LPROC_LL_RENAME, 1);
                 err = ll_objects_destroy(request, src);
         }
 

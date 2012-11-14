@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -66,10 +64,6 @@
 typedef unsigned short cfs_umode_t;
 
 #endif
-
-/* always adopt 2.6.9 definitions */
-#define KERNEL_VERSION(a,b,c) ((a)*100+(b)*10+c)
-#define LINUX_VERSION_CODE KERNEL_VERSION(2,6,9)
 
 #ifndef page_private
 #define page_private(page) ((page)->private)
@@ -137,8 +131,6 @@ extern int echo_client_init(void);
 
 /* general stuff */
 
-#define EXPORT_SYMBOL(S)
-
 typedef __u64 kdev_t;
 
 #ifndef min
@@ -195,6 +187,7 @@ void cfs_get_random_bytes(void *ptr, int size);
 #define ATTR_BLOCKS     0x4000
 #define ATTR_KILL_SUID  0
 #define ATTR_KILL_SGID  0
+#define ATTR_FILE       0
 
 struct iattr {
         unsigned int    ia_valid;
@@ -207,8 +200,6 @@ struct iattr {
         time_t          ia_ctime;
         unsigned int    ia_attr_flags;
 };
-
-#define ll_iattr iattr
 
 /* defined in kernel header include/linux/namei.h */
 #define INTENT_MAGIC 0x19620323

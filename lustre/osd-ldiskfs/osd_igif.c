@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -57,8 +57,6 @@
 
 void lu_igif_to_id(const struct lu_fid *fid, struct osd_inode_id *id)
 {
-        LASSERT(osd_fid_is_igif(fid));
-        id->oii_ino = lu_igif_ino(fid);
-        id->oii_gen = lu_igif_gen(fid);
+	LASSERT(fid_is_igif(fid));
+	osd_id_gen(id, lu_igif_ino(fid), lu_igif_gen(fid));
 }
-

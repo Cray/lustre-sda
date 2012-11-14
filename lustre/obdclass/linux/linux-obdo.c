@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -55,49 +55,100 @@
 #include <linux/pagemap.h> /* for PAGE_CACHE_SIZE */
 
 /*FIXME: Just copy from obdo_from_inode*/
-void obdo_from_la(struct obdo *dst, struct lu_attr *la, obd_flag valid)
+void obdo_from_la(struct obdo *dst, struct lu_attr *la, __u64 valid)
 {
         obd_flag newvalid = 0;
 
-        if (valid & OBD_MD_FLATIME) {
+        if (valid & LA_ATIME) {
                 dst->o_atime = la->la_atime;
                 newvalid |= OBD_MD_FLATIME;
         }
-        if (valid & OBD_MD_FLMTIME) {
+        if (valid & LA_MTIME) {
                 dst->o_mtime = la->la_mtime;
                 newvalid |= OBD_MD_FLMTIME;
         }
-        if (valid & OBD_MD_FLCTIME) {
+        if (valid & LA_CTIME) {
                 dst->o_ctime = la->la_ctime;
                 newvalid |= OBD_MD_FLCTIME;
         }
-        if (valid & OBD_MD_FLSIZE) {
+        if (valid & LA_SIZE) {
                 dst->o_size = la->la_size;
                 newvalid |= OBD_MD_FLSIZE;
         }
-        if (valid & OBD_MD_FLBLOCKS) {  /* allocation of space (x512 bytes) */
+        if (valid & LA_BLOCKS) {  /* allocation of space (x512 bytes) */
                 dst->o_blocks = la->la_blocks;
                 newvalid |= OBD_MD_FLBLOCKS;
         }
-        if (valid & OBD_MD_FLTYPE) {
-                dst->o_mode = (dst->o_mode & S_IALLUGO)|(la->la_mode & S_IFMT);
+        if (valid & LA_TYPE) {
+                dst->o_mode = (dst->o_mode & S_IALLUGO) |
+                              (la->la_mode & S_IFMT);
                 newvalid |= OBD_MD_FLTYPE;
         }
-        if (valid & OBD_MD_FLMODE) {
-                dst->o_mode = (dst->o_mode & S_IFMT)|(la->la_mode & S_IALLUGO);
+        if (valid & LA_MODE) {
+                dst->o_mode = (dst->o_mode & S_IFMT) |
+                              (la->la_mode & S_IALLUGO);
                 newvalid |= OBD_MD_FLMODE;
         }
-        if (valid & OBD_MD_FLUID) {
+        if (valid & LA_UID) {
                 dst->o_uid = la->la_uid;
                 newvalid |= OBD_MD_FLUID;
         }
-        if (valid & OBD_MD_FLGID) {
+        if (valid & LA_GID) {
                 dst->o_gid = la->la_gid;
                 newvalid |= OBD_MD_FLGID;
         }
         dst->o_valid |= newvalid;
 }
 EXPORT_SYMBOL(obdo_from_la);
+
+/*FIXME: Just copy from obdo_from_inode*/
+void la_from_obdo(struct lu_attr *dst, struct obdo *obdo, obd_flag valid)
+{
+        __u64 newvalid = 0;
+
+        valid &= obdo->o_valid;
+
+        if (valid & OBD_MD_FLATIME) {
+                dst->la_atime = obdo->o_atime;
+                newvalid |= LA_ATIME;
+        }
+        if (valid & OBD_MD_FLMTIME) {
+                dst->la_mtime = obdo->o_mtime;
+                newvalid |= LA_MTIME;
+        }
+        if (valid & OBD_MD_FLCTIME) {
+                dst->la_ctime = obdo->o_ctime;
+                newvalid |= LA_CTIME;
+        }
+        if (valid & OBD_MD_FLSIZE) {
+                dst->la_size = obdo->o_size;
+                newvalid |= LA_SIZE;
+        }
+        if (valid & OBD_MD_FLBLOCKS) {
+                dst->la_blocks = obdo->o_blocks;
+                newvalid |= LA_BLOCKS;
+        }
+        if (valid & OBD_MD_FLTYPE) {
+                dst->la_mode = (dst->la_mode & S_IALLUGO) |
+                               (obdo->o_mode & S_IFMT);
+                newvalid |= LA_TYPE;
+        }
+        if (valid & OBD_MD_FLMODE) {
+                dst->la_mode = (dst->la_mode & S_IFMT) |
+                               (obdo->o_mode & S_IALLUGO);
+                newvalid |= LA_MODE;
+        }
+        if (valid & OBD_MD_FLUID) {
+                dst->la_uid = obdo->o_uid;
+                newvalid |= LA_UID;
+        }
+        if (valid & OBD_MD_FLGID) {
+                dst->la_gid = obdo->o_gid;
+                newvalid |= LA_GID;
+        }
+        dst->la_valid = newvalid;
+}
+EXPORT_SYMBOL(la_from_obdo);
 
 void obdo_refresh_inode(struct inode *dst, struct obdo *src, obd_flag valid)
 {
@@ -117,20 +168,12 @@ void obdo_refresh_inode(struct inode *dst, struct obdo *src, obd_flag valid)
                 LTIME_S(dst->i_ctime) = src->o_ctime;
         if (valid & OBD_MD_FLSIZE)
                 i_size_write(dst, src->o_size);
-        /* optimum IO size */
-        if (valid & OBD_MD_FLBLKSZ && src->o_blksize > (1 << dst->i_blkbits)) {
-                dst->i_blkbits = cfs_ffs(src->o_blksize) - 1;
-#ifdef HAVE_INODE_BLKSIZE
-                dst->i_blksize = src->o_blksize;
-#endif
-        }
+	/* optimum IO size */
+	if (valid & OBD_MD_FLBLKSZ && src->o_blksize > (1 << dst->i_blkbits))
+		dst->i_blkbits = cfs_ffs(src->o_blksize) - 1;
 
-        if (dst->i_blkbits < CFS_PAGE_SHIFT) {
-#ifdef HAVE_INODE_BLKSIZE
-                dst->i_blksize = CFS_PAGE_SIZE;
-#endif
-                dst->i_blkbits = CFS_PAGE_SHIFT;
-        }
+	if (dst->i_blkbits < CFS_PAGE_SHIFT)
+		dst->i_blkbits = CFS_PAGE_SHIFT;
 
         /* allocation of space */
         if (valid & OBD_MD_FLBLOCKS && src->o_blocks > dst->i_blocks)
@@ -171,12 +214,8 @@ void obdo_to_inode(struct inode *dst, struct obdo *src, obd_flag valid)
                         dst->i_blocks = -1;
 
         }
-        if (valid & OBD_MD_FLBLKSZ) {
-                dst->i_blkbits = cfs_ffs(src->o_blksize)-1;
-#ifdef HAVE_INODE_BLKSIZE
-                dst->i_blksize = src->o_blksize;
-#endif
-        }
+	if (valid & OBD_MD_FLBLKSZ)
+		dst->i_blkbits = cfs_ffs(src->o_blksize)-1;
         if (valid & OBD_MD_FLMODE)
                 dst->i_mode = (dst->i_mode & S_IFMT) | (src->o_mode & ~S_IFMT);
         if (valid & OBD_MD_FLUID)

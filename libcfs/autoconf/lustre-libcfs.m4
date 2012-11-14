@@ -59,61 +59,6 @@ else
 fi
 ])
 
-#
-# LIBCFS_FUNC_CPU_ONLINE
-#
-# cpu_online is different in rh 2.4, vanilla 2.4, and 2.6
-#
-AC_DEFUN([LIBCFS_FUNC_CPU_ONLINE],
-[AC_MSG_CHECKING([if kernel defines cpu_online()])
-LB_LINUX_TRY_COMPILE([
-       #include <linux/sched.h>
-],[
-       cpu_online(0);
-],[
-       AC_MSG_RESULT([yes])
-       AC_DEFINE(HAVE_CPU_ONLINE, 1, [cpu_online found])
-],[
-       AC_MSG_RESULT([no])
-])
-])
-
-#
-# LIBCFS_TYPE_GFP_T
-#
-# check if gfp_t is typedef-ed
-#
-AC_DEFUN([LIBCFS_TYPE_GFP_T],
-[AC_MSG_CHECKING([if kernel defines gfp_t])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/gfp.h>
-],[
-	return sizeof(gfp_t);
-],[
-	AC_MSG_RESULT([yes])
-	AC_DEFINE(HAVE_GFP_T, 1, [gfp_t found])
-],[
-	AC_MSG_RESULT([no])
-])
-])
-
-#
-# LIBCFS_FUNC_SHOW_TASK
-#
-# we export show_task(), but not all kernels have it (yet)
-#
-AC_DEFUN([LIBCFS_FUNC_SHOW_TASK],
-[LB_CHECK_SYMBOL_EXPORT([show_task],
-[kernel/ksyms.c kernel/sched.c],[
-AC_DEFINE(HAVE_SHOW_TASK, 1, [show_task is exported])
-],[
-        LB_CHECK_SYMBOL_EXPORT([sched_show_task],
-        [kernel/ksyms.c kernel/sched.c],[
-        AC_DEFINE(HAVE_SCHED_SHOW_TASK, 1, [sched_show_task is exported])
-        ],[])
-])
-])
-
 # check kernel __u64 type
 AC_DEFUN([LIBCFS_U64_LONG_LONG_LINUX],
 [
@@ -137,21 +82,6 @@ LB_LINUX_TRY_COMPILE([
 EXTRA_KCFLAGS="$tmp_flags"
 ])
 
-# check if task_struct with rcu memeber
-AC_DEFUN([LIBCFS_TASK_RCU],
-[AC_MSG_CHECKING([if task_struct has a rcu field])
-LB_LINUX_TRY_COMPILE([
-	#include <linux/sched.h>
-],[
-        memset(((struct task_struct *)0)->rcu.next, 0, 0);
-],[
-        AC_MSG_RESULT([yes])
-        AC_DEFINE(HAVE_TASK_RCU, 1, [task_struct has rcu field])
-],[
-        AC_MSG_RESULT([no])
-])
-])
-
 # LIBCFS_TASKLIST_LOCK
 # 2.6.18 remove tasklist_lock export
 AC_DEFUN([LIBCFS_TASKLIST_LOCK],
@@ -163,6 +93,26 @@ AC_DEFINE(HAVE_TASKLIST_LOCK, 1,
 ])
 ])
 
+# LIBCFS_DIGEST_SETKEY_FLAGS
+# digest_alg.dia_setkey takes 4 args (2.6.18)
+#
+AC_DEFUN([LIBCFS_DIGEST_SETKEY_FLAGS],
+[AC_MSG_CHECKING([if kernel dia_setkey takes 4 args])
+LB_LINUX_TRY_COMPILE([
+	#include <linux/err.h>
+	#include <linux/crypto.h>
+],[
+	struct digest_alg alg;
+
+	alg.dia_setkey(NULL, NULL, 0, NULL);
+],[
+	AC_MSG_RESULT([yes])
+	AC_DEFINE(HAVE_DIGEST_SETKEY_FLAGS, 1, [kernel dia_setkey takes 4 args])
+],[
+	AC_MSG_RESULT([no])
+])
+])
+
 # 2.6.19 API changes
 # kmem_cache_destroy(cachep) return void instead of
 # int
@@ -171,7 +121,8 @@ AC_DEFUN([LIBCFS_KMEM_CACHE_DESTROY_INT],
 LB_LINUX_TRY_COMPILE([
         #include <linux/slab.h>
 ],[
-	int i = kmem_cache_destroy(NULL);
+	int i __attribute__ ((unused));
+	i = kmem_cache_destroy(NULL);
 ],[
         AC_MSG_RESULT(yes)
         AC_DEFINE(HAVE_KMEM_CACHE_DESTROY_INT, 1,
@@ -181,69 +132,116 @@ LB_LINUX_TRY_COMPILE([
 ])
 ])
 
-# 2.6.19 API change
-#panic_notifier_list use atomic_notifier operations
-#
-AC_DEFUN([LIBCFS_ATOMIC_PANIC_NOTIFIER],
-[AC_MSG_CHECKING([panic_notifier_list is atomic])
+# check cpumask_size (2.6.28)
+AC_DEFUN([LIBCFS_CPUMASK_SIZE],
+[AC_MSG_CHECKING([whether have cpumask_size()])
 LB_LINUX_TRY_COMPILE([
-	#include <linux/notifier.h>
-	#include <linux/kernel.h>
+	#include <linux/cpumask.h>
 ],[
-	struct atomic_notifier_head panic_notifier_list;
+	int size = cpumask_size();
 ],[
-        AC_MSG_RESULT(yes)
-	AC_DEFINE(HAVE_ATOMIC_PANIC_NOTIFIER, 1,
-		[panic_notifier_list is atomic_notifier_head])
+	AC_MSG_RESULT(yes)
+	AC_DEFINE(HAVE_CPUMASK_SIZE, 1, [have cpumask_size()])
 ],[
-        AC_MSG_RESULT(NO)
+	AC_MSG_RESULT(NO)
 ])
 ])
 
-# since 2.6.19 nlmsg_multicast() needs 5 argument.
-AC_DEFUN([LIBCFS_NLMSG_MULTICAST],
-[AC_MSG_CHECKING([nlmsg_multicast needs 5 argument])
+# check cpu topology functions
+#
+# topology_core_cpumask (2.6.29, not on all archs)
+# topology_core_siblings (not on all archs)
+# topology_thread_cpumask (2.6.29, not on all archs)
+# topology_thread_siblings (not on all archs)
+# cpumask_of_node/node_to_cpumask (not always exported)
+AC_DEFUN([LIBCFS_CPU_TOPOLOGY],
+[AC_MSG_CHECKING([whether have topology.h])
 LB_LINUX_TRY_COMPILE([
-	#include <net/netlink.h>
-],[
-        nlmsg_multicast(NULL, NULL, 0, 0, 0);
-],[
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_NLMSG_MULTICAST_5ARGS, 1,
-                  [nlmsg_multicast needs 5 argument])
-],[
-        AC_MSG_RESULT(NO)
-])
-])
-
-#
-# LIBCFS_NETLINK
-#
-# If we have netlink.h, and nlmsg_new takes 2 args (2.6.19)
-#
-AC_DEFUN([LIBCFS_NETLINK],
-[AC_MSG_CHECKING([if netlink.h can be compiled])
-LB_LINUX_TRY_COMPILE([
-        #include <net/netlink.h>
+	#include <linux/topology.h>
 ],[],[
-        AC_MSG_RESULT([yes])
-        AC_DEFINE(HAVE_NETLINK, 1, [net/netlink.h found])
+	AC_DEFINE(HAVE_CPU_TOPOLOGY, 1, [have CPU topology])
+	AC_MSG_RESULT(yes)
 
-        AC_MSG_CHECKING([if nlmsg_new takes a 2nd argument])
-        LB_LINUX_TRY_COMPILE([
-                #include <net/netlink.h>
-        ],[
-                nlmsg_new(100, GFP_KERNEL);
-        ],[
-                AC_MSG_RESULT([yes])
-                AC_DEFINE(HAVE_NETLINK_NL2, 1, [nlmsg_new takes 2 args])
-        ],[
-                AC_MSG_RESULT([no])
-        ])
+	AC_MSG_CHECKING([whether have topology_core_cpumask])
+	LB_LINUX_TRY_COMPILE([
+		#include <linux/topology.h>
+	],[
+		cpumask_t *mask = topology_core_cpumask(0);
+	],[
+		AC_DEFINE(HAVE_TOPOLOGY_CORE_CPUMASK, 1,
+			  [have topology_core_cpumask])
+		AC_MSG_RESULT(yes)
+	],[
+		AC_MSG_RESULT(no)
+	])
+
+	AC_MSG_CHECKING([whether have topology_core_siblings])
+	LB_LINUX_TRY_COMPILE([
+		#include <linux/topology.h>
+	],[
+		cpumask_t mask = topology_core_siblings(0);
+	],[
+		AC_DEFINE(HAVE_TOPOLOGY_CORE_SIBLINGS, 1,
+			  [have topology_core_siblings])
+		AC_MSG_RESULT(yes)
+	],[
+		AC_MSG_RESULT(no)
+	])
+
+	AC_MSG_CHECKING([whether have topology_thread_cpumask])
+	LB_LINUX_TRY_COMPILE([
+		#include <linux/topology.h>
+	],[
+		cpumask_t *mask = topology_thread_cpumask(0);
+	],[
+		AC_DEFINE(HAVE_TOPOLOGY_THREAD_CPUMASK, 1,
+			  [have topology_thread_cpumask])
+		AC_MSG_RESULT(yes)
+	],[
+		AC_MSG_RESULT(no)
+	])
+
+	AC_MSG_CHECKING([whether have topology_thread_siblings])
+	LB_LINUX_TRY_COMPILE([
+		#include <linux/topology.h>
+	],[
+		cpumask_t mask = topology_thread_siblings(0);
+	],[
+		AC_DEFINE(HAVE_TOPOLOGY_THREAD_SIBLINGS, 1,
+			  [have topology_thread_siblings])
+		AC_MSG_RESULT(yes)
+	],[
+		AC_MSG_RESULT(no)
+	])
+
+	AC_MSG_CHECKING([whether have cpumask_of_node])
+	LB_LINUX_TRY_COMPILE([
+		#include <linux/topology.h>
+	],[
+		cpumask_t *mask = cpumask_of_node(0);
+	],[
+		AC_DEFINE(HAVE_CPUMASK_OF_NODE, 1, [have cpumask_of_node])
+		AC_MSG_RESULT(yes)
+	],[
+		AC_MSG_RESULT(no)
+	])
+
+	AC_MSG_CHECKING([whether have node_to_cpumask])
+	LB_LINUX_TRY_COMPILE([
+		#include <linux/topology.h>
+	],[
+		cpumask_t mask = node_to_cpumask(0);
+	],[
+		AC_DEFINE(HAVE_NODE_TO_CPUMASK, 1, [have node_to_cpumask])
+		AC_MSG_RESULT(yes)
+	],[
+		AC_MSG_RESULT(no)
+	])
 ],[
-        AC_MSG_RESULT([no])
+	AC_MSG_RESULT(NO)
 ])
 ])
+
 
 # 2.6.20 API change INIT_WORK use 2 args and not
 # store data inside
@@ -252,7 +250,7 @@ AC_DEFUN([LIBCFS_3ARGS_INIT_WORK],
 LB_LINUX_TRY_COMPILE([
 	#include <linux/workqueue.h>
 ],[
-	struct work_struct work;
+	struct work_struct work __attribute__ ((unused));
 
 	INIT_WORK(&work, NULL, NULL);
 ],[
@@ -271,7 +269,7 @@ AC_DEFUN([LIBCFS_2ARGS_REGISTER_SYSCTL],
 LB_LINUX_TRY_COMPILE([
         #include <linux/sysctl.h>
 ],[
-	return register_sysctl_table(NULL,0);
+	register_sysctl_table(NULL,0);
 ],[
         AC_MSG_RESULT(yes)
         AC_DEFINE(HAVE_2ARGS_REGISTER_SYSCTL, 1,
@@ -279,29 +277,6 @@ LB_LINUX_TRY_COMPILE([
 ],[
         AC_MSG_RESULT(NO)
 ])
-])
-
-# 2.6.21 marks kmem_cache_t deprecated and uses struct kmem_cache
-# instead
-AC_DEFUN([LIBCFS_KMEM_CACHE],
-[AC_MSG_CHECKING([check kernel has struct kmem_cache])
-tmp_flags="$EXTRA_KCFLAGS"
-EXTRA_KCFLAGS="-Werror"
-LB_LINUX_TRY_COMPILE([
-        #include <linux/slab.h>
-        typedef struct kmem_cache cache_t;
-],[
-	cache_t *cachep = NULL;
-
-	kmem_cache_alloc(cachep, 0);
-],[
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_KMEM_CACHE, 1,
-                  [kernel has struct kmem_cache])
-],[
-        AC_MSG_RESULT(NO)
-])
-EXTRA_KCFLAGS="$tmp_flags"
 ])
 
 # 2.6.23 lost dtor argument
@@ -333,24 +308,6 @@ LB_LINUX_TRY_COMPILE([
                 [kernel has register_shrinker])
 ],[
         AC_MSG_RESULT([no])
-])
-])
-
-# 2.6.24 
-AC_DEFUN([LIBCFS_NETLINK_CBMUTEX],
-[AC_MSG_CHECKING([for mutex in netlink_kernel_create])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/netlink.h>
-],[
-        struct mutex *lock = NULL;
-
-        netlink_kernel_create(0, 0, NULL, lock, NULL);
-],[
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_NETLINK_CBMUTEX, 1,
-                  [netlink_kernel_create want mutex for callback])
-],[
-        AC_MSG_RESULT(NO)
 ])
 ])
 
@@ -395,56 +352,12 @@ AC_DEFUN([LIBCFS_NETWORK_NAMESPACE],
 LB_LINUX_TRY_COMPILE([
         #include <net/net_namespace.h>
 ],[
-        struct net *net = &init_net;
+        struct net *net __attribute__ ((unused));
+        net = &init_net;
 ],[
         AC_MSG_RESULT(yes)
         AC_DEFINE(HAVE_INIT_NET, 1,
                   [kernel is support network namespaces ])
-],[
-        AC_MSG_RESULT(NO)
-])
-])
-
-
-# 2.6.24 
-AC_DEFUN([LIBCFS_NETLINK_NETNS],
-[AC_MSG_CHECKING([for netlink support net ns])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/netlink.h>
-],[
-        struct net *net = NULL;
-        struct mutex *lock = NULL;
-
-        netlink_kernel_create(net, 0, 0, NULL,
-                              lock,
-                              NULL);
-],[
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_NETLINK_NS, 1,
-                  [netlink is support network namespace])
-# XXX
-# for now - if kernel have netlink ns - he uses cbmutex
-        AC_DEFINE(HAVE_NETLINK_CBMUTEX, 1,
-                  [netlink_kernel_create want mutex for callback])
-
-],[
-        AC_MSG_RESULT(NO)
-])
-])
-
-# ~2.6.24
-AC_DEFUN([LIBCFS_NL_BROADCAST_GFP],
-[AC_MSG_CHECKING([for netlink_broadcast is want to have gfp parameter])
-LB_LINUX_TRY_COMPILE([
-        #include <linux/netlink.h>
-],[
-	gfp_t gfp = GFP_KERNEL;
-
-        netlink_broadcast(NULL, NULL, 0, 0, gfp);
-],[
-        AC_MSG_RESULT(yes)
-        AC_DEFINE(HAVE_NL_BROADCAST_GFP, 1,
-                  [netlink brouacast is want to have gfp paramter])
 ],[
         AC_MSG_RESULT(NO)
 ])
@@ -530,8 +443,8 @@ AC_DEFUN([LIBCFS_SEM_COUNT],
 LB_LINUX_TRY_COMPILE([
         #include <asm/semaphore.h>
 ],[
-	struct semaphore s;
-	
+	struct semaphore s __attribute__ ((unused));
+
 	atomic_read(&s.count);
 ],[
         AC_MSG_RESULT(yes)
@@ -598,6 +511,25 @@ LB_LINUX_TRY_COMPILE([
 ])
 ])
 
+# LIBCFS_STRUCT_SHASH_ALG
+# struct shash_alg was introduced in 2.6.29
+#
+AC_DEFUN([LIBCFS_STRUCT_SHASH_ALG],
+[AC_MSG_CHECKING([if kernel has struct shash_alg])
+LB_LINUX_TRY_COMPILE([
+	#include <linux/err.h>
+	#include <crypto/internal/hash.h>
+],[
+	struct shash_alg foo;
+],[
+	AC_MSG_RESULT([yes])
+	AC_DEFINE(HAVE_STRUCT_SHASH_ALG, 1, [kernel has struct shash_alg])
+],[
+	AC_MSG_RESULT([no])
+])
+])
+
+
 #
 # LIBCFS_FUNC_UNSHARE_FS_STRUCT
 #
@@ -633,7 +565,8 @@ AC_DEFUN([LIBCFS_HAVE_IS_COMPAT_TASK],
 LB_LINUX_TRY_COMPILE([
         #include <linux/compat.h>
 ],[
-        int i = is_compat_task();
+        int i __attribute__ ((unused));
+        i = is_compat_task();
 ],[
         AC_MSG_RESULT([yes])
         AC_DEFINE(HAVE_IS_COMPAT_TASK, 1, [is_compat_task() is available])
@@ -669,6 +602,27 @@ AC_DEFUN([LIBCFS_HAVE_OOM_H],
         AC_MSG_RESULT([no])
 ])
 ])
+
+#
+# check set_mems_allowed
+# 2.6.31 adds function set_mems_allowed in cpuset.h
+#
+AC_DEFUN([LIBCFS_HAVE_SET_MEMS_ALLOWED],
+[AC_MSG_CHECKING([whether have set_mems_allowed()])
+LB_LINUX_TRY_COMPILE([
+	#include <linux/cpuset.h>
+],[
+	nodemask_t mask;
+
+	set_mems_allowed(mask);
+],[
+	AC_MSG_RESULT(yes)
+	AC_DEFINE(HAVE_SET_MEMS_ALLOWED, 1, [have set_mems_allowed()])
+],[
+	AC_MSG_RESULT(NO)
+])
+])
+
 
 #
 # RHEL6/2.6.32 want to have pointer to shrinker self pointer in handler function
@@ -792,46 +746,42 @@ LB_LINUX_TRY_COMPILE([
 #
 AC_DEFUN([LIBCFS_PROG_LINUX],
 [
-LIBCFS_FUNC_CPU_ONLINE
-LIBCFS_TYPE_GFP_T
 LIBCFS_CONFIG_PANIC_DUMPLOG
 
-LIBCFS_FUNC_SHOW_TASK
 LIBCFS_U64_LONG_LONG_LINUX
-LIBCFS_TASK_RCU
 # 2.6.18
 LIBCFS_TASKLIST_LOCK
 LIBCFS_HAVE_IS_COMPAT_TASK
+LIBCFS_DIGEST_SETKEY_FLAGS
 # 2.6.19
-LIBCFS_NETLINK
-LIBCFS_NLMSG_MULTICAST
 LIBCFS_KMEM_CACHE_DESTROY_INT
-LIBCFS_ATOMIC_PANIC_NOTIFIER
 # 2.6.20
 LIBCFS_3ARGS_INIT_WORK
 # 2.6.21
 LIBCFS_2ARGS_REGISTER_SYSCTL
-LIBCFS_KMEM_CACHE
 # 2.6.23
 LIBCFS_KMEM_CACHE_CREATE_DTOR
-LIBCFS_NETLINK_CBMUTEX
 LC_REGISTER_SHRINKER
 # 2.6.24
 LIBCFS_SYSCTL_UNNUMBERED
 LIBCFS_SCATTERLIST_SETPAGE
-LIBCFS_NL_BROADCAST_GFP
 LIBCFS_NETWORK_NAMESPACE
-LIBCFS_NETLINK_NETNS
 LIBCFS_FUNC_DUMP_TRACE
 # 2.6.26
 LIBCFS_SEM_COUNT
 # 2.6.27
 LIBCFS_CRED_WRAPPERS
+# 2.6.28
+LIBCFS_CPUMASK_SIZE
 # 2.6.29
 LIBCFS_STRUCT_CRED_IN_TASK
+LIBCFS_CPU_TOPOLOGY
+LIBCFS_STRUCT_SHASH_ALG
 # 2.6.30
 LIBCFS_FUNC_UNSHARE_FS_STRUCT
 LIBCFS_SOCK_MAP_FD_2ARG
+# 2.6.31
+LIBCFS_HAVE_SET_MEMS_ALLOWED
 # 2.6.32
 LIBCFS_STACKTRACE_OPS_HAVE_WALK_STACK
 LC_SHRINKER_WANT_SHRINK_PTR
@@ -884,6 +834,9 @@ AC_CHECK_TYPE([spinlock_t],
 
 # lnet/utils/wirecheck.c
 AC_CHECK_FUNCS([strnlen])
+
+# lnet/libcfs/user-prim.c, missing for RHEL5 and earlier userspace
+AC_CHECK_FUNCS([strlcpy])
 
 AC_CHECK_TYPE([umode_t],
 	[AC_DEFINE(HAVE_UMODE_T, 1, [umode_t is defined])],

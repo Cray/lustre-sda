@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -66,18 +64,29 @@
 struct ptlrpc_request;
 struct obd_export;
 struct lu_target;
+struct l_wait_info;
 #include <lustre_ha.h>
 #include <lustre_net.h>
 #include <lvfs.h>
 
+#ifdef HAVE_SERVER_SUPPORT
 void target_client_add_cb(struct obd_device *obd, __u64 transno, void *cb_data,
                           int error);
 int target_handle_connect(struct ptlrpc_request *req);
 int target_handle_disconnect(struct ptlrpc_request *req);
 void target_destroy_export(struct obd_export *exp);
-int target_pack_pool_reply(struct ptlrpc_request *req);
 int target_handle_ping(struct ptlrpc_request *req);
 void target_committed_to_req(struct ptlrpc_request *req);
+void target_cancel_recovery_timer(struct obd_device *obd);
+void target_stop_recovery_thread(struct obd_device *obd);
+void target_cleanup_recovery(struct obd_device *obd);
+int target_queue_recovery_request(struct ptlrpc_request *req,
+                                  struct obd_device *obd);
+int target_bulk_io(struct obd_export *exp, struct ptlrpc_bulk_desc *desc,
+                   struct l_wait_info *lwi);
+#endif
+
+int target_pack_pool_reply(struct ptlrpc_request *req);
 int do_set_info_async(struct obd_import *imp,
                       int opcode, int version,
                       obd_count keylen, void *key,
@@ -94,16 +103,7 @@ int target_handle_dqacq_callback(struct ptlrpc_request *req);
 
 #define OBD_RECOVERY_MAX_TIME (obd_timeout * 18) /* b13079 */
 
-struct l_wait_info;
-
-void target_cancel_recovery_timer(struct obd_device *obd);
-void target_stop_recovery_thread(struct obd_device *obd);
-void target_cleanup_recovery(struct obd_device *obd);
-int target_queue_recovery_request(struct ptlrpc_request *req,
-                                  struct obd_device *obd);
 void target_send_reply(struct ptlrpc_request *req, int rc, int fail_id);
-int target_bulk_io(struct obd_export *exp, struct ptlrpc_bulk_desc *desc,
-                   struct l_wait_info *lwi);
 
 /* client.c */
 
@@ -550,6 +550,7 @@ static inline void obd_ioctl_freedata(char *buf, int len)
 #define OBD_IOC_LLOG_CANCEL            _IOWR('f', 193, OBD_IOC_DATA_TYPE)
 #define OBD_IOC_LLOG_REMOVE            _IOWR('f', 194, OBD_IOC_DATA_TYPE)
 #define OBD_IOC_LLOG_CHECK             _IOWR('f', 195, OBD_IOC_DATA_TYPE)
+/* OBD_IOC_LLOG_CATINFO is deprecated */
 #define OBD_IOC_LLOG_CATINFO           _IOWR('f', 196, OBD_IOC_DATA_TYPE)
 
 #define ECHO_IOC_GET_STRIPE            _IOWR('f', 200, OBD_IOC_DATA_TYPE)
@@ -559,10 +560,15 @@ static inline void obd_ioctl_freedata(char *buf, int len)
 
 #define OBD_IOC_GET_OBJ_VERSION        _IOR('f', 210, OBD_IOC_DATA_TYPE)
 
+/* <lustre/lustre_user.h> defines ioctl number 218 */
 #define OBD_IOC_GET_MNTOPT             _IOW('f', 220, mntopt_t)
 
 #define OBD_IOC_ECHO_MD                _IOR('f', 221, struct obd_ioctl_data)
 #define OBD_IOC_ECHO_ALLOC_SEQ         _IOWR('f', 222, struct obd_ioctl_data)
+
+#define OBD_IOC_START_LFSCK	       _IOWR('f', 230, OBD_IOC_DATA_TYPE)
+#define OBD_IOC_STOP_LFSCK	       _IOW('f', 231, OBD_IOC_DATA_TYPE)
+
 /* XXX _IOWR('f', 250, long) has been defined in
  * libcfs/include/libcfs/libcfs_private.h for debug, don't use it
  */

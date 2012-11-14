@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -105,7 +103,7 @@ static void mdt_obj_version_get(struct mdt_thread_info *info,
 {
         LASSERT(o);
         LASSERT(mdt_object_exists(o) >= 0);
-        if (mdt_object_exists(o) > 0)
+	if (mdt_object_exists(o) > 0 && !mdt_object_obf(o))
                 *version = dt_version_get(info->mti_env, mdt_obj2dt(o));
         else
                 *version = ENOENT_VERSION;
@@ -291,6 +289,9 @@ static int mdt_md_create(struct mdt_thread_info *info)
         if (IS_ERR(parent))
                 RETURN(PTR_ERR(parent));
 
+        if (mdt_object_obf(parent))
+                GOTO(out_put_parent, rc = -EPERM);
+
         rc = mdt_version_get_check_save(info, parent, 0);
         if (rc)
                 GOTO(out_put_parent, rc);
@@ -302,14 +303,17 @@ static int mdt_md_create(struct mdt_thread_info *info)
         lname = mdt_name(info->mti_env, (char *)rr->rr_name, rr->rr_namelen);
         rc = mdt_lookup_version_check(info, parent, lname,
                                       &info->mti_tmp_fid1, 1);
-        /* -ENOENT is expected here */
-        if (rc != 0 && rc != -ENOENT)
-                GOTO(out_put_parent, rc);
+	if (rc == 0)
+		GOTO(out_put_parent, rc = -EEXIST);
 
-        /* save version of file name for replay, it must be ENOENT here */
-        mdt_enoent_version_save(info, 1);
+	/* -ENOENT is expected here */
+	if (rc != -ENOENT)
+		GOTO(out_put_parent, rc);
 
-        child = mdt_object_find(info->mti_env, mdt, rr->rr_fid2);
+	/* save version of file name for replay, it must be ENOENT here */
+	mdt_enoent_version_save(info, 1);
+
+	child = mdt_object_new(info->mti_env, mdt, rr->rr_fid2);
         if (likely(!IS_ERR(child))) {
                 struct md_object *next = mdt_object_child(parent);
 
@@ -333,11 +337,11 @@ static int mdt_md_create(struct mdt_thread_info *info)
                 info->mti_spec.sp_cr_mode =
                         mdt_dlm_mode2mdl_mode(lh->mlh_pdo_mode);
 
-                /*
-                 * Do perform lookup sanity check. We do not know if name exists
-                 * or not.
-                 */
-                info->mti_spec.sp_cr_lookup = 1;
+		/*
+		 * Do not perform lookup sanity check. We know that name does
+		 * not exist.
+		 */
+		info->mti_spec.sp_cr_lookup = 0;
                 info->mti_spec.sp_feat = &dt_directory_features;
 
                 rc = mdo_create(info->mti_env, next, lname,
@@ -474,7 +478,7 @@ static int mdt_reint_setattr(struct mdt_thread_info *info,
         struct mdt_object       *mo;
         struct md_object        *next;
         struct mdt_body         *repbody;
-        int                      som_au, rc;
+        int                      som_au, rc, rc2;
         ENTRY;
 
         DEBUG_REQ(D_INODE, req, "setattr "DFID" %x", PFID(rr->rr_fid1),
@@ -487,6 +491,9 @@ static int mdt_reint_setattr(struct mdt_thread_info *info,
         mo = mdt_object_find(info->mti_env, info->mti_mdt, rr->rr_fid1);
         if (IS_ERR(mo))
                 GOTO(out, rc = PTR_ERR(mo));
+
+	if (mdt_object_obf(mo))
+		GOTO(out_put, rc = -EPERM);
 
         /* start a log jounal handle if needed */
         if (!(mdt_conn_flags(info) & OBD_CONNECT_SOM)) {
@@ -591,10 +598,12 @@ out_put:
         mdt_object_put(info->mti_env, mo);
 out:
         if (rc == 0)
-                mdt_counter_incr(req->rq_export, LPROC_MDT_SETATTR);
+		mdt_counter_incr(req, LPROC_MDT_SETATTR);
 
         mdt_client_compatibility(info);
-        mdt_shrink_reply(info);
+        rc2 = mdt_fix_reply(info);
+        if (rc == 0)
+                rc = rc2;
         return rc;
 }
 
@@ -619,7 +628,7 @@ static int mdt_reint_create(struct mdt_thread_info *info,
                         rc = mdt_md_mkobj(info);
                 } else {
                         LASSERT(info->mti_rr.rr_namelen > 0);
-                        mdt_counter_incr(req->rq_export, LPROC_MDT_MKDIR);
+			mdt_counter_incr(req, LPROC_MDT_MKDIR);
                         rc = mdt_md_create(info);
                 }
                 break;
@@ -632,7 +641,7 @@ static int mdt_reint_create(struct mdt_thread_info *info,
         case S_IFSOCK:{
                 /* Special file should stay on the same node as parent. */
                 LASSERT(info->mti_rr.rr_namelen > 0);
-                mdt_counter_incr(req->rq_export, LPROC_MDT_MKNOD);
+		mdt_counter_incr(req, LPROC_MDT_MKNOD);
                 rc = mdt_md_create(info);
                 break;
         }
@@ -695,6 +704,9 @@ static int mdt_reint_unlink(struct mdt_thread_info *info,
                 GOTO(out, rc);
         }
 
+        if (mdt_object_obf(mp))
+                GOTO(out_unlock_parent, rc = -EPERM);
+
         rc = mdt_version_get_check_save(info, mp, 0);
         if (rc)
                 GOTO(out_unlock_parent, rc);
@@ -724,6 +736,7 @@ static int mdt_reint_unlink(struct mdt_thread_info *info,
         /* step 2: find & lock the child */
         lname = mdt_name(info->mti_env, (char *)rr->rr_name, rr->rr_namelen);
         /* lookup child object along with version checking */
+        fid_zero(child_fid);
         rc = mdt_lookup_version_check(info, mp, lname, child_fid, 1);
         if (rc != 0)
                  GOTO(out_unlock_parent, rc);
@@ -760,7 +773,7 @@ static int mdt_reint_unlink(struct mdt_thread_info *info,
         if (ma->ma_valid & MA_INODE) {
                 switch (ma->ma_attr.la_mode & S_IFMT) {
                 case S_IFDIR:
-                        mdt_counter_incr(req->rq_export, LPROC_MDT_RMDIR);
+			mdt_counter_incr(req, LPROC_MDT_RMDIR);
                         break;
                 case S_IFREG:
                 case S_IFLNK:
@@ -768,7 +781,7 @@ static int mdt_reint_unlink(struct mdt_thread_info *info,
                 case S_IFBLK:
                 case S_IFIFO:
                 case S_IFSOCK:
-                        mdt_counter_incr(req->rq_export, LPROC_MDT_UNLINK);
+			mdt_counter_incr(req, LPROC_MDT_UNLINK);
                         break;
                 default:
                         LASSERTF(0, "bad file type %o unlinking\n",
@@ -841,6 +854,9 @@ static int mdt_reint_link(struct mdt_thread_info *info,
         if (IS_ERR(mp))
                 RETURN(PTR_ERR(mp));
 
+        if (mdt_object_obf(mp))
+                GOTO(out_unlock_parent, rc = -EPERM);
+
         rc = mdt_version_get_check_save(info, mp, 0);
         if (rc)
                 GOTO(out_unlock_parent, rc);
@@ -884,7 +900,7 @@ static int mdt_reint_link(struct mdt_thread_info *info,
                       mdt_object_child(ms), lname, ma);
 
         if (rc == 0)
-                mdt_counter_incr(req->rq_export, LPROC_MDT_LINK);
+		mdt_counter_incr(req, LPROC_MDT_LINK);
 
         EXIT;
 out_unlock_child:
@@ -1144,6 +1160,9 @@ static int mdt_reint_rename(struct mdt_thread_info *info,
         if (IS_ERR(msrcdir))
                 GOTO(out_rename_lock, rc = PTR_ERR(msrcdir));
 
+        if (mdt_object_obf(msrcdir))
+                GOTO(out_unlock_source, rc = -EPERM);
+
         rc = mdt_version_get_check_save(info, msrcdir, 0);
         if (rc)
                 GOTO(out_unlock_source, rc);
@@ -1168,6 +1187,9 @@ static int mdt_reint_rename(struct mdt_thread_info *info,
                 if (IS_ERR(mtgtdir))
                         GOTO(out_unlock_source, rc = PTR_ERR(mtgtdir));
 
+                if (mdt_object_obf(mtgtdir))
+                        GOTO(out_put_target, rc = -EPERM);
+
                 /* check early, the real version will be saved after locking */
                 rc = mdt_version_get_check(info, mtgtdir, 1);
                 if (rc)
@@ -1191,6 +1213,7 @@ static int mdt_reint_rename(struct mdt_thread_info *info,
         /* step 3: find & lock the old object. */
         lname = mdt_name(info->mti_env, (char *)rr->rr_name, rr->rr_namelen);
         mdt_name_copy(&slname, lname);
+        fid_zero(old_fid);
         rc = mdt_lookup_version_check(info, msrcdir, &slname, old_fid, 2);
         if (rc != 0)
                 GOTO(out_unlock_target, rc);
@@ -1201,6 +1224,11 @@ static int mdt_reint_rename(struct mdt_thread_info *info,
         mold = mdt_object_find(info->mti_env, info->mti_mdt, old_fid);
         if (IS_ERR(mold))
                 GOTO(out_unlock_target, rc = PTR_ERR(mold));
+
+	if (mdt_object_obf(mold)) {
+		mdt_object_put(info->mti_env, mold);
+		GOTO(out_unlock_target, rc = -EPERM);
+	}
 
         lh_oldp = &info->mti_lh[MDT_LH_OLD];
         mdt_lock_reg_init(lh_oldp, LCK_EX);
@@ -1220,6 +1248,7 @@ static int mdt_reint_rename(struct mdt_thread_info *info,
         /* new target object may not exist now */
         lname = mdt_name(info->mti_env, (char *)rr->rr_tgt, rr->rr_tgtlen);
         /* lookup with version checking */
+        fid_zero(new_fid);
         rc = mdt_lookup_version_check(info, mtgtdir, lname, new_fid, 3);
         if (rc == 0) {
                 /* the new_fid should have been filled at this moment */
@@ -1234,6 +1263,11 @@ static int mdt_reint_rename(struct mdt_thread_info *info,
                 mnew = mdt_object_find(info->mti_env, info->mti_mdt, new_fid);
                 if (IS_ERR(mnew))
                         GOTO(out_unlock_old, rc = PTR_ERR(mnew));
+
+		if (mdt_object_obf(mnew)) {
+			mdt_object_put(info->mti_env, mnew);
+			GOTO(out_unlock_old, rc = -EPERM);
+		}
 
                 rc = mdt_object_lock(info, mnew, lh_newp,
                                      MDS_INODELOCK_FULL, MDT_CROSS_LOCK);
@@ -1271,11 +1305,11 @@ static int mdt_reint_rename(struct mdt_thread_info *info,
 
         /* handle last link of tgt object */
         if (rc == 0) {
-                mdt_counter_incr(req->rq_export, LPROC_MDT_RENAME);
+		mdt_counter_incr(req, LPROC_MDT_RENAME);
                 if (mnew)
                         mdt_handle_last_unlink(info, mnew, ma);
 
-                mdt_rename_counter_tally(info, info->mti_mdt, req->rq_export,
+		mdt_rename_counter_tally(info, info->mti_mdt, req,
                                          msrcdir, mtgtdir);
         }
 

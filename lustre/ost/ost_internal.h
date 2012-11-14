@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -63,9 +63,6 @@ struct ost_thread_local_cache {
 };
 
 struct ost_thread_local_cache *ost_tls(struct ptlrpc_request *r);
-
-#define OSS_MIN_CREATE_THREADS  2UL
-#define OSS_MAX_CREATE_THREADS 16UL
 
 /* Quota stuff */
 extern quota_interface_t *quota_interface;

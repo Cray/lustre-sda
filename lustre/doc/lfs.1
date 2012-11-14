@@ -13,23 +13,26 @@ lfs \- Lustre utility to create a file with specific striping pattern, find the 
 .br
 .B lfs df [-i] [-h] [--pool|-p <fsname>[.<pool>] [path]
 .br
-.B lfs find [[!] --atime|-A [-+]N] [[!] --mtime|-M [-+]N]
-        \fB[[!] --ctime|-C [-+]N] [--maxdepth|-D N] [--name|-n pattern]
-        \fB[--print|-p] \fB[--print0|-P] [[!] --obd|-O <uuid[s]>]
-        \fB[[!] --size|-S [-+]N[kMGTPE]] [--type |-t {bcdflpsD}]
-        \fB[[!] --gid|-g|--group|-G <gname>|<gid>]
-        \fB[[!] --uid|-u|--user|-U <uname>|<uid>]
-        \fB<directory|filename>\fR
+.B lfs find <directory|filename>
+        \fB[[!] --atime|-A [-+]N] [[!] --mtime|-M [-+]N] [[!] --ctime|-C [+-]N]
+        \fB[--maxdepth|-D N] [[!] --mdt|-m <uuid|index,...>] [--name|-n pattern]
+        \fB[[!] --ost|-O <uuid|index,...>] [--print|-p] [--print0|-P]
+        \fB[[!] --size|-s [-+]N[kMGTPE]]
+        \fB[[!] --stripe-count|-c [+-]<stripes>]
+        \fB[[!] --stripe-index|-i <index,...>]
+        \fB[[!] --stripe-size|-S [+-]N[kMG]]
+        \fB[--type |-t {bcdflpsD}] [[!] --gid|-g|--group|-G <gname>|<gid>]
+        \fB[[!] --uid|-u|--user|-U <uname>|<uid>] [[!] --pool <pool>]\fR
 .br
 .B lfs getname [-h]|[path ...]
 .br
 .B lfs getstripe [--obd|-O <uuid>] [--quiet|-q] [--verbose|-v] 
-        \fB[--count | -c ] [--index | -i | --offset | -o ]
-        \fB[--size | -s ] [--pool | -p ] [--directory | -d ]
-        \fB[--recursive | -r] [--raw|-R] <dirname|filename> ...\fR
+        \fB[--stripe-count|-c ] [--stripe-index|-i] [--mdt-index|-M]
+        \fB[--stripe-size|-S] [--directory|-d]
+        \fB[--pool|-p] [--recursive|-r] [--raw|-R] <dirname|filename> ...\fR
 .br
-.B lfs setstripe [--size|-s stripe-size] [--count|-c stripe-cnt]
-        \fB[--index|-i|--offset|-o start_ost_index ] [--pool|-p <pool>]
+.B lfs setstripe [--stripe-size|-S stripe_size] [--stripe-count|-c stripe_count]
+        \fB[--stripe-index|-i start_ost_index ] [--pool|-p <poolname>]
         \fB<directory|filename>\fR
 .br
 .B lfs setstripe -d <dir>
@@ -37,7 +40,7 @@ lfs \- Lustre utility to create a file with specific striping pattern, find the 
 .B lfs osts
 .RB [ path ]
 .br
-.B lfs poollist <filesystem>[.<pool>] | <pathname>
+.B lfs pool_list <filesystem>[.<pool>] | <pathname>
 .br
 .B lfs quota [-q] [-v] [-o obd_uuid|-I ost_idx|-i mdt_idx] [-u <uname>| -u <uid>|-g <gname>| -g <gid>] <filesystem>
 .br
@@ -73,6 +76,8 @@ lfs \- Lustre utility to create a file with specific striping pattern, find the 
 .B lfs setquota -t <-u|-g>
              \fB[-b <block-grace>] [-i <inode-grace>]
              \fB<filesystem>\fR
+.br
+.B lfs data_version [-n] \fB<filename>\fR
 .br
 .B lfs help
 .SH DESCRIPTION
@@ -157,8 +162,8 @@ can be used to limit the information, like
 You can limit the returned files to those with objects on a specific OST with
 .BR --obd .
 .TP
-.B setstripe [--count|-c stripe_cnt] [--size|-s stripe_size]
-        \fB[--index|-i|--offset|-o start_ost_index] [--pool <pool>]
+.B setstripe [--stripe-count|-c stripe_count] [--stripe-size|-S stripe_size]
+        \fB[--stripe-index|-i start_ost_index] [--pool <poolname>]
         \fB<dirname|filename>\fR
 .br
 To create a new file, or set the directory default, with the specified striping parameters.  The
@@ -171,7 +176,7 @@ of -1 means to stripe over all available OSTs.  The
 .I stripe_size
 is the number of bytes to store on each OST before moving to the next OST.  A
 .I stripe_size
-of 0 means to use the filesystem-wide default stripe size (default 1MB).  The
+of 0 means to use the filesystem-wide default stripe_size (default 1MB).  The
 .I start_ost_index
 is the OST index (starting at 0) on which to start striping for this file.  A
 .I start_ost_index
@@ -191,7 +196,7 @@ must be part of the pool or an error will be returned.
 .B setstripe -d
 Delete the default striping on the specified directory.
 .TP
-.B poollist
+.B pool_list
 .RI { filesystem }[ .poolname "] | {" pathname }
 List the pools in 
 .I filesystem
@@ -226,6 +231,16 @@ To set filesystem quotas for users or groups. Limits can be specified with -b, -
 .TP
 .B setquota -t [-u|-g] [--block-grace <block-grace>] [--inode-grace <inode-grace>] <filesystem>
 To set filesystem quota grace times for users or groups. Grace time is specified in "XXwXXdXXhXXmXXs" format or as an integer seconds value, see EXAMPLES
+.TP
+.B data_version [-n] <filename>
+Display current version of file data. If -n is specified, data version is read
+without taking lock. As a consequence, data version could be outdated if there
+is dirty caches on filesystem clients, but this will not force data flushes and
+has less impact on filesystem.
+
+Even without -n, race conditions are possible and data version should be
+checked before and after an operation to be confident the data did not change
+during it.
 .TP
 .B help 
 Provides brief help on the various arguments

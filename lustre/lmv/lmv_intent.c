@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -579,8 +577,10 @@ int lmv_revalidate_slaves(struct obd_export *exp, struct ptlrpc_request **reqp,
          * cached all the time.
          */
         obj = lmv_object_find_lock(obd, mid);
-        if (obj == NULL)
-                RETURN(-EALREADY);
+	if (obj == NULL) {
+		OBD_FREE_PTR(op_data);
+		RETURN(-EALREADY);
+	}
 
         for (i = 0; i < obj->lo_objcount; i++) {
                 fid = obj->lo_stripes[i].ls_fid;

@@ -28,7 +28,7 @@
 # Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
 # Use is subject to license terms.
 #
-# Copyright (c) 2012, Whamcloud, Inc.
+# Copyright (c) 2012, Intel Corporation.
 #
 
 #
@@ -38,7 +38,7 @@
 
 if LIBLUSTRE
 noinst_LIBRARIES = libosc.a
-libosc_a_SOURCES = osc_request.c osc_create.c osc_internal.h osc_cl_internal.h osc_dev.c osc_object.c osc_page.c osc_lock.c osc_io.c osc_quota.c
+libosc_a_SOURCES = osc_request.c osc_create.c osc_internal.h osc_cl_internal.h osc_dev.c osc_object.c osc_page.c osc_lock.c osc_io.c osc_quota.c osc_cache.c
 
 libosc_a_CPPFLAGS = $(LLCPPFLAGS)
 libosc_a_CFLAGS = $(LLCFLAGS)
@@ -51,25 +51,26 @@ modulefs_DATA = osc$(KMODEXT)
 endif
 
 if DARWIN
-macos_PROGRAMS := osc
+macos_PROGRAMS = osc
 
-osc_SOURCES := \
-        osc_create.c \
-        osc_dev.c    \
-        osc_object.c \
-        osc_page.c   \
-        osc_lock.c   \
-        osc_io.c     \
-        osc_request.c \
-        osc_quota.c
+osc_SOURCES =		\
+	osc_create.c	\
+	osc_dev.c	\
+	osc_object.c	\
+	osc_page.c	\
+	osc_lock.c	\
+	osc_io.c	\
+	osc_request.c	\
+	osc_quota.c	\
+	osc_cache.c
 
 osc_CFLAGS := $(EXTRA_KCFLAGS)
 osc_LDFLAGS := $(EXTRA_KLDFLAGS)
 osc_LDADD := $(EXTRA_KLIBS)
 
-plist_DATA := Info.plist
+plist_DATA = Info.plist
 
-install_data_hook := fix-kext-ownership
+install_data_hook = fix-kext-ownership
 
 endif # Darwin
 

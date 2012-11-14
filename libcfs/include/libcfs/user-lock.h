@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -88,7 +86,7 @@ struct cfs_spin_lock {int foo;};
 
 typedef struct cfs_spin_lock cfs_spinlock_t;
 
-#define CFS_SPIN_LOCK_UNLOCKED(lock) (cfs_spinlock_t) { }
+#define DEFINE_SPINLOCK(lock)		cfs_spinlock_t lock = { }
 #define LASSERT_SPIN_LOCKED(lock) do {(void)sizeof(lock);} while(0)
 #define LINVRNT_SPIN_LOCKED(lock) do {(void)sizeof(lock);} while(0)
 #define LASSERT_SEM_LOCKED(sem) do {(void)sizeof(sem);} while(0)
@@ -207,7 +205,7 @@ void cfs_fini_rwsem(cfs_rw_semaphore_t *s);
  * - cfs_read_unlock_irqrestore(x)
  */
 typedef cfs_rw_semaphore_t cfs_rwlock_t;
-#define CFS_RW_LOCK_UNLOCKED(lock)  (cfs_rwlock_t) { }
+#define DEFINE_RWLOCK(lock)	cfs_rwlock_t lock = { }
 
 #define cfs_rwlock_init(pl)         cfs_init_rwsem(pl)
 

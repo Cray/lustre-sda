@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 1999, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -58,8 +56,9 @@ cfs_atomic_t libcfs_kmemory = {0};
 #endif
 
 struct obd_device *obd_devs[MAX_OBD_DEVICES];
+EXPORT_SYMBOL(obd_devs);
 cfs_list_t obd_types;
-cfs_rwlock_t obd_dev_lock = CFS_RW_LOCK_UNLOCKED(obd_dev_lock);
+DEFINE_RWLOCK(obd_dev_lock);
 
 #ifndef __KERNEL__
 __u64 obd_max_pages = 0;
@@ -70,33 +69,98 @@ __u64 obd_pages;
 
 /* The following are visible and mutable through /proc/sys/lustre/. */
 unsigned int obd_debug_peer_on_timeout;
+EXPORT_SYMBOL(obd_debug_peer_on_timeout);
 unsigned int obd_dump_on_timeout;
+EXPORT_SYMBOL(obd_dump_on_timeout);
 unsigned int obd_dump_on_eviction;
+EXPORT_SYMBOL(obd_dump_on_eviction);
 unsigned int obd_max_dirty_pages = 256;
-unsigned int obd_timeout = OBD_TIMEOUT_DEFAULT;   /* seconds */
-unsigned int ldlm_timeout = LDLM_TIMEOUT_DEFAULT; /* seconds */
-/* Adaptive timeout defs here instead of ptlrpc module for /proc/sys/ access */
-#if defined(CONFIG_CRAY_GEMINI)
-/*
- * For Gemini, a minimum of 70s to handle a gnilnd timeout of 60s. The gnilnd 
- * timeout can creep up to 65s depending on system load and how often the 
- * reaper thread runs, so 70s should give us some head room.
- */
-unsigned int at_min = 70;
-#elif defined(CONFIG_CRAY_ARIES)
-/* For Aries, use Aries Timer project data */
-#include <aries/aries_timeouts_gpl.h>
-unsigned int at_min = TIMEOUT_SECS(TO_Lustre_adaptive_timeout);
-#else
-unsigned int at_min = 0;
-#endif  /* CONFIG_CRAY_GEMINI */
-unsigned int at_max = 600;
-unsigned int at_history = 600;
-int at_early_margin = 5;
-int at_extra = 30;
-
+EXPORT_SYMBOL(obd_max_dirty_pages);
 cfs_atomic_t obd_dirty_pages;
+EXPORT_SYMBOL(obd_dirty_pages);
+unsigned int obd_timeout = OBD_TIMEOUT_DEFAULT;   /* seconds */
+EXPORT_SYMBOL(obd_timeout);
+unsigned int ldlm_timeout = LDLM_TIMEOUT_DEFAULT; /* seconds */
+EXPORT_SYMBOL(ldlm_timeout);
+unsigned int obd_timeout_set;
+EXPORT_SYMBOL(obd_timeout_set);
+unsigned int ldlm_timeout_set;
+EXPORT_SYMBOL(ldlm_timeout_set);
+/* Adaptive timeout defs here instead of ptlrpc module for /proc/sys/ access */
+unsigned int at_min = 0;
+EXPORT_SYMBOL(at_min);
+unsigned int at_max = 600;
+EXPORT_SYMBOL(at_max);
+unsigned int at_history = 600;
+EXPORT_SYMBOL(at_history);
+int at_early_margin = 5;
+EXPORT_SYMBOL(at_early_margin);
+int at_extra = 30;
+EXPORT_SYMBOL(at_extra);
+
 cfs_atomic_t obd_dirty_transit_pages;
+EXPORT_SYMBOL(obd_dirty_transit_pages);
+
+char obd_jobid_var[JOBSTATS_JOBID_VAR_MAX_LEN + 1] = JOBSTATS_DISABLE;
+EXPORT_SYMBOL(obd_jobid_var);
+
+/* Get jobid of current process by reading the environment variable
+ * stored in between the "env_start" & "env_end" of task struct.
+ *
+ * TODO:
+ * It's better to cache the jobid for later use if there is any
+ * efficient way, the cl_env code probably could be reused for this
+ * purpose.
+ *
+ * If some job scheduler doesn't store jobid in the "env_start/end",
+ * then an upcall could be issued here to get the jobid by utilizing
+ * the userspace tools/api. Then, the jobid must be cached.
+ */
+int lustre_get_jobid(char *jobid)
+{
+	int jobid_len = JOBSTATS_JOBID_SIZE;
+	int rc = 0;
+	ENTRY;
+
+	memset(jobid, 0, JOBSTATS_JOBID_SIZE);
+	/* Jobstats isn't enabled */
+	if (strcmp(obd_jobid_var, JOBSTATS_DISABLE) == 0)
+		RETURN(0);
+
+	/* Use process name + fsuid as jobid */
+	if (strcmp(obd_jobid_var, JOBSTATS_PROCNAME_UID) == 0) {
+		snprintf(jobid, JOBSTATS_JOBID_SIZE, "%s.%u",
+			 cfs_curproc_comm(), cfs_curproc_fsuid());
+		RETURN(0);
+	}
+
+	rc = cfs_get_environ(obd_jobid_var, jobid, &jobid_len);
+	if (rc) {
+		if (rc == -EOVERFLOW) {
+			/* For the PBS_JOBID and LOADL_STEP_ID keys (which are
+			 * variable length strings instead of just numbers), it
+			 * might make sense to keep the unique parts for JobID,
+			 * instead of just returning an error.  That means a
+			 * larger temp buffer for cfs_get_environ(), then
+			 * truncating the string at some separator to fit into
+			 * the specified jobid_len.  Fix later if needed. */
+			static bool printed;
+			if (unlikely(!printed)) {
+				LCONSOLE_ERROR_MSG(0x16b, "%s value too large "
+						   "for JobID buffer (%d)\n",
+						   obd_jobid_var, jobid_len);
+				printed = true;
+			}
+		} else {
+			CDEBUG((rc == -ENOENT || rc == -EINVAL ||
+				rc == -EDEADLK) ? D_INFO : D_ERROR,
+			       "Get jobid for (%s) failed: rc = %d\n",
+			       obd_jobid_var, rc);
+		}
+	}
+	RETURN(rc);
+}
+EXPORT_SYMBOL(lustre_get_jobid);
 
 static inline void obd_data2conn(struct lustre_handle *conn,
                                  struct obd_ioctl_data *data)
@@ -354,61 +418,11 @@ int class_handle_ioctl(unsigned int cmd, unsigned long arg)
         RETURN(err);
 } /* class_handle_ioctl */
 
-
-
 #ifdef __KERNEL__
 extern cfs_psdev_t obd_psdev;
 #else
 void *obd_psdev = NULL;
 #endif
-
-EXPORT_SYMBOL(obd_devs);
-EXPORT_SYMBOL(obd_debug_peer_on_timeout);
-EXPORT_SYMBOL(obd_dump_on_timeout);
-EXPORT_SYMBOL(obd_dump_on_eviction);
-EXPORT_SYMBOL(obd_timeout);
-EXPORT_SYMBOL(ldlm_timeout);
-EXPORT_SYMBOL(obd_max_dirty_pages);
-EXPORT_SYMBOL(obd_dirty_pages);
-EXPORT_SYMBOL(obd_dirty_transit_pages);
-EXPORT_SYMBOL(at_min);
-EXPORT_SYMBOL(at_max);
-EXPORT_SYMBOL(at_extra);
-EXPORT_SYMBOL(at_early_margin);
-EXPORT_SYMBOL(at_history);
-EXPORT_SYMBOL(ptlrpc_put_connection_superhack);
-
-EXPORT_SYMBOL(proc_lustre_root);
-
-/* uuid.c */
-EXPORT_SYMBOL(class_uuid_unparse);
-EXPORT_SYMBOL(lustre_uuid_to_peer);
-
-EXPORT_SYMBOL(class_handle_hash);
-EXPORT_SYMBOL(class_handle_unhash);
-EXPORT_SYMBOL(class_handle_hash_back);
-EXPORT_SYMBOL(class_handle2object);
-EXPORT_SYMBOL(class_handle_free_cb);
-
-/* obd_config.c */
-EXPORT_SYMBOL(class_incref);
-EXPORT_SYMBOL(class_decref);
-EXPORT_SYMBOL(class_get_profile);
-EXPORT_SYMBOL(class_del_profile);
-EXPORT_SYMBOL(class_del_profiles);
-EXPORT_SYMBOL(class_process_config);
-EXPORT_SYMBOL(class_process_proc_param);
-EXPORT_SYMBOL(class_config_parse_llog);
-EXPORT_SYMBOL(class_config_dump_llog);
-EXPORT_SYMBOL(class_attach);
-EXPORT_SYMBOL(class_setup);
-EXPORT_SYMBOL(class_cleanup);
-EXPORT_SYMBOL(class_detach);
-EXPORT_SYMBOL(class_manual_cleanup);
-
-/* mea.c */
-EXPORT_SYMBOL(mea_name2idx);
-EXPORT_SYMBOL(raw_name2idx);
 
 #define OBD_INIT_CHECK
 #ifdef OBD_INIT_CHECK
@@ -507,7 +521,8 @@ int init_obdclass(void)
         obd_zombie_impexp_init();
 #ifdef LPROCFS
         obd_memory = lprocfs_alloc_stats(OBD_STATS_NUM,
-                                         LPROCFS_STATS_FLAG_NONE);
+					 LPROCFS_STATS_FLAG_NONE |
+					 LPROCFS_STATS_FLAG_IRQ_SAFE);
         if (obd_memory == NULL) {
                 CERROR("kmalloc of 'obd_memory' failed\n");
                 RETURN(-ENOMEM);

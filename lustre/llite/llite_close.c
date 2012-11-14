@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -250,10 +248,7 @@ int ll_som_update(struct inode *inode, struct md_op_data *op_data)
                                       old_flags & MF_GETATTR_LOCK);
                 if (rc) {
                         oa->o_valid = 0;
-                        if (rc == -ENOENT)
-                                CDEBUG(D_INODE, "objid "LPX64" is destroyed\n",
-                                       lli->lli_smd->lsm_object_id);
-                        else
+			if (rc != -ENOENT)
                                 CERROR("inode_getattr failed (%d): unable to "
                                        "send a Size-on-MDS attribute update "
                                        "for inode %lu/%u\n", rc, inode->i_ino,

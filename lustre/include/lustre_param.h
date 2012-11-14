@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -50,8 +48,16 @@
  * @{
  */
 
+/* For interoperability between 1.8 and 2.0. */
+struct cfg_interop_param {
+	char *old_param;
+	char *new_param;
+};
+
 /* obd_config.c */
 int class_find_param(char *buf, char *key, char **valp);
+struct cfg_interop_param *class_find_old_param(const char *param,
+					       struct cfg_interop_param *ptr);
 int class_get_next_param(char **params, char *copy);
 int class_match_param(char *buf, char *key, char **valp);
 int class_parse_nid(char *buf, lnet_nid_t *nid, char **endh);
@@ -84,11 +90,13 @@ int do_lcfg(char *cfgname, lnet_nid_t nid, int cmd,
 #define PARAM_AT_EXTRA             "at_extra="         /* global */
 #define PARAM_AT_EARLY_MARGIN      "at_early_margin="  /* global */
 #define PARAM_AT_HISTORY           "at_history="       /* global */
+#define PARAM_JOBID_VAR		   "jobid_var="	       /* global */
 #define PARAM_MGSNODE              "mgsnode="          /* only at mounttime */
 #define PARAM_FAILNODE             "failover.node="    /* add failover nid */
 #define PARAM_FAILMODE             "failover.mode="    /* initial mount only */
 #define PARAM_ACTIVE               "active="           /* activate/deactivate */
 #define PARAM_NETWORK              "network="          /* bind on nid */
+#define PARAM_ID_UPCALL		"identity_upcall="  /* identity upcall */
 
 /* Prefixes for parameters handled by obd's proc methods (XXX_process_config) */
 #define PARAM_OST                  "ost."

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2009, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -103,6 +101,41 @@
  * Format of a leaf node is not specified. Generic iam code accesses leaf
  * nodes through ->id_leaf methods in struct iam_descr.
  *
+ * The IAM root block is a special node, which contains the IAM descriptor.
+ * It is on disk format:
+ *
+ * +---------+-------+--------+---------+-------+------+-------+------------+
+ * |IAM desc | count |  idle  |         |       |      |       |            |
+ * |(fix/var)|   /   | blocks | padding | entry | .... | entry | free space |
+ * |         | limit |        |         |       |      |       |            |
+ * +---------+-------+--------+---------+-------+------+-------+------------+
+ *
+ * The padding length is calculated with the parameters in the IAM descriptor.
+ *
+ * The field "idle_blocks" is used to record empty leaf nodes, which have not
+ * been released but all contained entries in them have been removed. Usually,
+ * the idle blocks in the IAM should be reused when need to allocate new leaf
+ * nodes for new entries, it depends on the IAM hash functions to map the new
+ * entries to these idle blocks. Unfortunately, it is not easy to design some
+ * hash functions for such clever mapping, especially considering the insert/
+ * lookup performance.
+ *
+ * So the IAM recycles the empty leaf nodes, and put them into a per-file based
+ * idle blocks pool. If need some new leaf node, it will try to take idle block
+ * from such pool with priority, in spite of how the IAM hash functions to map
+ * the entry.
+ *
+ * The idle blocks pool is organized as a series of tables, and each table
+ * can be described as following (on-disk format):
+ *
+ * +---------+---------+---------+---------+------+---------+-------+
+ * |  magic  |  count  |  next   |  logic  |      |  logic  | free  |
+ * |(16 bits)|(16 bits)|  table  |  blk #  | .... |  blk #  | space |
+ * |         |         |(32 bits)|(32 bits)|      |(32 bits)|       |
+ * +---------+---------+---------+---------+------+---------+-------+
+ *
+ * The logic blk# for the first table is stored in the root node "idle_blocks".
+ *
  */
 
 #include <linux/module.h>
@@ -132,6 +165,40 @@ void iam_format_register(struct iam_format *fmt)
 }
 EXPORT_SYMBOL(iam_format_register);
 
+static struct buffer_head *
+iam_load_idle_blocks(struct iam_container *c, iam_ptr_t blk)
+{
+	struct inode *inode = c->ic_object;
+	struct iam_idle_head *head;
+	struct buffer_head *bh;
+	int err;
+
+	LASSERT_SEM_LOCKED(&c->ic_idle_sem);
+
+	if (blk == 0)
+		return NULL;
+
+	bh = ldiskfs_bread(NULL, inode, blk, 0, &err);
+	if (bh == NULL) {
+		CERROR("%.16s: cannot load idle blocks, blk = %u, err = %d\n",
+		       LDISKFS_SB(inode->i_sb)->s_es->s_volume_name, blk, err);
+		c->ic_idle_failed = 1;
+		return ERR_PTR(err);
+	}
+
+	head = (struct iam_idle_head *)(bh->b_data);
+	if (le16_to_cpu(head->iih_magic) != IAM_IDLE_HEADER_MAGIC) {
+		CERROR("%.16s: invalid idle block head, blk = %u, magic = %d\n",
+		       LDISKFS_SB(inode->i_sb)->s_es->s_volume_name, blk,
+		       le16_to_cpu(head->iih_magic));
+		brelse(bh);
+		c->ic_idle_failed = 1;
+		return ERR_PTR(-EBADF);
+	}
+
+	return bh;
+}
+
 /*
  * Determine format of given container. This is done by scanning list of
  * registered formats and calling ->if_guess() method of each in turn.
@@ -160,20 +227,41 @@ static int iam_format_guess(struct iam_container *c)
                 if (result == 0)
                         break;
         }
-        return result;
+
+	if (result == 0) {
+		struct buffer_head *bh;
+		__u32 *idle_blocks;
+
+		LASSERT(c->ic_root_bh != NULL);
+
+		idle_blocks = (__u32 *)(c->ic_root_bh->b_data +
+					c->ic_descr->id_root_gap +
+					sizeof(struct dx_countlimit));
+		cfs_down(&c->ic_idle_sem);
+		bh = iam_load_idle_blocks(c, le32_to_cpu(*idle_blocks));
+		if (bh != NULL && IS_ERR(bh))
+			result = PTR_ERR(bh);
+		else
+			c->ic_idle_bh = bh;
+		cfs_up(&c->ic_idle_sem);
+	}
+
+	return result;
 }
 
 /*
  * Initialize container @c.
  */
 int iam_container_init(struct iam_container *c,
-                       struct iam_descr *descr, struct inode *inode)
+		       struct iam_descr *descr, struct inode *inode)
 {
-        memset(c, 0, sizeof *c);
-        c->ic_descr  = descr;
-        c->ic_object = inode;
-        cfs_init_rwsem(&c->ic_sem);
-        return 0;
+	memset(c, 0, sizeof *c);
+	c->ic_descr  = descr;
+	c->ic_object = inode;
+	cfs_init_rwsem(&c->ic_sem);
+	dynlock_init(&c->ic_tree_lock);
+	cfs_sema_init(&c->ic_idle_sem, 1);
+	return 0;
 }
 EXPORT_SYMBOL(iam_container_init);
 
@@ -191,8 +279,10 @@ EXPORT_SYMBOL(iam_container_setup);
  */
 void iam_container_fini(struct iam_container *c)
 {
-        brelse(c->ic_root_bh);
-        c->ic_root_bh = NULL;
+	brelse(c->ic_idle_bh);
+	c->ic_idle_bh = NULL;
+	brelse(c->ic_root_bh);
+	c->ic_root_bh = NULL;
 }
 EXPORT_SYMBOL(iam_container_fini);
 
@@ -214,6 +304,7 @@ void iam_path_release(struct iam_path *path)
 
         for (i = 0; i < ARRAY_SIZE(path->ip_frames); i++) {
                 if (path->ip_frames[i].bh != NULL) {
+			path->ip_frames[i].at_shifted = 0;
                         brelse(path->ip_frames[i].bh);
                         path->ip_frames[i].bh = NULL;
                 }
@@ -394,20 +485,21 @@ static int iam_leaf_load(struct iam_path *path)
         return err;
 }
 
-static void iam_unlock_htree(struct inode *dir, struct dynlock_handle *lh)
+static void iam_unlock_htree(struct iam_container *ic,
+			     struct dynlock_handle *lh)
 {
-        if (lh != NULL)
-                dynlock_unlock(&LDISKFS_I(dir)->i_htree_lock, lh);
+	if (lh != NULL)
+		dynlock_unlock(&ic->ic_tree_lock, lh);
 }
 
 
 static void iam_leaf_unlock(struct iam_leaf *leaf)
 {
         if (leaf->il_lock != NULL) {
-                iam_unlock_htree(iam_leaf_container(leaf)->ic_object,
-                                leaf->il_lock);
-                do_corr(schedule());
-                leaf->il_lock = NULL;
+		iam_unlock_htree(iam_leaf_container(leaf),
+				 leaf->il_lock);
+		do_corr(schedule());
+		leaf->il_lock = NULL;
         }
 }
 
@@ -454,6 +546,11 @@ int iam_leaf_at_end(const struct iam_leaf *leaf)
 void iam_leaf_split(struct iam_leaf *l, struct buffer_head **bh, iam_ptr_t nr)
 {
         iam_leaf_ops(l)->split(l, bh, nr);
+}
+
+static inline int iam_leaf_empty(struct iam_leaf *l)
+{
+	return iam_leaf_ops(l)->leaf_empty(l);
 }
 
 int iam_leaf_can_add(const struct iam_leaf *l,
@@ -645,25 +742,24 @@ EXPORT_SYMBOL(iam_it_fini);
  * this locking primitives are used to protect parts
  * of dir's htree. protection unit is block: leaf or index
  */
-struct dynlock_handle *iam_lock_htree(struct inode *dir, unsigned long value,
-                                     enum dynlock_type lt)
+static struct dynlock_handle *iam_lock_htree(struct iam_container *ic,
+					     unsigned long value,
+					     enum dynlock_type lt)
 {
-        return dynlock_lock(&LDISKFS_I(dir)->i_htree_lock, value, lt, GFP_NOFS);
+	return dynlock_lock(&ic->ic_tree_lock, value, lt, GFP_NOFS);
 }
-
-
 
 int iam_index_lock(struct iam_path *path, struct dynlock_handle **lh)
 {
         struct iam_frame *f;
 
-        for (f = path->ip_frame; f >= path->ip_frames; --f, ++lh) {
-                do_corr(schedule());
-                *lh = iam_lock_htree(iam_path_obj(path), f->curidx, DLT_READ);
-                if (*lh == NULL)
-                        return -ENOMEM;
-        }
-        return 0;
+	for (f = path->ip_frame; f >= path->ip_frames; --f, ++lh) {
+		do_corr(schedule());
+		*lh = iam_lock_htree(path->ip_container, f->curidx, DLT_READ);
+		if (*lh == NULL)
+			return -ENOMEM;
+	}
+	return 0;
 }
 
 /*
@@ -949,12 +1045,13 @@ int iam_lookup_lock(struct iam_path *path,
         dir = iam_path_obj(path);
         while ((result = __iam_path_lookup(path)) == 0) {
                 do_corr(schedule());
-                *dl = iam_lock_htree(dir, path->ip_frame->leaf, lt);
-                if (*dl == NULL) {
-                        iam_path_fini(path);
-                        result = -ENOMEM;
-                        break;
-                }
+		*dl = iam_lock_htree(path->ip_container, path->ip_frame->leaf,
+				     lt);
+		if (*dl == NULL) {
+			iam_path_fini(path);
+			result = -ENOMEM;
+			break;
+		}
                 do_corr(schedule());
                 /*
                  * while locking leaf we just found may get split so we need
@@ -962,7 +1059,7 @@ int iam_lookup_lock(struct iam_path *path,
                  */
                 if (iam_check_full_path(path, 1) == 0)
                         break;
-                iam_unlock_htree(dir, *dl);
+		iam_unlock_htree(path->ip_container, *dl);
                 *dl = NULL;
                 iam_path_fini(path);
         }
@@ -1225,7 +1322,10 @@ static int iam_htree_advance(struct inode *dir, __u32 hash,
         while (1) {
                 do_corr(schedule());
                 iam_lock_bh(p->bh);
-                p->at = iam_entry_shift(path, p->at, +1);
+		if (p->at_shifted)
+			p->at_shifted = 0;
+		else
+			p->at = iam_entry_shift(path, p->at, +1);
                 if (p->at < iam_entry_shift(path, p->entries,
                                             dx_get_count(p->entries))) {
                         p->leaf = dx_get_block(path, p->at);
@@ -1296,15 +1396,16 @@ static inline int iam_index_advance(struct iam_path *path)
         return iam_htree_advance(iam_path_obj(path), 0, path, NULL, 0);
 }
 
-static void iam_unlock_array(struct inode *dir, struct dynlock_handle **lh)
+static void iam_unlock_array(struct iam_container *ic,
+			     struct dynlock_handle **lh)
 {
         int i;
 
         for (i = 0; i < DX_MAX_TREE_HEIGHT; ++i, ++lh) {
-                if (*lh != NULL) {
-                        iam_unlock_htree(dir, *lh);
-                        *lh = NULL;
-                }
+		if (*lh != NULL) {
+			iam_unlock_htree(ic, *lh);
+			*lh = NULL;
+		}
         }
 }
 /*
@@ -1340,7 +1441,7 @@ int iam_index_next(struct iam_container *c, struct iam_path *path)
                         break;
                 }
                 do {
-                        iam_unlock_array(object, lh);
+			iam_unlock_array(c, lh);
 
                         iam_path_release(path);
                         do_corr(schedule());
@@ -1372,13 +1473,13 @@ int iam_index_next(struct iam_container *c, struct iam_path *path)
                                 result = iam_check_full_path(path, 0);
                                 if (result != 0)
                                         break;
-                                iam_unlock_array(object, lh);
+				iam_unlock_array(c, lh);
                         }
                 } while (result == -EAGAIN);
                 if (result < 0)
                         break;
         }
-        iam_unlock_array(object, lh);
+	iam_unlock_array(c, lh);
         return result;
 }
 
@@ -1431,9 +1532,10 @@ int iam_it_next(struct iam_iterator *it)
                         result = iam_index_next(iam_it_container(it), path);
                         assert_corr(iam_leaf_is_locked(leaf));
                         if (result == 1) {
-                                struct dynlock_handle *lh;
-                                lh = iam_lock_htree(obj, path->ip_frame->leaf,
-                                                   DLT_WRITE);
+				struct dynlock_handle *lh;
+				lh = iam_lock_htree(iam_it_container(it),
+						    path->ip_frame->leaf,
+						    DLT_WRITE);
                                 if (lh != NULL) {
                                         iam_leaf_fini(leaf);
                                         leaf->il_lock = lh;
@@ -1556,11 +1658,108 @@ int iam_it_key_size(const struct iam_iterator *it)
 }
 EXPORT_SYMBOL(iam_it_key_size);
 
+struct buffer_head *
+iam_new_node(handle_t *h, struct iam_container *c, iam_ptr_t *b, int *e)
+{
+	struct inode *inode = c->ic_object;
+	struct buffer_head *bh = NULL;
+	struct iam_idle_head *head;
+	struct buffer_head *idle;
+	__u32 *idle_blocks;
+	__u16 count;
+
+	if (c->ic_idle_bh == NULL)
+		goto newblock;
+
+	cfs_down(&c->ic_idle_sem);
+	if (unlikely(c->ic_idle_bh == NULL)) {
+		cfs_up(&c->ic_idle_sem);
+		goto newblock;
+	}
+
+	head = (struct iam_idle_head *)(c->ic_idle_bh->b_data);
+	count = le16_to_cpu(head->iih_count);
+	if (count > 0) {
+		*e = ldiskfs_journal_get_write_access(h, c->ic_idle_bh);
+		if (*e != 0)
+			goto fail;
+
+		--count;
+		*b = le32_to_cpu(head->iih_blks[count]);
+		head->iih_count = cpu_to_le16(count);
+		*e = ldiskfs_journal_dirty_metadata(h, c->ic_idle_bh);
+		if (*e != 0)
+			goto fail;
+
+		cfs_up(&c->ic_idle_sem);
+		bh = ldiskfs_bread(NULL, inode, *b, 0, e);
+		if (bh == NULL)
+			return NULL;
+		goto got;
+	}
+
+	/* The block itself which contains the iam_idle_head is
+	 * also an idle block, and can be used as the new node. */
+	idle_blocks = (__u32 *)(c->ic_root_bh->b_data +
+				c->ic_descr->id_root_gap +
+				sizeof(struct dx_countlimit));
+	*e = ldiskfs_journal_get_write_access(h, c->ic_root_bh);
+	if (*e != 0)
+		goto fail;
+
+	*b = le32_to_cpu(*idle_blocks);
+	iam_lock_bh(c->ic_root_bh);
+	*idle_blocks = head->iih_next;
+	iam_unlock_bh(c->ic_root_bh);
+	*e = ldiskfs_journal_dirty_metadata(h, c->ic_root_bh);
+	if (*e != 0) {
+		iam_lock_bh(c->ic_root_bh);
+		*idle_blocks = cpu_to_le32(*b);
+		iam_unlock_bh(c->ic_root_bh);
+		goto fail;
+	}
+
+	bh = c->ic_idle_bh;
+	idle = iam_load_idle_blocks(c, le32_to_cpu(*idle_blocks));
+	if (idle != NULL && IS_ERR(idle)) {
+		*e = PTR_ERR(idle);
+		c->ic_idle_bh = NULL;
+		brelse(bh);
+		goto fail;
+	}
+
+	c->ic_idle_bh = idle;
+	cfs_up(&c->ic_idle_sem);
+
+got:
+	/* get write access for the found buffer head */
+	*e = ldiskfs_journal_get_write_access(h, bh);
+	if (*e != 0) {
+		brelse(bh);
+		bh = NULL;
+		ldiskfs_std_error(inode->i_sb, *e);
+	} else {
+		/* Clear the reused node as new node does. */
+		memset(bh->b_data, 0, inode->i_sb->s_blocksize);
+		set_buffer_uptodate(bh);
+	}
+	return bh;
+
+newblock:
+	bh = ldiskfs_append(h, inode, b, e);
+	return bh;
+
+fail:
+	cfs_up(&c->ic_idle_sem);
+	ldiskfs_std_error(inode->i_sb, *e);
+	return NULL;
+}
+
 /*
  * Insertion of new record. Interaction with jbd during non-trivial case (when
  * split happens) is as following:
  *
- *  - new leaf node is involved into transaction by ldiskfs_append();
+ *  - new leaf node is involved into transaction by iam_new_node();
  *
  *  - old leaf node is involved into transaction by iam_add_rec();
  *
@@ -1598,12 +1797,12 @@ static int iam_new_leaf(handle_t *handle, struct iam_leaf *leaf)
         path = leaf->il_path;
 
         obj = c->ic_object;
-        new_leaf = ldiskfs_append(handle, obj, (__u32 *)&blknr, &err);
+	new_leaf = iam_new_node(handle, c, &blknr, &err);
         do_corr(schedule());
         if (new_leaf != NULL) {
                 struct dynlock_handle *lh;
 
-                lh = iam_lock_htree(obj, blknr, DLT_WRITE);
+		lh = iam_lock_htree(c, blknr, DLT_WRITE);
                 do_corr(schedule());
                 if (lh != NULL) {
                         iam_leaf_ops(leaf)->init_new(c, new_leaf);
@@ -1618,7 +1817,7 @@ static int iam_new_leaf(handle_t *handle, struct iam_leaf *leaf)
                                 leaf->il_lock = lh;
                                 path->ip_frame->leaf = blknr;
                         } else
-                                iam_unlock_htree(obj, lh);
+				iam_unlock_htree(path->ip_container, lh);
                         do_corr(schedule());
                         err = iam_txn_dirty(handle, path, new_leaf);
                         brelse(new_leaf);
@@ -1758,12 +1957,13 @@ int split_index_node(handle_t *handle, struct iam_path *path,
          * Lock all nodes, bottom to top.
          */
         for (frame = path->ip_frame, i = nr_splet; i >= 0; --i, --frame) {
-                do_corr(schedule());
-                lock[i] = iam_lock_htree(dir, frame->curidx, DLT_WRITE);
-                if (lock[i] == NULL) {
-                        err = -ENOMEM;
-                        goto cleanup;
-                }
+		do_corr(schedule());
+		lock[i] = iam_lock_htree(path->ip_container, frame->curidx,
+					 DLT_WRITE);
+		if (lock[i] == NULL) {
+			err = -ENOMEM;
+			goto cleanup;
+		}
         }
 
         /*
@@ -1788,17 +1988,19 @@ int split_index_node(handle_t *handle, struct iam_path *path,
         /* Go back down, allocating blocks, locking them, and adding into
          * transaction... */
         for (frame = safe + 1, i = 0; i < nr_splet; ++i, ++frame) {
-                bh_new[i] = ldiskfs_append (handle, dir, &newblock[i], &err);
+		bh_new[i] = iam_new_node(handle, path->ip_container,
+					 &newblock[i], &err);
                 do_corr(schedule());
                 if (!bh_new[i] ||
                     descr->id_ops->id_node_init(path->ip_container,
                                                 bh_new[i], 0) != 0)
                         goto cleanup;
-                new_lock[i] = iam_lock_htree(dir, newblock[i], DLT_WRITE);
-                if (new_lock[i] == NULL) {
-                        err = -ENOMEM;
-                        goto cleanup;
-                }
+		new_lock[i] = iam_lock_htree(path->ip_container, newblock[i],
+					     DLT_WRITE);
+		if (new_lock[i] == NULL) {
+			err = -ENOMEM;
+			goto cleanup;
+		}
                 do_corr(schedule());
                 BUFFER_TRACE(frame->bh, "get_write_access");
                 err = ldiskfs_journal_get_write_access(handle, frame->bh);
@@ -1871,7 +2073,7 @@ int split_index_node(handle_t *handle, struct iam_path *path,
                         ++ frame;
                         assert_inv(dx_node_check(path, frame));
                         bh_new[0] = NULL; /* buffer head is "consumed" */
-                        err = ldiskfs_journal_get_write_access(handle, bh2);
+                        err = ldiskfs_journal_dirty_metadata(handle, bh2);
                         if (err)
                                 goto journal_error;
                         do_corr(schedule());
@@ -1938,8 +2140,8 @@ journal_error:
         ldiskfs_std_error(dir->i_sb, err);
 
 cleanup:
-        iam_unlock_array(dir, lock);
-        iam_unlock_array(dir, new_lock);
+	iam_unlock_array(path->ip_container, lock);
+	iam_unlock_array(path->ip_container, new_lock);
 
         assert_corr(err || iam_frame_is_locked(path, path->ip_frame));
 
@@ -1994,7 +2196,7 @@ static int iam_add_rec(handle_t *handle, struct iam_iterator *it,
                                         err = iam_txn_dirty(handle, path,
                                                             path->ip_frame->bh);
                         }
-                        iam_unlock_htree(iam_path_obj(path), lh);
+			iam_unlock_htree(path->ip_container, lh);
                         do_corr(schedule());
                 }
                 if (err == 0) {
@@ -2047,6 +2249,184 @@ int iam_it_rec_insert(handle_t *h, struct iam_iterator *it,
 }
 EXPORT_SYMBOL(iam_it_rec_insert);
 
+static inline int iam_idle_blocks_limit(struct inode *inode)
+{
+	return (inode->i_sb->s_blocksize - sizeof(struct iam_idle_head)) >> 2;
+}
+
+/*
+ * If the leaf cannnot be recycled, we will lose one block for reusing.
+ * It is not a serious issue because it almost the same of non-recycle.
+ */
+static iam_ptr_t iam_index_shrink(handle_t *h, struct iam_path *p,
+				  struct iam_leaf *l, struct buffer_head **bh)
+{
+	struct iam_container *c = p->ip_container;
+	struct inode *inode = c->ic_object;
+	struct iam_frame *frame = p->ip_frame;
+	struct iam_entry *entries;
+	struct iam_entry *pos;
+	struct dynlock_handle *lh;
+	int count;
+	int rc;
+
+	if (c->ic_idle_failed)
+		return 0;
+
+	if (unlikely(frame == NULL))
+		return 0;
+
+	if (!iam_leaf_empty(l))
+		return 0;
+
+	lh = iam_lock_htree(c, frame->curidx, DLT_WRITE);
+	if (lh == NULL) {
+		CWARN("%.16s: No memory to recycle idle blocks\n",
+		      LDISKFS_SB(inode->i_sb)->s_es->s_volume_name);
+		return 0;
+	}
+
+	rc = iam_txn_add(h, p, frame->bh);
+	if (rc != 0) {
+		iam_unlock_htree(c, lh);
+		return 0;
+	}
+
+	iam_lock_bh(frame->bh);
+	entries = frame->entries;
+	count = dx_get_count(entries);
+	/* NOT shrink the last entry in the index node, which can be reused
+	 * directly by next new node. */
+	if (count == 2) {
+		iam_unlock_bh(frame->bh);
+		iam_unlock_htree(c, lh);
+		return 0;
+	}
+
+	pos = iam_find_position(p, frame);
+	/* There may be some new leaf nodes have been added or empty leaf nodes
+	 * have been shrinked during my delete operation.
+	 *
+	 * If the empty leaf is not under current index node because the index
+	 * node has been split, then just skip the empty leaf, which is rare. */
+	if (unlikely(frame->leaf != dx_get_block(p, pos))) {
+		iam_unlock_bh(frame->bh);
+		iam_unlock_htree(c, lh);
+		return 0;
+	}
+
+	frame->at = pos;
+	if (frame->at < iam_entry_shift(p, entries, count - 1)) {
+		struct iam_entry *n = iam_entry_shift(p, frame->at, 1);
+
+		memmove(frame->at, n,
+			(char *)iam_entry_shift(p, entries, count) - (char *)n);
+		frame->at_shifted = 1;
+	}
+	dx_set_count(entries, count - 1);
+	iam_unlock_bh(frame->bh);
+	rc = iam_txn_dirty(h, p, frame->bh);
+	iam_unlock_htree(c, lh);
+	if (rc != 0)
+		return 0;
+
+	get_bh(l->il_bh);
+	*bh = l->il_bh;
+	return frame->leaf;
+}
+
+static int
+iam_install_idle_blocks(handle_t *h, struct iam_path *p, struct buffer_head *bh,
+			__u32 *idle_blocks, iam_ptr_t blk)
+{
+	struct iam_container *c = p->ip_container;
+	struct buffer_head *old = c->ic_idle_bh;
+	struct iam_idle_head *head;
+	int rc;
+
+	head = (struct iam_idle_head *)(bh->b_data);
+	head->iih_magic = cpu_to_le16(IAM_IDLE_HEADER_MAGIC);
+	head->iih_count = 0;
+	head->iih_next = *idle_blocks;
+	/* The bh already get_write_accessed. */
+	rc = iam_txn_dirty(h, p, bh);
+	if (rc != 0)
+		return rc;
+
+	rc = iam_txn_add(h, p, c->ic_root_bh);
+	if (rc != 0)
+		return rc;
+
+	iam_lock_bh(c->ic_root_bh);
+	*idle_blocks = cpu_to_le32(blk);
+	iam_unlock_bh(c->ic_root_bh);
+	rc = iam_txn_dirty(h, p, c->ic_root_bh);
+	if (rc == 0) {
+		/* NOT release old before new assigned. */
+		get_bh(bh);
+		c->ic_idle_bh = bh;
+		brelse(old);
+	} else {
+		iam_lock_bh(c->ic_root_bh);
+		*idle_blocks = head->iih_next;
+		iam_unlock_bh(c->ic_root_bh);
+	}
+	return rc;
+}
+
+/*
+ * If the leaf cannnot be recycled, we will lose one block for reusing.
+ * It is not a serious issue because it almost the same of non-recycle.
+ */
+static void iam_recycle_leaf(handle_t *h, struct iam_path *p,
+			     struct buffer_head *bh, iam_ptr_t blk)
+{
+	struct iam_container *c = p->ip_container;
+	struct inode *inode = c->ic_object;
+	struct iam_idle_head *head;
+	__u32 *idle_blocks;
+	int count;
+	int rc;
+
+	cfs_down(&c->ic_idle_sem);
+	if (unlikely(c->ic_idle_failed)) {
+		rc = -EFAULT;
+		goto unlock;
+	}
+
+	idle_blocks = (__u32 *)(c->ic_root_bh->b_data +
+				c->ic_descr->id_root_gap +
+				sizeof(struct dx_countlimit));
+	/* It is the first idle block. */
+	if (c->ic_idle_bh == NULL) {
+		rc = iam_install_idle_blocks(h, p, bh, idle_blocks, blk);
+		goto unlock;
+	}
+
+	head = (struct iam_idle_head *)(c->ic_idle_bh->b_data);
+	count = le16_to_cpu(head->iih_count);
+	/* Current ic_idle_bh is full, to be replaced by the leaf. */
+	if (count == iam_idle_blocks_limit(inode)) {
+		rc = iam_install_idle_blocks(h, p, bh, idle_blocks, blk);
+		goto unlock;
+	}
+
+	/* Just add to ic_idle_bh. */
+	rc = iam_txn_add(h, p, c->ic_idle_bh);
+	if (rc != 0)
+		goto unlock;
+
+	head->iih_blks[count] = cpu_to_le32(blk);
+	head->iih_count = cpu_to_le16(count + 1);
+	rc = iam_txn_dirty(h, p, c->ic_idle_bh);
+
+unlock:
+	cfs_up(&c->ic_idle_sem);
+	if (rc != 0)
+		CWARN("%.16s: idle blocks failed, will lose the blk %u\n",
+		      LDISKFS_SB(inode->i_sb)->s_es->s_volume_name, blk);
+}
+
 /*
  * Delete record under iterator.
  *
@@ -2079,12 +2459,22 @@ int iam_it_rec_delete(handle_t *h, struct iam_iterator *it)
         if (result == 0) {
                 iam_rec_del(leaf, it->ii_flags&IAM_IT_MOVE);
                 result = iam_txn_dirty(h, path, leaf->il_bh);
-                if (result == 0 && iam_leaf_at_end(leaf) &&
-                    it->ii_flags&IAM_IT_MOVE) {
-                        result = iam_it_next(it);
-                        if (result > 0)
-                                result = 0;
-                }
+		if (result == 0 && iam_leaf_at_end(leaf)) {
+			struct buffer_head *bh = NULL;
+			iam_ptr_t blk;
+
+			blk = iam_index_shrink(h, path, leaf, &bh);
+			if (it->ii_flags & IAM_IT_MOVE) {
+				result = iam_it_next(it);
+				if (result > 0)
+					result = 0;
+			}
+
+			if (bh != NULL) {
+				iam_recycle_leaf(h, path, bh, blk);
+				brelse(bh);
+			}
+		}
         }
         assert_inv(iam_leaf_check(leaf));
         assert_inv(iam_path_check(path));
@@ -2250,20 +2640,27 @@ EXPORT_SYMBOL(iam_insert);
  * Update record with the key @k in container @c (within context of
  * transaction @h), new record is given by @r.
  *
- * Return values: 0: success, -ve: error, including -ENOENT if no record with
- * the given key found.
+ * Return values: +1: skip because of the same rec value, 0: success,
+ * -ve: error, including -ENOENT if no record with the given key found.
  */
 int iam_update(handle_t *h, struct iam_container *c, const struct iam_key *k,
                const struct iam_rec *r, struct iam_path_descr *pd)
 {
         struct iam_iterator it;
-        int result;
+	struct iam_leaf *folio;
+	int result;
 
-        iam_it_init(&it, c, IAM_IT_WRITE, pd);
+	iam_it_init(&it, c, IAM_IT_WRITE, pd);
 
-        result = iam_it_get_exact(&it, k);
-        if (result == 0)
-                iam_it_rec_set(h, &it, r);
+	result = iam_it_get_exact(&it, k);
+	if (result == 0) {
+		folio = &it.ii_path.ip_leaf;
+		result = iam_leaf_ops(folio)->rec_eq(folio, r);
+		if (result == 0)
+			iam_it_rec_set(h, &it, r);
+		else
+			result = 1;
+	}
         iam_it_put(&it);
         iam_it_fini(&it);
         return result;

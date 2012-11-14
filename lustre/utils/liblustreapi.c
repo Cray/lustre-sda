@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -185,36 +183,37 @@ int parse_size(char *optarg, unsigned long long *size,
         *size = strtoull(optarg, &end, 0);
 
         if (*end != '\0') {
-                if ((*end == 'b') && *(end+1) == '\0' &&
+                if ((*end == 'b') && *(end + 1) == '\0' &&
                     (*size & (~0ULL << (64 - 9))) == 0 &&
                     !bytes_spec) {
                         *size_units = 1 << 9;
-                } else if ((*end == 'b') && *(end+1) == '\0' &&
+                } else if ((*end == 'b') &&
+                           *(end + 1) == '\0' &&
                            bytes_spec) {
                         *size_units = 1;
                 } else if ((*end == 'k' || *end == 'K') &&
-                           *(end+1) == '\0' && (*size &
-                           (~0ULL << (64 - 10))) == 0) {
+                           *(end + 1) == '\0' &&
+                           (*size & (~0ULL << (64 - 10))) == 0) {
                         *size_units = 1 << 10;
                 } else if ((*end == 'm' || *end == 'M') &&
-                           *(end+1) == '\0' && (*size &
-                           (~0ULL << (64 - 20))) == 0) {
+                           *(end + 1) == '\0' &&
+                           (*size & (~0ULL << (64 - 20))) == 0) {
                         *size_units = 1 << 20;
                 } else if ((*end == 'g' || *end == 'G') &&
-                           *(end+1) == '\0' && (*size &
-                           (~0ULL << (64 - 30))) == 0) {
+                           *(end + 1) == '\0' &&
+                           (*size & (~0ULL << (64 - 30))) == 0) {
                         *size_units = 1 << 30;
                 } else if ((*end == 't' || *end == 'T') &&
-                           *(end+1) == '\0' && (*size &
-                           (~0ULL << (64 - 40))) == 0) {
+                           *(end + 1) == '\0' &&
+                           (*size & (~0ULL << (64 - 40))) == 0) {
                         *size_units = 1ULL << 40;
                 } else if ((*end == 'p' || *end == 'P') &&
-                           *(end+1) == '\0' && (*size &
-                           (~0ULL << (64 - 50))) == 0) {
+                           *(end + 1) == '\0' &&
+                           (*size & (~0ULL << (64 - 50))) == 0) {
                         *size_units = 1ULL << 50;
                 } else if ((*end == 'e' || *end == 'E') &&
-                           *(end+1) == '\0' && (*size &
-                           (~0ULL << (64 - 60))) == 0) {
+                           *(end + 1) == '\0' &&
+                           (*size & (~0ULL << (64 - 60))) == 0) {
                         *size_units = 1ULL << 60;
                 } else {
                         return -1;
@@ -411,6 +410,8 @@ static int get_param_obdvar(const char *fsname, const char *file_path,
                         llapi_error(LLAPI_MSG_ERROR, rc,
                                     "'%s' is not on a Lustre filesystem",
                                     file_path);
+			if (fp != NULL)
+				fclose(fp);
                         return rc;
                 }
         } else if (fsname) {
@@ -1017,7 +1018,7 @@ int llapi_get_poollist(const char *name, char **poollist, int list_size,
                         rc = -errno;
                         llapi_error(LLAPI_MSG_ERROR, rc,
                                     "Error reading pool list for '%s'", name);
-                        return rc;
+			goto out;
                 } else if ((rc == 0) && (cookie == NULL)) {
                         /* end of directory */
                         break;
@@ -1028,13 +1029,17 @@ int llapi_get_poollist(const char *name, char **poollist, int list_size,
                         continue;
 
                 /* check output bounds */
-                if (nb_entries >= list_size)
-                        return -EOVERFLOW;
+		if (nb_entries >= list_size) {
+			rc = -EOVERFLOW;
+			goto out;
+		}
 
                 /* +2 for '.' and final '\0' */
-                if (used + strlen(pool.d_name) + strlen(fsname) + 2
-                    > buffer_size)
-                        return -EOVERFLOW;
+		if (used + strlen(pool.d_name) + strlen(fsname) + 2
+		    > buffer_size) {
+			rc = -EOVERFLOW;
+			goto out;
+		}
 
                 sprintf(buffer + used, "%s.%s", fsname, pool.d_name);
                 poollist[nb_entries] = buffer + used;
@@ -1042,8 +1047,9 @@ int llapi_get_poollist(const char *name, char **poollist, int list_size,
                 nb_entries++;
         }
 
+out:
         closedir(dir);
-        return nb_entries;
+	return ((rc != 0) ? rc : nb_entries);
 }
 
 /* wrapper for lfs.c and obd.c */
@@ -1607,8 +1613,10 @@ retry_get_uuids:
                 if (ret == -EOVERFLOW) {
                         uuids_temp = realloc(uuids, obdcount *
                                              sizeof(struct obd_uuid));
-                        if (uuids_temp != NULL)
+			if (uuids_temp != NULL) {
+				uuids = uuids_temp;
                                 goto retry_get_uuids;
+			}
                         else
                                 ret = -ENOMEM;
                 }
@@ -1624,12 +1632,21 @@ retry_get_uuids:
         }
 
         for (obdnum = 0; obdnum < num_obds; obdnum++) {
-                for (i = 0; i < obdcount; i++) {
-                        if (llapi_uuid_match(uuids[i].uuid,
-                                             obduuids[obdnum].uuid)) {
-                                indexes[obdnum] = i;
-                                obd_valid++;
-                                break;
+                char *end = NULL;
+
+                /* The user may have specified a simple index */
+                i = strtol(obduuids[obdnum].uuid, &end, 0);
+                if (end && *end == '\0' && i < obdcount) {
+                        indexes[obdnum] = i;
+                        obd_valid++;
+                } else {
+                        for (i = 0; i < obdcount; i++) {
+                                if (llapi_uuid_match(uuids[i].uuid,
+                                                     obduuids[obdnum].uuid)) {
+                                        indexes[obdnum] = i;
+                                        obd_valid++;
+                                        break;
+                                }
                         }
                 }
                 if (i >= obdcount) {
@@ -1972,8 +1989,8 @@ static void lov_dump_user_lmm_header(struct lov_user_md *lum, char *path,
 
 void lov_dump_user_lmm_v1v3(struct lov_user_md *lum, char *pool_name,
                             struct lov_user_ost_data_v1 *objects,
-                            char *path, int is_dir,
-                            int obdindex, int depth, int header, int raw)
+                            char *path, int is_dir, int obdindex,
+                            int depth, int header, int raw)
 {
         int i, obdstripe = (obdindex != OBD_NOT_FOUND) ? 0 : 1;
 
@@ -2351,7 +2368,8 @@ static int cb_find_init(char *path, DIR *parent, DIR *dir,
          * to be compared. */
         if (param->obduuid    || param->mdtuuid || param->check_uid ||
             param->check_gid || param->check_pool || param->atime   ||
-            param->ctime     || param->mtime || param->check_size)
+            param->ctime     || param->mtime || param->check_size ||
+            param->check_stripecount || param->check_stripesize)
                 decision = 0;
 
         if (param->type && checked_type == 0)
@@ -2438,6 +2456,26 @@ static int cb_find_init(char *path, DIR *parent, DIR *dir,
                 }
         }
 
+        if (param->check_stripesize) {
+                decision = find_value_cmp(param->lmd->lmd_lmm.lmm_stripe_size,
+                                          param->stripesize,
+                                          param->stripesize_sign,
+                                          param->exclude_stripesize,
+                                          param->stripesize_units, 0);
+                if (decision == -1)
+                        goto decided;
+        }
+
+        if (param->check_stripecount) {
+                decision = find_value_cmp(param->lmd->lmd_lmm.lmm_stripe_count,
+                                          param->stripecount,
+                                          param->stripecount_sign,
+                                          param->exclude_stripecount, 1, 0);
+                if (decision == -1)
+                        goto decided;
+        }
+
+        /* If an OBD UUID is specified but none matches, skip this file. */
         if ((param->obduuid && param->obdindex == OBD_NOT_FOUND) ||
             (param->mdtuuid && param->mdtindex == OBD_NOT_FOUND))
                 goto decided;
@@ -2656,7 +2694,7 @@ static int cb_get_mdt_index(char *path, DIR *parent, DIR *d, void *data,
         if (param->quiet || !(param->verbose & VERBOSE_DETAIL))
                 llapi_printf(LLAPI_MSG_NORMAL, "%d\n", mdtidx);
         else
-                llapi_printf(LLAPI_MSG_NORMAL, "%s MDT index: %d\n",
+                llapi_printf(LLAPI_MSG_NORMAL, "%s\nmdt_index:\t%d\n",
                              path, mdtidx);
 
 out:
@@ -2740,7 +2778,7 @@ static int cb_getstripe(char *path, DIR *parent, DIR *d, void *data,
         }
 
 dump:
-        if (!param->get_mdt_index)
+        if (!(param->verbose & VERBOSE_MDTINDEX))
                 llapi_lov_dump_user_lmm(param, path, d ? 1 : 0);
 
 out:
@@ -2754,7 +2792,7 @@ out:
 
 int llapi_getstripe(char *path, struct find_param *param)
 {
-        return param_callback(path, param->get_mdt_index ?
+        return param_callback(path, (param->verbose & VERBOSE_MDTINDEX) ?
                               cb_get_mdt_index : cb_getstripe,
                               cb_common_fini, param);
 }
@@ -2894,51 +2932,6 @@ int llapi_target_check(int type_num, char **obd_type, char *dir)
 }
 
 #undef MAX_STRING_SIZE
-
-int llapi_catinfo(char *dir, char *keyword, char *node_name)
-{
-        char raw[OBD_MAX_IOCTL_BUFFER];
-        char out[LLOG_CHUNK_SIZE];
-        char *buf = raw;
-        struct obd_ioctl_data data = { 0 };
-        char key[30];
-        DIR *root;
-        int rc;
-
-        sprintf(key, "%s", keyword);
-        memset(raw, 0, sizeof(raw));
-        memset(out, 0, sizeof(out));
-        data.ioc_inlbuf1 = key;
-        data.ioc_inllen1 = strlen(key) + 1;
-        if (node_name) {
-                data.ioc_inlbuf2 = node_name;
-                data.ioc_inllen2 = strlen(node_name) + 1;
-        }
-        data.ioc_pbuf1 = out;
-        data.ioc_plen1 = sizeof(out);
-        rc = obd_ioctl_pack(&data, &buf, sizeof(raw));
-        if (rc)
-                return rc;
-
-        root = opendir(dir);
-        if (root == NULL) {
-                rc = -errno;
-                llapi_error(LLAPI_MSG_ERROR, rc, "open %s failed", dir);
-                return rc;
-        }
-
-        rc = ioctl(dirfd(root), OBD_IOC_LLOG_CATINFO, buf);
-        if (rc) {
-                rc = -errno;
-                llapi_error(LLAPI_MSG_ERROR, rc,
-                            "ioctl OBD_IOC_CATINFO failed");
-        } else {
-                llapi_printf(LLAPI_MSG_NORMAL, "%s", data.ioc_pbuf1);
-        }
-
-        closedir(root);
-        return rc;
-}
 
 /* Is this a lustre fs? */
 int llapi_is_lustre_mnttype(const char *type)
@@ -3084,7 +3077,7 @@ static int rmtacl_notify(int ops)
 {
         FILE *fp;
         struct mntent *mnt;
-        int found = 0, fd, rc;
+	int found = 0, fd = 0, rc = 0;
 
         fp = setmntent(MOUNTED, "r");
         if (fp == NULL) {
@@ -3099,7 +3092,7 @@ static int rmtacl_notify(int ops)
                 if (!mnt)
                         break;
 
-                if (!llapi_is_lustre_mnt(mnt))
+		if (!llapi_is_lustre_mnt(mnt))
                         continue;
 
                 fd = open(mnt->mnt_dir, O_RDONLY | O_DIRECTORY);
@@ -3107,20 +3100,24 @@ static int rmtacl_notify(int ops)
                         rc = -errno;
                         llapi_error(LLAPI_MSG_ERROR, rc,
                                     "Can't open '%s'\n", mnt->mnt_dir);
-                        return rc;
+			goto out;
                 }
 
                 rc = ioctl(fd, LL_IOC_RMTACL, ops);
                 if (rc < 0) {
                         rc = -errno;
                         llapi_error(LLAPI_MSG_ERROR, rc, "ioctl %d\n", fd);
-                        return rc;
+			goto out;
                 }
 
                 found++;
         }
+
+out:
         endmntent(fp);
-        return found;
+	if (fd >= 0)
+		close(fd);
+	return ((rc != 0) ? rc : found);
 }
 
 static char *next_token(char *p, int div)
@@ -3540,6 +3537,24 @@ int llapi_changelog_fini(void **priv)
         return 0;
 }
 
+/** Convert a changelog_rec to changelog_ext_rec, in this way client can treat
+ *  all records in the format of changelog_ext_rec, this can make record
+ *  analysis simpler.
+ */
+static inline int changelog_extend_rec(struct changelog_ext_rec *ext)
+{
+	if (!CHANGELOG_REC_EXTENDED(ext)) {
+		struct changelog_rec *rec = (struct changelog_rec *)ext;
+
+		memmove(ext->cr_name, rec->cr_name, rec->cr_namelen);
+		fid_zero(&ext->cr_sfid);
+		fid_zero(&ext->cr_spfid);
+		return 1;
+	}
+
+	return 0;
+}
+
 /** Read the next changelog entry
  * @param priv Opaque private control structure
  * @param rech Changelog record handle; record will be allocated here
@@ -3547,7 +3562,7 @@ int llapi_changelog_fini(void **priv)
  *         <0 error code
  *         1 EOF
  */
-int llapi_changelog_recv(void *priv, struct changelog_rec **rech)
+int llapi_changelog_recv(void *priv, struct changelog_ext_rec **rech)
 {
         struct changelog_private *cp = (struct changelog_private *)priv;
         struct kuc_hdr *kuch;
@@ -3588,10 +3603,11 @@ repeat:
                 }
         }
 
-        /* Our message is a changelog_rec.  Use pointer math to skip
-         * kuch_hdr and point directly to the message payload.
-         */
-        *rech = (struct changelog_rec *)(kuch + 1);
+	/* Our message is a changelog_ext_rec.  Use pointer math to skip
+	 * kuch_hdr and point directly to the message payload.
+	 */
+	*rech = (struct changelog_ext_rec *)(kuch + 1);
+	changelog_extend_rec(*rech);
 
         return 0;
 
@@ -3602,7 +3618,7 @@ out_free:
 }
 
 /** Release the changelog record when done with it. */
-int llapi_changelog_free(struct changelog_rec **rech)
+int llapi_changelog_free(struct changelog_ext_rec **rech)
 {
         if (*rech) {
                 /* We allocated memory starting at the kuc_hdr, but passed
@@ -3702,13 +3718,13 @@ int llapi_path2fid(const char *path, lustre_fid *fid)
         memset(fid, 0, sizeof(*fid));
         fd = open(path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW);
         if (fd < 0) {
-                if (errno == ELOOP) /* symbolic link */
+                if (errno == ELOOP || errno == ENXIO)
                         return path2fid_from_lma(path, fid);
                 return -errno;
         }
 
         rc = ioctl(fd, LL_IOC_PATH2FID, fid) < 0 ? -errno : 0;
-        if (rc == -EINVAL) /* char special device */
+        if (rc == -EINVAL || rc == -ENOTTY)
                 rc = path2fid_from_lma(path, fid);
 
         close(fd);
@@ -3888,8 +3904,8 @@ out_free:
 /** Release the action list when done with it. */
 int llapi_copytool_free(struct hsm_action_list **hal)
 {
-        /* Reuse the llapi_changelog_free function */
-        return llapi_changelog_free((struct changelog_rec **)hal);
+	/* Reuse the llapi_changelog_free function */
+	return llapi_changelog_free((struct changelog_ext_rec **)hal);
 }
 
 int llapi_get_connect_flags(const char *mnt, __u64 *flags)
@@ -3940,4 +3956,34 @@ int llapi_get_version(char *buffer, int buffer_size,
         close(fd);
         *version = data->ioc_bulk;
         return 0;
+}
+
+/**
+ * Get a 64-bit value representing the version of file data pointed by fd.
+ *
+ * Each write or truncate, flushed on OST, will change this value. You can use
+ * this value to verify if file data was modified. This only checks the file
+ * data, not metadata.
+ *
+ * \param  flags  If set to LL_DV_NOFLUSH, the data version will be read
+ *                directly from OST without regard to possible dirty cache on
+ *                client nodes.
+ *
+ * \retval 0 on success.
+ * \retval -errno on error.
+ */
+int llapi_get_data_version(int fd, __u64 *data_version, __u64 flags)
+{
+        int rc;
+        struct ioc_data_version idv;
+
+        idv.idv_flags = flags;
+
+        rc = ioctl(fd, LL_IOC_DATA_VERSION, &idv);
+        if (rc)
+                rc = -errno;
+        else
+                *data_version = idv.idv_version;
+
+        return rc;
 }

@@ -28,7 +28,7 @@
 # Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
 # Use is subject to license terms.
 #
-# Copyright (c) 2011, Whamcloud, Inc.
+# Copyright (c) 2011, 2012, Intel Corporation.
 #
 
 #
@@ -39,16 +39,14 @@
 AUTOMAKE_OPTIONS = foreign
 
 # also update lustre/autoconf/lustre-core.m4 AC_CONFIG_FILES
-ALWAYS_SUBDIRS := include lvfs obdclass ldlm ptlrpc osc lov obdecho \
+ALWAYS_SUBDIRS = include lvfs obdclass ldlm ptlrpc osc lov obdecho \
 	mgc fid fld doc utils tests scripts autoconf contrib conf
 
-SERVER_SUBDIRS := obdfilter ost mds mgs mdt cmm mdd osd-ldiskfs
+SERVER_SUBDIRS = obdfilter ost mds mgs mdt cmm mdd ofd osd-zfs osd-ldiskfs quota
 
-CLIENT_SUBDIRS := mdc lmv llite lclient
+CLIENT_SUBDIRS = mdc lmv llite lclient
 
-QUOTA_SUBDIRS := quota
-
-LIBLUSTRE_SUBDIRS := liblustre
+LIBLUSTRE_SUBDIRS = liblustre
 
 SUBDIRS := $(ALWAYS_SUBDIRS)
 
@@ -60,8 +58,6 @@ if CLIENT
 SUBDIRS += $(CLIENT_SUBDIRS)
 endif
 
-SUBDIRS += $(QUOTA_SUBDIRS)
-
 # this needs to be after the client subdirs
 if LIBLUSTRE
 if !CLIENT
@@ -71,7 +67,7 @@ SUBDIRS += $(LIBLUSTRE_SUBDIRS)
 endif
 
 DIST_SUBDIRS := $(ALWAYS_SUBDIRS) $(SERVER_SUBDIRS) $(CLIENT_SUBDIRS)	\
-	$(LIBLUSTRE_SUBDIRS) $(QUOTA_SUBDIRS)
+	$(LIBLUSTRE_SUBDIRS)
 
 EXTRA_DIST = BUGS FDL kernel_patches BUILDING
 

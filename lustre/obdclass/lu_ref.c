@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -59,18 +59,17 @@
  * Asserts a condition for a given lu_ref. Must be called with
  * lu_ref::lf_guard held.
  */
-#define REFASSERT(ref, expr)                            \
-  do {                                                  \
-          struct lu_ref *__ref = (ref);                 \
-                                                        \
-          if (unlikely(!(expr))) {                      \
-                  lu_ref_print(__ref);                  \
-                  cfs_spin_unlock(&__ref->lf_guard);    \
-                  lu_ref_print_all();                   \
-                  LASSERT(0);                           \
-                  cfs_spin_lock(&__ref->lf_guard);      \
-          }                                             \
-  } while (0)
+#define REFASSERT(ref, expr)  do {                      \
+	struct lu_ref *__tmp = (ref);                   \
+							\
+	if (unlikely(!(expr))) {                        \
+		lu_ref_print(__tmp);                    \
+		cfs_spin_unlock(&__tmp->lf_guard);      \
+		lu_ref_print_all();                     \
+		LASSERT(0);                             \
+		cfs_spin_lock(&__tmp->lf_guard);        \
+	}                                               \
+} while (0)
 
 struct lu_ref_link {
         struct lu_ref    *ll_ref;
@@ -100,7 +99,7 @@ static struct lu_kmem_descr lu_ref_caches[] = {
 static CFS_LIST_HEAD(lu_ref_refs);
 static cfs_spinlock_t lu_ref_refs_guard;
 static struct lu_ref lu_ref_marker = {
-        .lf_guard   = CFS_SPIN_LOCK_UNLOCKED(lu_ref_marker.lf_guard),
+	.lf_guard   = DEFINE_SPINLOCK(lu_ref_marker.lf_guard),
         .lf_list    = CFS_LIST_HEAD_INIT(lu_ref_marker.lf_list),
         .lf_linkage = CFS_LIST_HEAD_INIT(lu_ref_marker.lf_linkage)
 };

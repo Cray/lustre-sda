@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -106,7 +106,7 @@ struct ptldebug_header {
 #define S_LDLM        0x00010000
 #define S_LOV         0x00020000
 #define S_LQUOTA      0x00040000
-/* unused */
+#define S_OSD		0x00080000
 /* unused */
 /* unused */
 /* unused */
@@ -151,6 +151,7 @@ struct ptldebug_header {
 #define D_CONSOLE     0x02000000
 #define D_QUOTA       0x04000000
 #define D_SEC         0x08000000
+#define D_LFSCK	      0x10000000 /* For both OI scrub and LFSCK */
 /* keep these in sync with lnet/{utils,libcfs}/debug.c */
 
 #define D_HSM         D_TRACE
@@ -301,17 +302,38 @@ do {                                                                    \
 #if defined(__GNUC__)
 
 long libcfs_log_return(struct libcfs_debug_msg_data *, long rc);
-#define RETURN(rc)                                                      \
-do {                                                                    \
-        EXIT_NESTING;                                                   \
-        if (cfs_cdebug_show(D_TRACE, DEBUG_SUBSYSTEM)) {                \
-                LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, D_TRACE, NULL);     \
-                return (typeof(rc))libcfs_log_return(&msgdata,          \
-                                                     (long)(rc));       \
-        }                                                               \
-                                                                        \
-        return (rc);                                                    \
+#if BITS_PER_LONG > 32
+#define RETURN(rc)							\
+do {									\
+	EXIT_NESTING;							\
+	if (cfs_cdebug_show(D_TRACE, DEBUG_SUBSYSTEM)) {		\
+                LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, D_TRACE, NULL);	\
+                return (typeof(rc))libcfs_log_return(&msgdata,		\
+                                                     (long)(rc));	\
+	}								\
+									\
+	return (rc);							\
 } while (0)
+#else /* BITS_PER_LONG == 32 */
+/* We need an on-stack variable, because we cannot case a 32-bit pointer
+ * directly to (long long) without generating a complier warning/error, yet
+ * casting directly to (long) will truncate 64-bit return values. The log
+ * values will print as 32-bit values, but they always have been. LU-1436
+ */
+#define RETURN(rc)							\
+do {									\
+	EXIT_NESTING;							\
+	if (cfs_cdebug_show(D_TRACE, DEBUG_SUBSYSTEM)) {		\
+		typeof(rc) __rc = (rc);					\
+		LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, D_TRACE, NULL);	\
+		libcfs_log_return(&msgdata, (long_ptr_t)__rc);		\
+		return __rc;						\
+	}								\
+									\
+	return (rc);							\
+} while (0)
+#endif /* BITS_PER_LONG > 32 */
+
 #elif defined(_MSC_VER)
 #define RETURN(rc)                                                      \
 do {                                                                    \
@@ -357,10 +379,11 @@ extern int libcfs_debug_vmsg2(struct libcfs_debug_msg_data *msgdata,
                               va_list args, const char *format2, ...)
         __attribute__ ((format (printf, 4, 5)));
 
-/* one more external symbol that tracefile provides: */
+/* other external symbols that tracefile provides: */
+extern int cfs_trace_copyin_string(char *knl_buffer, int knl_buffer_nob,
+				   const char *usr_buffer, int usr_buffer_nob);
 extern int cfs_trace_copyout_string(char *usr_buffer, int usr_buffer_nob,
-                                    const char *knl_buffer, char *append);
-
+				    const char *knl_buffer, char *append);
 
 #if defined(HAVE_BGL_SUPPORT)
 #define LIBCFS_DEBUG_FILE_PATH_DEFAULT "/bgl/ion/tmp/lustre-log"

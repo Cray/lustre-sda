@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -133,10 +131,9 @@ int mdc_set_lock_data(struct obd_export *exp, __u64 *lockh, void *data,
         LASSERT(lock != NULL);
         lock_res_and_lock(lock);
 #ifdef __KERNEL__
-        if (lock->l_resource->lr_lvb_inode &&
-            lock->l_resource->lr_lvb_inode != data) {
+        if (lock->l_ast_data && lock->l_ast_data != data) {
                 struct inode *new_inode = data;
-                struct inode *old_inode = lock->l_resource->lr_lvb_inode;
+                struct inode *old_inode = lock->l_ast_data;
                 LASSERTF(old_inode->i_state & I_FREEING,
                          "Found existing inode %p/%lu/%u state %lu in lock: "
                          "setting data to %p/%lu/%u\n", old_inode,
@@ -145,7 +142,7 @@ int mdc_set_lock_data(struct obd_export *exp, __u64 *lockh, void *data,
                          new_inode, new_inode->i_ino, new_inode->i_generation);
         }
 #endif
-        lock->l_resource->lr_lvb_inode = data;
+        lock->l_ast_data = data;
         if (bits)
                 *bits = lock->l_policy_data.l_inodebits.bits;
 
@@ -194,27 +191,14 @@ int mdc_change_cbdata(struct obd_export *exp,
                       ldlm_iterator_t it, void *data)
 {
         struct ldlm_res_id res_id;
-        struct ldlm_resource *res;
-        struct ldlm_namespace *ns = class_exp2obd(exp)->obd_namespace;
         ENTRY;
 
-        if (ns == NULL) {
-                CERROR("must pass in namespace\n");
-                LBUG();
-        }
-
         fid_build_reg_res_name(fid, &res_id);
+        ldlm_resource_iterate(class_exp2obd(exp)->obd_namespace,
+                              &res_id, it, data);
 
-        res = ldlm_resource_get(ns, NULL, &res_id, 0, 0);
-        if(res == NULL)
-                RETURN(0);
-
-        lock_res(res);
-        res->lr_lvb_inode = NULL;
-        unlock_res(res);
-
-        ldlm_resource_putref(res);
-        RETURN(0);
+        EXIT;
+        return 0;
 }
 
 /* find any ldlm lock of the inode in mdc
@@ -480,9 +464,10 @@ static int mdc_finish_enqueue(struct obd_export *exp,
                               struct lustre_handle *lockh,
                               int rc)
 {
-        struct req_capsule  *pill = &req->rq_pill;
-        struct ldlm_request *lockreq;
-        struct ldlm_reply   *lockrep;
+	struct req_capsule  *pill = &req->rq_pill;
+	struct ldlm_request *lockreq;
+	struct ldlm_reply   *lockrep;
+	struct lustre_intent_data *intent = &it->d.lustre;
         ENTRY;
 
         LASSERT(rc >= 0);
@@ -508,20 +493,20 @@ static int mdc_finish_enqueue(struct obd_export *exp,
                         ldlm_lock_decref(lockh, einfo->ei_mode);
                         einfo->ei_mode = lock->l_req_mode;
                 }
-                LDLM_LOCK_PUT(lock);
-        }
+		LDLM_LOCK_PUT(lock);
+	}
 
-        lockrep = req_capsule_server_get(pill, &RMF_DLM_REP);
-        LASSERT(lockrep != NULL);                 /* checked by ldlm_cli_enqueue() */
+	lockrep = req_capsule_server_get(pill, &RMF_DLM_REP);
+	LASSERT(lockrep != NULL); /* checked by ldlm_cli_enqueue() */
 
-        it->d.lustre.it_disposition = (int)lockrep->lock_policy_res1;
-        it->d.lustre.it_status = (int)lockrep->lock_policy_res2;
-        it->d.lustre.it_lock_mode = einfo->ei_mode;
-        it->d.lustre.it_lock_handle = lockh->cookie;
-        it->d.lustre.it_data = req;
+	intent->it_disposition = (int)lockrep->lock_policy_res1;
+	intent->it_status = (int)lockrep->lock_policy_res2;
+	intent->it_lock_mode = einfo->ei_mode;
+	intent->it_lock_handle = lockh->cookie;
+	intent->it_data = req;
 
-        if (it->d.lustre.it_status < 0 && req->rq_replay)
-                mdc_clear_replay_flag(req, it->d.lustre.it_status);
+	if (intent->it_status < 0 && req->rq_replay)
+		mdc_clear_replay_flag(req, intent->it_status);
 
         /* If we're doing an IT_OPEN which did not result in an actual
          * successful open, then we need to remove the bit which saves
@@ -531,11 +516,11 @@ static int mdc_finish_enqueue(struct obd_export *exp,
          * function without doing so, and try to replay a failed create
          * (bug 3440) */
         if (it->it_op & IT_OPEN && req->rq_replay &&
-            (!it_disposition(it, DISP_OPEN_OPEN) ||it->d.lustre.it_status != 0))
-                mdc_clear_replay_flag(req, it->d.lustre.it_status);
+	    (!it_disposition(it, DISP_OPEN_OPEN) ||intent->it_status != 0))
+		mdc_clear_replay_flag(req, intent->it_status);
 
-        DEBUG_REQ(D_RPCTRACE, req, "op: %d disposition: %x, status: %d",
-                  it->it_op,it->d.lustre.it_disposition,it->d.lustre.it_status);
+	DEBUG_REQ(D_RPCTRACE, req, "op: %d disposition: %x, status: %d",
+		  it->it_op, intent->it_disposition, intent->it_status);
 
         /* We know what to expect, so we do any byte flipping required here */
         if (it->it_op & (IT_OPEN | IT_UNLINK | IT_LOOKUP | IT_GETATTR)) {
@@ -556,7 +541,9 @@ static int mdc_finish_enqueue(struct obd_export *exp,
                          * is swabbed by that handler correctly.
                          */
                         mdc_set_open_replay_data(NULL, NULL, req);
-                }
+		}
+
+		/* TODO: make sure LAYOUT lock must be granted along with EA */
 
                 if ((body->valid & (OBD_MD_FLDIREA | OBD_MD_FLEASIZE)) != 0) {
                         void *eadata;
@@ -632,9 +619,47 @@ static int mdc_finish_enqueue(struct obd_export *exp,
                         if (capa == NULL)
                                 RETURN(-EPROTO);
                 }
-        }
+        } else if (it->it_op & IT_LAYOUT) {
+                struct ldlm_lock *lock = ldlm_handle2lock(lockh);
 
-        RETURN(rc);
+		if (lock != NULL && lock->l_lvb_data == NULL) {
+			int lvb_len;
+
+			/* maybe the lock was granted right away and layout
+			 * is packed into RMF_DLM_LVB of req */
+			lvb_len = req_capsule_get_size(pill, &RMF_DLM_LVB,
+						       RCL_SERVER);
+			if (lvb_len > 0) {
+				void *lvb;
+				void *lmm;
+
+				lvb = req_capsule_server_get(pill,
+							     &RMF_DLM_LVB);
+				if (lvb == NULL) {
+					LDLM_LOCK_PUT(lock);
+					RETURN(-EPROTO);
+				}
+
+				OBD_ALLOC_LARGE(lmm, lvb_len);
+				if (lmm == NULL) {
+					LDLM_LOCK_PUT(lock);
+					RETURN(-ENOMEM);
+				}
+				memcpy(lmm, lvb, lvb_len);
+
+				/* install lvb_data */
+				lock_res_and_lock(lock);
+				LASSERT(lock->l_lvb_data == NULL);
+				lock->l_lvb_data = lmm;
+				lock->l_lvb_len = lvb_len;
+				unlock_res_and_lock(lock);
+			}
+		}
+		if (lock != NULL)
+			LDLM_LOCK_PUT(lock);
+	}
+
+	RETURN(rc);
 }
 
 /* We always reserve enough space in the reply packet for a stripe MD, because
@@ -646,14 +671,18 @@ int mdc_enqueue(struct obd_export *exp, struct ldlm_enqueue_info *einfo,
 {
         struct obd_device     *obddev = class_exp2obd(exp);
         struct ptlrpc_request *req = NULL;
-        int                    flags = extra_lock_flags;
+        int                    flags, saved_flags = extra_lock_flags;
         int                    rc;
         struct ldlm_res_id res_id;
         static const ldlm_policy_data_t lookup_policy =
                             { .l_inodebits = { MDS_INODELOCK_LOOKUP } };
         static const ldlm_policy_data_t update_policy =
                             { .l_inodebits = { MDS_INODELOCK_UPDATE } };
+	static const ldlm_policy_data_t layout_policy =
+			    { .l_inodebits = { MDS_INODELOCK_LAYOUT } };
         ldlm_policy_data_t const *policy = &lookup_policy;
+        int                    generation, resends = 0;
+        struct ldlm_reply     *lockrep;
         ENTRY;
 
         LASSERTF(!it || einfo->ei_type == LDLM_IBITS, "lock type %d\n",
@@ -661,14 +690,19 @@ int mdc_enqueue(struct obd_export *exp, struct ldlm_enqueue_info *einfo,
 
         fid_build_reg_res_name(&op_data->op_fid1, &res_id);
 
-        if (it)
-                flags |= LDLM_FL_HAS_INTENT;
-        if (it && it->it_op & (IT_UNLINK | IT_GETATTR | IT_READDIR))
-                policy = &update_policy;
+	if (it) {
+		saved_flags |= LDLM_FL_HAS_INTENT;
+		if (it->it_op & (IT_UNLINK | IT_GETATTR | IT_READDIR))
+			policy = &update_policy;
+		else if (it->it_op & IT_LAYOUT)
+			policy = &layout_policy;
+	}
 
-        if (reqp)
-                req = *reqp;
+        LASSERT(reqp == NULL);
 
+        generation = obddev->u.cli.cl_import->imp_generation;
+resend:
+        flags = saved_flags;
         if (!it) {
                 /* The only way right now is FLOCK, in this case we hide flock
                    policy as lmm, but lmmsize is 0 */
@@ -685,17 +719,28 @@ int mdc_enqueue(struct obd_export *exp, struct ldlm_enqueue_info *einfo,
                 lmm = NULL;
         } else if (it->it_op & IT_UNLINK)
                 req = mdc_intent_unlink_pack(exp, it, op_data);
-        else if (it->it_op & (IT_GETATTR | IT_LOOKUP | IT_LAYOUT))
-                req = mdc_intent_getattr_pack(exp, it, op_data);
-        else if (it->it_op == IT_READDIR)
-                req = ldlm_enqueue_pack(exp);
-        else {
+	else if (it->it_op & (IT_GETATTR | IT_LOOKUP))
+		req = mdc_intent_getattr_pack(exp, it, op_data);
+	else if (it->it_op & (IT_READDIR | IT_LAYOUT))
+		req = ldlm_enqueue_pack(exp);
+	else {
                 LBUG();
                 RETURN(-EINVAL);
         }
 
         if (IS_ERR(req))
                 RETURN(PTR_ERR(req));
+
+	if (req != NULL && it && it->it_op & IT_CREAT)
+		/* ask ptlrpc not to resend on EINPROGRESS since we have our own
+		 * retry logic */
+		req->rq_no_retry_einprogress = 1;
+
+        if (resends) {
+                req->rq_generation_set = 1;
+                req->rq_import_generation = generation;
+                req->rq_sent = cfs_time_current_sec() + resends;
+        }
 
         /* It is important to obtain rpc_lock first (if applicable), so that
          * threads that are serialised with rpc_lock are not polluting our
@@ -713,13 +758,6 @@ int mdc_enqueue(struct obd_export *exp, struct ldlm_enqueue_info *einfo,
 
         rc = ldlm_cli_enqueue(exp, &req, einfo, &res_id, policy, &flags, NULL,
                               0, lockh, 0);
-        if (reqp)
-                *reqp = req;
-
-        if (it) {
-                mdc_exit_request(&obddev->u.cli);
-                mdc_put_rpc_lock(obddev->u.cli.cl_rpc_lock, it);
-        }
         if (!it) {
                 /* For flock requests we immediatelly return without further
                    delay and let caller deal with the rest, since rest of
@@ -728,12 +766,39 @@ int mdc_enqueue(struct obd_export *exp, struct ldlm_enqueue_info *einfo,
                 RETURN(rc);
         }
 
+        mdc_exit_request(&obddev->u.cli);
+        mdc_put_rpc_lock(obddev->u.cli.cl_rpc_lock, it);
+
         if (rc < 0) {
                 CERROR("ldlm_cli_enqueue: %d\n", rc);
                 mdc_clear_replay_flag(req, rc);
                 ptlrpc_req_finished(req);
                 RETURN(rc);
         }
+
+        lockrep = req_capsule_server_get(&req->rq_pill, &RMF_DLM_REP);
+        LASSERT(lockrep != NULL);
+
+        /* Retry the create infinitely when we get -EINPROGRESS from
+         * server. This is required by the new quota design. */
+        if (it && it->it_op & IT_CREAT &&
+            (int)lockrep->lock_policy_res2 == -EINPROGRESS) {
+                mdc_clear_replay_flag(req, rc);
+                ptlrpc_req_finished(req);
+                resends++;
+
+                CDEBUG(D_HA, "%s: resend:%d op:%d "DFID"/"DFID"\n",
+                       obddev->obd_name, resends, it->it_op,
+                       PFID(&op_data->op_fid1), PFID(&op_data->op_fid2));
+
+                if (generation == obddev->u.cli.cl_import->imp_generation) {
+                        goto resend;
+                } else {
+			CDEBUG(D_HA, "resend cross eviction\n");
+                        RETURN(-EIO);
+                }
+        }
+
         rc = mdc_finish_enqueue(exp, req, einfo, it, lockh, rc);
 
         RETURN(rc);

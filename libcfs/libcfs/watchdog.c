@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -93,9 +91,8 @@ static CFS_DEFINE_MUTEX(lcw_refcount_mutex);
  * dispatcher.
  */
 /* BH lock! */
-static cfs_spinlock_t lcw_pending_timers_lock = CFS_SPIN_LOCK_UNLOCKED(lcw_pending_timers_lock);
-static cfs_list_t lcw_pending_timers = \
-        CFS_LIST_HEAD_INIT(lcw_pending_timers);
+static DEFINE_SPINLOCK(lcw_pending_timers_lock);
+static cfs_list_t lcw_pending_timers = CFS_LIST_HEAD_INIT(lcw_pending_timers);
 
 /* Last time a watchdog expired */
 static cfs_time_t lcw_last_watchdog_time;
@@ -107,11 +104,8 @@ lcw_dump(struct lc_watchdog *lcw)
         ENTRY;
 #if defined(HAVE_TASKLIST_LOCK)
         cfs_read_lock(&tasklist_lock);
-#elif defined(HAVE_TASK_RCU)
-        rcu_read_lock();
 #else
-        CERROR("unable to dump stack because of missing export\n");
-        RETURN_EXIT;
+        rcu_read_lock();
 #endif
        if (lcw->lcw_task == NULL) {
                 LCONSOLE_WARN("Process " LPPID " was not found in the task "
@@ -123,7 +117,7 @@ lcw_dump(struct lc_watchdog *lcw)
 
 #if defined(HAVE_TASKLIST_LOCK)
         cfs_read_unlock(&tasklist_lock);
-#elif defined(HAVE_TASK_RCU)
+#else
         rcu_read_unlock();
 #endif
         EXIT;

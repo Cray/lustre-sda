@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -524,8 +522,9 @@ int osc_create_async(struct obd_export *exp, struct obd_info *oinfo,
         RETURN(rc);
 }
 
-int osc_create(struct obd_export *exp, struct obdo *oa,
-               struct lov_stripe_md **ea, struct obd_trans_info *oti)
+int osc_create(const struct lu_env *env, struct obd_export *exp,
+               struct obdo *oa, struct lov_stripe_md **ea,
+               struct obd_trans_info *oti)
 {
         struct osc_creator *oscc = &exp->exp_obd->u.cli.cl_oscc;
         struct obd_import  *imp  = exp->exp_obd->u.cli.cl_import;

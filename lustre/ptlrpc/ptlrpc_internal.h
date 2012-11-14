@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -49,10 +47,12 @@ struct ldlm_res_id;
 struct ptlrpc_request_set;
 extern int test_req_buffer_pressure;
 
+int ptlrpc_start_thread(struct ptlrpc_service_part *svcpt, int wait);
 /* ptlrpcd.c */
 int ptlrpcd_start(int index, int max, const char *name, struct ptlrpcd_ctl *pc);
 
 /* client.c */
+struct ptlrpc_bulk_desc *new_bulk(int npages, int type, int portal);
 void ptlrpc_init_xid(void);
 
 /* events.c */
@@ -94,7 +94,8 @@ void ptlrpc_add_bulk_page(struct ptlrpc_bulk_desc *desc, cfs_page_t *page,
                           int pageoffset, int len);
 
 /* pack_generic.c */
-struct ptlrpc_reply_state *lustre_get_emerg_rs(struct ptlrpc_service *svc);
+struct ptlrpc_reply_state *
+lustre_get_emerg_rs(struct ptlrpc_service_part *svcpt);
 void lustre_put_emerg_rs(struct ptlrpc_reply_state *rs);
 
 /* pinger.c */
@@ -153,6 +154,22 @@ static inline int ll_rpc_recoverable_error(int rc)
 {
         return (rc == -ENOTCONN || rc == -ENODEV);
 }
+
+#ifdef HAVE_SERVER_SUPPORT
+/* target.c */
+int lut_mod_init(void);
+void lut_mod_exit(void);
+#else
+static inline int lut_mod_init(void)
+{
+	return 0;
+}
+
+static inline void lut_mod_exit(void)
+{
+	return;
+}
+#endif
 
 static inline void ptlrpc_reqset_put(struct ptlrpc_request_set *set)
 {

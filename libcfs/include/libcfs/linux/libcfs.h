@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -47,6 +47,7 @@
 
 
 #include <stdarg.h>
+#include <libcfs/linux/linux-cpu.h>
 #include <libcfs/linux/linux-time.h>
 #include <libcfs/linux/linux-mem.h>
 #include <libcfs/linux/linux-prim.h>
@@ -63,6 +64,7 @@
 #include <linux/types.h>
 #include <asm/timex.h>
 #include <linux/sched.h> /* THREAD_SIZE */
+#include <linux/rbtree.h>
 
 #define CFS_THREAD_SIZE   THREAD_SIZE
 #define LUSTRE_TRACE_SIZE (THREAD_SIZE >> 5)

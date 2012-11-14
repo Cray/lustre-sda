@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -60,11 +58,9 @@
 
 #include "quota_internal.h"
 
-#ifdef HAVE_QUOTA_SUPPORT
-
 /* lock ordering: mds->mds_qonoff_sem > dquot->dq_mutex > lqs->lqs_lock */
 static cfs_list_t lustre_dquot_hash[NR_DQHASH];
-static cfs_rwlock_t dquot_hash_lock = CFS_RW_LOCK_UNLOCKED(dquot_hash_lock);
+static DEFINE_RWLOCK(dquot_hash_lock);
 
 cfs_mem_cache_t *lustre_dquot_cachep;
 
@@ -1768,5 +1764,3 @@ int mds_quota_recovery(struct obd_device *obd)
         cfs_wait_for_completion(&data.comp);
         RETURN(rc);
 }
-
-#endif /* HAVE_QUOTA_SUPPORT */

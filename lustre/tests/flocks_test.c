@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -134,6 +132,7 @@ int t1(int argc, char *argv[])
         int fd;
         int mount_with_flock = 0;
         int error = 0;
+	int rc = 0;
 
         if (argc != 5) {
                 t1_usage();
@@ -169,13 +168,19 @@ int t1(int argc, char *argv[])
                 error = flock(fd, LOCK_EX);
         } else {
                 t1_usage();
-                return EXIT_FAILURE;
+		rc = EXIT_FAILURE;
+		goto out;
         }
 
         if (mount_with_flock)
-                return((error == 0) ? EXIT_SUCCESS : EXIT_FAILURE);
+		rc = ((error == 0) ? EXIT_SUCCESS : EXIT_FAILURE);
         else
-                return((error == 0) ? EXIT_FAILURE : EXIT_SUCCESS);
+		rc = ((error == 0) ? EXIT_FAILURE : EXIT_SUCCESS);
+
+out:
+	if (fd >= 0)
+		close(fd);
+	return rc;
 }
 
 /** ===============================================================
@@ -246,7 +251,8 @@ int t2(int argc, char* argv[])
         rc = t_fcntl(fd, F_GETFL);
         if ((rc & O_APPEND) == 0) {
                 fprintf(stderr, "error get flag: ret %x\n", rc);
-                return EXIT_FAILURE;
+		rc = EXIT_FAILURE;
+		goto out;
         }
 
         ta.lock = &lock;

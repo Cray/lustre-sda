@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -119,7 +117,7 @@ int mgc_logname2resid(char *logname, struct ldlm_res_id *res_id, int type)
 
 /********************** config llog list **********************/
 static CFS_LIST_HEAD(config_llog_list);
-static cfs_spinlock_t config_list_lock = CFS_SPIN_LOCK_UNLOCKED(config_list_lock);
+static DEFINE_SPINLOCK(config_list_lock);
 
 /* Take a reference to a config log */
 static int config_log_get(struct config_llog_data *cld)
@@ -261,7 +259,7 @@ static struct config_llog_data *config_recover_log_add(struct obd_device *obd,
         struct config_llog_data *cld;
         char logname[32];
 
-        if ((lsi->lsi_flags & LSI_SERVER) && !IS_MDT(lsi->lsi_ldd))
+        if ((lsi->lsi_flags & LSI_SERVER) && IS_OST(lsi->lsi_ldd))
                 return NULL;
 
         /* we have to use different llog for clients and mdts for cmd
@@ -420,7 +418,7 @@ int lprocfs_mgc_rd_ir_state(char *page, char **start, off_t off,
         ENTRY;
 
         rc = snprintf(page, count, "imperative_recovery: %s\n",
-                      OCD_HAS_FLAG(ocd, IMP_RECOV) ? "ON" : "OFF");
+		      OCD_HAS_FLAG(ocd, IMP_RECOV) ? "ENABLED" : "DISABLED");
         rc += snprintf(page + rc, count - rc, "client_state:\n");
 
         cfs_spin_lock(&config_list_lock);
@@ -630,7 +628,9 @@ static int mgc_fs_setup(struct obd_device *obd, struct super_block *sb,
         }
 
         cli->cl_mgc_vfsmnt = mnt;
-        fsfilt_setup(obd, mnt->mnt_sb);
+        err = fsfilt_setup(obd, mnt->mnt_sb);
+        if (err)
+                GOTO(err_ops, err);
 
         OBD_SET_CTXT_MAGIC(&obd->obd_lvfs_ctxt);
         obd->obd_lvfs_ctxt.pwdmnt = mnt;
@@ -1000,9 +1000,9 @@ static int mgc_target_register(struct obd_export *exp,
         RETURN(rc);
 }
 
-int mgc_set_info_async(struct obd_export *exp, obd_count keylen,
-                       void *key, obd_count vallen, void *val,
-                       struct ptlrpc_request_set *set)
+int mgc_set_info_async(const struct lu_env *env, struct obd_export *exp,
+                       obd_count keylen, void *key, obd_count vallen,
+                       void *val, struct ptlrpc_request_set *set)
 {
         int rc = -EINVAL;
         ENTRY;
@@ -1111,8 +1111,9 @@ int mgc_set_info_async(struct obd_export *exp, obd_count keylen,
         RETURN(rc);
 }
 
-static int mgc_get_info(struct obd_export *exp, __u32 keylen, void *key,
-                        __u32 *vallen, void *val, struct lov_stripe_md *unused)
+static int mgc_get_info(const struct lu_env *env, struct obd_export *exp,
+                        __u32 keylen, void *key, __u32 *vallen, void *val,
+                        struct lov_stripe_md *unused)
 {
         int rc = -EINVAL;
 
@@ -1228,9 +1229,9 @@ enum {
 };
 
 static int mgc_apply_recover_logs(struct obd_device *mgc,
-                                  struct config_llog_data *cld,
-                                  __u64 max_version,
-                                  void *data, int datalen)
+				  struct config_llog_data *cld,
+				  __u64 max_version,
+				  void *data, int datalen, bool mne_swab)
 {
         struct config_llog_instance *cfg = &cld->cld_cfg;
         struct lustre_sb_info       *lsi = s2lsi(cfg->cfg_sb);
@@ -1291,10 +1292,16 @@ static int mgc_apply_recover_logs(struct obd_device *mgc,
                 if (datalen < entry_len) /* must have entry_len at least */
                         break;
 
-                lustre_swab_mgs_nidtbl_entry(entry);
-                LASSERT(entry->mne_length <= CFS_PAGE_SIZE);
-                if (entry->mne_length < entry_len)
-                        break;
+		/* Keep this swab for normal mixed endian handling. LU-1644 */
+		if (mne_swab)
+			lustre_swab_mgs_nidtbl_entry(entry);
+		if (entry->mne_length > CFS_PAGE_SIZE) {
+			CERROR("MNE too large (%u)\n", entry->mne_length);
+			break;
+		}
+
+		if (entry->mne_length < entry_len)
+			break;
 
                 off     += entry->mne_length;
                 datalen -= entry->mne_length;
@@ -1416,6 +1423,7 @@ static int mgc_process_recover_log(struct obd_device *obd,
         cfs_page_t **pages;
         int nrpages;
         bool eof = true;
+	bool mne_swab = false;
         int i;
         int ealen;
         int rc;
@@ -1502,13 +1510,24 @@ again:
                 GOTO(out, rc);
         }
 
+	mne_swab = !!ptlrpc_rep_need_swab(req);
+#if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(3, 2, 50, 0)
+	/* This import flag means the server did an extra swab of IR MNE
+	 * records (fixed in LU-1252), reverse it here if needed. LU-1644 */
+	if (unlikely(req->rq_import->imp_need_mne_swab))
+		mne_swab = !mne_swab;
+#else
+#warning "LU-1644: Remove old OBD_CONNECT_MNE_SWAB fixup and imp_need_mne_swab"
+#endif
+
         for (i = 0; i < nrpages && ealen > 0; i++) {
                 int rc2;
                 void *ptr;
 
                 ptr = cfs_kmap(pages[i]);
                 rc2 = mgc_apply_recover_logs(obd, cld, res->mcr_offset, ptr,
-                                             min_t(int, ealen, CFS_PAGE_SIZE));
+					     min_t(int, ealen, CFS_PAGE_SIZE),
+					     mne_swab);
                 cfs_kunmap(pages[i]);
                 if (rc2 < 0) {
                         CWARN("Process recover log %s error %d\n",
@@ -1703,7 +1722,7 @@ static int mgc_process_cfg_log(struct obd_device *mgc,
            running an MGS though (logs are already local). */
         if (lctxt && lsi && (lsi->lsi_flags & LSI_SERVER) &&
             (lsi->lsi_srv_mnt == cli->cl_mgc_vfsmnt) &&
-            !IS_MGS(lsi->lsi_ldd)) {
+	    !IS_MGS(lsi->lsi_ldd) && lsi->lsi_lmd->lmd_osd_type == NULL) {
                 push_ctxt(saved_ctxt, &mgc->obd_lvfs_ctxt, NULL);
                 must_pop++;
                 if (!local_only)

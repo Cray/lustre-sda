@@ -1,5 +1,5 @@
 m4_define([LUSTRE_MAJOR],[2])
-m4_define([LUSTRE_MINOR],[2])
+m4_define([LUSTRE_MINOR],[3])
 m4_define([LUSTRE_PATCH],[0])
 m4_define([LUSTRE_FIX],[0])
 

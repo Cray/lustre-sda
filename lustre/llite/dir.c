@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -58,15 +56,6 @@
 #include <lustre_dlm.h>
 #include <lustre_fid.h>
 #include "llite_internal.h"
-
-#ifndef HAVE_PAGE_CHECKED
-#ifdef HAVE_PG_FS_MISC
-#define PageChecked(page)        test_bit(PG_fs_misc, &(page)->flags)
-#define SetPageChecked(page)     set_bit(PG_fs_misc, &(page)->flags)
-#else
-#error PageChecked or PageFsMisc not defined in kernel
-#endif
-#endif
 
 /*
  * (new) readdir implementation overview.
@@ -386,7 +375,7 @@ struct page *ll_get_dir_page(struct file *filp, struct inode *dir, __u64 hash,
         if (!rc) {
                 struct ldlm_enqueue_info einfo = { LDLM_IBITS, mode,
                        ll_md_blocking_ast, ldlm_completion_ast,
-                       NULL, NULL, NULL };
+                       NULL, NULL, dir };
                 struct lookup_intent it = { .it_op = IT_READDIR };
                 struct ptlrpc_request *request;
                 struct md_op_data *op_data;
@@ -409,11 +398,6 @@ struct page *ll_get_dir_page(struct file *filp, struct inode *dir, __u64 hash,
                                PFID(ll_inode2fid(dir)), hash, rc);
                         return ERR_PTR(rc);
                 }
-
-                CDEBUG(D_INODE, "setting lr_lvb_inode to inode %p (%lu/%u)\n",
-                       dir, dir->i_ino, dir->i_generation);
-                md_set_lock_data(ll_i2sbi(dir)->ll_md_exp,
-                                 &it.d.lustre.it_lock_handle, dir, NULL);
         } else {
                 /* for cross-ref object, l_ast_data of the lock may not be set,
                  * we reset it here */
@@ -528,7 +512,7 @@ int ll_readdir(struct file *filp, void *cookie, filldir_t filldir)
                 /*
                  * end-of-file.
                  */
-                RETURN(0);
+                GOTO(out, rc = 0);
 
         rc    = 0;
         done  = 0;
@@ -647,6 +631,10 @@ int ll_readdir(struct file *filp, void *cookie, filldir_t filldir)
 
         ll_dir_chain_fini(&chain);
 
+out:
+        if (!rc)
+                ll_stats_ops_tally(sbi, LPROC_LL_READDIR, 1);
+
         RETURN(rc);
 }
 
@@ -660,7 +648,7 @@ int ll_send_mgc_param(struct obd_export *mgc, char *string)
                 return -ENOMEM;
 
         strncpy(msp->mgs_param, string, MGS_PARAM_MAXLEN);
-        rc = obd_set_info_async(mgc, sizeof(KEY_SET_INFO), KEY_SET_INFO,
+        rc = obd_set_info_async(NULL, mgc, sizeof(KEY_SET_INFO), KEY_SET_INFO,
                                 sizeof(struct mgs_send_param), msp, NULL);
         if (rc)
                 CERROR("Failed to set parameter: %d\n", rc);
@@ -1288,61 +1276,7 @@ out_free:
                 return rc;
         }
         case OBD_IOC_LLOG_CATINFO: {
-                struct ptlrpc_request *req = NULL;
-                char                  *buf = NULL;
-                char                  *str;
-                int                    len = 0;
-
-                rc = obd_ioctl_getdata(&buf, &len, (void *)arg);
-                if (rc)
-                        RETURN(rc);
-                data = (void *)buf;
-
-                if (!data->ioc_inlbuf1) {
-                        obd_ioctl_freedata(buf, len);
-                        RETURN(-EINVAL);
-                }
-
-                req = ptlrpc_request_alloc(sbi2mdc(sbi)->cl_import,
-                                           &RQF_LLOG_CATINFO);
-                if (req == NULL)
-                        GOTO(out_catinfo, rc = -ENOMEM);
-
-                req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
-                                     data->ioc_inllen1);
-                req_capsule_set_size(&req->rq_pill, &RMF_STRING, RCL_CLIENT,
-                                     data->ioc_inllen2);
-
-                rc = ptlrpc_request_pack(req, LUSTRE_LOG_VERSION, LLOG_CATINFO);
-                if (rc) {
-                        ptlrpc_request_free(req);
-                        GOTO(out_catinfo, rc);
-                }
-
-                str = req_capsule_client_get(&req->rq_pill, &RMF_NAME);
-                memcpy(str, data->ioc_inlbuf1, data->ioc_inllen1);
-                if (data->ioc_inllen2) {
-                        str = req_capsule_client_get(&req->rq_pill,
-                                                     &RMF_STRING);
-                        memcpy(str, data->ioc_inlbuf2, data->ioc_inllen2);
-                }
-
-                req_capsule_set_size(&req->rq_pill, &RMF_STRING, RCL_SERVER,
-                                     data->ioc_plen1);
-                ptlrpc_request_set_replen(req);
-
-                rc = ptlrpc_queue_wait(req);
-                if (!rc) {
-                        str = req_capsule_server_get(&req->rq_pill,
-                                                     &RMF_STRING);
-                        if (cfs_copy_to_user(data->ioc_pbuf1, str,
-                                             data->ioc_plen1))
-                                rc = -EFAULT;
-                }
-                ptlrpc_req_finished(req);
-        out_catinfo:
-                obd_ioctl_freedata(buf, len);
-                RETURN(rc);
+		RETURN(-EOPNOTSUPP);
         }
         case OBD_IOC_QUOTACHECK: {
                 struct obd_quotactl *oqctl;
@@ -1506,8 +1440,8 @@ out_free:
                 /* get ost count when count is zero, get mdt count otherwise */
                 exp = count ? sbi->ll_md_exp : sbi->ll_dt_exp;
                 vallen = sizeof(count);
-                rc = obd_get_info(exp, sizeof(KEY_TGT_COUNT), KEY_TGT_COUNT,
-                                  &vallen, &count, NULL);
+                rc = obd_get_info(NULL, exp, sizeof(KEY_TGT_COUNT),
+                                  KEY_TGT_COUNT, &vallen, &count, NULL);
                 if (rc) {
                         CERROR("get target count failed: %d\n", rc);
                         RETURN(rc);
@@ -1532,7 +1466,7 @@ out_free:
                                     sizeof(struct ioc_changelog));
                 RETURN(rc);
         case OBD_IOC_FID2PATH:
-                RETURN(ll_fid2path(ll_i2mdexp(inode), (void *)arg));
+		RETURN(ll_fid2path(inode, (void *)arg));
         case LL_IOC_HSM_CT_START:
                 rc = copy_and_ioctl(cmd, sbi->ll_md_exp, (void *)arg,
                                     sizeof(struct lustre_kernelcomm));

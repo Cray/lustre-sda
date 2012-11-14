@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, Whamcloud, Inc.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -60,8 +58,6 @@
 #include <lustre_fsfilt.h>
 #include <linux/lustre_quota.h>
 #include "quota_internal.h"
-
-#ifdef HAVE_QUOTA_SUPPORT
 
 #ifdef __KERNEL__
 /**
@@ -283,4 +279,3 @@ int filter_quota_adjust_qunit(struct obd_export *exp,
         RETURN(rc);
 }
 #endif /* __KERNEL__ */
-#endif

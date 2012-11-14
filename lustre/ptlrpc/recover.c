@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -184,6 +182,7 @@ int ptlrpc_resend(struct obd_import *imp)
 
         RETURN(0);
 }
+EXPORT_SYMBOL(ptlrpc_resend);
 
 /**
  * Go through all requests in delayed list and wake their threads
@@ -203,6 +202,7 @@ void ptlrpc_wake_delayed(struct obd_import *imp)
         }
         cfs_spin_unlock(&imp->imp_lock);
 }
+EXPORT_SYMBOL(ptlrpc_wake_delayed);
 
 void ptlrpc_request_handle_notconn(struct ptlrpc_request *failed_req)
 {
@@ -285,6 +285,7 @@ int ptlrpc_set_import_active(struct obd_import *imp, int active)
 
         RETURN(rc);
 }
+EXPORT_SYMBOL(ptlrpc_set_import_active);
 
 /* Attempt to reconnect an import */
 int ptlrpc_recover_import(struct obd_import *imp, char *new_uuid, int async)
@@ -345,6 +346,7 @@ int ptlrpc_recover_import(struct obd_import *imp, char *new_uuid, int async)
 out:
         return rc;
 }
+EXPORT_SYMBOL(ptlrpc_recover_import);
 
 int ptlrpc_import_in_recovery(struct obd_import *imp)
 {

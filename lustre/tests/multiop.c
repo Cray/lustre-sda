@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -68,6 +68,8 @@ char usage[] =
 "        d  mkdir\n"
 "        D  open(O_DIRECTORY)\n"
 "        f  statfs\n"
+"        G gid get grouplock\n"
+"        g gid put grouplock\n"
 "        L  link\n"
 "        l  symlink\n"
 "        m  mknod\n"
@@ -194,6 +196,7 @@ int main(int argc, char **argv)
         int flags;
         int save_errno;
         int verbose = 0;
+        int gid = 0;
 
         if (argc < 3) {
                 fprintf(stderr, usage, argv[0]);
@@ -254,6 +257,22 @@ int main(int argc, char **argv)
                         if (statfs(fname, &stfs) == -1) {
                                 save_errno = errno;
                                 perror("statfs()");
+                                exit(save_errno);
+                        }
+                        break;
+                case 'G':
+                        gid = atoi(commands+1);
+                        if (ioctl(fd, LL_IOC_GROUP_LOCK, gid) == -1) {
+                                save_errno = errno;
+                                perror("ioctl(GROUP_LOCK)");
+                                exit(save_errno);
+                        }
+                        break;
+                case 'g':
+                        gid = atoi(commands+1);
+                        if (ioctl(fd, LL_IOC_GROUP_UNLOCK, gid) == -1) {
+                                save_errno = errno;
+                                perror("ioctl(GROUP_UNLOCK)");
                                 exit(save_errno);
                         }
                         break;

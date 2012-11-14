@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * Modifications for Lustre
  *
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
@@ -66,7 +64,7 @@
 #include "gss_api.h"
 
 static CFS_LIST_HEAD(registered_mechs);
-static cfs_spinlock_t registered_mechs_lock = CFS_SPIN_LOCK_UNLOCKED(registered_mechs_lock);
+static DEFINE_SPINLOCK(registered_mechs_lock);
 
 int lgss_mech_register(struct gss_api_mech *gm)
 {

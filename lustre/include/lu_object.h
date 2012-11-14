@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -174,8 +172,9 @@ struct lu_device_operations {
  * For lu_object_conf flags
  */
 typedef enum {
-        /* Currently, only used for client-side object initialization. */
-        LOC_F_NEW = 0x1,
+	/* This is a new object to be allocated, or the file
+	 * corresponding to the object does not exists. */
+	LOC_F_NEW	= 0x00000001,
 } loc_flags_t;
 
 /**
@@ -677,6 +676,9 @@ void lu_object_fini       (struct lu_object *o);
 void lu_object_add_top    (struct lu_object_header *h, struct lu_object *o);
 void lu_object_add        (struct lu_object *before, struct lu_object *o);
 
+void lu_dev_add_linkage(struct lu_site *s, struct lu_device *d);
+void lu_dev_del_linkage(struct lu_site *s, struct lu_device *d);
+
 /**
  * Helpers to initialize and finalize device types.
  */
@@ -945,6 +947,7 @@ struct lu_context {
          * from enum lu_context_tag.
          */
         __u32                  lc_tags;
+	enum lu_context_state  lc_state;
         /**
          * Pointer to the home service thread. NULL for other execution
          * contexts.
@@ -955,7 +958,6 @@ struct lu_context {
          * detail.
          */
         void                 **lc_value;
-        enum lu_context_state  lc_state;
         /**
          * Linkage into a list of all remembered contexts. Only
          * `non-transient' contexts, i.e., ones created for service threads
@@ -999,7 +1001,18 @@ enum lu_context_tag {
          * a client.
          */
         LCT_SESSION   = 1 << 4,
-
+        /**
+         * A per-request data on OSP device
+         */
+        LCT_OSP_THREAD = 1 << 5,
+        /**
+         * MGS device thread
+         */
+        LCT_MG_THREAD = 1 << 6,
+        /**
+         * Context for local operations
+         */
+        LCT_LOCAL = 1 << 7,
         /**
          * Set when at least one of keys, having values in this context has
          * non-NULL lu_context_key::lct_exit() method. This is used to

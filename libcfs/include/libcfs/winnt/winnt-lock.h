@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -223,7 +221,7 @@ struct cfs_spin_lock {
 #define CFS_DECL_SPIN(name)  cfs_spinlock_t name;
 #define CFS_DECL_SPIN_EXTERN(name)  extern cfs_spinlock_t name;
 
-#define CFS_SPIN_LOCK_UNLOCKED {0}
+#define DEFINE_SPINLOCK {0}
 
 static inline void cfs_spin_lock_init(cfs_spinlock_t *lock)
 {

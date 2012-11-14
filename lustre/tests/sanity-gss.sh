@@ -1,5 +1,5 @@
 #!/bin/bash
-# vim:expandtab:shiftwidth=4:softtabstop=4:tabstop=4:
+# vim:shiftwidth=4:softtabstop=4:tabstop=4:
 #
 # Run select tests by setting ONLY, or as arguments to the script.
 # Skip specific tests by setting EXCEPT.
@@ -25,6 +25,8 @@ SRCDIR=`dirname $0`
 export PATH=$PWD/$SRCDIR:$SRCDIR:$SRCDIR/../utils:$SRCDIR/../utils/gss:$PATH:/sbin
 export NAME=${NAME:-local}
 SAVE_PWD=$PWD
+
+export MULTIOP=${MULTIOP:-multiop}
 
 CLEANUP=${CLEANUP:-""}
 SETUP=${SETUP:-""}
@@ -241,7 +243,7 @@ test_3() {
     $RUNAS cat $file > /dev/null || error "$RUNAS_ID cat error"
 
     # start multiop
-    $RUNAS multiop $file o_r &
+    $RUNAS $MULTIOP $file o_r &
     OPPID=$!
     # wait multiop finish its open()
     sleep 1
@@ -638,7 +640,7 @@ switch_sec_test()
     do_facet $SINGLEMDS lctl set_param fail_val=36
     do_facet $SINGLEMDS lctl set_param fail_loc=0x513
     log "starting multiop"
-    multiop $filename m &
+    $MULTIOP $filename m &
     multiop_pid=$!
     echo "multiop pid=$multiop_pid"
     sleep 1

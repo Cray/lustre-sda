@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -202,11 +200,13 @@ static int osc_lock_unuse(const struct lu_env *env,
                 LASSERT(!ols->ols_hold);
                 LASSERT(ols->ols_agl);
                 return 0;
+	case OLS_UPCALL_RECEIVED:
+		osc_lock_unhold(ols);
 	case OLS_ENQUEUED:
-        case OLS_UPCALL_RECEIVED:
-                LASSERT(!ols->ols_hold);
-                ols->ols_state = OLS_NEW;
-                return 0;
+		LASSERT(!ols->ols_hold);
+		osc_lock_detach(env, ols);
+		ols->ols_state = OLS_NEW;
+		return 0;
         case OLS_GRANTED:
                 LASSERT(!ols->ols_glimpse);
                 LASSERT(ols->ols_hold);
@@ -585,17 +585,21 @@ static int osc_lock_upcall(void *cookie, int errcode)
                         cl_lock_error(env, lock, rc);
                 }
 
-                cl_lock_mutex_put(env, lock);
+		/* release cookie reference, acquired by osc_lock_enqueue() */
+		cl_lock_hold_release(env, lock, "upcall", lock);
+		cl_lock_mutex_put(env, lock);
 
-                /* release cookie reference, acquired by osc_lock_enqueue() */
-                lu_ref_del(&lock->cll_reference, "upcall", lock);
-                cl_lock_put(env, lock);
+		lu_ref_del(&lock->cll_reference, "upcall", lock);
+		/* This maybe the last reference, so must be called after
+		 * cl_lock_mutex_put(). */
+		cl_lock_put(env, lock);
 
-                cl_env_nested_put(&nest, env);
-        } else
-                /* should never happen, similar to osc_ldlm_blocking_ast(). */
-                LBUG();
-        RETURN(errcode);
+		cl_env_nested_put(&nest, env);
+	} else {
+		/* should never happen, similar to osc_ldlm_blocking_ast(). */
+		LBUG();
+	}
+	RETURN(errcode);
 }
 
 /**
@@ -1119,15 +1123,6 @@ static int osc_lock_enqueue_wait(const struct lu_env *env,
                 if (!lockless && osc_lock_compatible(olck, scan_ols))
                         continue;
 
-                /* Now @scan is conflicting with @lock, this means current
-                 * thread have to sleep for @scan being destroyed. */
-                if (scan_ols->ols_owner == osc_env_io(env)) {
-			CDEBUG(D_DLMTRACE, "DEADLOCK POSSIBLE!\n");
-			CL_LOCK_DEBUG(D_DLMTRACE, env, scan, "queued.\n");
-			CL_LOCK_DEBUG(D_DLMTRACE, env, lock, "queuing.\n");
-			if (cfs_cdebug_show(D_DLMTRACE, DEBUG_SUBSYSTEM))
-				libcfs_debug_dumpstack(NULL);
-                }
                 cl_lock_get_trust(scan);
                 conflict = scan;
                 break;
@@ -1190,7 +1185,9 @@ static int osc_lock_enqueue(const struct lu_env *env,
         if (enqflags & CEF_AGL) {
                 ols->ols_flags |= LDLM_FL_BLOCK_NOWAIT;
                 ols->ols_agl = 1;
-        }
+	} else {
+		ols->ols_agl = 0;
+	}
         if (ols->ols_flags & LDLM_FL_HAS_INTENT)
                 ols->ols_glimpse = 1;
         if (!osc_lock_is_lockless(ols) && !(enqflags & CEF_MUST))
@@ -1209,9 +1206,9 @@ static int osc_lock_enqueue(const struct lu_env *env,
                         if (ols->ols_locklessable)
                                 ols->ols_flags |= LDLM_FL_DENY_ON_CONTENTION;
 
-                        /* a reference for lock, passed as an upcall cookie */
-                        cl_lock_get(lock);
-                        lu_ref_add(&lock->cll_reference, "upcall", lock);
+			/* lock will be passed as upcall cookie,
+			 * hold ref to prevent to be released. */
+                        cl_lock_hold_add(env, lock, "upcall", lock);
                         /* a user for lock also */
                         cl_lock_user_add(env, lock);
                         ols->ols_state = OLS_ENQUEUED;
@@ -1232,9 +1229,7 @@ static int osc_lock_enqueue(const struct lu_env *env,
                                           PTLRPCD_SET, 1, ols->ols_agl);
                         if (result != 0) {
                                 cl_lock_user_del(env, lock);
-                                lu_ref_del(&lock->cll_reference,
-                                           "upcall", lock);
-                                cl_lock_put(env, lock);
+				cl_lock_unhold(env, lock, "upcall", lock);
                                 if (unlikely(result == -ECANCELED)) {
                                         ols->ols_state = OLS_NEW;
                                         result = 0;
@@ -1333,14 +1328,32 @@ static int osc_lock_use(const struct lu_env *env,
 
 static int osc_lock_flush(struct osc_lock *ols, int discard)
 {
-        struct cl_lock       *lock  = ols->ols_cl.cls_lock;
-        struct cl_env_nest    nest;
-        struct lu_env        *env;
-        int result = 0;
+	struct cl_lock       *lock  = ols->ols_cl.cls_lock;
+	struct cl_env_nest    nest;
+	struct lu_env        *env;
+	int result = 0;
+	ENTRY;
 
-        env = cl_env_nested_get(&nest);
-        if (!IS_ERR(env)) {
-                result = cl_lock_page_out(env, lock, discard);
+	env = cl_env_nested_get(&nest);
+	if (!IS_ERR(env)) {
+		struct osc_object    *obj   = cl2osc(ols->ols_cl.cls_obj);
+		struct cl_lock_descr *descr = &lock->cll_descr;
+		int rc = 0;
+
+		if (descr->cld_mode >= CLM_WRITE) {
+			result = osc_cache_writeback_range(env, obj,
+					descr->cld_start, descr->cld_end,
+					1, discard);
+			CDEBUG(D_DLMTRACE, "write out %d pages for lock %p.\n",
+			       result, lock);
+			if (result > 0)
+				result = 0;
+		}
+
+		rc = cl_lock_discard_pages(env, lock);
+		if (result == 0 && rc < 0)
+			result = rc;
+
                 cl_env_nested_put(&nest, env);
         } else
                 result = PTR_ERR(env);
@@ -1348,7 +1361,7 @@ static int osc_lock_flush(struct osc_lock *ols, int discard)
                 ols->ols_flush = 1;
                 LINVRNT(!osc_lock_has_pages(ols));
         }
-        return result;
+	RETURN(result);
 }
 
 /**
@@ -1454,6 +1467,7 @@ static int osc_lock_has_pages(struct osc_lock *olck)
         cfs_mutex_lock(&oob->oo_debug_mutex);
 
         io->ci_obj = cl_object_top(obj);
+	io->ci_ignore_layout = 1;
         cl_io_init(env, io, CIT_MISC, io->ci_obj);
         do {
                 result = cl_page_gang_lookup(env, obj, io,

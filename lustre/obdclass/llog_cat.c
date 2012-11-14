@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -487,7 +485,7 @@ int llog_cat_process_thread(void *data)
         /*
          * Make sure that all cached data is sent.
          */
-        llog_sync(ctxt, NULL);
+	llog_sync(ctxt, NULL, 0);
         GOTO(release_llh, rc);
 release_llh:
         rc = llog_cat_put(llh);

@@ -40,8 +40,9 @@ fi
 mkdir -p $DIR
 
 # LU-482 Avert LVM and VM inability to flush caches in pre .33 kernels
-if [ $LINUX_VERSION_CODE -lt $(kernel_version 2 6 33) ]; then
-    sync; sleep 5; sync; sleep 5; sync; sleep 5
+if [ $LINUX_VERSION_CODE -lt $(version_code 2.6.33) ]; then
+    sync
+    do_facet $SINGLEMDS sync
 fi
 
 test_0() {

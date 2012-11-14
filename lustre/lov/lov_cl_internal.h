@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -201,11 +201,30 @@ struct lov_object {
          * Type of an object. Protected by lov_object::lo_type_guard.
          */
         enum lov_layout_type   lo_type;
+	/**
+	 * True if layout is valid. This bit is cleared when layout lock
+	 * is lost.
+	 */
+	unsigned	       lo_lsm_invalid:1;
+	/**
+	 * Layout metadata.
+	 */
+	struct lov_stripe_md  *lo_lsm;
+	/**
+	 * Waitq - wait for no one else is using lo_lsm
+	 */
+	cfs_waitq_t	       lo_waitq;
 
         union lov_layout_state {
                 struct lov_layout_raid0 {
                         unsigned               lo_nr;
-                        struct lov_stripe_md  *lo_lsm;
+			/**
+			 * When this is true, lov_object::lo_attr contains
+			 * valid up to date attributes for a top-level
+			 * object. This field is reset to 0 when attributes of
+			 * any sub-object change.
+			 */
+			int		       lo_attr_valid;
                         /**
                          * Array of sub-objects. Allocated when top-object is
                          * created (lov_init_raid0()).
@@ -226,13 +245,6 @@ struct lov_object {
                          * protect lo_sub
                          */
                         cfs_spinlock_t         lo_sub_lock;
-                        /**
-                         * When this is true, lov_object::lo_attr contains
-                         * valid up to date attributes for a top-level
-                         * object. This field is reset to 0 when attributes of
-                         * any sub-object change.
-                         */
-                        int                    lo_attr_valid;
                         /**
                          * Cached object attribute, built from sub-object
                          * attributes.
@@ -414,7 +426,6 @@ struct lov_thread_info {
         struct cl_lock_descr    lti_ldescr;
         struct ost_lvb          lti_lvb;
         struct cl_2queue        lti_cl2q;
-        union  lov_layout_state lti_state;
         struct cl_lock_closure  lti_closure;
         cfs_waitlink_t          lti_waiter;
 };
@@ -471,6 +482,11 @@ struct lov_io {
          * lov_io::lis_cl::cis_object.
          */
         struct lov_object *lis_object;
+	/**
+	 * Lov stripe - this determines how this io fans out.
+	 * Hold a refcount to the lsm so it can't go away during IO.
+	 */
+	struct lov_stripe_md *lis_lsm;
         /**
          * Original end-of-io position for this IO, set by the upper layer as
          * cl_io::u::ci_rw::pos + cl_io::u::ci_rw::count. lov remembers this,
@@ -605,6 +621,8 @@ struct lov_io_sub    *lov_page_subio    (const struct lu_env *env,
                                          struct lov_io *lio,
                                          const struct cl_page_slice *slice);
 
+void lov_lsm_decref(struct lov_object *lov, struct lov_stripe_md *lsm);
+struct lov_stripe_md *lov_lsm_addref(struct lov_object *lov);
 
 #define lov_foreach_target(lov, var)                    \
         for (var = 0; var < lov_targets_nr(lov); ++var)
@@ -794,13 +812,10 @@ static inline struct lov_thread_info *lov_env_info(const struct lu_env *env)
 
 static inline struct lov_layout_raid0 *lov_r0(struct lov_object *lov)
 {
-        struct lov_layout_raid0 *raid0;
-
-        LASSERT(lov->lo_type == LLT_RAID0);
-        raid0 = &lov->u.raid0;
-        LASSERT(raid0->lo_lsm->lsm_wire.lw_magic == LOV_MAGIC ||
-                raid0->lo_lsm->lsm_wire.lw_magic == LOV_MAGIC_V3);
-        return raid0;
+	LASSERT(lov->lo_type == LLT_RAID0);
+	LASSERT(lov->lo_lsm->lsm_wire.lw_magic == LOV_MAGIC ||
+		lov->lo_lsm->lsm_wire.lw_magic == LOV_MAGIC_V3);
+	return &lov->u.raid0;
 }
 
 /** @} lov */

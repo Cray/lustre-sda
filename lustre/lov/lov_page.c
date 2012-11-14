@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -111,6 +109,30 @@ static void lov_page_assume(const struct lu_env *env,
         lov_page_own(env, slice, io, 0);
 }
 
+static int lov_page_cache_add(const struct lu_env *env,
+			      const struct cl_page_slice *slice,
+			      struct cl_io *io)
+{
+	struct lov_io     *lio = lov_env_io(env);
+	struct lov_io_sub *sub;
+	int rc = 0;
+
+	LINVRNT(lov_page_invariant(slice));
+	LINVRNT(!cl2lov_page(slice)->lps_invalid);
+	ENTRY;
+
+	sub = lov_page_subio(env, lio, slice);
+	if (!IS_ERR(sub)) {
+		rc = cl_page_cache_add(sub->sub_env, sub->sub_io,
+				       slice->cpl_page->cp_child, CRT_WRITE);
+		lov_sub_put(sub);
+	} else {
+		rc = PTR_ERR(sub);
+		CL_PAGE_DEBUG(D_ERROR, env, slice->cpl_page, "rc = %d\n", rc);
+	}
+	RETURN(rc);
+}
+
 static int lov_page_print(const struct lu_env *env,
                           const struct cl_page_slice *slice,
                           void *cookie, lu_printer_t printer)
@@ -124,6 +146,11 @@ static const struct cl_page_operations lov_page_ops = {
         .cpo_fini   = lov_page_fini,
         .cpo_own    = lov_page_own,
         .cpo_assume = lov_page_assume,
+	.io = {
+		[CRT_WRITE] = {
+			.cpo_cache_add = lov_page_cache_add
+		}
+	},
         .cpo_print  = lov_page_print
 };
 
@@ -157,9 +184,9 @@ struct cl_page *lov_page_init_raid0(const struct lu_env *env,
         ENTRY;
 
         offset = cl_offset(obj, page->cp_index);
-        stripe = lov_stripe_number(r0->lo_lsm, offset);
-        LASSERT(stripe < r0->lo_nr);
-        rc = lov_stripe_offset(r0->lo_lsm, offset, stripe,
+	stripe = lov_stripe_number(loo->lo_lsm, offset);
+	LASSERT(stripe < r0->lo_nr);
+	rc = lov_stripe_offset(loo->lo_lsm, offset, stripe,
                                    &suboff);
         LASSERT(rc == 0);
 

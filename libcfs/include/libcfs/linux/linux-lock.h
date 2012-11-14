@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -77,8 +77,6 @@
  * - read_lock_irqsave(lock, f)
  * - write_lock_irqsave(lock, f)
  * - write_unlock_irqrestore(lock, f)
- *
- * - SPIN_LOCK_UNLOCKED
  */
 
 /*
@@ -103,8 +101,6 @@ typedef spinlock_t cfs_spinlock_t;
 #define cfs_write_unlock_irqrestore(lock, f) write_unlock_irqrestore(lock, f)
 #define cfs_spin_lock_irqsave(lock, f)       spin_lock_irqsave(lock, f)
 #define cfs_spin_unlock_irqrestore(lock, f)  spin_unlock_irqrestore(lock, f)
-
-#define CFS_SPIN_LOCK_UNLOCKED(lock)         __SPIN_LOCK_UNLOCKED(lock)
 
 /*
  * rw_semaphore "implementation" (use Linux kernel's primitives)
@@ -155,7 +151,9 @@ typedef rwlock_t cfs_rwlock_t;
 #define cfs_write_lock_bh(lock)                write_lock_bh(lock)
 #define cfs_write_unlock_bh(lock)              write_unlock_bh(lock)
 
-#define CFS_RW_LOCK_UNLOCKED(lock)             __RW_LOCK_UNLOCKED(lock)
+#ifndef DEFINE_RWLOCK
+#define DEFINE_RWLOCK(lock)	rwlock_t lock = __RW_LOCK_UNLOCKED(lock)
+#endif
 
 /*
  * completion "implementation" (use Linux kernel's primitives)

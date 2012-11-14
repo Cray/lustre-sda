@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, Whamcloud, Inc.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -62,12 +60,12 @@ cfs_mem_cache_t *ll_rmtperm_hash_cachep = NULL;
 
 static inline struct ll_remote_perm *alloc_ll_remote_perm(void)
 {
-        struct ll_remote_perm *lrp;
+	struct ll_remote_perm *lrp;
 
-        OBD_SLAB_ALLOC_PTR_GFP(lrp, ll_remote_perm_cachep, GFP_KERNEL);
-        if (lrp)
-                CFS_INIT_HLIST_NODE(&lrp->lrp_list);
-        return lrp;
+	OBD_SLAB_ALLOC_PTR_GFP(lrp, ll_remote_perm_cachep, CFS_ALLOC_KERNEL);
+	if (lrp)
+		CFS_INIT_HLIST_NODE(&lrp->lrp_list);
+	return lrp;
 }
 
 static inline void free_ll_remote_perm(struct ll_remote_perm *lrp)
@@ -85,9 +83,9 @@ cfs_hlist_head_t *alloc_rmtperm_hash(void)
         cfs_hlist_head_t *hash;
         int i;
 
-        OBD_SLAB_ALLOC(hash, ll_rmtperm_hash_cachep, GFP_KERNEL,
-                       REMOTE_PERM_HASHSIZE * sizeof(*hash));
-
+	OBD_SLAB_ALLOC_GFP(hash, ll_rmtperm_hash_cachep,
+			   REMOTE_PERM_HASHSIZE * sizeof(*hash),
+			   CFS_ALLOC_STD);
         if (!hash)
                 return NULL;
 

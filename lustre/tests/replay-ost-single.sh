@@ -1,4 +1,6 @@
 #!/bin/bash
+# -*- mode: Bash; tab-width: 4; indent-tabs-mode: t; -*-
+# vim:shiftwidth=4:softtabstop=4:tabstop=4:
 
 set -e
 
@@ -176,7 +178,7 @@ test_6() {
 
     f=$TDIR/$tfile
     rm -f $f
-    sync && sleep 2 && sync	# wait for delete thread
+    sync && sleep 2 && sync  # wait for delete thread
 
     # wait till space is returned, following
     # (( $before > $after_dd)) test counting on that
@@ -186,19 +188,21 @@ test_6() {
     before=`kbytesfree`
     dd if=/dev/urandom bs=4096 count=1280 of=$f || return 28
     lfs getstripe $f
-    get_stripe_info client $f
+    stripe_index=$(lfs getstripe -i $f)
 
     sync
     sleep 2 # ensure we have a fresh statfs
     sync
-#define OBD_FAIL_MDS_REINT_NET_REP       0x119
+
+    #define OBD_FAIL_MDS_REINT_NET_REP       0x119
     do_facet $SINGLEMDS "lctl set_param fail_loc=0x80000119"
     after_dd=`kbytesfree`
     log "before: $before after_dd: $after_dd"
     (( $before > $after_dd )) || return 1
     rm -f $f
     fail ost$((stripe_index + 1))
-    wait_recovery_complete ost$((stripe_index + 1)) || error "OST recovery not done"
+    wait_recovery_complete ost$((stripe_index + 1)) ||
+        error "OST$((stripe_index + 1)) recovery not completed"
     $CHECKSTAT -t file $f && return 2 || true
     sync
     # let the delete happen
@@ -206,7 +210,7 @@ test_6() {
     wait_destroy_complete || return 5
     after=`kbytesfree`
     log "before: $before after: $after"
-    (( $before <= $after + 40 )) || return 3	# take OST logs into account
+    (( $before <= $after + 40 )) || return 3   # take OST logs into account
 }
 run_test 6 "Fail OST before obd_destroy"
 
@@ -242,6 +246,126 @@ test_7() {
     (( $before <= $after + 40 )) || return 3	# take OST logs into account
 }
 run_test 7 "Fail OST before obd_destroy"
+
+test_8a() {
+	[[ $(lustre_version_code $SINGLEMDS) -ge $(version_code 2.3.0) ]] ||
+		{ skip "Need MDS version at least 2.3.0"; return; }
+	verify=$ROOT/tmp/verify-$$
+	dd if=/dev/urandom of=$verify bs=4096 count=1280 ||
+	        error "Create verify file failed"
+#define OBD_FAIL_OST_DQACQ_NET 0x230
+	do_facet ost1 "lctl set_param fail_loc=0x230"
+	dd if=$verify of=$TDIR/$tfile bs=4096 count=1280 oflag=sync &
+	ddpid=$!
+	sleep $TIMEOUT  # wait for the io to become redo io
+	if ! ps -p $ddpid  > /dev/null 2>&1; then
+		error "redo io finished incorrectly"
+		return 1
+	fi
+	do_facet ost1 "lctl set_param fail_loc=0"
+	wait $ddpid || true
+	cancel_lru_locks osc
+	cmp $verify $TDIR/$tfile || return 2
+	rm -f $verify $TDIR/$tfile
+	message=`dmesg | grep "redo for recoverable error -115"`
+	[ -z "$message" ] || error "redo error messages found in dmesg"
+}
+run_test 8a "Verify redo io: redo io when get -EINPROGRESS error"
+
+test_8b() {
+	[[ $(lustre_version_code $SINGLEMDS) -ge $(version_code 2.3.0) ]] ||
+		{ skip "Need MDS version at least 2.3.0"; return; }
+	verify=$ROOT/tmp/verify-$$
+	dd if=/dev/urandom of=$verify bs=4096 count=1280 ||
+	        error "Create verify file failed"
+#define OBD_FAIL_OST_DQACQ_NET 0x230
+	do_facet ost1 "lctl set_param fail_loc=0x230"
+	dd if=$verify of=$TDIR/$tfile bs=4096 count=1280 oflag=sync &
+	ddpid=$!
+	sleep $TIMEOUT  # wait for the io to become redo io
+	fail ost1
+	do_facet ost1 "lctl set_param fail_loc=0"
+	wait $ddpid || return 1
+	cancel_lru_locks osc
+	cmp $verify $TDIR/$tfile || return 2
+	rm -f $verify $TDIR/$tfile
+}
+run_test 8b "Verify redo io: redo io should success after recovery"
+
+test_8c() {
+	[[ $(lustre_version_code $SINGLEMDS) -ge $(version_code 2.3.0) ]] ||
+		{ skip "Need MDS version at least 2.3.0"; return; }
+	verify=$ROOT/tmp/verify-$$
+	dd if=/dev/urandom of=$verify bs=4096 count=1280 ||
+		error "Create verify file failed"
+#define OBD_FAIL_OST_DQACQ_NET 0x230
+	do_facet ost1 "lctl set_param fail_loc=0x230"
+	dd if=$verify of=$TDIR/$tfile bs=4096 count=1280 oflag=sync &
+	ddpid=$!
+	sleep $TIMEOUT  # wait for the io to become redo io
+	ost_evict_client
+	# allow recovery to complete
+	sleep $((TIMEOUT + 2))
+	do_facet ost1 "lctl set_param fail_loc=0"
+	wait $ddpid
+	cancel_lru_locks osc
+	cmp $verify $TDIR/$tfile && return 2
+	rm -f $verify $TDIR/$tfile
+}
+run_test 8c "Verify redo io: redo io should fail after eviction"
+
+test_8d() {
+	[[ $(lustre_version_code $SINGLEMDS) -ge $(version_code 2.3.0) ]] ||
+		{ skip "Need MDS version at least 2.3.0"; return; }
+#define OBD_FAIL_MDS_DQACQ_NET 0x187
+	do_facet $SINGLEMDS "lctl set_param fail_loc=0x187"
+	# test the non-intent create path
+	mcreate $TDIR/$tfile &
+	cpid=$!
+	sleep $TIMEOUT
+	if ! ps -p $cpid  > /dev/null 2>&1; then
+		error "mknod finished incorrectly"
+		return 1
+	fi
+	do_facet $SINGLEMDS "lctl set_param fail_loc=0"
+	wait $cpid || return 2
+	stat $TDIR/$tfile || error "mknod failed"
+
+	rm $TDIR/$tfile
+
+#define OBD_FAIL_MDS_DQACQ_NET 0x187
+	do_facet $SINGLEMDS "lctl set_param fail_loc=0x187"
+	# test the intent create path
+	openfile -f O_RDWR:O_CREAT $TDIR/$tfile &
+	cpid=$!
+	sleep $TIMEOUT
+	if ! ps -p $cpid > /dev/null 2>&1; then
+		error "open finished incorrectly"
+		return 3
+	fi
+	do_facet $SINGLEMDS "lctl set_param fail_loc=0"
+	wait $cpid || return 4
+	stat $TDIR/$tfile || error "open failed"
+}
+run_test 8d "Verify redo creation on -EINPROGRESS"
+
+test_8e() {
+	[[ $(lustre_version_code $SINGLEMDS) -ge $(version_code 2.3.0) ]] ||
+		{ skip "Need MDS version at least 2.3.0"; return; }
+	sleep 1 # ensure we have a fresh statfs
+#define OBD_FAIL_OST_STATFS_EINPROGRESS 0x231
+	do_facet ost1 "lctl set_param fail_loc=0x231"
+	df $MOUNT &
+	dfpid=$!
+	sleep $TIMEOUT
+	if ! ps -p $dfpid  > /dev/null 2>&1; then
+			do_facet ost1 "lctl set_param fail_loc=0"
+			error "df shouldn't have completed!"
+			return 1
+	fi
+	do_facet ost1 "lctl set_param fail_loc=0"
+}
+run_test 8e "Verify that ptlrpc resends request on -EINPROGRESS"
 
 complete $(basename $0) $SECONDS
 check_and_cleanup_lustre

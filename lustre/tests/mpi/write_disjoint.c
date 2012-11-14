@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -206,7 +206,8 @@ int main (int argc, char *argv[]) {
 
                         for (i = 0; i < noProcessors; i++) {
                                 char command[4096];
-                                int j, rc;
+                                int j;
+				
                                 if (!memcmp(read_buf + (i * CHUNK_SIZE(n)),
                                             chunk_buf[i], CHUNK_SIZE(n)))
                                         continue;
@@ -231,7 +232,7 @@ int main (int argc, char *argv[]) {
                                 }
 
                                 sprintf(command, "od -Ad -a %s", filename);
-                                rc = system(command);
+                                ret = system(command);
                                 rprintf(0, n, "data check error - exiting\n");
                         }
                 }

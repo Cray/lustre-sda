@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -902,22 +900,24 @@ int jt_lcfg_getparam(int argc, char **argv)
         if (rc < 0 || rc >= argc)
                 return CMD_HELP;
 
-        for (i = rc; i < argc; i++) {
-                path = argv[i];
+	for (i = rc, rc = 0; i < argc; i++) {
+		int rc2;
 
-                clean_path(path);
+		path = argv[i];
 
-                lprocfs_param_pattern(argv[0], path, pattern, sizeof(pattern));
+		clean_path(path);
 
-                if (popt.only_path)
-                        rc = listparam_display(&popt, pattern);
-                else
-                        rc = getparam_display(&popt, pattern);
-                if (rc < 0)
-                        return rc;
-        }
+		lprocfs_param_pattern(argv[0], path, pattern, sizeof(pattern));
 
-        return 0;
+		if (popt.only_path)
+			rc2 = listparam_display(&popt, pattern);
+		else
+			rc2 = getparam_display(&popt, pattern);
+		if (rc2 < 0 && rc == 0)
+			rc = rc2;
+	}
+
+	return rc;
 }
 
 static int setparam_cmdline(int argc, char **argv, struct param_opts *popt)
@@ -996,7 +996,9 @@ int jt_lcfg_setparam(int argc, char **argv)
         if (rc < 0 || rc >= argc)
                 return CMD_HELP;
 
-        for (i = rc; i < argc; i++) {
+	for (i = rc, rc = 0; i < argc; i++) {
+		int rc2;
+
                 if ((value = strchr(argv[i], '=')) != NULL) {
                         /* format: set_param a=b */
                         *value = '\0';
@@ -1016,13 +1018,13 @@ int jt_lcfg_setparam(int argc, char **argv)
 
                 lprocfs_param_pattern(argv[0], path, pattern, sizeof(pattern));
 
-                rc = setparam_display(&popt, pattern, value);
+                rc2 = setparam_display(&popt, pattern, value);
                 path = NULL;
                 value = NULL;
-                if (rc < 0)
-                        return rc;
-        }
+		if (rc2 < 0 && rc == 0)
+			rc = rc2;
+	}
 
-        return 0;
+	return rc;
 }
 

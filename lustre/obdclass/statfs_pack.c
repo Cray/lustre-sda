@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -63,6 +61,7 @@ void statfs_pack(struct obd_statfs *osfs, cfs_kstatfs_t *sfs)
         osfs->os_bsize = sfs->f_bsize;
         osfs->os_namelen = sfs->f_namelen;
 }
+EXPORT_SYMBOL(statfs_pack);
 
 void statfs_unpack(cfs_kstatfs_t *sfs, struct obd_statfs *osfs)
 {
@@ -76,6 +75,4 @@ void statfs_unpack(cfs_kstatfs_t *sfs, struct obd_statfs *osfs)
         sfs->f_bsize = osfs->os_bsize;
         sfs->f_namelen = osfs->os_namelen;
 }
-
-EXPORT_SYMBOL(statfs_pack);
 EXPORT_SYMBOL(statfs_unpack);

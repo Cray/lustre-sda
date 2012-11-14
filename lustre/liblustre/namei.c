@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -130,15 +128,11 @@ int llu_md_blocking_ast(struct ldlm_lock *lock,
                 }
                 break;
         case LDLM_CB_CANCELING: {
-                struct inode *inode = llu_inode_from_resource(lock);
+                struct inode *inode = llu_inode_from_lock(lock);
                 struct llu_inode_info *lli;
                 struct intnl_stat *st;
                 __u64 bits = lock->l_policy_data.l_inodebits.bits;
                 struct lu_fid *fid;
-
-                /* Inode is set to lock->l_resource->lr_lvb_inode
-                 * for mdc - bug 24555 */
-                LASSERT(lock->l_ast_data == NULL);
 
                 /* Invalidate all dentries associated with this inode */
                 if (inode == NULL)
@@ -352,8 +346,7 @@ static int lookup_it_finish(struct ptlrpc_request *request, int offset,
                         if (md.lsm != NULL)
                                 obd_free_memmd(sbi->ll_dt_exp, &md.lsm);
                         RETURN(inode ? PTR_ERR(inode) : -ENOMEM);
-                } else if (md.lsm != NULL &&
-                           llu_i2info(inode)->lli_smd != md.lsm) {
+		} else if (md.lsm != NULL) {
                         obd_free_memmd(sbi->ll_dt_exp, &md.lsm);
                 }
 
@@ -362,11 +355,8 @@ static int lookup_it_finish(struct ptlrpc_request *request, int offset,
 
                 /* If this is a stat, get the authoritative file size */
                 if (it->it_op == IT_GETATTR && S_ISREG(st->st_mode) &&
-                    lli->lli_smd != NULL) {
-                        struct lov_stripe_md *lsm = lli->lli_smd;
+		    lli->lli_has_smd) {
                         ldlm_error_t rc;
-
-                        LASSERT(lsm->lsm_object_id != 0);
 
                         /* bug 2334: drop MDS lock before acquiring OST lock */
                         ll_intent_drop_lock(it);
@@ -388,21 +378,6 @@ static int lookup_it_finish(struct ptlrpc_request *request, int offset,
         child->p_base->pb_ino = inode;
 
         RETURN(0);
-}
-
-struct inode *llu_inode_from_resource(struct ldlm_lock *lock)
-{
-        struct inode *inode;
-        lock_res_and_lock(lock);
-
-        if (lock->l_resource->lr_lvb_inode) {
-                inode = (struct inode *)lock->l_resource->lr_lvb_inode;
-                I_REF(inode);
-        } else
-                inode = NULL;
-
-        unlock_res_and_lock(lock);
-        return inode;
 }
 
 struct inode *llu_inode_from_lock(struct ldlm_lock *lock)

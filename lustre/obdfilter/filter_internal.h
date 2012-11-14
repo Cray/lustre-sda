@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -115,6 +113,24 @@ enum {
         LPROC_FILTER_LAST,
 };
 
+/* for job stats */
+enum {
+	LPROC_FILTER_STATS_READ = 0,
+	LPROC_FILTER_STATS_WRITE = 1,
+	LPROC_FILTER_STATS_SETATTR = 2,
+	LPROC_FILTER_STATS_PUNCH = 3,
+	LPROC_FILTER_STATS_SYNC = 4,
+	LPROC_FILTER_STATS_LAST,
+};
+
+static inline void filter_counter_incr(struct obd_export *exp, int opcode,
+				       char *jobid, long amount)
+{
+	if (exp->exp_obd && exp->exp_obd->u.obt.obt_jobstats.ojs_hash &&
+	    (exp->exp_connect_flags & OBD_CONNECT_JOBSTATS))
+		lprocfs_job_stats_log(exp->exp_obd, jobid, opcode, amount);
+}
+
 //#define FILTER_MAX_CACHE_SIZE (32 * 1024 * 1024) /* was OBD_OBJECT_EOF */
 #define FILTER_MAX_CACHE_SIZE OBD_OBJECT_EOF
 
@@ -146,16 +162,17 @@ int filter_update_server_data(struct obd_device *);
 int filter_update_last_objid(struct obd_device *, obd_seq, int force_sync);
 int filter_common_setup(struct obd_device *, struct lustre_cfg *lcfg,
                         void *option);
-int filter_destroy(struct obd_export *exp, struct obdo *oa,
-                   struct lov_stripe_md *md, struct obd_trans_info *,
-                   struct obd_export *, void *);
+int filter_destroy(const struct lu_env *env, struct obd_export *exp,
+                   struct obdo *oa, struct lov_stripe_md *md,
+                   struct obd_trans_info *, struct obd_export *, void *);
 int filter_setattr_internal(struct obd_export *exp, struct dentry *dentry,
                             struct obdo *oa, struct obd_trans_info *oti);
-int filter_setattr(struct obd_export *exp, struct obd_info *oinfo,
-                   struct obd_trans_info *oti);
+int filter_setattr(const struct lu_env *env, struct obd_export *exp,
+                   struct obd_info *oinfo, struct obd_trans_info *oti);
 
-int filter_create(struct obd_export *exp, struct obdo *oa,
-                  struct lov_stripe_md **ea, struct obd_trans_info *oti);
+int filter_create(const struct lu_env *env, struct obd_export *exp,
+                  struct obdo *oa, struct lov_stripe_md **ea,
+                  struct obd_trans_info *oti);
 
 struct obd_llog_group *filter_find_olg(struct obd_device *obd, int seq);
 
@@ -164,20 +181,34 @@ extern struct ldlm_valblock_ops filter_lvbo;
 
 
 /* filter_io.c */
-int filter_preprw(int cmd, struct obd_export *, struct obdo *, int objcount,
+int filter_preprw(const struct lu_env *env, int cmd, struct obd_export *,
+                  struct obdo *, int objcount,
                   struct obd_ioobj *, struct niobuf_remote *,
                   int *, struct niobuf_local *, struct obd_trans_info *,
                   struct lustre_capa *);
-int filter_commitrw(int cmd, struct obd_export *, struct obdo *, int objcount,
+int filter_commitrw(const struct lu_env *, int cmd, struct obd_export *,
+                    struct obdo *, int objcount,
                     struct obd_ioobj *, struct niobuf_remote *,  int,
                     struct niobuf_local *, struct obd_trans_info *, int rc);
-int filter_brw(int cmd, struct obd_export *, struct obd_info *oinfo,
-               obd_count oa_bufs, struct brw_page *pga, struct obd_trans_info *);
 void filter_release_cache(struct obd_device *, struct obd_ioobj *,
                           struct niobuf_remote *, struct inode *);
 
 /* filter_io_*.c */
-struct filter_iobuf;
+struct filter_iobuf {
+	cfs_hlist_node_t	dr_hlist;
+	__u64			dr_hkey;
+	/* number of reqs being processed */
+	cfs_atomic_t		dr_numreqs;
+	cfs_waitq_t		dr_wait;
+	int			dr_max_pages;
+	int			dr_npages;
+	int			dr_error;
+	unsigned int		dr_ignore_quota:1;
+	struct page		**dr_pages;
+	unsigned long		*dr_blocks;
+	struct filter_obd	*dr_filter;
+};
+
 int filter_commitrw_write(struct obd_export *exp, struct obdo *oa, int objcount,
                           struct obd_ioobj *obj, struct niobuf_remote *, int,
                           struct niobuf_local *res, struct obd_trans_info *oti,
@@ -221,6 +252,7 @@ void filter_tally(struct obd_export *exp, struct page **pages, int nr_pages,
                   unsigned long *blocks, int blocks_per_page, int wr);
 int lproc_filter_attach_seqstat(struct obd_device *dev);
 void lprocfs_filter_init_vars(struct lprocfs_static_vars *lvars);
+void filter_stats_counter_init(struct lprocfs_stats *stats);
 #else
 static inline void filter_tally(struct obd_export *exp, struct page **pages,
                                 int nr_pages, unsigned long *blocks,
@@ -230,6 +262,7 @@ static void lprocfs_filter_init_vars(struct lprocfs_static_vars *lvars)
 {
         memset(lvars, 0, sizeof(*lvars));
 }
+static inline void filter_stats_counter_init(struct lprocfs_stats *stats) {}
 #endif
 
 /* Quota stuff */

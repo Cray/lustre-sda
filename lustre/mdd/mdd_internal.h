@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -54,6 +52,8 @@
 # include <lustre_quota.h>
 #endif
 #include <lustre_fsfilt.h>
+#include <lustre/lustre_lfsck_user.h>
+#include <lustre_fid.h>
 
 #ifdef HAVE_QUOTA_SUPPORT
 /* quota stuff */
@@ -98,6 +98,30 @@ struct mdd_dot_lustre_objs {
         struct mdd_object *mdd_obf;
 };
 
+extern const char lfsck_bookmark_name[];
+
+struct md_lfsck {
+	cfs_mutex_t	      ml_mutex;
+	cfs_spinlock_t	      ml_lock;
+	struct ptlrpc_thread  ml_thread;
+	struct dt_object     *ml_bookmark_obj;
+	struct dt_object     *ml_it_obj;
+	__u32		      ml_new_scanned;
+	/* Arguments for low layer iteration. */
+	__u32		      ml_args;
+
+	/* Raw value for LFSCK speed limit. */
+	__u32		      ml_speed_limit;
+
+	/* Schedule for every N objects. */
+	__u32		      ml_sleep_rate;
+
+	/* Sleep N jiffies for each schedule. */
+	__u32		      ml_sleep_jif;
+	__u16		      ml_version;
+	unsigned int	      ml_paused:1; /* The lfsck is paused. */
+};
+
 struct mdd_device {
         struct md_device                 mdd_md_dev;
         struct dt_device                *mdd_child;
@@ -113,7 +137,8 @@ struct mdd_device {
         unsigned long                    mdd_atime_diff;
         struct mdd_object               *mdd_dot_lustre;
         struct mdd_dot_lustre_objs       mdd_dot_lustre_objs;
-        unsigned int                     mdd_sync_permission;
+	struct md_lfsck			 mdd_lfsck;
+	unsigned int			 mdd_sync_permission;
 };
 
 enum mod_flags {
@@ -155,6 +180,9 @@ struct mdd_thread_info {
         struct lu_attr            mti_la_for_fix;
         struct md_attr            mti_ma;
         struct obd_info           mti_oi;
+	/* mti_orph_ent and mti_orph_key must be conjoint,
+	 * then mti_orph_ent::lde_name will be mti_orph_key. */
+	struct lu_dirent	  mti_orph_ent;
         char                      mti_orph_key[NAME_MAX + 1];
         struct obd_trans_info     mti_oti;
         struct lu_buf             mti_buf;
@@ -175,6 +203,7 @@ extern const char orph_index_name[];
 
 extern const struct dt_index_features orph_index_features;
 
+struct lov_mds_md *mdd_max_lmm_buffer(const struct lu_env *env, int size);
 struct lov_mds_md *mdd_max_lmm_get(const struct lu_env *env,
                                    struct mdd_device *mdd);
 
@@ -220,6 +249,10 @@ int mdd_get_md_locked(const struct lu_env *env, struct mdd_object *obj,
 int mdd_data_get(const struct lu_env *env, struct mdd_object *obj, void **data);
 int mdd_la_get(const struct lu_env *env, struct mdd_object *obj,
                struct lu_attr *la, struct lustre_capa *capa);
+int mdd_attr_get(const struct lu_env *env, struct md_object *obj,
+		 struct md_attr *ma);
+int mdd_attr_set(const struct lu_env *env, struct md_object *obj,
+		 const struct md_attr *ma);
 int mdd_attr_set_internal(const struct lu_env *env,
                           struct mdd_object *obj,
                           struct lu_attr *attr,
@@ -318,6 +351,10 @@ int mdd_get_cookie_size(const struct lu_env *env, struct mdd_device *mdd,
 int mdd_lov_setattr_async(const struct lu_env *env, struct mdd_object *obj,
                           struct lov_mds_md *lmm, int lmm_size,
                           struct llog_cookie *logcookies);
+
+int mdd_lovobj_unlink(const struct lu_env *env, struct mdd_device *mdd,
+		      struct mdd_object *obj, struct lu_attr *la,
+		      struct md_attr *ma, int log_unlink);
 
 struct mdd_thread_info *mdd_env_info(const struct lu_env *env);
 
@@ -430,6 +467,14 @@ int mdd_txn_stop_cb(const struct lu_env *env, struct thandle *txn,
 int mdd_txn_start_cb(const struct lu_env *env, struct thandle *,
                      void *cookie);
 
+/* mdd_lfsck.c */
+void mdd_lfsck_set_speed(struct md_lfsck *lfsck, __u32 limit);
+int mdd_lfsck_start(const struct lu_env *env, struct md_lfsck *lfsck,
+		    struct lfsck_start *start);
+int mdd_lfsck_stop(const struct lu_env *env, struct md_lfsck *lfsck);
+int mdd_lfsck_setup(const struct lu_env *env, struct mdd_device *mdd);
+void mdd_lfsck_cleanup(const struct lu_env *env, struct mdd_device *mdd);
+
 /* mdd_device.c */
 struct lu_object *mdd_object_alloc(const struct lu_env *env,
                                    const struct lu_object_header *hdr,
@@ -438,6 +483,9 @@ struct llog_changelog_rec;
 int mdd_changelog_llog_write(struct mdd_device         *mdd,
                              struct llog_changelog_rec *rec,
                              struct thandle            *handle);
+int mdd_changelog_ext_llog_write(struct mdd_device *mdd,
+				 struct llog_changelog_ext_rec *rec,
+				 struct thandle *handle);
 int mdd_changelog_llog_cancel(struct mdd_device *mdd, long long endrec);
 int mdd_changelog_write_header(struct mdd_device *mdd, int markerflags);
 int mdd_changelog_on(struct mdd_device *mdd, int on);
@@ -537,6 +585,11 @@ static inline const struct lu_fid *mdo2fid(const struct mdd_object *obj)
         return lu_object_fid(&obj->mod_obj.mo_lu);
 }
 
+static inline int mdd_object_obf(const struct mdd_object *obj)
+{
+	return lu_fid_eq(mdo2fid(obj), &LU_OBF_FID);
+}
+
 static inline cfs_umode_t mdd_object_type(const struct mdd_object *obj)
 {
         return lu_object_attr(&obj->mod_obj.mo_lu);
@@ -604,7 +657,7 @@ static inline void mdd_set_capainfo(const struct lu_env *env, int offset,
         struct md_capainfo *ci = md_capainfo(env);
         const struct lu_fid *fid = mdo2fid(obj);
 
-        LASSERT(offset >= 0 && offset <= MD_CAPAINFO_MAX);
+	LASSERT(offset >= 0 && offset < MD_CAPAINFO_MAX);
         /* NB: in mdt_init0 */
         if (!ci)
                 return;

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -71,12 +69,6 @@
 /* 2.6 alloc_page users can use page->lru */
 #define PAGE_LIST_ENTRY lru
 #define PAGE_LIST(page) ((page)->lru)
-
-#ifndef HAVE_CPU_ONLINE
-#define cfs_cpu_online(cpu) ((1<<cpu) & (cpu_online_map))
-#else
-#define cfs_cpu_online(cpu) cpu_online(cpu)
-#endif
 
 #ifndef __user
 #define __user

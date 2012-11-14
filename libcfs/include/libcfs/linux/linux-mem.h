@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -138,11 +136,7 @@ extern void cfs_free_page(cfs_page_t *page);
  * SLAB allocator
  * XXX Liang: move these declare to public file
  */
-#ifdef HAVE_KMEM_CACHE
 typedef struct kmem_cache cfs_mem_cache_t;
-#else
-typedef kmem_cache_t cfs_mem_cache_t;
-#endif
 extern cfs_mem_cache_t * cfs_mem_cache_create (const char *, size_t, size_t, unsigned long);
 extern int cfs_mem_cache_destroy ( cfs_mem_cache_t * );
 extern void *cfs_mem_cache_alloc ( cfs_mem_cache_t *, int);
@@ -157,6 +151,24 @@ extern int cfs_mem_is_in_cache(const void *addr, const cfs_mem_cache_t *kmem);
 #define CFS_SLAB_HWCACHE_ALIGN          SLAB_HWCACHE_ALIGN
 #define CFS_SLAB_KERNEL                 SLAB_KERNEL
 #define CFS_SLAB_NOFS                   SLAB_NOFS
+
+/*
+ * NUMA allocators
+ *
+ * NB: we will rename these functions in a separate patch:
+ * - rename cfs_alloc to cfs_malloc
+ * - rename cfs_alloc/free_page to cfs_page_alloc/free
+ * - rename cfs_alloc/free_large to cfs_vmalloc/vfree
+ */
+extern void *cfs_cpt_malloc(struct cfs_cpt_table *cptab, int cpt,
+			    size_t nr_bytes, unsigned int flags);
+extern void *cfs_cpt_vmalloc(struct cfs_cpt_table *cptab, int cpt,
+			     size_t nr_bytes);
+extern cfs_page_t *cfs_page_cpt_alloc(struct cfs_cpt_table *cptab,
+				      int cpt, unsigned int flags);
+extern void *cfs_mem_cache_cpt_alloc(cfs_mem_cache_t *cachep,
+				     struct cfs_cpt_table *cptab,
+				     int cpt, unsigned int flags);
 
 /*
  * Shrinker

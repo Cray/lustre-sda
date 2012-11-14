@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -64,6 +62,23 @@
 #include <obd_cksum.h>
 #include "llite_internal.h"
 #include <linux/lustre_compat25.h>
+
+/* this isn't where truncate starts.   roughly:
+ * sys_truncate->ll_setattr_raw->vmtruncate->ll_truncate. setattr_raw grabs
+ * DLM lock on [size, EOF], i_mutex, ->lli_size_sem, and WRITE_I_ALLOC_SEM to
+ * avoid races.
+ *
+ * must be called under ->lli_size_sem */
+void ll_truncate(struct inode *inode)
+{
+        ENTRY;
+
+        CDEBUG(D_VFSTRACE, "VFS Op:inode=%lu/%u(%p) to %llu\n", inode->i_ino,
+               inode->i_generation, inode, i_size_read(inode));
+
+        EXIT;
+        return;
+} /* ll_truncate */
 
 /**
  * Finalizes cl-data before exiting typical address_space operation. Dual to
@@ -124,7 +139,21 @@ static struct ll_cl_context *ll_cl_init(struct file *file,
         cio = ccc_env_io(env);
         io = cio->cui_cl.cis_io;
         if (io == NULL && create) {
-                loff_t pos;
+		struct inode *inode = vmpage->mapping->host;
+		loff_t pos;
+
+		if (mutex_trylock(&inode->i_mutex)) {
+			mutex_unlock(&(inode)->i_mutex);
+
+			/* this is too bad. Someone is trying to write the
+			 * page w/o holding inode mutex. This means we can
+			 * add dirty pages into cache during truncate */
+			CERROR("Proc %s is dirting page w/o inode lock, this"
+			       "will break truncate.\n", cfs_current()->comm);
+			libcfs_debug_dumpstack(NULL);
+			LBUG();
+			return ERR_PTR(-EIO);
+		}
 
                 /*
                  * Loop-back driver calls ->prepare_write() and ->sendfile()
@@ -520,7 +549,7 @@ static int ll_read_ahead_page(const struct lu_env *env, struct cl_io *io,
 #ifdef __GFP_NOWARN
         gfp_mask |= __GFP_NOWARN;
 #endif
-        vmpage = grab_cache_page_nowait_gfp(mapping, index, gfp_mask);
+        vmpage = grab_cache_page_nowait(mapping, index);
         if (vmpage != NULL) {
                 /* Check if vmpage was truncated or reclaimed */
                 if (vmpage->mapping == mapping) {
@@ -1130,32 +1159,33 @@ out_unlock:
 
 int ll_writepage(struct page *vmpage, struct writeback_control *wbc)
 {
-        struct inode           *inode = vmpage->mapping->host;
+	struct inode	       *inode = vmpage->mapping->host;
+	struct ll_inode_info   *lli   = ll_i2info(inode);
         struct lu_env          *env;
         struct cl_io           *io;
         struct cl_page         *page;
         struct cl_object       *clob;
-        struct cl_2queue       *queue;
         struct cl_env_nest      nest;
+	bool redirtied = false;
+	bool unlocked = false;
         int result;
         ENTRY;
 
         LASSERT(PageLocked(vmpage));
         LASSERT(!PageWriteback(vmpage));
 
-        if (ll_i2dtexp(inode) == NULL)
-                RETURN(-EINVAL);
+	LASSERT(ll_i2dtexp(inode) != NULL);
 
-        env = cl_env_nested_get(&nest);
-        if (IS_ERR(env))
-                RETURN(PTR_ERR(env));
+	env = cl_env_nested_get(&nest);
+	if (IS_ERR(env))
+		GOTO(out, result = PTR_ERR(env));
 
-        queue = &vvp_env_info(env)->vti_queue;
         clob  = ll_i2info(inode)->lli_clob;
         LASSERT(clob != NULL);
 
         io = ccc_env_thread_io(env);
         io->ci_obj = clob;
+	io->ci_ignore_layout = 1;
         result = cl_io_init(env, io, CIT_MISC, clob);
         if (result == 0) {
                 page = cl_page_find(env, clob, vmpage->index,
@@ -1164,39 +1194,101 @@ int ll_writepage(struct page *vmpage, struct writeback_control *wbc)
                         lu_ref_add(&page->cp_reference, "writepage",
                                    cfs_current());
                         cl_page_assume(env, io, page);
-                        /*
-                         * Mark page dirty, because this is what
-                         * ->vio_submit()->cpo_prep_write() assumes.
-                         *
-                         * XXX better solution is to detect this from within
-                         * cl_io_submit_rw() somehow.
-                         */
-                        set_page_dirty(vmpage);
-                        cl_2queue_init_page(queue, page);
-                        result = cl_io_submit_rw(env, io, CRT_WRITE,
-                                                 queue, CRP_NORMAL);
-                        if (result != 0) {
-                                /*
-                                 * Re-dirty page on error so it retries write,
-                                 * but not in case when IO has actually
-                                 * occurred and completed with an error.
-                                 */
-                                if (!PageError(vmpage)) {
-                                        redirty_page_for_writepage(wbc, vmpage);
-                                        result = 0;
-                                }
-                        }
-                        cl_page_list_disown(env, io, &queue->c2_qin);
-                        LASSERT(!cl_page_is_owned(page, io));
+			result = cl_page_flush(env, io, page);
+			if (result != 0) {
+				/*
+				 * Re-dirty page on error so it retries write,
+				 * but not in case when IO has actually
+				 * occurred and completed with an error.
+				 */
+				if (!PageError(vmpage)) {
+					redirty_page_for_writepage(wbc, vmpage);
+					result = 0;
+					redirtied = true;
+				}
+			}
+			cl_page_disown(env, io, page);
+			unlocked = true;
                         lu_ref_del(&page->cp_reference,
                                    "writepage", cfs_current());
                         cl_page_put(env, page);
-                        cl_2queue_fini(env, queue);
-                }
+		} else {
+			result = PTR_ERR(page);
+		}
         }
         cl_io_fini(env, io);
+
+	if (redirtied && wbc->sync_mode == WB_SYNC_ALL) {
+		loff_t offset = cl_offset(clob, vmpage->index);
+
+		/* Flush page failed because the extent is being written out.
+		 * Wait for the write of extent to be finished to avoid
+		 * breaking kernel which assumes ->writepage should mark
+		 * PageWriteback or clean the page. */
+		result = cl_sync_file_range(inode, offset,
+					    offset + CFS_PAGE_SIZE - 1,
+					    CL_FSYNC_LOCAL);
+		if (result > 0) {
+			/* actually we may have written more than one page.
+			 * decreasing this page because the caller will count
+			 * it. */
+			wbc->nr_to_write -= result - 1;
+			result = 0;
+		}
+	}
+
         cl_env_nested_put(&nest, env);
-        RETURN(result);
+	GOTO(out, result);
+
+out:
+	if (result < 0) {
+		if (!lli->lli_async_rc)
+			lli->lli_async_rc = result;
+		SetPageError(vmpage);
+		if (!unlocked)
+			unlock_page(vmpage);
+	}
+	return result;
+}
+
+int ll_writepages(struct address_space *mapping, struct writeback_control *wbc)
+{
+	struct inode *inode = mapping->host;
+	loff_t start;
+	loff_t end;
+	enum cl_fsync_mode mode;
+	int range_whole = 0;
+	int result;
+	ENTRY;
+
+	if (wbc->range_cyclic) {
+		start = mapping->writeback_index << CFS_PAGE_SHIFT;
+		end = OBD_OBJECT_EOF;
+	} else {
+		start = wbc->range_start;
+		end = wbc->range_end;
+		if (end == LLONG_MAX) {
+			end = OBD_OBJECT_EOF;
+			range_whole = start == 0;
+		}
+	}
+
+	mode = CL_FSYNC_NONE;
+	if (wbc->sync_mode == WB_SYNC_ALL)
+		mode = CL_FSYNC_LOCAL;
+
+	result = cl_sync_file_range(inode, start, end, mode);
+	if (result > 0) {
+		wbc->nr_to_write -= result;
+		result = 0;
+	 }
+
+	if (wbc->range_cyclic || (range_whole && wbc->nr_to_write > 0)) {
+		if (end == OBD_OBJECT_EOF)
+			end = i_size_read(inode);
+		mapping->writeback_index = (end >> CFS_PAGE_SHIFT) + 1;
+	}
+	RETURN(result);
 }
 
 int ll_readpage(struct file *file, struct page *vmpage)
@@ -1217,7 +1309,7 @@ int ll_readpage(struct file *file, struct page *vmpage)
                         result = cl_io_read_page(env, io, page);
                 } else {
                         /* Page from a non-object file. */
-                        LASSERT(!ll_i2info(vmpage->mapping->host)->lli_smd);
+			LASSERT(!ll_i2info(vmpage->mapping->host)->lli_has_smd);
                         unlock_page(vmpage);
                         result = 0;
                 }

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,7 +26,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -131,7 +129,7 @@ enum {
 #define CFS_FAIL_GNI_SCHEDULE_COMPLETE  0xf049
 #define CFS_FAIL_GNI_PUT_ACK_AGAIN      0xf050
 #define CFS_FAIL_GNI_GET_REQ_AGAIN      0xf051
-#define CFS_FAIL_GNI_SCHED_DEADLINE	0xf052
+#define CFS_FAIL_GNI_SCHED_DEADLINE     0xf052
 
 /* Failure injection control */
 #define CFS_FAIL_MASK_SYS    0x0000FF00
@@ -155,35 +153,51 @@ enum {
                               (cfs_fail_loc & CFS_FAIL_MASK_LOC) ==           \
                               ((id) & CFS_FAIL_MASK_LOC))
 
-static inline int cfs_fail_check_set(__u32 id, __u32 value, int set)
+static inline int cfs_fail_check_set(__u32 id, __u32 value,
+				     int set, int quiet)
 {
-        int ret = 0;
+	int ret = 0;
 
-        if (unlikely(CFS_FAIL_PRECHECK(id) &&
-                     (ret = __cfs_fail_check_set(id, value, set))))
-                LCONSOLE_INFO("*** cfs_fail_loc=%x, val=%u***\n", id, value);
+	if (unlikely(CFS_FAIL_PRECHECK(id) &&
+		     (ret = __cfs_fail_check_set(id, value, set)))) {
+		if (quiet) {
+			CDEBUG(D_INFO, "*** cfs_fail_loc=%x, val=%u***\n",
+			       id, value);
+		} else {
+			LCONSOLE_INFO("*** cfs_fail_loc=%x, val=%u***\n",
+				      id, value);
+		}
+	}
 
-        return ret;
+	return ret;
 }
 
 /* If id hit cfs_fail_loc, return 1, otherwise return 0 */
 #define CFS_FAIL_CHECK(id) \
-        cfs_fail_check_set(id, 0, CFS_FAIL_LOC_NOSET)
+	cfs_fail_check_set(id, 0, CFS_FAIL_LOC_NOSET, 0)
+#define CFS_FAIL_CHECK_QUIET(id) \
+	cfs_fail_check_set(id, 0, CFS_FAIL_LOC_NOSET, 1)
 
 /* If id hit cfs_fail_loc and cfs_fail_val == (-1 or value) return 1,
  * otherwise return 0 */
 #define CFS_FAIL_CHECK_VALUE(id, value) \
-        cfs_fail_check_set(id, value, CFS_FAIL_LOC_VALUE)
+	cfs_fail_check_set(id, value, CFS_FAIL_LOC_VALUE, 0)
+#define CFS_FAIL_CHECK_VALUE_QUIET(id, value) \
+	cfs_fail_check_set(id, value, CFS_FAIL_LOC_VALUE, 1)
 
 /* If id hit cfs_fail_loc, cfs_fail_loc |= value and return 1,
  * otherwise return 0 */
 #define CFS_FAIL_CHECK_ORSET(id, value) \
-        cfs_fail_check_set(id, value, CFS_FAIL_LOC_ORSET)
+	cfs_fail_check_set(id, value, CFS_FAIL_LOC_ORSET, 0)
+#define CFS_FAIL_CHECK_ORSET_QUIET(id, value) \
+	cfs_fail_check_set(id, value, CFS_FAIL_LOC_ORSET, 1)
 
 /* If id hit cfs_fail_loc, cfs_fail_loc = value and return 1,
  * otherwise return 0 */
 #define CFS_FAIL_CHECK_RESET(id, value) \
-        cfs_fail_check_set(id, value, CFS_FAIL_LOC_RESET)
+	cfs_fail_check_set(id, value, CFS_FAIL_LOC_RESET, 0)
+#define CFS_FAIL_CHECK_RESET_QUIET(id, value) \
+	cfs_fail_check_set(id, value, CFS_FAIL_LOC_RESET, 1)
 
 static inline int cfs_fail_timeout_set(__u32 id, __u32 value, int ms, int set)
 {

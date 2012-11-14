@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2009, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -221,6 +219,9 @@ struct iam_frame {
         iam_ptr_t         curidx;  /* (logical) offset of this node. Used to
                                     * per-node locking to detect concurrent
                                     * splits. */
+	unsigned int      at_shifted:1; /* The "at" entry has moved to next
+					 * because of shrinking index node
+					 * for recycling empty leaf node. */
 };
 
 /*
@@ -376,6 +377,8 @@ struct iam_leaf_operations {
         int (*key_cmp)(const struct iam_leaf *l, const struct iam_key *k);
         int (*key_eq)(const struct iam_leaf *l, const struct iam_key *k);
 
+	int (*rec_eq)(const struct iam_leaf *l, const struct iam_rec *r);
+
         int (*key_size)(const struct iam_leaf *l);
         /*
          * Search leaf @l for a record with key @k or for a place
@@ -403,6 +406,10 @@ struct iam_leaf_operations {
          */
         void (*split)(struct iam_leaf *l, struct buffer_head **bh,
                       iam_ptr_t newblknr);
+	/*
+	 * the leaf is empty?
+	 */
+	int (*leaf_empty)(struct iam_leaf *l);
 };
 
 /*
@@ -441,6 +448,20 @@ struct iam_descr {
         struct iam_leaf_operations      *id_leaf_ops;
 };
 
+enum {
+	IAM_IDLE_HEADER_MAGIC = 0x7903,
+};
+
+/*
+ * Header structure to record idle blocks.
+ */
+struct iam_idle_head {
+	__le16 iih_magic;
+	__le16 iih_count; /* how many idle blocks in this head */
+	__le32 iih_next; /* next head for idle blocks */
+	__le32 iih_blks[0];
+};
+
 /*
  * An instance of iam container.
  */
@@ -462,6 +483,16 @@ struct iam_container {
          * read-write lock protecting index consistency.
          */
         cfs_rw_semaphore_t   ic_sem;
+	struct dynlock       ic_tree_lock;
+	/*
+	 * Protect ic_idle_bh
+	 */
+	cfs_semaphore_t      ic_idle_sem;
+	/*
+	 * BH for idle blocks
+	 */
+	struct buffer_head  *ic_idle_bh;
+	unsigned int	     ic_idle_failed:1; /* Idle block mechanism failed */
 };
 
 /*
@@ -819,8 +850,8 @@ struct fake_dirent {
 };
 
 struct dx_countlimit {
-        __le16 limit;
-        __le16 count;
+	__le16 limit;
+	__le16 count;
 };
 
 /*
@@ -910,18 +941,12 @@ static inline struct iam_ikey *iam_path_ikey(const struct iam_path *path,
         return path->ip_data->ipd_key_scratch[nr];
 }
 
-
-static inline struct dynlock *path_dynlock(struct iam_path *path)
-{
-        return &LDISKFS_I(iam_path_obj(path))->i_htree_lock;
-}
-
 static inline int iam_leaf_is_locked(const struct iam_leaf *leaf)
 {
         int result;
 
-        result = dynlock_is_locked(path_dynlock(leaf->il_path),
-                                   leaf->il_curidx);
+	result = dynlock_is_locked(&iam_leaf_container(leaf)->ic_tree_lock,
+				   leaf->il_curidx);
         if (!result)
                 dump_stack();
         return result;
@@ -932,7 +957,8 @@ static inline int iam_frame_is_locked(struct iam_path *path,
 {
         int result;
 
-        result = dynlock_is_locked(path_dynlock(path), frame->curidx);
+	result = dynlock_is_locked(&path->ip_container->ic_tree_lock,
+				   frame->curidx);
         if (!result)
                 dump_stack();
         return result;

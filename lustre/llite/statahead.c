@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -47,7 +45,6 @@
 #include <obd_support.h>
 #include <lustre_lite.h>
 #include <lustre_dlm.h>
-#include <linux/lustre_version.h>
 #include "llite_internal.h"
 
 #define SA_OMITTED_ENTRY_MAX 8ULL
@@ -86,7 +83,7 @@ struct ll_sa_entry {
 };
 
 static unsigned int sai_generation = 0;
-static cfs_spinlock_t sai_generation_lock = CFS_SPIN_LOCK_UNLOCKED(sai_generation_lock);
+static DEFINE_SPINLOCK(sai_generation_lock);
 
 static inline int ll_sa_entry_unlinked(struct ll_sa_entry *entry)
 {
@@ -141,10 +138,10 @@ ll_sa_entry_unhash(struct ll_statahead_info *sai, struct ll_sa_entry *entry)
 static inline int agl_should_run(struct ll_statahead_info *sai,
                                  struct inode *inode)
 {
-        if (inode != NULL && S_ISREG(inode->i_mode) &&
-            ll_i2info(inode)->lli_smd != NULL && sai->sai_agl_valid)
-                return 1;
-        return 0;
+	if (inode != NULL && S_ISREG(inode->i_mode) &&
+	    ll_i2info(inode)->lli_has_smd && sai->sai_agl_valid)
+		return 1;
+	return 0;
 }
 
 static inline struct ll_sa_entry *

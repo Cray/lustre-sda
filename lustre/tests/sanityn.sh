@@ -3,8 +3,8 @@
 set -e
 
 ONLY=${ONLY:-"$*"}
-# bug number for skipped test: 3192 15528/3811 16929 9977 15528/11549 18080
-ALWAYS_EXCEPT="                14b  19         22    28   29          35    $SANITYN_EXCEPT"
+# bug number for skipped test: 3192 LU-1205 15528/3811 16929 9977 15528/11549 18080
+ALWAYS_EXCEPT="                14b  18c     19         22    28   29          35    $SANITYN_EXCEPT"
 # UPDATE THE COMMENT ABOVE WITH BUG NUMBERS WHEN CHANGING ALWAYS_EXCEPT!
 
 # bug number for skipped test:        12652 12652
@@ -22,11 +22,10 @@ PATH=$PWD/$SRCDIR:$SRCDIR:$SRCDIR/../utils:$PATH
 
 SIZE=${SIZE:-40960}
 CHECKSTAT=${CHECKSTAT:-"checkstat -v"}
-GETSTRIPE=${GETSTRIPE:-lfs getstripe}
-SETSTRIPE=${SETSTRIPE:-lstripe}
 MCREATE=${MCREATE:-mcreate}
 OPENFILE=${OPENFILE:-openfile}
 OPENUNLINK=${OPENUNLINK:-openunlink}
+export MULTIOP=${MULTIOP:-multiop}
 export TMP=${TMP:-/tmp}
 MOUNT_2=${MOUNT_2:-"yes"}
 CHECK_GRANT=${CHECK_GRANT:-"yes"}
@@ -272,7 +271,7 @@ test_14a() {
 	cp -p `which multiop` $DIR1/d14/multiop || error "cp failed"
         MULTIOP_PROG=$DIR1/d14/multiop multiop_bg_pause $TMP/test14.junk O_c || return 1
         MULTIOP_PID=$!
-        multiop $DIR2/d14/multiop Oc && error "expected error, got success"
+        $MULTIOP $DIR2/d14/multiop Oc && error "expected error, got success"
         kill -USR1 $MULTIOP_PID || return 2
         wait $MULTIOP_PID || return 3
         rm $TMP/test14.junk $DIR1/d14/multiop || error "removing multiop"
@@ -331,7 +330,8 @@ run_test 15 "test out-of-space with multiple writers ==========="
 test_16() {
 	rm -f $MOUNT1/fsxfile
 	lfs setstripe $MOUNT1/fsxfile -c -1 # b=10919
-	fsx -c 50 -p 100 -N 2500 -l $((SIZE * 256)) -S 0 $MOUNT1/fsxfile $MOUNT2/fsxfile
+	fsx -c 50 -p 100 -N 2500 -l $((SIZE * 256)) -S 0 $FSXOPT \
+		$MOUNT1/fsxfile $MOUNT2/fsxfile
 }
 run_test 16 "2500 iterations of dual-mount fsx ================="
 
@@ -351,7 +351,17 @@ test_17() { # bug 3513, 3667
 run_test 17 "resource creation/LVB creation race ==============="
 
 test_18() {
-	$LUSTRE/tests/mmap_sanity -d $MOUNT1 -m $MOUNT2
+        # turn e.g. ALWAYS_EXCEPT="18c" into "-e 3"
+        local idx
+        local excepts=
+        for idx in {a..z}; do
+                local ptr=EXCEPT_ALWAYS_18$idx
+                [ x${!ptr} = xtrue ] || continue
+
+                excepts="$excepts -e $(($(printf %d \'$idx)-96))"
+        done
+
+	$LUSTRE/tests/mmap_sanity -d $MOUNT1 -m $MOUNT2 $excepts
 	sync; sleep 1; sync
 }
 run_test 18 "mmap sanity check ================================="
@@ -384,9 +394,9 @@ test_20() {
 	mkdir $DIR1/d20
 	cancel_lru_locks osc
 	CNT=$((`lctl get_param -n llite.*.dump_page_cache | wc -l`))
-	multiop $DIR1/f20 Ow8190c
-	multiop $DIR2/f20 Oz8194w8190c
-	multiop $DIR1/f20 Oz0r8190c
+	$MULTIOP $DIR1/f20 Ow8190c
+	$MULTIOP $DIR2/f20 Oz8194w8190c
+	$MULTIOP $DIR1/f20 Oz0r8190c
 	cancel_lru_locks osc
 	CNTD=$((`lctl get_param -n llite.*.dump_page_cache | wc -l` - $CNT))
 	[ $CNTD -gt 0 ] && \
@@ -535,8 +545,8 @@ test_28() { # bug 9977
 	ECHO_UUID="ECHO_osc1_UUID"
 	tOST=`$LCTL dl | | awk '/-osc-|OSC.*MNT/ { print $4 }' | head -1`
 
-	lfs setstripe $DIR1/$tfile -s 1048576 -i 0 -c 2
-	tOBJID=`lfs getstripe $DIR1/$tfile |grep "^[[:space:]]\+1" |awk '{print $2}'`
+	$LFS setstripe $DIR1/$tfile -S 1048576 -i 0 -c 2
+	tOBJID=`$LFS getstripe $DIR1/$tfile | awk '$1 == 1 {print $2}'`
 	dd if=/dev/zero of=$DIR1/$tfile bs=1024k count=2
 
 	$LCTL <<-EOF
@@ -545,7 +555,7 @@ test_28() { # bug 9977
 		setup $tOST
 	EOF
 
-	tECHOID=`$LCTL dl | grep $ECHO_UUID | awk '{print $1}'`
+	tECHOID=`$LCTL dl | grep $ECHO_UUID | awk '{ print $1 }'`
 	$LCTL --device $tECHOID destroy "${tOBJID}:0"
 
     	$LCTL <<-EOF
@@ -889,38 +899,44 @@ test_35() { # bug 17645
 run_test 35 "-EINTR cp_ast vs. bl_ast race does not evict client"
 
 test_36() { #bug 16417
-    local SIZE
-    local SIZE_B
-    local i
+	local SIZE
+	local SIZE_B
+	local i
 
-    mkdir -p $DIR1/$tdir
-    $LFS setstripe -c -1 $DIR1/$tdir
-    i=0
-    SIZE=50
-    let SIZE_B=SIZE*1024*1024
+	mkdir -p $DIR1/$tdir
+	$LFS setstripe -c -1 $DIR1/$tdir
+	i=0
+	SIZE=50
+	let SIZE_B=SIZE*1024*1024
 
-    while [ $i -le 10 ]; do
-        lctl mark "start test"
-        local before=$($LFS df | awk '{if ($1 ~/^filesystem/) {print $5; exit} }')
-        dd if=/dev/zero of=$DIR1/$tdir/file000 bs=1M count=$SIZE
-        sync
-        sleep 1
-        local after_dd=$($LFS df | awk '{if ($1 ~/^filesystem/) {print $5; exit} }')
-        multiop_bg_pause $DIR2/$tdir/file000 O_r${SIZE_B}c || return 3
-        read_pid=$!
-        rm -f $DIR1/$tdir/file000
-        kill -USR1 $read_pid
-        wait $read_pid
-        sleep 1
-        local after=$($LFS df | awk '{if ($1 ~/^filesystem/) {print $5; exit} }')
-        echo "*** cycle($i) *** before($before):after_dd($after_dd):after($after)"
-        # this free space! not used
-        if [ $after_dd -ge $after ]; then
-            error "space leaked"
-            return 1;
-        fi
-        let i=i+1
-            done
+	while [ $i -le 10 ]; do
+		lctl mark "start test"
+		local before=$($LFS df | awk '{if ($1 ~/^filesystem/) \
+		                               {print $5; exit} }')
+		dd if=/dev/zero of=$DIR1/$tdir/file000 bs=1M count=$SIZE
+		sync          # sync data from client's cache
+		sync_all_data # sync data from server's cache (delayed
+		              # allocation)
+		sleep 1
+		local after_dd=$($LFS df | awk '{if ($1 ~/^filesystem/) \
+		                                 {print $5; exit} }')
+		multiop_bg_pause $DIR2/$tdir/file000 O_r${SIZE_B}c || return 3
+		read_pid=$!
+		rm -f $DIR1/$tdir/file000
+		kill -USR1 $read_pid
+		wait $read_pid
+		sleep 1
+		local after=$($LFS df | awk '{if ($1 ~/^filesystem/) \
+		                              {print $5; exit} }')
+		echo "*** cycle($i) *** before($before) after_dd($after_dd)" \
+			"after($after)"
+		# this free space! not used
+		if [ $after_dd -ge $after ]; then
+			error "space leaked"
+			return 1;
+		fi
+		let i=i+1
+	done
 }
 run_test 36 "handle ESTALE/open-unlink corectly"
 
@@ -1192,7 +1208,7 @@ run_test 40e "pdirops: rename and others =============="
 test_41a() {
 #define OBD_FAIL_ONCE|OBD_FAIL_MDS_PDO_LOCK    0x145
 	do_facet $SINGLEMDS lctl set_param fail_loc=0x80000145
-	multiop $DIR1/$tfile oO_CREAT:O_RDWR:c &
+	$MULTIOP $DIR1/$tfile oO_CREAT:O_RDWR:c &
 	PID1=$!
 	sleep 1
 	mkdir $DIR2/$tfile && error "mkdir must fail"
@@ -1205,10 +1221,10 @@ run_test 41a "pdirops: create vs mkdir =============="
 test_41b() {
 #define OBD_FAIL_ONCE|OBD_FAIL_MDS_PDO_LOCK    0x145
 	do_facet $SINGLEMDS lctl set_param fail_loc=0x80000145
-	multiop $DIR1/$tfile oO_CREAT:O_RDWR:c &
+	$MULTIOP $DIR1/$tfile oO_CREAT:O_RDWR:c &
 	PID1=$!
 	sleep 1
-	multiop $DIR2/$tfile oO_CREAT:O_EXCL:c && error "create must fail"
+	$MULTIOP $DIR2/$tfile oO_CREAT:O_EXCL:c && error "create must fail"
 	check_pdo_conflict $PID1 && { wait $PID1; error "create isn't blocked"; }
 	rm -r $DIR1/*
 	return 0
@@ -1219,7 +1235,7 @@ test_41c() {
 	touch $DIR1/$tfile-2
 #define OBD_FAIL_ONCE|OBD_FAIL_MDS_PDO_LOCK    0x145
 	do_facet $SINGLEMDS lctl set_param fail_loc=0x80000145
-	multiop $DIR1/$tfile oO_CREAT:O_RDWR:c &
+	$MULTIOP $DIR1/$tfile oO_CREAT:O_RDWR:c &
 	PID1=$!
 	sleep 1
 	link $DIR2/$tfile-2 $DIR2/$tfile && error "link must fail"
@@ -1232,7 +1248,7 @@ run_test 41c "pdirops: create vs link =============="
 test_41d() {
 #define OBD_FAIL_ONCE|OBD_FAIL_MDS_PDO_LOCK    0x145
 	do_facet $SINGLEMDS lctl set_param fail_loc=0x80000145
-	multiop $DIR1/$tfile oO_CREAT:O_RDWR:c &
+	$MULTIOP $DIR1/$tfile oO_CREAT:O_RDWR:c &
 	PID1=$!
 	sleep 1
 	rm $DIR2/$tfile || error "unlink must succeed"
@@ -1246,7 +1262,7 @@ test_41e() {
 	touch $DIR1/$tfile-2
 #define OBD_FAIL_ONCE|OBD_FAIL_MDS_PDO_LOCK    0x145
 	do_facet $SINGLEMDS lctl set_param fail_loc=0x80000145
-	multiop $DIR1/$tfile oO_CREAT:O_RDWR:c &
+	$MULTIOP $DIR1/$tfile oO_CREAT:O_RDWR:c &
 	PID1=$!
 	sleep 1
 	mv $DIR2/$tfile-2 $DIR2/$tfile || error "rename must succeed"
@@ -1259,7 +1275,7 @@ run_test 41e "pdirops: create and rename (tgt) =============="
 test_41f() {
 #define OBD_FAIL_ONCE|OBD_FAIL_MDS_PDO_LOCK    0x145
 	do_facet $SINGLEMDS lctl set_param fail_loc=0x80000145
-	multiop $DIR1/$tfile oO_CREAT:O_RDWR:c &
+	$MULTIOP $DIR1/$tfile oO_CREAT:O_RDWR:c &
 	PID1=$!
 	sleep 1
 	mv $DIR2/$tfile $DIR2/$tfile-2 || error "rename must succeed"
@@ -1272,7 +1288,7 @@ run_test 41f "pdirops: create and rename (src) =============="
 test_41g() {
 #define OBD_FAIL_ONCE|OBD_FAIL_MDS_PDO_LOCK    0x145
 	do_facet $SINGLEMDS lctl set_param fail_loc=0x80000145
-	multiop $DIR1/$tfile oO_CREAT:O_RDWR:c &
+	$MULTIOP $DIR1/$tfile oO_CREAT:O_RDWR:c &
 	PID1=$!
 	sleep 1
 	stat $DIR2/$tfile > /dev/null || error "stat must succeed"
@@ -1285,7 +1301,7 @@ run_test 41g "pdirops: create vs getattr =============="
 test_41h() {
 #define OBD_FAIL_ONCE|OBD_FAIL_MDS_PDO_LOCK    0x145
 	do_facet $SINGLEMDS lctl set_param fail_loc=0x80000145
-	multiop $DIR1/$tfile oO_CREAT:O_RDWR:c &
+	$MULTIOP $DIR1/$tfile oO_CREAT:O_RDWR:c &
 	PID1=$!
 	sleep 1
 	ls -lia $DIR2/ > /dev/null
@@ -1315,7 +1331,7 @@ test_42b() {
 	mkdir $DIR1/$tfile &
 	PID1=$!
 	sleep 1
-	multiop $DIR2/$tfile oO_CREAT:O_EXCL:c && error "create must fail"
+	$MULTIOP $DIR2/$tfile oO_CREAT:O_EXCL:c && error "create must fail"
 	check_pdo_conflict $PID1 && { wait $PID1; error "create isn't blocked"; }
 	rm -r $DIR1/*
 	return 0
@@ -1424,7 +1440,7 @@ test_43b() {
 	rm $DIR1/$tfile &
 	PID1=$!
 	sleep 1
-	multiop $DIR2/$tfile oO_CREAT:O_EXCL:c || error "create must succeed"
+	$MULTIOP $DIR2/$tfile oO_CREAT:O_EXCL:c || error "create must succeed"
 	check_pdo_conflict $PID1 && { wait $PID1; error "create isn't blocked"; }
 	rm -r $DIR1/*
 	return 0
@@ -1539,7 +1555,7 @@ test_44b() {
 	mv $DIR1/$tfile-2 $DIR1/$tfile &
 	PID1=$!
 	sleep 1
-	multiop $DIR2/$tfile oO_CREAT:O_EXCL:c && error "create must fail"
+	$MULTIOP $DIR2/$tfile oO_CREAT:O_EXCL:c && error "create must fail"
 	check_pdo_conflict $PID1 && { wait $PID1; error "create isn't blocked"; }
 	rm -r $DIR1/*
 	return 0
@@ -1656,7 +1672,7 @@ test_45b() {
 	mv $DIR1/$tfile $DIR1/$tfile-2 &
 	PID1=$!
 	sleep 1
-	multiop $DIR2/$tfile oO_CREAT:O_EXCL:c || error "create must succeed"
+	$MULTIOP $DIR2/$tfile oO_CREAT:O_EXCL:c || error "create must succeed"
 	check_pdo_conflict $PID1 && { wait $PID1; error "create isn't blocked"; }
 	rm -r $DIR1/*
 	return 0
@@ -1771,7 +1787,7 @@ test_46b() {
 	link $DIR1/$tfile-2 $DIR1/$tfile &
 	PID1=$!
 	sleep 1
-	multiop $DIR2/$tfile oO_CREAT:O_EXCL:c && error "create must fail"
+	$MULTIOP $DIR2/$tfile oO_CREAT:O_EXCL:c && error "create must fail"
 	check_pdo_conflict $PID1 && { wait $PID1; error "create isn't blocked"; }
 	rm -r $DIR1/*
 	return 0
@@ -1876,6 +1892,55 @@ test_50() {
         [ $size -eq $trunc_size ] || error "wrong size"
 }
 run_test 50 "osc lvb attrs: enqueue vs. CP AST =============="
+
+test_60() {
+	[[ $(lustre_version_code $SINGLEMDS) -ge $(version_code 2.3.0) ]] ||
+	{ skip "Need MDS version at least 2.3.0"; return; }
+	# Create a file
+	mkdir -p $DIR1/$tdir
+	file1=$DIR1/$tdir/file
+	file2=$DIR2/$tdir/file
+
+	echo orig > $file2 || error "Could not create $file2"
+	version=$($LFS data_version $file1)
+
+	# Append data
+	echo append >> $file2 || error "Could not append to $file2"
+	version2=$($LFS data_version $file1)
+	[ "$version" != "$version2" ] ||
+	    error "append did not change data version: $version"
+
+	# Overwrite data
+	echo overwrite > $file2 || error "Could not overwrite $file2"
+	version3=$($LFS data_version $file1)
+	[ "$version2" != "$version3" ] ||
+	    error "overwrite did not change data version: $version2"
+
+	# Truncate before EOF
+	$TRUNCATE $file2 3 || error "Could not truncate $file2"
+	version4=$($LFS data_version $file1)
+	[ "$version3" != "$version4" ] ||
+	    error "truncate did not change data version: $version3"
+
+	# Truncate after EOF
+	$TRUNCATE $file2 123456 || error "Could not truncate $file2"
+	version5=$($LFS data_version $file1)
+	[ "$version4" != "$version5" ] ||
+	    error "truncate did not change data version: $version4"
+
+	# Chmod do not change version
+	chmod 400 $file2 || error "Could not chmod 400 $file2"
+	version6=$($LFS data_version $file1)
+	[ "$version5" == "$version6" ] ||
+	    error "chmod should not change data version: $version5 != $version6"
+
+	# Chown do not change version
+	chown $RUNAS_ID $file2 || error "Could not chown $RUNAS_ID $file2"
+	version7=$($LFS data_version $file1)
+	[ "$version5" == "$version7" ] ||
+	    error "chown should not change data version: $version5 != $version7"
+}
+run_test 60 "Verify data_version behaviour"
 
 log "cleanup: ======================================================"
 

@@ -28,6 +28,8 @@
 # Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
 # Use is subject to license terms.
 #
+# Copyright (c) 2012, Intel Corporation.
+#
 
 #
 # This file is part of Lustre, http://www.lustre.org/
@@ -70,43 +72,43 @@ modulefs_DATA = ptlrpc$(KMODEXT)
 endif #LINUX
 
 if DARWIN
-macos_PROGRAMS := ptlrpc
+macos_PROGRAMS = ptlrpc
 
-ptlrpc_SOURCES := \
-        ptlrpc_module.c \
-        client.c \
-        connection.c \
-        events.c \
-        import.c \
-        llog_client.c \
-        llog_net.c \
-        llog_server.c \
-        lproc_ptlrpc.c \
-        niobuf.c \
-        pack_generic.c \
-        pers.c \
-        pinger.c \
-        ptlrpcd.c \
-        recover.c \
-        recov_thread.c \
-        service.c \
-	wiretest.c \
-	sec.c \
-	sec_bulk.c \
-	sec_gc.c \
-	sec_config.c \
-	sec_lproc.c \
-	sec_null.c \
-	sec_plain.c \
-        $(LDLM_COMM_SOURCES)
+ptlrpc_SOURCES =	\
+	ptlrpc_module.c	\
+	client.c	\
+	connection.c	\
+	events.c	\
+	import.c	\
+	llog_client.c	\
+	llog_net.c	\
+	llog_server.c	\
+	lproc_ptlrpc.c	\
+	niobuf.c	\
+	pack_generic.c	\
+	pers.c		\
+	pinger.c	\
+	ptlrpcd.c	\
+	recover.c	\
+	recov_thread.c	\
+	service.c	\
+	wiretest.c	\
+	sec.c		\
+	sec_bulk.c	\
+	sec_gc.c	\
+	sec_config.c	\
+	sec_lproc.c	\
+	sec_null.c	\
+	sec_plain.c	\
+	$(LDLM_COMM_SOURCES)
 
 ptlrpc_CFLAGS := $(EXTRA_KCFLAGS)
 ptlrpc_LDFLAGS := $(EXTRA_KLDFLAGS)
 ptlrpc_LDADD := $(EXTRA_KLIBS)
 
-plist_DATA := Info.plist
+plist_DATA = Info.plist
 
-install_data_hook := fix-kext-ownership
+install_data_hook = fix-kext-ownership
 
 endif # DARWIN
 

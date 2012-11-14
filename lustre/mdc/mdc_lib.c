@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -168,9 +166,10 @@ void mdc_create_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 
 static __u64 mds_pack_open_flags(__u32 flags, __u32 mode)
 {
-        __u64 cr_flags = (flags & (FMODE_READ | FMODE_WRITE |
-                                   MDS_OPEN_HAS_EA | MDS_OPEN_HAS_OBJS | 
-                                   MDS_OPEN_OWNEROVERRIDE | MDS_OPEN_LOCK));
+	__u64 cr_flags = (flags & (FMODE_READ | FMODE_WRITE |
+				   MDS_OPEN_HAS_EA | MDS_OPEN_HAS_OBJS |
+				   MDS_OPEN_OWNEROVERRIDE | MDS_OPEN_LOCK |
+				   MDS_OPEN_BY_FID));
         if (flags & O_CREAT)
                 cr_flags |= MDS_OPEN_CREAT;
         if (flags & O_EXCL)
@@ -328,7 +327,7 @@ void mdc_setattr_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
         struct mdt_rec_setattr *rec;
         struct mdt_ioepoch *epoch;
         struct lov_user_md *lum = NULL;
-        
+
         CLASSERT(sizeof(struct mdt_rec_reint) ==sizeof(struct mdt_rec_setattr));
         rec = req_capsule_client_get(&req->rq_pill, &RMF_REC_REINT);
         mdc_setattr_pack_rec(rec, op_data);

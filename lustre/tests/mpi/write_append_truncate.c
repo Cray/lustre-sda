@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -527,7 +527,6 @@ int main(int argc, char *argv[])
 
                         if (error == 1) {
                                 char command[4096];
-                                int rc;
 
                                 rprintf(rank, n, 0, STATUS_FMT"\n",
                                         write_char, write_size, write_size,
@@ -535,7 +534,7 @@ int main(int argc, char *argv[])
                                         trunc_offset, trunc_offset);
 
                                 sprintf(command, "od -Ax -a %s", fnames[0]);
-                                rc = system(command);
+                                ret = system(command);
                                 MPI_Abort(MPI_COMM_WORLD, 1);
                         }
                 }

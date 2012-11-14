@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -38,6 +36,7 @@
  * Implementation of cl_page for VVP layer.
  *
  *   Author: Nikita Danilov <nikita.danilov@sun.com>
+ *   Author: Jinshan Xiong <jinshan.xiong@whamcloud.com>
  */
 
 #define DEBUG_SUBSYSTEM S_LLITE
@@ -227,21 +226,15 @@ static int vvp_page_prep_write(const struct lu_env *env,
                                const struct cl_page_slice *slice,
                                struct cl_io *unused)
 {
-        struct cl_page *cp     = slice->cpl_page;
-        cfs_page_t     *vmpage = cl2vm_page(slice);
-        int result;
+	cfs_page_t *vmpage = cl2vm_page(slice);
 
-        if (clear_page_dirty_for_io(vmpage)) {
-                set_page_writeback(vmpage);
-                vvp_write_pending(cl2ccc(slice->cpl_obj), cl2ccc_page(slice));
-                result = 0;
+	LASSERT(PageLocked(vmpage));
+	LASSERT(!PageDirty(vmpage));
 
-                /* only turn on writeback for async write. */
-                if (cp->cp_sync_io == NULL)
-                        unlock_page(vmpage);
-        } else
-                result = -EALREADY;
-        return result;
+	set_page_writeback(vmpage);
+	vvp_write_pending(cl2ccc(slice->cpl_obj), cl2ccc_page(slice));
+
+	return 0;
 }
 
 /**
@@ -344,37 +337,32 @@ static void vvp_page_completion_write(const struct lu_env *env,
  * truncated. Skip it.
  */
 static int vvp_page_make_ready(const struct lu_env *env,
-                               const struct cl_page_slice *slice)
+			       const struct cl_page_slice *slice)
 {
-        cfs_page_t *vmpage = cl2vm_page(slice);
-        struct cl_page *pg = slice->cpl_page;
-        int result;
+	cfs_page_t *vmpage = cl2vm_page(slice);
+	struct cl_page *pg = slice->cpl_page;
+	int result = 0;
 
-        result = -EAGAIN;
-        /* we're trying to write, but the page is locked.. come back later */
-        if (!TestSetPageLocked(vmpage)) {
-                if (pg->cp_state == CPS_CACHED) {
-                        /*
-                         * We can cancel IO if page wasn't dirty after all.
-                         */
-                        clear_page_dirty_for_io(vmpage);
-                        /*
-                         * This actually clears the dirty bit in the radix
-                         * tree.
-                         */
-                        set_page_writeback(vmpage);
-                        vvp_write_pending(cl2ccc(slice->cpl_obj),
-                                          cl2ccc_page(slice));
-                        CL_PAGE_HEADER(D_PAGE, env, pg, "readied\n");
-                        result = 0;
-                } else
-                        /*
-                         * Page was concurrently truncated.
-                         */
-                        LASSERT(pg->cp_state == CPS_FREEING);
-                unlock_page(vmpage);
-        }
-        RETURN(result);
+	lock_page(vmpage);
+	if (clear_page_dirty_for_io(vmpage)) {
+		LASSERT(pg->cp_state == CPS_CACHED);
+		/* This actually clears the dirty bit in the radix
+		 * tree. */
+		set_page_writeback(vmpage);
+		vvp_write_pending(cl2ccc(slice->cpl_obj),
+				cl2ccc_page(slice));
+		CL_PAGE_HEADER(D_PAGE, env, pg, "readied\n");
+	} else if (pg->cp_state == CPS_PAGEOUT) {
+		/* is it possible for osc_flush_async_page() to already
+		 * make it ready? */
+		result = -EALREADY;
+	} else {
+		CL_PAGE_DEBUG(D_ERROR, env, pg, "Unexpecting page state %d.\n",
+			      pg->cp_state);
+		LBUG();
+	}
+	unlock_page(vmpage);
+	RETURN(result);
 }
 
 static int vvp_page_print(const struct lu_env *env,
@@ -429,10 +417,10 @@ static const struct cl_page_operations vvp_page_ops = {
 
 static void vvp_transient_page_verify(const struct cl_page *page)
 {
-        struct inode *inode = ccc_object_inode(page->cp_obj);
+	struct inode *inode = ccc_object_inode(page->cp_obj);
 
-        LASSERT(!TRYLOCK_INODE_MUTEX(inode));
-        /* LASSERT_SEM_LOCKED(&inode->i_alloc_sem); */
+	LASSERT(!mutex_trylock(&inode->i_mutex));
+	/* LASSERT_SEM_LOCKED(&inode->i_alloc_sem); */
 }
 
 static int vvp_transient_page_own(const struct lu_env *env,
@@ -479,15 +467,15 @@ static void vvp_transient_page_discard(const struct lu_env *env,
 }
 
 static int vvp_transient_page_is_vmlocked(const struct lu_env *env,
-                                          const struct cl_page_slice *slice)
+					  const struct cl_page_slice *slice)
 {
-        struct inode    *inode = ccc_object_inode(slice->cpl_obj);
-        int              locked;
+	struct inode    *inode = ccc_object_inode(slice->cpl_obj);
+	int	locked;
 
-        locked = !TRYLOCK_INODE_MUTEX(inode);
-        if (!locked)
-                UNLOCK_INODE_MUTEX(inode);
-        return locked ? -EBUSY : -ENODATA;
+	locked = !mutex_trylock(&inode->i_mutex);
+	if (!locked)
+		mutex_unlock(&inode->i_mutex);
+	return locked ? -EBUSY : -ENODATA;
 }
 
 static void
@@ -499,15 +487,15 @@ vvp_transient_page_completion(const struct lu_env *env,
 }
 
 static void vvp_transient_page_fini(const struct lu_env *env,
-                                    struct cl_page_slice *slice)
+				    struct cl_page_slice *slice)
 {
-        struct ccc_page *cp = cl2ccc_page(slice);
-        struct cl_page *clp = slice->cpl_page;
-        struct ccc_object *clobj = cl2ccc(clp->cp_obj);
+	struct ccc_page *cp = cl2ccc_page(slice);
+	struct cl_page *clp = slice->cpl_page;
+	struct ccc_object *clobj = cl2ccc(clp->cp_obj);
 
-        vvp_page_fini_common(cp);
-        LASSERT(!TRYLOCK_INODE_MUTEX(clobj->cob_inode));
-        clobj->cob_transient_pages--;
+	vvp_page_fini_common(cp);
+	LASSERT(!mutex_trylock(&clobj->cob_inode->i_mutex));
+	clobj->cob_transient_pages--;
 }
 
 static const struct cl_page_operations vvp_transient_page_ops = {
@@ -534,35 +522,35 @@ static const struct cl_page_operations vvp_transient_page_ops = {
 };
 
 struct cl_page *vvp_page_init(const struct lu_env *env, struct cl_object *obj,
-                              struct cl_page *page, cfs_page_t *vmpage)
+			      struct cl_page *page, cfs_page_t *vmpage)
 {
-        struct ccc_page *cpg;
-        int result;
+	struct ccc_page *cpg;
+	int result;
 
-        CLOBINVRNT(env, obj, ccc_object_invariant(obj));
+	CLOBINVRNT(env, obj, ccc_object_invariant(obj));
 
-        OBD_SLAB_ALLOC_PTR_GFP(cpg, vvp_page_kmem, CFS_ALLOC_IO);
-        if (cpg != NULL) {
-                cpg->cpg_page = vmpage;
-                page_cache_get(vmpage);
+	OBD_SLAB_ALLOC_PTR_GFP(cpg, vvp_page_kmem, CFS_ALLOC_IO);
+	if (cpg != NULL) {
+		cpg->cpg_page = vmpage;
+		page_cache_get(vmpage);
 
-                CFS_INIT_LIST_HEAD(&cpg->cpg_pending_linkage);
-                if (page->cp_type == CPT_CACHEABLE) {
-                        SetPagePrivate(vmpage);
-                        vmpage->private = (unsigned long)page;
-                        cl_page_slice_add(page, &cpg->cpg_cl, obj,
-                                          &vvp_page_ops);
-                } else {
-                        struct ccc_object *clobj = cl2ccc(obj);
+		CFS_INIT_LIST_HEAD(&cpg->cpg_pending_linkage);
+		if (page->cp_type == CPT_CACHEABLE) {
+			SetPagePrivate(vmpage);
+			vmpage->private = (unsigned long)page;
+			cl_page_slice_add(page, &cpg->cpg_cl, obj,
+					  &vvp_page_ops);
+		} else {
+			struct ccc_object *clobj = cl2ccc(obj);
 
-                        LASSERT(!TRYLOCK_INODE_MUTEX(clobj->cob_inode));
-                        cl_page_slice_add(page, &cpg->cpg_cl, obj,
-                                          &vvp_transient_page_ops);
-                        clobj->cob_transient_pages++;
-                }
-                result = 0;
-        } else
-                result = -ENOMEM;
-        return ERR_PTR(result);
+			LASSERT(!mutex_trylock(&clobj->cob_inode->i_mutex));
+			cl_page_slice_add(page, &cpg->cpg_cl, obj,
+					  &vvp_transient_page_ops);
+			clobj->cob_transient_pages++;
+		}
+		result = 0;
+	} else
+		result = -ENOMEM;
+	return ERR_PTR(result);
 }
 

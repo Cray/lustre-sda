@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -61,7 +59,7 @@ int cl_init_ea_size(struct obd_export *md_exp, struct obd_export *dt_exp)
         __u16 stripes;
         ENTRY;
 
-        rc = obd_get_info(dt_exp, sizeof(KEY_LOVDESC), KEY_LOVDESC,
+        rc = obd_get_info(NULL, dt_exp, sizeof(KEY_LOVDESC), KEY_LOVDESC,
                           &valsize, &desc, NULL);
         if (rc)
                 RETURN(rc);
@@ -140,6 +138,7 @@ int cl_get_grouplock(struct cl_object *obj, unsigned long gid, int nonblock,
 
         io = ccc_env_thread_io(env);
         io->ci_obj = obj;
+	io->ci_ignore_layout = 1;
 
         rc = cl_io_init(env, io, CIT_MISC, io->ci_obj);
         if (rc) {

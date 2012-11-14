@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, Whamcloud, Inc.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -110,7 +108,7 @@ static int lprocfs_mds_wr_evict_client(struct file *file, const char *buffer,
         }
 
         if (obd->u.mds.mds_evict_ost_nids) {
-                rc = obd_set_info_async(mds->mds_lov_exp,
+                rc = obd_set_info_async(NULL, mds->mds_lov_exp,
                                         sizeof(KEY_EVICT_BY_NID),
                                         KEY_EVICT_BY_NID, strlen(tmpbuf + 4) + 1,
                                         tmpbuf + 4, set);

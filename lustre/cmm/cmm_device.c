@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -84,7 +82,7 @@ int cmm_root_get(const struct lu_env *env, struct md_device *md,
 }
 
 static int cmm_statfs(const struct lu_env *env, struct md_device *md,
-                      cfs_kstatfs_t *sfs)
+                      struct obd_statfs *sfs)
 {
         struct cmm_device *cmm_dev = md2cmm_dev(md);
         int rc;
@@ -631,6 +629,7 @@ static int cmm_process_config(const struct lu_env *env,
         }
         case LCFG_CLEANUP:
         {
+		lu_dev_del_linkage(d->ld_site, d);
                 cmm_device_shutdown(env, m, cfg);
         }
         default:

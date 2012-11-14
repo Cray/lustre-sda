@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -266,6 +264,7 @@ struct obd_import {
                                   imp_pingable:1,         /* pingable */
                                   imp_resend_replay:1,    /* resend for replay */
                                   imp_no_pinger_recover:1,/* disable normal recovery, for test only. */
+				  imp_need_mne_swab:1,	  /* need IR MNE swab */
                                   imp_force_reconnect:1;  /* import must be reconnected instead of chouse new connection */
         __u32                     imp_connect_op;
         struct obd_connect_data   imp_connect_data;
@@ -317,13 +316,16 @@ static inline unsigned int at_timeout2est(unsigned int val)
         return (max((val << 2) / 5, 5U) - 4);
 }
 
-static inline void at_init(struct adaptive_timeout *at, int val, int flags) {
-        memset(at, 0, sizeof(*at));
+static inline void at_reset(struct adaptive_timeout *at, int val) {
         at->at_current = val;
         at->at_worst_ever = val;
         at->at_worst_time = cfs_time_current_sec();
-        at->at_flags = flags;
-        cfs_spin_lock_init(&at->at_lock);
+}
+static inline void at_init(struct adaptive_timeout *at, int val, int flags) {
+	memset(at, 0, sizeof(*at));
+	cfs_spin_lock_init(&at->at_lock);
+	at->at_flags = flags;
+	at_reset(at, val);
 }
 extern unsigned int at_min;
 static inline int at_get(struct adaptive_timeout *at) {

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -356,7 +354,10 @@ typedef struct cfs_hash_ops {
         void *   (*hs_key)(cfs_hlist_node_t *hnode);
         /** copy key from @hnode to @key */
         void     (*hs_keycpy)(cfs_hlist_node_t *hnode, void *key);
-        /** compare @key with key of @hnode */
+	/**
+	 *  compare @key with key of @hnode
+	 *  returns 1 on a match
+	 */
         int      (*hs_keycmp)(const void *key, cfs_hlist_node_t *hnode);
         /** return object address of @hnode, i.e: container_of(...hnode) */
         void *   (*hs_object)(cfs_hlist_node_t *hnode);

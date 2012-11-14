@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -73,17 +71,15 @@ void policy_from_vma(ldlm_policy_data_t *policy,
                                ~CFS_PAGE_MASK;
 }
 
-struct vm_area_struct * our_vma(unsigned long addr, size_t count)
+struct vm_area_struct *our_vma(struct mm_struct *mm, unsigned long addr,
+                               size_t count)
 {
-        struct mm_struct *mm = current->mm;
         struct vm_area_struct *vma, *ret = NULL;
         ENTRY;
 
-        /* No MM (e.g. NFS)? No vmas too. */
-        if (!mm)
-                RETURN(NULL);
+        /* mmap_sem must have been held by caller. */
+        LASSERT(!down_write_trylock(&mm->mmap_sem));
 
-        spin_lock(&mm->page_table_lock);
         for(vma = find_vma(mm, addr);
             vma != NULL && vma->vm_start < (addr + count); vma = vma->vm_next) {
                 if (vma->vm_ops && vma->vm_ops == &ll_file_vm_ops &&
@@ -92,7 +88,6 @@ struct vm_area_struct * our_vma(unsigned long addr, size_t count)
                         break;
                 }
         }
-        spin_unlock(&mm->page_table_lock);
         RETURN(ret);
 }
 
@@ -338,35 +333,6 @@ out_err:
         RETURN(page);
 }
 
-static int ll_page_mkwrite(struct vm_area_struct *vma, struct page *vmpage)
-{
-        int count = 0;
-        bool printed = false;
-        bool retry;
-        int result;
-
-        do {
-                retry = false;
-                result = ll_page_mkwrite0(vma, vmpage, &retry);
-
-                if (!printed && ++count > 16) {
-                        CWARN("app(%s): the page %lu of file %lu is under heavy"
-                              " contention.\n",
-                              current->comm, page_index(vmpage),
-                              vma->vm_file->f_dentry->d_inode->i_ino);
-                        printed = true;
-                }
-        } while (retry);
-
-        if (result == 0)
-                unlock_page(vmpage);
-        else if (result == -ENODATA)
-                result = 0; /* kernel will know truncate has happened and
-                             * retry */
-
-        return result;
-}
-
 #else
 
 static inline int to_fault_error(int result)
@@ -483,7 +449,38 @@ restart:
 	cfs_restore_sigs(set);
         return result;
 }
+#endif
 
+#ifndef HAVE_PGMKWRITE_USE_VMFAULT
+static int ll_page_mkwrite(struct vm_area_struct *vma, struct page *vmpage)
+{
+        int count = 0;
+        bool printed = false;
+        bool retry;
+        int result;
+
+        do {
+                retry = false;
+                result = ll_page_mkwrite0(vma, vmpage, &retry);
+
+                if (!printed && ++count > 16) {
+                        CWARN("app(%s): the page %lu of file %lu is under heavy"
+                              " contention.\n",
+                              current->comm, page_index(vmpage),
+                              vma->vm_file->f_dentry->d_inode->i_ino);
+                        printed = true;
+                }
+        } while (retry);
+
+        if (result == 0)
+                unlock_page(vmpage);
+        else if (result == -ENODATA)
+                result = 0; /* kernel will know truncate has happened and
+                             * retry */
+
+        return result;
+}
+#else
 static int ll_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
         int count = 0;
@@ -602,15 +599,18 @@ int ll_teardown_mmaps(struct address_space *mapping, __u64 first, __u64 last)
 
 static struct vm_operations_struct ll_file_vm_ops = {
 #ifndef HAVE_VM_OP_FAULT
-        .nopage         = ll_nopage,
-        .populate       = ll_populate,
-
+	.nopage			= ll_nopage,
+	.populate		= ll_populate,
 #else
-        .fault          = ll_fault,
+	.fault			= ll_fault,
 #endif
-        .page_mkwrite   = ll_page_mkwrite,
-        .open           = ll_vm_open,
-        .close          = ll_vm_close,
+#ifndef HAVE_PGMKWRITE_COMPACT
+	.page_mkwrite		= ll_page_mkwrite,
+#else
+	._pmkw.page_mkwrite	= ll_page_mkwrite,
+#endif
+	.open			= ll_vm_open,
+	.close			= ll_vm_close,
 };
 
 int ll_file_mmap(struct file *file, struct vm_area_struct * vma)

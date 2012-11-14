@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -52,18 +52,22 @@
  */
 struct ldlm_resource * lock_res_and_lock(struct ldlm_lock *lock)
 {
-        /* on server-side resource of lock doesn't change */
-        if (!lock->l_ns_srv)
-                cfs_spin_lock(&lock->l_lock);
+	/* on server-side resource of lock doesn't change */
+	if (!lock->l_ns_srv)
+		cfs_spin_lock(&lock->l_lock);
 
-        lock_res(lock->l_resource);
-        return lock->l_resource;
+	lock_res(lock->l_resource);
+
+	lock->l_res_locked = 1;
+	return lock->l_resource;
 }
 
 void unlock_res_and_lock(struct ldlm_lock *lock)
 {
-        /* on server-side resource of lock doesn't change */
-        unlock_res(lock->l_resource);
-        if (!lock->l_ns_srv)
-                cfs_spin_unlock(&lock->l_lock);
+	/* on server-side resource of lock doesn't change */
+	lock->l_res_locked = 0;
+
+	unlock_res(lock->l_resource);
+	if (!lock->l_ns_srv)
+		cfs_spin_unlock(&lock->l_lock);
 }

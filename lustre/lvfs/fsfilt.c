@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -80,6 +78,7 @@ int fsfilt_register_ops(struct fsfilt_operations *fs_ops)
         /* unlock fsfilt_types list */
         return 0;
 }
+EXPORT_SYMBOL(fsfilt_register_ops);
 
 void fsfilt_unregister_ops(struct fsfilt_operations *fs_ops)
 {
@@ -98,6 +97,7 @@ void fsfilt_unregister_ops(struct fsfilt_operations *fs_ops)
         }
         /* unlock fsfilt_types list */
 }
+EXPORT_SYMBOL(fsfilt_unregister_ops);
 
 struct fsfilt_operations *fsfilt_get_ops(const char *type)
 {
@@ -129,14 +129,10 @@ struct fsfilt_operations *fsfilt_get_ops(const char *type)
 
         return fs_ops;
 }
+EXPORT_SYMBOL(fsfilt_get_ops);
 
 void fsfilt_put_ops(struct fsfilt_operations *fs_ops)
 {
         cfs_module_put(fs_ops->fs_owner);
 }
-
-
-EXPORT_SYMBOL(fsfilt_register_ops);
-EXPORT_SYMBOL(fsfilt_unregister_ops);
-EXPORT_SYMBOL(fsfilt_get_ops);
 EXPORT_SYMBOL(fsfilt_put_ops);

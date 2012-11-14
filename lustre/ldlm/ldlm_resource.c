@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2010, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -69,6 +67,10 @@ cfs_proc_dir_entry_t *ldlm_svc_proc_dir = NULL;
 
 extern unsigned int ldlm_cancel_unused_locks_before_replay;
 
+/* during debug dump certain amount of granted locks for one resource to avoid
+ * DDOS. */
+unsigned int ldlm_dump_granted_max = 256;
+
 #ifdef LPROCFS
 static int ldlm_proc_dump_ns(struct file *file, const char *buffer,
                              unsigned long count, void *data)
@@ -83,6 +85,9 @@ int ldlm_proc_setup(void)
         int rc;
         struct lprocfs_vars list[] = {
                 { "dump_namespaces", NULL, ldlm_proc_dump_ns, NULL },
+                { "dump_granted_max",
+                  lprocfs_rd_uint, lprocfs_wr_uint,
+                  &ldlm_dump_granted_max, NULL },
                 { "cancel_unused_locks_before_replay",
                   lprocfs_rd_uint, lprocfs_wr_uint,
                   &ldlm_cancel_unused_locks_before_replay, NULL },
@@ -265,33 +270,6 @@ static int lprocfs_wr_lru_size(struct file *file, const char *buffer,
         return count;
 }
 
-static int lprocfs_rd_elc(char *page, char **start, off_t off,
-			  int count, int *eof, void *data)
-{
-	struct ldlm_namespace *ns = data;
-	unsigned int supp = ns_connect_cancelset(ns);
-
-	return lprocfs_rd_uint(page, start, off, count, eof, &supp);
-}
-
-static int lprocfs_wr_elc(struct file *file, const char *buffer,
-			       unsigned long count, void *data)
-{
-	struct ldlm_namespace *ns = data;
-	unsigned int supp = -1;
-	int rc;
-
-	rc = lprocfs_wr_uint(file, buffer, count, &supp);
-	if (rc < 0)
-		return rc;
-
-	if (supp == 0)
-		ns->ns_connect_flags &= ~OBD_CONNECT_CANCELSET;
-	else if (ns->ns_orig_connect_flags & OBD_CONNECT_CANCELSET)
-		ns->ns_connect_flags |= OBD_CONNECT_CANCELSET;
-	return count;
-}
-
 void ldlm_namespace_proc_unregister(struct ldlm_namespace *ns)
 {
         struct proc_dir_entry *dir;
@@ -360,13 +338,6 @@ int ldlm_namespace_proc_register(struct ldlm_namespace *ns)
                 lock_vars[0].read_fptr = lprocfs_rd_uint;
                 lock_vars[0].write_fptr = lprocfs_wr_uint;
                 lprocfs_add_vars(ldlm_ns_proc_dir, lock_vars, 0);
-
-		snprintf(lock_name, MAX_STRING_SIZE, "%s/early_lock_cancel",
-			 ldlm_ns_name(ns));
-		lock_vars[0].data = ns;
-		lock_vars[0].read_fptr = lprocfs_rd_elc;
-		lock_vars[0].write_fptr = lprocfs_wr_elc;
-		lprocfs_add_vars(ldlm_ns_proc_dir, lock_vars, 0);
         } else {
                 snprintf(lock_name, MAX_STRING_SIZE, "%s/ctime_age_limit",
                          ldlm_ns_name(ns));
@@ -489,7 +460,6 @@ static void ldlm_res_hop_get_locked(cfs_hash_t *hs, cfs_hlist_node_t *hnode)
 
         res = cfs_hlist_entry(hnode, struct ldlm_resource, lr_hash);
         ldlm_resource_getref(res);
-        LDLM_RESOURCE_ADDREF(res);
 }
 
 static void ldlm_res_hop_put_locked(cfs_hash_t *hs, cfs_hlist_node_t *hnode)
@@ -498,7 +468,6 @@ static void ldlm_res_hop_put_locked(cfs_hash_t *hs, cfs_hlist_node_t *hnode)
 
         res = cfs_hlist_entry(hnode, struct ldlm_resource, lr_hash);
         /* cfs_hash_for_each_nolock is the only chance we call it */
-        LDLM_RESOURCE_DELREF(res);
         ldlm_resource_putref_locked(res);
 }
 
@@ -507,7 +476,6 @@ static void ldlm_res_hop_put(cfs_hash_t *hs, cfs_hlist_node_t *hnode)
         struct ldlm_resource *res;
 
         res = cfs_hlist_entry(hnode, struct ldlm_resource, lr_hash);
-        LDLM_RESOURCE_DELREF(res);
         ldlm_resource_putref(res);
 }
 
@@ -1233,8 +1201,7 @@ void ldlm_resource_add_lock(struct ldlm_resource *res, cfs_list_t *head,
 {
         check_res_locked(res);
 
-        CDEBUG(D_OTHER, "About to add this lock:\n");
-        ldlm_lock_dump(D_OTHER, lock, 0);
+        LDLM_DEBUG(lock, "About to add this lock:\n");
 
         if (lock->l_destroyed) {
                 CDEBUG(D_OTHER, "Lock destroyed, not adding to resource\n");
@@ -1254,8 +1221,7 @@ void ldlm_resource_insert_lock_after(struct ldlm_lock *original,
         check_res_locked(res);
 
         ldlm_resource_dump(D_INFO, res);
-        CDEBUG(D_OTHER, "About to insert this lock after %p:\n", original);
-        ldlm_lock_dump(D_OTHER, new, 0);
+        LDLM_DEBUG(new, "About to insert this lock after %p:\n", original);
 
         if (new->l_destroyed) {
                 CDEBUG(D_OTHER, "Lock destroyed, not adding to resource\n");
@@ -1339,8 +1305,8 @@ void ldlm_namespace_dump(int level, struct ldlm_namespace *ns)
 
 void ldlm_resource_dump(int level, struct ldlm_resource *res)
 {
-        cfs_list_t *tmp;
-        int pos;
+        struct ldlm_lock *lock;
+        unsigned int granted = 0;
 
         CLASSERT(RES_NAME_SIZE == 4);
 
@@ -1353,33 +1319,26 @@ void ldlm_resource_dump(int level, struct ldlm_resource *res)
                cfs_atomic_read(&res->lr_refcount));
 
         if (!cfs_list_empty(&res->lr_granted)) {
-                pos = 0;
-                CDEBUG(level, "Granted locks:\n");
-                cfs_list_for_each(tmp, &res->lr_granted) {
-                        struct ldlm_lock *lock;
-                        lock = cfs_list_entry(tmp, struct ldlm_lock,
-                                              l_res_link);
-                        ldlm_lock_dump(level, lock, ++pos);
+                CDEBUG(level, "Granted locks (in reverse order):\n");
+                cfs_list_for_each_entry_reverse(lock, &res->lr_granted,
+                                                l_res_link) {
+                        LDLM_DEBUG_LIMIT(level, lock, "###");
+                        if (!(level & D_CANTMASK) &&
+                            ++granted > ldlm_dump_granted_max) {
+                                CDEBUG(level, "only dump %d granted locks to "
+                                       "avoid DDOS.\n", granted);
+                                break;
+                        }
                 }
         }
         if (!cfs_list_empty(&res->lr_converting)) {
-                pos = 0;
                 CDEBUG(level, "Converting locks:\n");
-                cfs_list_for_each(tmp, &res->lr_converting) {
-                        struct ldlm_lock *lock;
-                        lock = cfs_list_entry(tmp, struct ldlm_lock,
-                                              l_res_link);
-                        ldlm_lock_dump(level, lock, ++pos);
-                }
+                cfs_list_for_each_entry(lock, &res->lr_converting, l_res_link)
+                        LDLM_DEBUG_LIMIT(level, lock, "###");
         }
         if (!cfs_list_empty(&res->lr_waiting)) {
-                pos = 0;
                 CDEBUG(level, "Waiting locks:\n");
-                cfs_list_for_each(tmp, &res->lr_waiting) {
-                        struct ldlm_lock *lock;
-                        lock = cfs_list_entry(tmp, struct ldlm_lock,
-                                              l_res_link);
-                        ldlm_lock_dump(level, lock, ++pos);
-                }
+                cfs_list_for_each_entry(lock, &res->lr_waiting, l_res_link)
+                        LDLM_DEBUG_LIMIT(level, lock, "###");
         }
 }

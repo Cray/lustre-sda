@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -109,14 +107,13 @@ enum local_oid {
         MDD_ORPHAN_OID          = 7UL,
         MDD_LOV_OBJ_OID         = 8UL,
         MDD_CAPA_KEYS_OID       = 9UL,
-        MDD_OBJECTS_OID         = 10UL,
         /** \see mdt_mod_init */
         MDT_LAST_RECV_OID       = 11UL,
-        /** \see osd_mod_init */
-        OSD_REM_OBJ_DIR_OID     = 12UL,
         OSD_FS_ROOT_OID         = 13UL,
         ACCT_USER_OID           = 15UL,
         ACCT_GROUP_OID          = 16UL,
+	LFSCK_BOOKMARK_OID	= 17UL,
+	OTABLE_IT_OID		= 18UL,
         OFD_LAST_RECV_OID       = 19UL,
         OFD_GROUP0_LAST_OID     = 20UL,
         OFD_GROUP4K_LAST_OID    = 20UL+4096,
@@ -124,12 +121,6 @@ enum local_oid {
         LLOG_CATALOGS_OID       = 4118UL,
         MGS_CONFIGS_OID         = 4119UL,
         OFD_HEALTH_CHECK_OID    = 4120UL,
-
-        /** first OID for first OI fid */
-        OSD_OI_FID_OID_FIRST    = 5000UL,
-        /** reserve enough in case we want to have more in the future */
-        OSD_OI_FID_OID_MAX      = OSD_OI_FID_OID_FIRST +
-                                  (1UL << OSD_OI_FID_OID_BITS_MAX),
 };
 
 static inline void lu_local_obj_fid(struct lu_fid *fid, __u32 oid)
@@ -137,6 +128,19 @@ static inline void lu_local_obj_fid(struct lu_fid *fid, __u32 oid)
         fid->f_seq = FID_SEQ_LOCAL_FILE;
         fid->f_oid = oid;
         fid->f_ver = 0;
+}
+
+static inline int fid_is_otable_it(const struct lu_fid *fid)
+{
+	return unlikely(fid_seq(fid) == FID_SEQ_LOCAL_FILE &&
+			fid_oid(fid) == OTABLE_IT_OID);
+}
+
+static inline int fid_is_acct(const struct lu_fid *fid)
+{
+        return fid_seq(fid) == FID_SEQ_LOCAL_FILE &&
+               (fid_oid(fid) == ACCT_USER_OID ||
+                fid_oid(fid) == ACCT_GROUP_OID);
 }
 
 enum lu_mgr_type {

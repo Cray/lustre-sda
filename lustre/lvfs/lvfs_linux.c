@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -65,7 +63,8 @@
 __u64 obd_max_pages = 0;
 __u64 obd_max_alloc = 0;
 struct lprocfs_stats *obd_memory = NULL;
-cfs_spinlock_t obd_updatemax_lock = CFS_SPIN_LOCK_UNLOCKED(obd_updatemax_lock);
+EXPORT_SYMBOL(obd_memory);
+DEFINE_SPINLOCK(obd_updatemax_lock);
 /* refine later and change to seqlock or simlar from libcfs */
 
 /* Debugging check only needed during development */
@@ -433,18 +432,18 @@ long l_readdir(struct file *file, cfs_list_t *dentry_list)
 EXPORT_SYMBOL(l_readdir);
 
 int l_notify_change(struct vfsmount *mnt, struct dentry *dchild,
-                 struct iattr *newattrs)
+		    struct iattr *newattrs)
 {
-        int rc;
+	int rc;
 
-        LOCK_INODE_MUTEX(dchild->d_inode);
+	mutex_lock(&dchild->d_inode->i_mutex);
 #ifdef HAVE_SECURITY_PLUG
-        rc = notify_change(dchild, mnt, newattrs);
+	rc = notify_change(dchild, mnt, newattrs);
 #else
-        rc = notify_change(dchild, newattrs);
+	rc = notify_change(dchild, newattrs);
 #endif
-        UNLOCK_INODE_MUTEX(dchild->d_inode);
-        return rc;
+	mutex_unlock(&dchild->d_inode->i_mutex);
+	return rc;
 }
 EXPORT_SYMBOL(l_notify_change);
 
@@ -484,15 +483,9 @@ out:
 }
 EXPORT_SYMBOL(simple_truncate);
 
-#ifdef LUSTRE_KERNEL_VERSION
-#ifndef HAVE_CLEAR_RDONLY_ON_PUT
-#error rdonly patchset must be updated [cfs bz11248]
-#endif
-void dev_set_rdonly(lvfs_sbdev_type dev);
-int dev_check_rdonly(lvfs_sbdev_type dev);
-
-void __lvfs_set_rdonly(lvfs_sbdev_type dev, lvfs_sbdev_type jdev)
+int __lvfs_set_rdonly(lvfs_sbdev_type dev, lvfs_sbdev_type jdev)
 {
+#ifdef HAVE_DEV_SET_RDONLY
         if (jdev && (jdev != dev)) {
                 CDEBUG(D_IOCTL | D_HA, "set journal dev %lx rdonly\n",
                        (long)jdev);
@@ -500,14 +493,24 @@ void __lvfs_set_rdonly(lvfs_sbdev_type dev, lvfs_sbdev_type jdev)
         }
         CDEBUG(D_IOCTL | D_HA, "set dev %lx rdonly\n", (long)dev);
         dev_set_rdonly(dev);
+
+        return 0;
+#else
+        CERROR("DEV %lx CANNOT BE SET READONLY\n", (long)dev);
+
+        return -EOPNOTSUPP;
+#endif
 }
+EXPORT_SYMBOL(__lvfs_set_rdonly);
 
 int lvfs_check_rdonly(lvfs_sbdev_type dev)
 {
+#ifdef HAVE_DEV_SET_RDONLY
         return dev_check_rdonly(dev);
+#else
+        return 0;
+#endif
 }
-
-EXPORT_SYMBOL(__lvfs_set_rdonly);
 EXPORT_SYMBOL(lvfs_check_rdonly);
 
 int lvfs_check_io_health(struct obd_device *obd, struct file *file)
@@ -529,7 +532,6 @@ int lvfs_check_io_health(struct obd_device *obd, struct file *file)
         RETURN(rc);
 }
 EXPORT_SYMBOL(lvfs_check_io_health);
-#endif /* LUSTRE_KERNEL_VERSION */
 
 void obd_update_maxusage()
 {
@@ -546,6 +548,7 @@ void obd_update_maxusage()
         cfs_spin_unlock(&obd_updatemax_lock);
 
 }
+EXPORT_SYMBOL(obd_update_maxusage);
 
 __u64 obd_memory_max(void)
 {
@@ -557,6 +560,7 @@ __u64 obd_memory_max(void)
 
         return ret;
 }
+EXPORT_SYMBOL(obd_memory_max);
 
 __u64 obd_pages_max(void)
 {
@@ -568,11 +572,7 @@ __u64 obd_pages_max(void)
 
         return ret;
 }
-
-EXPORT_SYMBOL(obd_update_maxusage);
 EXPORT_SYMBOL(obd_pages_max);
-EXPORT_SYMBOL(obd_memory_max);
-EXPORT_SYMBOL(obd_memory);
 
 #ifdef LPROCFS
 __s64 lprocfs_read_helper(struct lprocfs_counter *lc,

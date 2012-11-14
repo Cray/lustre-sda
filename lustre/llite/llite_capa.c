@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, Whamcloud, Inc.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -165,7 +163,7 @@ static void ll_delete_capa(struct obd_capa *ocapa)
 /* three places where client capa is deleted:
  * 1. capa_thread_main(), main place to delete expired capa.
  * 2. ll_clear_inode_capas() in ll_clear_inode().
- * 3. ll_truncate_free_capa() delete truncate capa explicitly in ll_setattr_ost().
+ * 3. ll_truncate_free_capa() delete truncate capa explicitly in ll_truncate().
  */
 static int capa_thread_main(void *unused)
 {

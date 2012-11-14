@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -116,6 +114,7 @@ struct filter_export_data {
         int                        fed_mod_count;/* items in fed_writing list */
         long                       fed_pending;  /* bytes just being written */
         __u32                      fed_group;
+	__u8                       fed_pagesize; /* log2 of client page size */
 };
 
 struct mgs_export_data {
@@ -181,13 +180,13 @@ struct obd_export {
          */
         cfs_atomic_t              exp_rpc_count; /* RPC references */
         cfs_atomic_t              exp_cb_count; /* Commit callback references */
+	/** Number of queued replay requests to be processes */
+	cfs_atomic_t		  exp_replay_count;
         cfs_atomic_t              exp_locks_count; /** Lock references */
 #if LUSTRE_TRACKS_LOCK_EXP_REFS
         cfs_list_t                exp_locks_list;
         cfs_spinlock_t            exp_locks_list_guard;
 #endif
-        /** Number of queued replay requests to be processes */
-        cfs_atomic_t              exp_replay_count;
         /** UUID of client connected to this export */
         struct obd_uuid           exp_client_uuid;
         /** To link all exports on an obd device */
@@ -203,7 +202,10 @@ struct obd_export {
         cfs_list_t                exp_obd_chain_timed;
         /** Obd device of this export */
         struct obd_device        *exp_obd;
-        /** "reverse" import to send requests (e.g. from ldlm) back to client */
+	/**
+	 * "reverse" import to send requests (e.g. from ldlm) back to client
+	 * exp_lock protect its change
+	 */
         struct obd_import        *exp_imp_reverse;
         struct nid_stat          *exp_nid_stats;
         struct lprocfs_stats     *exp_md_stats;
@@ -213,13 +215,11 @@ struct obd_export {
         __u32                     exp_conn_cnt;
         /** Hash list of all ldlm locks granted on this export */
         cfs_hash_t               *exp_lock_hash;
-        /** Lock protecting access to exp_flock_wait_list */
-        cfs_rwlock_t              exp_flock_wait_lock;
         /**
-         * Wait queue for Posix lock deadlock detection, added with
-         * ldlm_lock::l_flock_waitq.
+	 * Hash list for Posix lock deadlock detection, added with
+	 * ldlm_lock::l_exp_flock_hash.
          */
-        cfs_list_t                exp_flock_wait_list;
+	cfs_hash_t               *exp_flock_hash;
         cfs_list_t                exp_outstanding_replies;
         cfs_list_t                exp_uncommitted_replies;
         cfs_spinlock_t            exp_uncommitted_replies_lock;
@@ -229,7 +229,10 @@ struct obd_export {
         cfs_time_t                exp_last_request_time;
         /** On replay all requests waiting for replay are linked here */
         cfs_list_t                exp_req_replay_queue;
-        /** protects exp_flags and exp_outstanding_replies */
+	/**
+	 * protects exp_flags, exp_outstanding_replies and the change
+	 * of exp_imp_reverse
+	 */
         cfs_spinlock_t            exp_lock;
         /** Compatibility flags for this export */
         __u64                     exp_connect_flags;
@@ -250,7 +253,10 @@ struct obd_export {
                                   exp_libclient:1, /* liblustre client? */
                                   /* client timed out and tried to reconnect,
                                    * but couldn't because of active rpcs */
-                                  exp_abort_active_req:1;
+				  exp_abort_active_req:1,
+				  /* if to swap nidtbl entries for 2.2 clients.
+				   * Only used by the MGS to fix LU-1644. */
+				  exp_need_mne_swab:1;
         /* also protected by exp_lock */
         enum lustre_sec_part      exp_sp_peer;
         struct sptlrpc_flavor     exp_flvr;             /* current */

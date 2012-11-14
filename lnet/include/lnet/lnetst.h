@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -44,6 +44,12 @@
 #include <libcfs/libcfs.h>
 #include <lnet/lnet.h>
 #include <lnet/lib-types.h>
+
+#define LST_FEAT_NONE		(0)
+#define LST_FEAT_BULK_LEN	(1 << 0)	/* enable variable page size */
+
+#define LST_FEATS_EMPTY		(LST_FEAT_NONE)
+#define LST_FEATS_MASK		(LST_FEAT_NONE | LST_FEAT_BULK_LEN)
 
 #define LST_NAME_SIZE           32              /* max name buffer length */
 
@@ -235,6 +241,8 @@ typedef struct {
         int                     lstio_ses_key;          /* IN: local key */
         int                     lstio_ses_timeout;      /* IN: session timeout */
         int                     lstio_ses_force;        /* IN: force create ? */
+	/** IN: session features */
+	unsigned		lstio_ses_feats;
         lst_sid_t              *lstio_ses_idp;          /* OUT: session id */
         int                     lstio_ses_nmlen;        /* IN: name length */
         char                   *lstio_ses_namep;        /* IN: session name */
@@ -244,6 +252,8 @@ typedef struct {
 typedef struct {
         lst_sid_t              *lstio_ses_idp;          /* OUT: session id */
         int                    *lstio_ses_keyp;         /* OUT: local key */
+	/** OUT: session features */
+	unsigned	       *lstio_ses_featp;
         lstcon_ndlist_ent_t    *lstio_ses_ndinfo;       /* OUT: */
         int                     lstio_ses_nmlen;        /* IN: name length */
         char                   *lstio_ses_namep;        /* OUT: session name */
@@ -305,6 +315,8 @@ typedef struct {
         int                     lstio_grp_nmlen;        /* IN: name length */
         char                   *lstio_grp_namep;        /* IN: group name */
         int                     lstio_grp_count;        /* IN: # of nodes */
+	/** OUT: session features */
+	unsigned	       *lstio_grp_featp;
         lnet_process_id_t      *lstio_grp_idsp;         /* IN: nodes */
         cfs_list_t             *lstio_grp_resultp;      /* OUT: list head of result buffer */
 } lstio_group_nodes_args_t;

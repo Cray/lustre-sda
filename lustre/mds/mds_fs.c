@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -61,8 +61,9 @@
 /* Creates an object with the same name as its fid.  Because this is not at all
  * performance sensitive, it is accomplished by creating a file, checking the
  * fid, and renaming it. */
-int mds_obd_create(struct obd_export *exp, struct obdo *oa,
-                   struct lov_stripe_md **ea, struct obd_trans_info *oti)
+int mds_obd_create(const struct lu_env *env, struct obd_export *exp,
+                   struct obdo *oa, struct lov_stripe_md **ea,
+                   struct obd_trans_info *oti)
 {
         struct mds_obd *mds = &exp->exp_obd->u.mds;
         struct inode *parent_inode = mds->mds_objects_dir->d_inode;
@@ -108,8 +109,8 @@ int mds_obd_create(struct obd_export *exp, struct obdo *oa,
         oa->o_generation = filp->f_dentry->d_inode->i_generation;
         namelen = ll_fid2str(fidname, oa->o_id, oa->o_generation);
 
-        LOCK_INODE_MUTEX_PARENT(parent_inode);
-        new_child = lookup_one_len(fidname, mds->mds_objects_dir, namelen);
+	mutex_lock_nested(&parent_inode->i_mutex, I_MUTEX_PARENT);
+	new_child = lookup_one_len(fidname, mds->mds_objects_dir, namelen);
 
         if (IS_ERR(new_child)) {
                 CERROR("getting neg dentry for obj rename: %d\n", rc);
@@ -144,21 +145,22 @@ int mds_obd_create(struct obd_export *exp, struct obdo *oa,
 out_dput:
         dput(new_child);
 out_close:
-        UNLOCK_INODE_MUTEX(parent_inode);
-        err = filp_close(filp, 0);
-        if (err) {
-                CERROR("closing tmpfile %u: rc %d\n", tmpname, rc);
-                if (!rc)
-                        rc = err;
-        }
+	mutex_unlock(&parent_inode->i_mutex);
+	err = filp_close(filp, 0);
+	if (err) {
+		CERROR("closing tmpfile %u: rc %d\n", tmpname, rc);
+		if (!rc)
+			rc = err;
+	}
 out_pop:
         pop_ctxt(&saved, &exp->exp_obd->obd_lvfs_ctxt, &ucred);
         RETURN(rc);
 }
 
-int mds_obd_destroy(struct obd_export *exp, struct obdo *oa,
-                    struct lov_stripe_md *ea, struct obd_trans_info *oti,
-                    struct obd_export *md_exp, void *capa)
+int mds_obd_destroy(const struct lu_env *env, struct obd_export *exp,
+                    struct obdo *oa, struct lov_stripe_md *ea,
+                    struct obd_trans_info *oti, struct obd_export *md_exp,
+                    void *capa)
 {
         struct mds_obd *mds = &exp->exp_obd->u.mds;
         struct inode *parent_inode = mds->mds_objects_dir->d_inode;
@@ -177,15 +179,15 @@ int mds_obd_destroy(struct obd_export *exp, struct obdo *oa,
 
         namelen = ll_fid2str(fidname, oa->o_id, oa->o_generation);
 
-        LOCK_INODE_MUTEX_PARENT(parent_inode);
-        de = lookup_one_len(fidname, mds->mds_objects_dir, namelen);
-        if (IS_ERR(de)) {
-                rc = IS_ERR(de);
-                de = NULL;
-                CERROR("error looking up object "LPU64" %s: rc %d\n",
-                       oa->o_id, fidname, rc);
-                GOTO(out_dput, rc);
-        }
+	mutex_lock_nested(&parent_inode->i_mutex, I_MUTEX_PARENT);
+	de = lookup_one_len(fidname, mds->mds_objects_dir, namelen);
+	if (IS_ERR(de)) {
+		rc = IS_ERR(de);
+		de = NULL;
+		CERROR("error looking up object "LPU64" %s: rc %d\n",
+		       oa->o_id, fidname, rc);
+		GOTO(out_dput, rc);
+	}
         if (de->d_inode == NULL) {
                 CERROR("destroying non-existent object "LPU64" %s: rc %d\n",
                        oa->o_id, fidname, rc);
@@ -215,9 +217,9 @@ int mds_obd_destroy(struct obd_export *exp, struct obdo *oa,
         if (err && !rc)
                 rc = err;
 out_dput:
-        if (de != NULL)
-                l_dput(de);
-        UNLOCK_INODE_MUTEX(parent_inode);
+	if (de != NULL)
+		l_dput(de);
+	mutex_unlock(&parent_inode->i_mutex);
 
         if (inode)
                 iput(inode);

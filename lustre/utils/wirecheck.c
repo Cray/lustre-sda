@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -165,6 +163,21 @@ do {                                                            \
                 CHECK_VALUE((int)sizeof(s));                    \
 } while(0)
 
+#define CHECK_VALUE_SAME(v1, v2)                                \
+do {                                                            \
+	printf("\tLASSERTF("#v1" == "#v2", "                    \
+	       "\"%%d != %%d\\n\",\n"                           \
+	       "\t\t "#v1", "#v2");\n");                        \
+} while (0)
+
+#define CHECK_MEMBER_SAME(s1, s2, m)                            \
+do {                                                            \
+	CHECK_VALUE_SAME((int)offsetof(struct s1, m),           \
+			 (int)offsetof(struct s2, m));          \
+	CHECK_VALUE_SAME((int)sizeof(((struct s1 *)0)->m),      \
+			 (int)sizeof(((struct s2 *)0)->m));     \
+} while (0)
+
 static void
 check_lu_seq_range(void)
 {
@@ -223,12 +236,14 @@ check_ost_id(void)
         CHECK_VALUE_64X(FID_SEQ_LOCAL_FILE);
         CHECK_VALUE_64X(FID_SEQ_DOT_LUSTRE);
         CHECK_VALUE_64X(FID_SEQ_SPECIAL);
+        CHECK_VALUE_64X(FID_SEQ_QUOTA);
+        CHECK_VALUE_64X(FID_SEQ_QUOTA_GLB);
         CHECK_VALUE_64X(FID_SEQ_NORMAL);
         CHECK_VALUE_64X(FID_SEQ_LOV_DEFAULT);
 
-        CHECK_VALUE(FID_OID_SPECIAL_BFL);
-        CHECK_VALUE(FID_OID_DOT_LUSTRE);
-        CHECK_VALUE(FID_OID_DOT_LUSTRE_OBF);
+        CHECK_VALUE_X(FID_OID_SPECIAL_BFL);
+        CHECK_VALUE_X(FID_OID_DOT_LUSTRE);
+        CHECK_VALUE_X(FID_OID_DOT_LUSTRE_OBF);
 }
 
 static void
@@ -320,11 +335,32 @@ check_ptlrpc_body(void)
         CHECK_MEMBER(ptlrpc_body, pb_conn_cnt);
         CHECK_MEMBER(ptlrpc_body, pb_timeout);
         CHECK_MEMBER(ptlrpc_body, pb_service_time);
-        CHECK_MEMBER(ptlrpc_body, pb_slv);
         CHECK_MEMBER(ptlrpc_body, pb_limit);
+	CHECK_MEMBER(ptlrpc_body, pb_slv);
         CHECK_CVALUE(PTLRPC_NUM_VERSIONS);
-        CHECK_MEMBER(ptlrpc_body, pb_pre_versions[PTLRPC_NUM_VERSIONS]);
-        CHECK_MEMBER(ptlrpc_body, pb_padding[4]);
+	CHECK_MEMBER(ptlrpc_body, pb_pre_versions);
+	CHECK_MEMBER(ptlrpc_body, pb_padding);
+	CHECK_CVALUE(JOBSTATS_JOBID_SIZE);
+	CHECK_MEMBER(ptlrpc_body, pb_jobid);
+
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_handle);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_type);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_version);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_opc);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_status);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_last_xid);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_last_seen);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_last_committed);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_transno);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_flags);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_op_flags);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_conn_cnt);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_timeout);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_service_time);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_limit);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_slv);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_pre_versions);
+	CHECK_MEMBER_SAME(ptlrpc_body_v3, ptlrpc_body_v2, pb_padding);
 
         CHECK_VALUE(MSG_PTLRPC_BODY_OFF);
         CHECK_VALUE(REQ_REC_OFF);
@@ -453,7 +489,8 @@ check_obd_connect_data(void)
         CHECK_DEFINE_64X(OBD_CONNECT_UMASK);
         CHECK_DEFINE_64X(OBD_CONNECT_EINPROGRESS);
         CHECK_DEFINE_64X(OBD_CONNECT_GRANT_PARAM);
-        CHECK_CDEFINE(OBD_CONNECT_FLOCK_OWNER);
+        CHECK_DEFINE_64X(OBD_CONNECT_LIGHTWEIGHT);
+	CHECK_DEFINE_64X(OBD_CONNECT_SHORTIO);
 
         CHECK_VALUE_X(OBD_CKSUM_CRC32);
         CHECK_VALUE_X(OBD_CKSUM_ADLER);
@@ -589,6 +626,7 @@ check_lov_mds_md_v1(void)
         CHECK_MEMBER(lov_mds_md_v1, lmm_object_seq);
         CHECK_MEMBER(lov_mds_md_v1, lmm_stripe_size);
         CHECK_MEMBER(lov_mds_md_v1, lmm_stripe_count);
+	CHECK_MEMBER(lov_mds_md_v1, lmm_layout_gen);
         CHECK_MEMBER(lov_mds_md_v1, lmm_objects[0]);
 
         CHECK_CDEFINE(LOV_MAGIC_V1);
@@ -605,6 +643,7 @@ check_lov_mds_md_v3(void)
         CHECK_MEMBER(lov_mds_md_v3, lmm_object_seq);
         CHECK_MEMBER(lov_mds_md_v3, lmm_stripe_size);
         CHECK_MEMBER(lov_mds_md_v3, lmm_stripe_count);
+	CHECK_MEMBER(lov_mds_md_v3, lmm_layout_gen);
         CHECK_CVALUE(LOV_MAXPOOLNAME);
         CHECK_MEMBER(lov_mds_md_v3, lmm_pool_name[LOV_MAXPOOLNAME]);
         CHECK_MEMBER(lov_mds_md_v3, lmm_objects[0]);
@@ -785,6 +824,7 @@ check_mdt_body(void)
         CHECK_VALUE_O(MDS_OPEN_APPEND);
         CHECK_VALUE_O(MDS_OPEN_SYNC);
         CHECK_VALUE_O(MDS_OPEN_DIRECTORY);
+        CHECK_VALUE_O(MDS_OPEN_BY_FID);
         CHECK_VALUE_O(MDS_OPEN_DELAY_CREATE);
         CHECK_VALUE_O(MDS_OPEN_OWNEROVERRIDE);
         CHECK_VALUE_O(MDS_OPEN_JOIN_FILE);
@@ -1393,6 +1433,23 @@ check_changelog_rec(void)
         CHECK_MEMBER(changelog_rec, cr_time);
         CHECK_MEMBER(changelog_rec, cr_tfid);
         CHECK_MEMBER(changelog_rec, cr_pfid);
+}
+
+static void
+check_changelog_rec_ext(void)
+{
+	BLANK_LINE();
+	CHECK_STRUCT(changelog_ext_rec);
+	CHECK_MEMBER(changelog_ext_rec, cr_namelen);
+	CHECK_MEMBER(changelog_ext_rec, cr_flags);
+	CHECK_MEMBER(changelog_ext_rec, cr_type);
+	CHECK_MEMBER(changelog_ext_rec, cr_index);
+	CHECK_MEMBER(changelog_ext_rec, cr_prev);
+	CHECK_MEMBER(changelog_ext_rec, cr_time);
+	CHECK_MEMBER(changelog_ext_rec, cr_tfid);
+	CHECK_MEMBER(changelog_ext_rec, cr_pfid);
+	CHECK_MEMBER(changelog_ext_rec, cr_sfid);
+	CHECK_MEMBER(changelog_ext_rec, cr_spfid);
 }
 
 static void
@@ -2063,6 +2120,7 @@ main(int argc, char **argv)
         check_llog_setattr64_rec();
         check_llog_size_change_rec();
         check_changelog_rec();
+	check_changelog_rec_ext();
         check_changelog_setinfo();
         check_llog_changelog_rec();
         check_llog_changelog_user_rec();

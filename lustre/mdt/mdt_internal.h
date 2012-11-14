@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -86,10 +84,10 @@ struct mdt_object;
 /* file data for open files on MDS */
 struct mdt_file_data {
         struct portals_handle mfd_handle; /* must be first */
+	int		      mfd_mode;   /* open mode provided by client */
         cfs_list_t            mfd_list;   /* protected by med_open_lock */
         __u64                 mfd_xid;    /* xid of the open request */
         struct lustre_handle  mfd_old_handle; /* old handle in replay case */
-        int                   mfd_mode;   /* open mode provided by client */
         struct mdt_object    *mfd_object; /* point to opened object */
 };
 
@@ -388,28 +386,12 @@ struct mdt_thread_info {
         struct mdt_ioepoch        *mti_ioepoch;
         __u64                      mti_replayepoch;
 
-        /* server and client data buffers */
-        struct lr_server_data      mti_lsd;
-        struct lsd_client_data     mti_lcd;
         loff_t                     mti_off;
         struct lu_buf              mti_buf;
         struct lustre_capa_key     mti_capa_key;
 
         /* Ops object filename */
         struct lu_name             mti_name;
-        struct md_attr             mti_tmp_attr;
-};
-
-typedef void (*mdt_cb_t)(const struct mdt_device *mdt, __u64 transno,
-                         void *data, int err);
-struct mdt_commit_cb {
-        mdt_cb_t  mdt_cb_func;
-        void     *mdt_cb_data;
-};
-
-enum mdt_txn_op {
-        MDT_TXN_CAPA_KEYS_WRITE_OP,
-        MDT_TXN_LAST_RCVD_WRITE_OP,
 };
 
 static inline const struct md_device_operations *
@@ -463,9 +445,14 @@ static inline int mdt_object_exists(const struct mdt_object *o)
         return lu_object_exists(&o->mot_obj.mo_lu);
 }
 
-static inline const struct lu_fid *mdt_object_fid(struct mdt_object *o)
+static inline const struct lu_fid *mdt_object_fid(const struct mdt_object *o)
 {
         return lu_object_fid(&o->mot_obj.mo_lu);
+}
+
+static inline int mdt_object_obf(const struct mdt_object *o)
+{
+        return lu_fid_eq(mdt_object_fid(o), &LU_OBF_FID);
 }
 
 static inline struct lu_site *mdt_lu_site(const struct mdt_device *mdt)
@@ -511,6 +498,9 @@ void mdt_object_unlock(struct mdt_thread_info *,
                        struct mdt_lock_handle *,
                        int decref);
 
+struct mdt_object *mdt_object_new(const struct lu_env *,
+				  struct mdt_device *,
+				  const struct lu_fid *);
 struct mdt_object *mdt_object_find(const struct lu_env *,
                                    struct mdt_device *,
                                    const struct lu_fid *);
@@ -548,14 +538,6 @@ extern void target_recovery_init(struct lu_target *lut,
 int mdt_fs_setup(const struct lu_env *, struct mdt_device *,
                  struct obd_device *, struct lustre_sb_info *lsi);
 void mdt_fs_cleanup(const struct lu_env *, struct mdt_device *);
-
-int mdt_client_del(const struct lu_env *env,
-                    struct mdt_device *mdt);
-int mdt_client_add(const struct lu_env *env,
-                   struct mdt_device *mdt,
-                   int cl_idx);
-int mdt_client_new(const struct lu_env *env,
-                   struct mdt_device *mdt);
 
 int mdt_export_stats_init(struct obd_device *obd,
                           struct obd_export *exp,
@@ -600,22 +582,10 @@ int mdt_close(struct mdt_thread_info *info);
 int mdt_attr_set(struct mdt_thread_info *info, struct mdt_object *mo,
                  struct md_attr *ma, int flags);
 int mdt_done_writing(struct mdt_thread_info *info);
-void mdt_shrink_reply(struct mdt_thread_info *info);
+int mdt_fix_reply(struct mdt_thread_info *info);
 int mdt_handle_last_unlink(struct mdt_thread_info *, struct mdt_object *,
                            const struct md_attr *);
 void mdt_reconstruct_open(struct mdt_thread_info *, struct mdt_lock_handle *);
-
-struct thandle *mdt_trans_create(const struct lu_env *env,
-                                 struct mdt_device *mdt);
-int mdt_trans_start(const struct lu_env *env, struct mdt_device *mdt,
-                    struct thandle *th);
-void mdt_trans_stop(const struct lu_env *env,
-                    struct mdt_device *mdt, struct thandle *th);
-int mdt_record_write(const struct lu_env *env,
-                     struct dt_object *dt, const struct lu_buf *buf,
-                     loff_t *pos, struct thandle *th);
-int mdt_record_read(const struct lu_env *env,
-                    struct dt_object *dt, struct lu_buf *buf, loff_t *pos);
 
 struct lu_buf *mdt_buf(const struct lu_env *env, void *area, ssize_t len);
 const struct lu_buf *mdt_buf_const(const struct lu_env *env,
@@ -678,15 +648,17 @@ int mdt_pack_remote_perm(struct mdt_thread_info *, struct mdt_object *, void *);
 
 extern struct lu_context_key       mdt_thread_key;
 /* debug issues helper starts here*/
-static inline void mdt_fail_write(const struct lu_env *env,
-                                  struct dt_device *dd, int id)
+static inline int mdt_fail_write(const struct lu_env *env,
+                                 struct dt_device *dd, int id)
 {
         if (OBD_FAIL_CHECK_ORSET(id, OBD_FAIL_ONCE)) {
                 CERROR(LUSTRE_MDT_NAME": cfs_fail_loc=%x, fail write ops\n",
                        id);
-                dd->dd_ops->dt_ro(env, dd);
+                return dd->dd_ops->dt_ro(env, dd);
                 /* We set FAIL_ONCE because we never "un-fail" a device */
         }
+
+        return 0;
 }
 
 static inline struct mdt_export_data *mdt_req2med(struct ptlrpc_request *req)
@@ -816,14 +788,15 @@ enum {
         LPROC_MDT_CROSSDIR_RENAME,
         LPROC_MDT_LAST,
 };
-void mdt_counter_incr(struct obd_export *exp, int opcode);
+void mdt_counter_incr(struct ptlrpc_request *req, int opcode);
 void mdt_stats_counter_init(struct lprocfs_stats *stats);
 void lprocfs_mdt_init_vars(struct lprocfs_static_vars *lvars);
 int mdt_procfs_init(struct mdt_device *mdt, const char *name);
 int mdt_procfs_fini(struct mdt_device *mdt);
 void mdt_rename_counter_tally(struct mdt_thread_info *info,
-                              struct mdt_device *mdt, struct obd_export *exp,
-                              struct mdt_object *src, struct mdt_object *tgt);
+			      struct mdt_device *mdt,
+			      struct ptlrpc_request *req,
+			      struct mdt_object *src, struct mdt_object *tgt);
 
 void mdt_time_start(const struct mdt_thread_info *info);
 void mdt_time_end(const struct mdt_thread_info *info, int idx);
@@ -840,7 +813,7 @@ static inline void mdt_set_capainfo(struct mdt_thread_info *info, int offset,
 {
         struct md_capainfo *ci;
 
-        LASSERT(offset >= 0 && offset <= MD_CAPAINFO_MAX);
+	LASSERT(offset >= 0 && offset < MD_CAPAINFO_MAX);
         if (!info->mti_mdt->mdt_opts.mo_mds_capa ||
             !(info->mti_exp->exp_connect_flags & OBD_CONNECT_MDS_CAPA))
                 return;

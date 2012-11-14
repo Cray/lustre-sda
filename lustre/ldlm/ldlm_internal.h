@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -97,22 +95,11 @@ void ldlm_namespace_free_post(struct ldlm_namespace *ns);
 /* ldlm_lock.c */
 
 struct ldlm_cb_set_arg {
-        int          type;      /* LDLM_BL_CALLBACK or LDLM_CP_CALLBACK */
-        unsigned int threshold; /* threshold to wake up the waiting proc */
-        cfs_atomic_t rpcs;      /* # of inflight rpcs in set */
-        cfs_atomic_t restart;
-        cfs_atomic_t refcount;
-        cfs_waitq_t  waitq;
+	struct ptlrpc_request_set *set;
+	int                        type; /* LDLM_{CP,BL}_CALLBACK */
+	cfs_atomic_t               restart;
+	cfs_list_t                *list;
 };
-
-static inline void ldlm_csa_put(struct ldlm_cb_set_arg *arg)
-{
-        if (cfs_atomic_dec_and_test(&arg->refcount)) {
-                LASSERT(cfs_atomic_read(&arg->rpcs) == 0);
-
-                OBD_FREE_PTR(arg);
-        }
-}
 
 typedef enum {
         LDLM_WORK_BL_AST,
@@ -180,6 +167,8 @@ void ldlm_extent_unlink_lock(struct ldlm_lock *lock);
 /* ldlm_flock.c */
 int ldlm_process_flock_lock(struct ldlm_lock *req, int *flags, int first_enq,
                             ldlm_error_t *err, cfs_list_t *work_list);
+int ldlm_init_flock_export(struct obd_export *exp);
+void ldlm_destroy_flock_export(struct obd_export *exp);
 
 /* l_lock.c */
 void l_check_ns_lock(struct ldlm_namespace *ns);

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -52,14 +50,15 @@
 
 static void lov_init_set(struct lov_request_set *set)
 {
-        set->set_count = 0;
-        cfs_atomic_set(&set->set_completes, 0);
-        cfs_atomic_set(&set->set_success, 0);
-        set->set_cookies = 0;
-        CFS_INIT_LIST_HEAD(&set->set_list);
-        cfs_atomic_set(&set->set_refcount, 1);
-        cfs_waitq_init(&set->set_waitq);
-        cfs_spin_lock_init(&set->set_lock);
+	set->set_count = 0;
+	cfs_atomic_set(&set->set_completes, 0);
+	cfs_atomic_set(&set->set_success, 0);
+	cfs_atomic_set(&set->set_finish_checked, 0);
+	set->set_cookies = 0;
+	CFS_INIT_LIST_HEAD(&set->set_list);
+	cfs_atomic_set(&set->set_refcount, 1);
+	cfs_waitq_init(&set->set_waitq);
+	cfs_spin_lock_init(&set->set_lock);
 }
 
 void lov_finish_set(struct lov_request_set *set)
@@ -95,13 +94,19 @@ void lov_finish_set(struct lov_request_set *set)
         EXIT;
 }
 
-int lov_finished_set(struct lov_request_set *set)
+int lov_set_finished(struct lov_request_set *set, int idempotent)
 {
-        int completes = cfs_atomic_read(&set->set_completes);
+	int completes = cfs_atomic_read(&set->set_completes);
 
-        CDEBUG(D_INFO, "check set %d/%d\n", completes,
-               set->set_count);
-        return completes == set->set_count;
+	CDEBUG(D_INFO, "check set %d/%d\n", completes, set->set_count);
+
+	if (completes == set->set_count) {
+		if (idempotent)
+			return 1;
+		if (cfs_atomic_inc_return(&set->set_finish_checked) == 1)
+			return 1;
+	}
+	return 0;
 }
 
 void lov_update_set(struct lov_request_set *set,
@@ -269,6 +274,37 @@ int lov_fini_enqueue_set(struct lov_request_set *set, __u32 mode, int rc,
         lov_put_reqset(set);
 
         RETURN(rc ? rc : ret);
+}
+
+static void lov_llh_addref(void *llhp)
+{
+	struct lov_lock_handles *llh = llhp;
+
+	cfs_atomic_inc(&llh->llh_refcount);
+	CDEBUG(D_INFO, "GETting llh %p : new refcount %d\n", llh,
+	       cfs_atomic_read(&llh->llh_refcount));
+}
+
+static struct portals_handle_ops lov_handle_ops = {
+	.hop_addref = lov_llh_addref,
+	.hop_free   = NULL,
+};
+
+static struct lov_lock_handles *lov_llh_new(struct lov_stripe_md *lsm)
+{
+	struct lov_lock_handles *llh;
+
+	OBD_ALLOC(llh, sizeof *llh +
+		  sizeof(*llh->llh_handles) * lsm->lsm_stripe_count);
+	if (llh == NULL)
+		return NULL;
+
+	cfs_atomic_set(&llh->llh_refcount, 2);
+	llh->llh_stripe_count = lsm->lsm_stripe_count;
+	CFS_INIT_LIST_HEAD(&llh->llh_handle.h_link);
+	class_handle_hash(&llh->llh_handle, &lov_handle_ops);
+
+	return llh;
 }
 
 int lov_prep_enqueue_set(struct obd_export *exp, struct obd_info *oinfo,
@@ -548,8 +584,11 @@ static int lov_update_create_set(struct lov_request_set *set,
 
         if (rc && lov->lov_tgts[req->rq_idx] &&
             lov->lov_tgts[req->rq_idx]->ltd_active) {
-                CERROR("error creating fid "LPX64" sub-object"
-                       " on OST idx %d/%d: rc = %d\n",
+                /* Pre-creating objects may timeout via -ETIMEDOUT or
+                 * -ENOTCONN both are always non-critical events. */
+                CDEBUG(rc == -ETIMEDOUT || rc == -ENOTCONN ? D_HA : D_ERROR,
+                       "error creating fid "LPX64" sub-object "
+                       "on OST idx %d/%d: rc = %d\n",
                        set->set_oi->oi_oa->o_id, req->rq_idx,
                        lsm->lsm_stripe_count, rc);
                 if (rc > 0) {
@@ -660,8 +699,8 @@ cleanup:
                         continue;
 
                 sub_exp = lov->lov_tgts[req->rq_idx]->ltd_exp;
-                err = obd_destroy(sub_exp, req->rq_oi.oi_oa, NULL, oti, NULL,
-                                  NULL);
+                err = obd_destroy(NULL, sub_exp, req->rq_oi.oi_oa, NULL, oti,
+                                  NULL, NULL);
                 if (err)
                         CERROR("Failed to uncreate objid "LPX64" subobj "
                                LPX64" on OST idx %d: rc = %d\n",
@@ -709,10 +748,10 @@ int cb_create_update(void *cookie, int rc)
                 if (lovreq->rq_idx == cfs_fail_val)
                         rc = -ENOTCONN;
 
-        rc= lov_update_create_set(lovreq->rq_rqset, lovreq, rc);
-        if (lov_finished_set(lovreq->rq_rqset))
-                lov_put_reqset(lovreq->rq_rqset);
-        return rc;
+	rc = lov_update_create_set(lovreq->rq_rqset, lovreq, rc);
+	if (lov_set_finished(lovreq->rq_rqset, 0))
+		lov_put_reqset(lovreq->rq_rqset);
+	return rc;
 }
 
 int lov_prep_create_set(struct obd_export *exp, struct obd_info *oinfo,
@@ -1294,6 +1333,8 @@ int lov_update_punch_set(struct lov_request_set *set,
                                 req->rq_oi.oi_oa->o_blocks;
                 }
 
+                /* Do we need to update lvb_size here? It needn't because
+                 * it have been done in ll_truncate(). -jay */
                 lov_stripe_unlock(lsm);
         }
 
@@ -1491,10 +1532,10 @@ int lov_fini_statfs(struct obd_device *obd, struct obd_statfs *osfs,int success)
         if (success) {
                 __u32 expected_stripes = lov_get_stripecnt(&obd->u.lov,
                                                            LOV_MAGIC, 0);
-                if (osfs->os_files != LOV_U64_MAX)
-                        do_div(osfs->os_files, expected_stripes);
-                if (osfs->os_ffree != LOV_U64_MAX)
-                        do_div(osfs->os_ffree, expected_stripes);
+		if (osfs->os_files != LOV_U64_MAX)
+			lov_do_div64(osfs->os_files, expected_stripes);
+		if (osfs->os_ffree != LOV_U64_MAX)
+			lov_do_div64(osfs->os_ffree, expected_stripes);
 
                 cfs_spin_lock(&obd->obd_osfs_lock);
                 memcpy(&obd->obd_osfs, osfs, sizeof(*osfs));
@@ -1635,15 +1676,15 @@ out_update:
         obd_putref(lovobd);
 
 out:
-        if (set->set_oi->oi_flags & OBD_STATFS_PTLRPCD &&
-            lov_finished_set(set)) {
-                lov_statfs_interpret(NULL, set, set->set_count !=
-                                     cfs_atomic_read(&set->set_success));
-                if (lov->lov_qos.lq_statfs_in_progress)
-                        qos_statfs_done(lov);
-        }
+	if (set->set_oi->oi_flags & OBD_STATFS_PTLRPCD &&
+	    lov_set_finished(set, 0)) {
+		lov_statfs_interpret(NULL, set, set->set_count !=
+				     cfs_atomic_read(&set->set_success));
+		if (lov->lov_qos.lq_statfs_in_progress)
+			qos_statfs_done(lov);
+	}
 
-        RETURN(0);
+	RETURN(0);
 }
 
 int lov_prep_statfs_set(struct obd_device *obd, struct obd_info *oinfo,

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -347,19 +347,11 @@ void filter_release_cache(struct obd_device *obd, struct obd_ioobj *obj,
 
         LASSERT(inode != NULL);
         for (i = 0; i < obj->ioo_bufcnt; i++, rnb++) {
-#ifdef HAVE_TRUNCATE_RANGE
                 /* remove pages in which range is fit */
                 truncate_inode_pages_range(inode->i_mapping,
                                            rnb->offset & CFS_PAGE_MASK,
                                            (rnb->offset + rnb->len - 1) |
                                            ~CFS_PAGE_MASK);
-#else
-                /* use invalidate for old kernels */
-                invalidate_mapping_pages(inode->i_mapping,
-                                         rnb->offset >> CFS_PAGE_SHIFT,
-                                         (rnb->offset + rnb->len) >>
-                                         CFS_PAGE_SHIFT);
-#endif
         }
 }
 
@@ -479,7 +471,8 @@ static int filter_preprw_read(int cmd, struct obd_export *exp, struct obdo *oa,
         if (exp->exp_nid_stats && exp->exp_nid_stats->nid_stats)
                 lprocfs_counter_add(exp->exp_nid_stats->nid_stats,
                                     LPROC_FILTER_READ_BYTES, tot_bytes);
-
+	filter_counter_incr(exp, LPROC_FILTER_STATS_READ,
+			    oti ? oti->oti_jobid : NULL, tot_bytes);
         EXIT;
 
  cleanup:
@@ -549,6 +542,7 @@ static int filter_grant_check(struct obd_export *exp, struct obdo *oa,
                         if (tmp)
                                 bytes += blocksize - tmp;
 
+			lnb[n].rc = 0;
                         if ((lnb[n].flags & OBD_BRW_FROM_GRANT) &&
                             (oa->o_valid & OBD_MD_FLGRANT)) {
                                 if (resend) {
@@ -666,6 +660,7 @@ static int filter_preprw_write(int cmd, struct obd_export *exp, struct obdo *oa,
         obd_size left;
         unsigned long now = jiffies, timediff;
         int rc = 0, i, tot_bytes = 0, cleanup_phase = 0, localreq = 0;
+	int retries = 0;
         ENTRY;
         LASSERT(objcount == 1);
         LASSERT(obj->ioo_bufcnt > 0);
@@ -703,7 +698,7 @@ static int filter_preprw_write(int cmd, struct obd_export *exp, struct obdo *oa,
                                 noa->o_valid = OBD_MD_FLID;
                         }
 
-                        if (filter_create(exp, noa, NULL, oti) == 0) {
+                        if (filter_create(NULL, exp, noa, NULL, oti) == 0) {
                                 f_dput(dentry);
                                 dentry = filter_fid2dentry(exp->exp_obd, NULL,
                                                            obj->ioo_seq,
@@ -753,38 +748,54 @@ static int filter_preprw_write(int cmd, struct obd_export *exp, struct obdo *oa,
          * already exist so we can store the reservation handle there. */
         fmd = filter_fmd_find(exp, obj->ioo_id, obj->ioo_seq);
 
-        LASSERT(oa != NULL);
-        cfs_spin_lock(&obd->obd_osfs_lock);
-        filter_grant_incoming(exp, oa);
-        if (fmd && fmd->fmd_mactime_xid > oti->oti_xid)
-                oa->o_valid &= ~(OBD_MD_FLMTIME | OBD_MD_FLCTIME |
-                                 OBD_MD_FLATIME);
-        else
-                obdo_to_inode(dentry->d_inode, oa, OBD_MD_FLATIME |
-                              OBD_MD_FLMTIME | OBD_MD_FLCTIME);
-        cleanup_phase = 3;
+	LASSERT(oa != NULL);
+retry:
+	cfs_spin_lock(&obd->obd_osfs_lock);
+	if (retries == 0)
+		filter_grant_incoming(exp, oa);
+	if (fmd && fmd->fmd_mactime_xid > oti->oti_xid)
+		oa->o_valid &= ~(OBD_MD_FLMTIME | OBD_MD_FLCTIME |
+				 OBD_MD_FLATIME);
+	else
+		obdo_to_inode(dentry->d_inode, oa, OBD_MD_FLATIME |
+			      OBD_MD_FLMTIME | OBD_MD_FLCTIME);
+	cleanup_phase = 3;
 
-        left = filter_grant_space_left(exp);
+	left = filter_grant_space_left(exp);
 
-        fso.fso_dentry = dentry;
-        fso.fso_bufcnt = *npages;
+	fso.fso_dentry = dentry;
+	fso.fso_bufcnt = *npages;
 
-        rc = filter_grant_check(exp, oa, objcount, &fso, *npages, res,
-                                &left, dentry->d_inode);
+	rc = filter_grant_check(exp, oa, objcount, &fso, *npages, res,
+				&left, dentry->d_inode);
 
-        /* do not zero out oa->o_valid as it is used in filter_commitrw_write()
-         * for setting UID/GID and fid EA in first write time. */
-        /* If OBD_FL_SHRINK_GRANT is set, the client just returned us some grant
-         * so no sense in allocating it some more. We either return the grant
-         * back to the client if we have plenty of space or we don't return
-         * anything if we are short. This was decided in filter_grant_incoming*/
-        if ((oa->o_valid & OBD_MD_FLGRANT) &&
-            (!(oa->o_valid & OBD_MD_FLFLAGS) ||
-             !(oa->o_flags & OBD_FL_SHRINK_GRANT)))
-                oa->o_grant = filter_grant(exp, oa->o_grant, oa->o_undirty,
-                                           left, 1);
+	/* do not zero out oa->o_valid as it is used in filter_commitrw_write()
+	 * for setting UID/GID and fid EA in first write time. */
+	/* If OBD_FL_SHRINK_GRANT is set, the client just returned us some grant
+	 * so no sense in allocating it some more. We either return the grant
+	 * back to the client if we have plenty of space or we don't return
+	 * anything if we are short. This was decided in filter_grant_incoming*/
+	if ((retries == 0) && (oa->o_valid & OBD_MD_FLGRANT) &&
+	    (!(oa->o_valid & OBD_MD_FLFLAGS) ||
+	     !(oa->o_flags & OBD_FL_SHRINK_GRANT)))
+		oa->o_grant = filter_grant(exp, oa->o_grant, oa->o_undirty,
+					   left, 1);
 
-        cfs_spin_unlock(&obd->obd_osfs_lock);
+	cfs_spin_unlock(&obd->obd_osfs_lock);
+
+	if (rc == -ENOSPC && retries == 0) {
+		void *handle = NULL;
+
+		CDEBUG(D_INODE, "retry after commit pending journals");
+
+		retries = 1;
+		handle = fsfilt_start(obd, dentry->d_inode,
+				      FSFILT_OP_SETATTR, NULL);
+		if (handle != NULL &&
+		    fsfilt_commit(obd, dentry->d_inode, handle, 1) == 0)
+			goto retry;
+	}
+
         filter_fmd_put(exp, fmd);
 
         OBD_FAIL_TIMEOUT(OBD_FAIL_OST_BRW_PAUSE_BULK2, (obd_timeout + 1) / 4);
@@ -871,6 +882,8 @@ static int filter_preprw_write(int cmd, struct obd_export *exp, struct obdo *oa,
         if (exp->exp_nid_stats && exp->exp_nid_stats->nid_stats)
                 lprocfs_counter_add(exp->exp_nid_stats->nid_stats,
                                     LPROC_FILTER_WRITE_BYTES, tot_bytes);
+	filter_counter_incr(exp, LPROC_FILTER_STATS_WRITE,
+			    oti ? oti->oti_jobid : NULL, tot_bytes);
         EXIT;
 cleanup:
         switch(cleanup_phase) {
@@ -908,8 +921,8 @@ cleanup:
         return rc;
 }
 
-int filter_preprw(int cmd, struct obd_export *exp, struct obdo *oa,
-                  int objcount, struct obd_ioobj *obj,
+int filter_preprw(const struct lu_env *env, int cmd, struct obd_export *exp,
+                  struct obdo *oa, int objcount, struct obd_ioobj *obj,
                   struct niobuf_remote *nb, int *npages,
                   struct niobuf_local *res, struct obd_trans_info *oti,
                   struct lustre_capa *capa)
@@ -1003,8 +1016,8 @@ void filter_grant_commit(struct obd_export *exp, int niocount,
         cfs_spin_unlock(&exp->exp_obd->obd_osfs_lock);
 }
 
-int filter_commitrw(int cmd, struct obd_export *exp, struct obdo *oa,
-                    int objcount, struct obd_ioobj *obj,
+int filter_commitrw(const struct lu_env *env, int cmd, struct obd_export *exp,
+                    struct obdo *oa, int objcount, struct obd_ioobj *obj,
                     struct niobuf_remote *nb, int npages,
                     struct niobuf_local *res, struct obd_trans_info *oti,
                     int rc)
@@ -1017,49 +1030,4 @@ int filter_commitrw(int cmd, struct obd_export *exp, struct obdo *oa,
                                             nb, npages, res, oti, rc);
         LBUG();
         return -EPROTO;
-}
-
-int filter_brw(int cmd, struct obd_export *exp, struct obd_info *oinfo,
-               obd_count oa_bufs, struct brw_page *pga,
-               struct obd_trans_info *oti)
-{
-        struct obd_ioobj ioo;
-        struct niobuf_local *lnb;
-        struct niobuf_remote *rnb;
-        obd_count i;
-        int ret = 0, npages;
-        ENTRY;
-
-        OBD_ALLOC(lnb, oa_bufs * sizeof(struct niobuf_local));
-        OBD_ALLOC(rnb, oa_bufs * sizeof(struct niobuf_remote));
-
-        if (lnb == NULL || rnb == NULL)
-                GOTO(out, ret = -ENOMEM);
-
-        for (i = 0; i < oa_bufs; i++) {
-                lnb[i].page = pga[i].pg;
-                rnb[i].offset = pga[i].off;
-                rnb[i].len = pga[i].count;
-                lnb[i].flags = rnb[i].flags = pga[i].flag;
-        }
-
-        obdo_to_ioobj(oinfo->oi_oa, &ioo);
-        ioo.ioo_bufcnt = oa_bufs;
-
-        npages = oa_bufs;
-        ret = filter_preprw(cmd, exp, oinfo->oi_oa, 1, &ioo,
-                            rnb, &npages, lnb, oti, oinfo_capa(oinfo));
-        if (ret != 0)
-                GOTO(out, ret);
-        LASSERTF(oa_bufs == npages, "%u != %u\n", oa_bufs, npages);
-
-        ret = filter_commitrw(cmd, exp, oinfo->oi_oa, 1, &ioo, rnb,
-                              npages, lnb, oti, ret);
-
-out:
-        if (lnb)
-                OBD_FREE(lnb, oa_bufs * sizeof(struct niobuf_local));
-        if (rnb)
-                OBD_FREE(rnb, oa_bufs * sizeof(struct niobuf_remote));
-        RETURN(ret);
 }

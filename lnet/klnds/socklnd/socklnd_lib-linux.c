@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -406,53 +404,6 @@ ksocknal_lib_tunables_fini ()
 }
 #endif /* # if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM */
 
-void
-ksocknal_lib_bind_irq (unsigned int irq)
-{
-#if (defined(CONFIG_SMP) && defined(CPU_AFFINITY))
-        int              bind;
-        int              cpu;
-        char             cmdline[64];
-        ksock_irqinfo_t *info;
-        char            *argv[] = {"/bin/sh",
-                                   "-c",
-                                   cmdline,
-                                   NULL};
-        char            *envp[] = {"HOME=/",
-                                   "PATH=/sbin:/bin:/usr/sbin:/usr/bin",
-                                   NULL};
-
-        LASSERT (irq < NR_IRQS);
-        if (irq == 0)              /* software NIC or affinity disabled */
-                return;
-
-        info = &ksocknal_data.ksnd_irqinfo[irq];
-
-        cfs_write_lock_bh (&ksocknal_data.ksnd_global_lock);
-
-        LASSERT (info->ksni_valid);
-        bind = !info->ksni_bound;
-        info->ksni_bound = 1;
-
-        cfs_write_unlock_bh (&ksocknal_data.ksnd_global_lock);
-
-        if (!bind)                              /* bound already */
-                return;
-
-        cpu = ksocknal_irqsched2cpu(info->ksni_sched);
-        snprintf (cmdline, sizeof (cmdline),
-                  "echo %d > /proc/irq/%u/smp_affinity", 1 << cpu, irq);
-
-        LCONSOLE_INFO("Binding irq %u to CPU %d with cmd: %s\n",
-                      irq, cpu, cmdline);
-
-        /* FIXME: Find a better method of setting IRQ affinity...
-         */
-
-        USERMODEHELPER(argv[0], argv, envp);
-#endif
-}
-
 int
 ksocknal_lib_get_conn_addrs (ksock_conn_t *conn)
 {
@@ -478,44 +429,17 @@ ksocknal_lib_get_conn_addrs (ksock_conn_t *conn)
         return 0;
 }
 
-unsigned int
-ksocknal_lib_sock_irq (struct socket *sock)
-{
-        int                irq = 0;
-#ifdef CPU_AFFINITY
-        struct dst_entry  *dst;
-
-        if (!*ksocknal_tunables.ksnd_irq_affinity)
-                return 0;
-
-        dst = sk_dst_get (sock->sk);
-        if (dst != NULL) {
-                if (dst->dev != NULL) {
-                        irq = dst->dev->irq;
-                        if (irq >= NR_IRQS) {
-                                CERROR ("Unexpected IRQ %x\n", irq);
-                                irq = 0;
-                        }
-                }
-                dst_release (dst);
-        }
-
-#endif
-        return irq;
-}
-
 int
 ksocknal_lib_zc_capable(ksock_conn_t *conn)
 {
-        int  caps = conn->ksnc_sock->sk->sk_route_caps;
+	int  caps = conn->ksnc_sock->sk->sk_route_caps;
 
-        if (conn->ksnc_proto == &ksocknal_protocol_v1x)
-                return 0;
+	if (conn->ksnc_proto == &ksocknal_protocol_v1x)
+		return 0;
 
-        /* ZC if the socket supports scatter/gather and doesn't need software
-         * checksums */
-        return ((caps & NETIF_F_SG) != 0 &&
-                (caps & (NETIF_F_IP_CSUM | NETIF_F_NO_CSUM | NETIF_F_HW_CSUM)) != 0);
+	/* ZC if the socket supports scatter/gather and doesn't need software
+	 * checksums */
+	return ((caps & NETIF_F_SG) != 0 && (caps & NETIF_F_ALL_CSUM) != 0);
 }
 
 int
@@ -1089,25 +1013,11 @@ ksocknal_lib_setup_sock (struct socket *sock)
         return (0);
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,10))
-#define sock2tcp_opt(sk) tcp_sk(sk)
-#else
-struct tcp_opt *sock2tcp_opt(struct sock *sk)
-{
-        struct tcp_sock *s = (struct tcp_sock *)sk;
-        return &s->tcp;
-}
-#endif
-
 void
 ksocknal_lib_push_conn (ksock_conn_t *conn)
 {
         struct sock    *sk;
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,11))
-        struct tcp_opt *tp;
-#else
         struct tcp_sock *tp;
-#endif
         int             nonagle;
         int             val = 1;
         int             rc;
@@ -1117,8 +1027,8 @@ ksocknal_lib_push_conn (ksock_conn_t *conn)
         if (rc != 0)                            /* being shut down */
                 return;
 
-        sk = conn->ksnc_sock->sk;
-        tp = sock2tcp_opt(sk);
+	sk = conn->ksnc_sock->sk;
+	tp = tcp_sk(sk);
 
         lock_sock (sk);
         nonagle = tp->nonagle;
@@ -1271,23 +1181,4 @@ ksocknal_lib_memory_pressure(ksock_conn_t *conn)
         cfs_spin_unlock_bh (&sched->kss_lock);
 
         return rc;
-}
-
-int
-ksocknal_lib_bind_thread_to_cpu(int id)
-{
-#if defined(CONFIG_SMP) && defined(CPU_AFFINITY)
-        id = ksocknal_sched2cpu(id);
-        if (cpu_online(id)) {
-                cpumask_t m = CPU_MASK_NONE;
-                cpu_set(id, m);
-                set_cpus_allowed(current, m);
-                return 0;
-        }
-
-        return -1;
-
-#else
-        return 0;
-#endif
 }

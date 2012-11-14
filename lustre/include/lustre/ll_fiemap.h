@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -48,6 +46,7 @@
 #if !defined(HAVE_LINUX_FIEMAP_H) || !defined(__KERNEL__)
 
 #ifndef __KERNEL__
+#include <stddef.h>
 #include <libcfs/posix/posix-types.h>
 #endif
 

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -97,8 +95,6 @@ int xattr_type_filter(struct ll_sb_info *sbi, int xattr_type)
            !(sbi->ll_flags & LL_SBI_ACL))
                 return -EOPNOTSUPP;
 
-        if (xattr_type == XATTR_SECURITY_T && !selinux_is_enabled())
-                return -EOPNOTSUPP;
         if (xattr_type == XATTR_USER_T && !(sbi->ll_flags & LL_SBI_USER_XATTR))
                 return -EOPNOTSUPP;
         if (xattr_type == XATTR_TRUSTED_T && !cfs_capable(CFS_CAP_SYS_ADMIN))
@@ -138,6 +134,11 @@ int ll_setxattr_common(struct inode *inode, const char *name,
         if ((xattr_type == XATTR_SECURITY_T &&
             strcmp(name, "security.capability") == 0))
                 RETURN(0);
+
+        /* LU-549:  Disable security.selinux when selinux is disabled */
+        if (xattr_type == XATTR_SECURITY_T && !selinux_is_enabled() &&
+            strcmp(name, "security.selinux") == 0)
+                RETURN(-EOPNOTSUPP);
 
 #ifdef CONFIG_FS_POSIX_ACL
         if (sbi->ll_flags & LL_SBI_RMT_CLIENT &&
@@ -308,6 +309,11 @@ int ll_getxattr_common(struct inode *inode, const char *name,
             strcmp(name, "security.capability") == 0))
                 RETURN(-ENODATA);
 
+        /* LU-549:  Disable security.selinux when selinux is disabled */
+        if (xattr_type == XATTR_SECURITY_T && !selinux_is_enabled() &&
+            strcmp(name, "security.selinux") == 0)
+                RETURN(-EOPNOTSUPP);
+
 #ifdef CONFIG_FS_POSIX_ACL
         if (sbi->ll_flags & LL_SBI_RMT_CLIENT &&
             (xattr_type == XATTR_ACL_ACCESS_T ||
@@ -432,6 +438,7 @@ ssize_t ll_getxattr(struct dentry *dentry, const char *name,
             (strncmp(name, XATTR_LUSTRE_PREFIX,
                      sizeof(XATTR_LUSTRE_PREFIX) - 1) == 0 &&
              strcmp(name + sizeof(XATTR_LUSTRE_PREFIX) - 1, "lov") == 0)) {
+		struct lov_stripe_md *lsm;
                 struct lov_user_md *lump;
                 struct lov_mds_md *lmm = NULL;
                 struct ptlrpc_request *request = NULL;
@@ -446,7 +453,8 @@ ssize_t ll_getxattr(struct dentry *dentry, const char *name,
                         GOTO(out, rc = sizeof(struct lov_user_md));
                 }
 
-                if (!ll_i2info(inode)->lli_smd) {
+		lsm = ccc_inode_lsm_get(inode);
+		if (lsm == NULL) {
                         if (S_ISDIR(inode->i_mode)) {
                                 rc = ll_dir_getstripe(inode, &lmm,
                                                       &lmmsize, &request);
@@ -456,10 +464,10 @@ ssize_t ll_getxattr(struct dentry *dentry, const char *name,
                 } else {
                         /* LSM is present already after lookup/getattr call.
                          * we need to grab layout lock once it is implemented */
-                        rc = obd_packmd(ll_i2dtexp(inode), &lmm,
-                                        ll_i2info(inode)->lli_smd);
-                        lmmsize = rc;
-                }
+			rc = obd_packmd(ll_i2dtexp(inode), &lmm, lsm);
+			lmmsize = rc;
+		}
+		ccc_inode_lsm_put(inode, lsm);
 
                 if (rc < 0)
                        GOTO(out, rc);
@@ -513,8 +521,31 @@ ssize_t ll_listxattr(struct dentry *dentry, char *buffer, size_t size)
         if (rc < 0)
                 GOTO(out, rc);
 
-        if (S_ISREG(inode->i_mode)) {
-                if (ll_i2info(inode)->lli_smd == NULL)
+	if (buffer != NULL) {
+		struct ll_sb_info *sbi = ll_i2sbi(inode);
+		char *xattr_name = buffer;
+		int xlen, rem = rc;
+
+		while (rem > 0) {
+			xlen = strnlen(xattr_name, rem - 1) + 1;
+			rem -= xlen;
+			if (xattr_type_filter(sbi,
+					get_xattr_type(xattr_name)) == 0) {
+				/* skip OK xattr type
+				 * leave it in buffer
+				 */
+				xattr_name += xlen;
+				continue;
+			}
+			/* move up remaining xattrs in buffer
+			 * removing the xattr that is not OK
+			 */
+			memmove(xattr_name, xattr_name + xlen, rem);
+			rc -= xlen;
+		}
+	}
+	if (S_ISREG(inode->i_mode)) {
+		if (!ll_i2info(inode)->lli_has_smd)
                         rc2 = -1;
         } else if (S_ISDIR(inode->i_mode)) {
                 rc2 = ll_dir_getstripe(inode, &lmm, &lmmsize, &request);
@@ -527,14 +558,14 @@ ssize_t ll_listxattr(struct dentry *dentry, char *buffer, size_t size)
                 const size_t name_len   = sizeof("lov") - 1;
                 const size_t total_len  = prefix_len + name_len + 1;
 
-                if (buffer && (rc + total_len) <= size) {
-                        buffer += rc;
-                        memcpy(buffer,XATTR_LUSTRE_PREFIX, prefix_len);
-                        memcpy(buffer+prefix_len, "lov", name_len);
-                        buffer[prefix_len + name_len] = '\0';
-                }
-                rc2 = total_len;
-        }
+		if (buffer && (rc + total_len) <= size) {
+			buffer += rc;
+			memcpy(buffer, XATTR_LUSTRE_PREFIX, prefix_len);
+			memcpy(buffer + prefix_len, "lov", name_len);
+			buffer[prefix_len + name_len] = '\0';
+		}
+		rc2 = total_len;
+	}
 out:
         ptlrpc_req_finished(request);
         rc = rc + rc2;

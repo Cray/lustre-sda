@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, Whamcloud, Inc.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -159,6 +157,8 @@ int fld_trans_start(struct lu_server_fld *fld,
 void fld_trans_stop(struct lu_server_fld *fld,
                     const struct lu_env *env, struct thandle* th);
 
+extern struct lu_context_key fld_thread_key;
+
 int fld_index_init(struct lu_server_fld *fld,
                    const struct lu_env *env,
                    struct dt_device *dt);
@@ -216,5 +216,5 @@ fld_target_name(struct lu_fld_target *tar)
 }
 
 extern cfs_proc_dir_entry_t *fld_type_proc_dir;
-
+extern struct file_operations fld_proc_seq_fops;
 #endif /* __FLD_INTERNAL_H */

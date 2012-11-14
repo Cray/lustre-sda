@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -278,6 +276,16 @@ struct cl_object_conf {
          * VFS inode. This is consumed by vvp.
          */
         struct inode             *coc_inode;
+	/**
+	 * Validate object conf. If object is using an invalid conf,
+	 * then invalidate it and set the new layout.
+	 */
+	bool			  coc_validate_only;
+	/**
+	 * Invalidate the current stripe configuration due to losing
+	 * layout lock.
+	 */
+	bool			  coc_invalidate;
 };
 
 /**
@@ -1056,6 +1064,15 @@ struct cl_page_operations {
          */
         int (*cpo_cancel)(const struct lu_env *env,
                           const struct cl_page_slice *slice);
+	/**
+	 * Write out a page by kernel. This is only called by ll_writepage
+	 * right now.
+	 *
+	 * \see cl_page_flush()
+	 */
+	int (*cpo_flush)(const struct lu_env *env,
+			 const struct cl_page_slice *slice,
+			 struct cl_io *io);
         /** @} transfer */
 };
 
@@ -1911,6 +1928,11 @@ enum cl_io_type {
          */
         CIT_FAULT,
         /**
+	 * fsync system call handling
+	 * To write out a range of file
+	 */
+	CIT_FSYNC,
+	/**
          * Miscellaneous io. This is used for occasional io activity that
          * doesn't fit into other types. Currently this is used for:
          *
@@ -1955,11 +1977,6 @@ enum cl_io_state {
         CIS_IT_ENDED,
         /** cl_io finalized. */
         CIS_FINI
-};
-
-enum cl_req_priority {
-        CRP_NORMAL,
-        CRP_CANCEL
 };
 
 /**
@@ -2079,8 +2096,7 @@ struct cl_io_operations {
                 int  (*cio_submit)(const struct lu_env *env,
                                    const struct cl_io_slice *slice,
                                    enum cl_req_type crt,
-                                   struct cl_2queue *queue,
-                                   enum cl_req_priority priority);
+				   struct cl_2queue *queue);
         } req_op[CRT_NR];
         /**
          * Read missing page.
@@ -2242,6 +2258,18 @@ enum cl_io_lock_dmd {
         CILR_PEEK
 };
 
+enum cl_fsync_mode {
+	/** start writeback, do not wait for them to finish */
+	CL_FSYNC_NONE  = 0,
+	/** start writeback and wait for them to finish */
+	CL_FSYNC_LOCAL = 1,
+	/** discard all of dirty pages in a specific file range */
+	CL_FSYNC_DISCARD = 2,
+	/** start writeback and make sure they have reached storage before
+	 * return. OST_SYNC RPC must be issued and finished */
+	CL_FSYNC_ALL   = 3
+};
+
 struct cl_io_rw_common {
         loff_t      crw_pos;
         size_t      crw_count;
@@ -2276,11 +2304,6 @@ struct cl_io {
         struct cl_lockset              ci_lockset;
         /** lock requirements, this is just a help info for sublayers. */
         enum cl_io_lock_dmd            ci_lockreq;
-        /**
-         * This io has held grouplock, to inform sublayers that
-         * don't do lockless i/o.
-         */
-        int                            ci_no_srvlock;
         union {
                 struct cl_rd_io {
                         struct cl_io_rw_common rd;
@@ -2288,6 +2311,7 @@ struct cl_io {
                 struct cl_wr_io {
                         struct cl_io_rw_common wr;
                         int                    wr_append;
+			int                    wr_sync;
                 } ci_wr;
                 struct cl_io_rw_common ci_rw;
                 struct cl_setattr_io {
@@ -2309,11 +2333,43 @@ struct cl_io {
                         /** resulting page */
                         struct cl_page *ft_page;
                 } ci_fault;
+		struct cl_fsync_io {
+			loff_t             fi_start;
+			loff_t             fi_end;
+			struct obd_capa   *fi_capa;
+			/** file system level fid */
+			struct lu_fid     *fi_fid;
+			enum cl_fsync_mode fi_mode;
+			/* how many pages were written/discarded */
+			unsigned int       fi_nr_written;
+		} ci_fsync;
         } u;
         struct cl_2queue     ci_queue;
         size_t               ci_nob;
         int                  ci_result;
-        int                  ci_continue;
+	unsigned int         ci_continue:1,
+	/**
+	 * This io has held grouplock, to inform sublayers that
+	 * don't do lockless i/o.
+	 */
+			     ci_no_srvlock:1,
+	/**
+	 * The whole IO need to be restarted because layout has been changed
+	 */
+			     ci_need_restart:1,
+	/**
+	 * Ignore layout change.
+	 * Most of the CIT_MISC operations can ignore layout change, because
+	 * the purpose to create this kind of cl_io is to give an environment
+	 * to run clio methods, for example:
+	 *   1. request group lock;
+	 *   2. flush caching pages by osc;
+	 *   3. writepage
+	 *   4. echo client
+	 * So far, only direct IO and glimpse clio need restart if layout
+	 * change during IO time.
+	 */
+			     ci_ignore_layout:1;
         /**
          * Number of pages owned by this IO. For invariant checking.
          */
@@ -2388,10 +2444,12 @@ struct cl_io {
  * Per-transfer attributes.
  */
 struct cl_req_attr {
-        /** Generic attributes for the server consumption. */
-        struct obdo     *cra_oa;
-        /** Capability. */
-        struct obd_capa *cra_capa;
+	/** Generic attributes for the server consumption. */
+	struct obdo	*cra_oa;
+	/** Capability. */
+	struct obd_capa	*cra_capa;
+	/** Jobid */
+	char		 cra_jobid[JOBSTATS_JOBID_SIZE];
 };
 
 /**
@@ -2757,6 +2815,8 @@ int  cl_page_cache_add  (const struct lu_env *env, struct cl_io *io,
 void cl_page_clip       (const struct lu_env *env, struct cl_page *pg,
                          int from, int to);
 int  cl_page_cancel     (const struct lu_env *env, struct cl_page *page);
+int  cl_page_flush      (const struct lu_env *env, struct cl_io *io,
+			 struct cl_page *pg);
 
 /** @} transfer */
 
@@ -2803,9 +2863,19 @@ struct cl_lock *cl_lock_peek(const struct lu_env *env, const struct cl_io *io,
 struct cl_lock *cl_lock_request(const struct lu_env *env, struct cl_io *io,
                                 const struct cl_lock_descr *need,
                                 const char *scope, const void *source);
-struct cl_lock *cl_lock_at_page(const struct lu_env *env, struct cl_object *obj,
-                                struct cl_page *page, struct cl_lock *except,
-                                int pending, int canceld);
+struct cl_lock *cl_lock_at_pgoff(const struct lu_env *env,
+				 struct cl_object *obj, pgoff_t index,
+				 struct cl_lock *except, int pending,
+				 int canceld);
+static inline struct cl_lock *cl_lock_at_page(const struct lu_env *env,
+					      struct cl_object *obj,
+					      struct cl_page *page,
+					      struct cl_lock *except,
+					      int pending, int canceld)
+{
+	return cl_lock_at_pgoff(env, obj, page->cp_index, except,
+				pending, canceld);
+}
 
 const struct cl_lock_slice *cl_lock_at(const struct cl_lock *lock,
                                        const struct lu_device_type *dtype);
@@ -2815,6 +2885,8 @@ void  cl_lock_get_trust (struct cl_lock *lock);
 void  cl_lock_put       (const struct lu_env *env, struct cl_lock *lock);
 void  cl_lock_hold_add  (const struct lu_env *env, struct cl_lock *lock,
                          const char *scope, const void *source);
+void cl_lock_hold_release(const struct lu_env *env, struct cl_lock *lock,
+			  const char *scope, const void *source);
 void  cl_lock_unhold    (const struct lu_env *env, struct cl_lock *lock,
                          const char *scope, const void *source);
 void  cl_lock_release   (const struct lu_env *env, struct cl_lock *lock,
@@ -2887,8 +2959,7 @@ int  cl_lock_mutex_try  (const struct lu_env *env, struct cl_lock *lock);
 void cl_lock_mutex_put  (const struct lu_env *env, struct cl_lock *lock);
 int  cl_lock_is_mutexed (struct cl_lock *lock);
 int  cl_lock_nr_mutexed (const struct lu_env *env);
-int  cl_lock_page_out   (const struct lu_env *env, struct cl_lock *lock,
-                         int discard);
+int  cl_lock_discard_pages(const struct lu_env *env, struct cl_lock *lock);
 int  cl_lock_ext_match  (const struct cl_lock_descr *has,
                          const struct cl_lock_descr *need);
 int  cl_lock_descr_match(const struct cl_lock_descr *has,
@@ -2946,11 +3017,10 @@ int   cl_io_prepare_write(const struct lu_env *env, struct cl_io *io,
 int   cl_io_commit_write (const struct lu_env *env, struct cl_io *io,
                           struct cl_page *page, unsigned from, unsigned to);
 int   cl_io_submit_rw    (const struct lu_env *env, struct cl_io *io,
-                          enum cl_req_type iot, struct cl_2queue *queue,
-                          enum cl_req_priority priority);
+			  enum cl_req_type iot, struct cl_2queue *queue);
 int   cl_io_submit_sync  (const struct lu_env *env, struct cl_io *io,
-                          enum cl_req_type iot, struct cl_2queue *queue,
-                          enum cl_req_priority priority, long timeout);
+			  enum cl_req_type iot, struct cl_2queue *queue,
+			  long timeout);
 void  cl_io_rw_advance   (const struct lu_env *env, struct cl_io *io,
                           size_t nob);
 int   cl_io_cancel       (const struct lu_env *env, struct cl_io *io,
@@ -2963,6 +3033,16 @@ int   cl_io_is_going     (const struct lu_env *env);
 static inline int cl_io_is_append(const struct cl_io *io)
 {
         return io->ci_type == CIT_WRITE && io->u.ci_wr.wr_append;
+}
+
+static inline int cl_io_is_sync_write(const struct cl_io *io)
+{
+	return io->ci_type == CIT_WRITE && io->u.ci_wr.wr_sync;
+}
+
+static inline int cl_io_is_mkwrite(const struct cl_io *io)
+{
+	return io->ci_type == CIT_FAULT && io->u.ci_fault.ft_mkwrite;
 }
 
 /**

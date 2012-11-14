@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -94,6 +92,7 @@ int raw_name2idx(int hashtype, int count, const char *name, int namelen)
         LASSERT(c < count);
         return c;
 }
+EXPORT_SYMBOL(raw_name2idx);
 
 int mea_name2idx(struct lmv_stripe_md *mea, const char *name, int namelen)
 {
@@ -106,3 +105,4 @@ int mea_name2idx(struct lmv_stripe_md *mea, const char *name, int namelen)
         LASSERT(c < mea->mea_count);
         return c;
 }
+EXPORT_SYMBOL(mea_name2idx);

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, Whamcloud, Inc.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -193,7 +191,7 @@ int llog_setup(struct obd_device *obd, struct obd_llog_group *olg, int index,
                struct llog_operations *op);
 int __llog_ctxt_put(struct llog_ctxt *ctxt);
 int llog_cleanup(struct llog_ctxt *);
-int llog_sync(struct llog_ctxt *ctxt, struct obd_export *exp);
+int llog_sync(struct llog_ctxt *ctxt, struct obd_export *exp, int flags);
 int llog_add(struct llog_ctxt *ctxt, struct llog_rec_hdr *rec,
              struct lov_stripe_md *lsm, struct llog_cookie *logcookies,
              int numcookies);
@@ -230,7 +228,8 @@ int llog_handle_connect(struct ptlrpc_request *req);
 int llog_obd_repl_cancel(struct llog_ctxt *ctxt,
                          struct lov_stripe_md *lsm, int count,
                          struct llog_cookie *cookies, int flags);
-int llog_obd_repl_sync(struct llog_ctxt *ctxt, struct obd_export *exp);
+int llog_obd_repl_sync(struct llog_ctxt *ctxt, struct obd_export *exp,
+		       int flags);
 int llog_obd_repl_connect(struct llog_ctxt *ctxt,
                           struct llog_logid *logid, struct llog_gen *gen,
                           struct obd_uuid *uuid);
@@ -253,7 +252,8 @@ struct llog_operations {
         int (*lop_setup)(struct obd_device *obd, struct obd_llog_group *olg,
                          int ctxt_idx, struct obd_device *disk_obd, int count,
                          struct llog_logid *logid, const char *name);
-        int (*lop_sync)(struct llog_ctxt *ctxt, struct obd_export *exp);
+	int (*lop_sync)(struct llog_ctxt *ctxt, struct obd_export *exp,
+			int flags);
         int (*lop_cleanup)(struct llog_ctxt *ctxt);
         int (*lop_add)(struct llog_ctxt *ctxt, struct llog_rec_hdr *rec,
                        struct lov_stripe_md *lsm,
@@ -276,6 +276,7 @@ int llog_put_cat_list(struct obd_device *disk_obd,
                       char *name, int idx, int count, struct llog_catid *idarray);
 
 #define LLOG_CTXT_FLAG_UNINITIALIZED     0x00000001
+#define LLOG_CTXT_FLAG_STOP		 0x00000002
 
 struct llog_ctxt {
         int                      loc_idx; /* my index the obd array of ctxt's */

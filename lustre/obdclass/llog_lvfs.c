@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -653,7 +653,7 @@ static int llog_lvfs_create(struct llog_ctxt *ctxt, struct llog_handle **res,
                 oa->o_seq = FID_SEQ_LLOG;
                 oa->o_valid = OBD_MD_FLGENER | OBD_MD_FLGROUP;
 
-                rc = obd_create(ctxt->loc_exp, oa, NULL, NULL);
+                rc = obd_create(NULL, ctxt->loc_exp, oa, NULL, NULL);
                 if (rc)
                         GOTO(out, rc);
 
@@ -721,12 +721,12 @@ static int llog_lvfs_destroy(struct llog_handle *handle)
                 dget(fdentry);
                 rc = llog_lvfs_close(handle);
 
-                if (rc == 0) {
-                        LOCK_INODE_MUTEX_PARENT(inode);
-                        rc = ll_vfs_unlink(inode, fdentry, mnt);
-                        UNLOCK_INODE_MUTEX(inode);
-                }
-                mntput(mnt);
+		if (rc == 0) {
+			mutex_lock_nested(&inode->i_mutex, I_MUTEX_PARENT);
+			rc = ll_vfs_unlink(inode, fdentry, mnt);
+			mutex_unlock(&inode->i_mutex);
+		}
+		mntput(mnt);
 
                 dput(fdentry);
                 pop_ctxt(&saved, &obd->obd_lvfs_ctxt, NULL);
@@ -753,7 +753,8 @@ static int llog_lvfs_destroy(struct llog_handle *handle)
                 GOTO(out, rc = PTR_ERR(th));
         }
 
-        rc = obd_destroy(handle->lgh_ctxt->loc_exp, oa, NULL, NULL, NULL, NULL);
+        rc = obd_destroy(NULL, handle->lgh_ctxt->loc_exp, oa,
+                         NULL, NULL, NULL, NULL);
 
         rc1 = fsfilt_commit(obd, inode, th, 0);
         if (rc == 0 && rc1 != 0)

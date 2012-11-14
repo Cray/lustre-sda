@@ -28,6 +28,8 @@
 # Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
 # Use is subject to license terms.
 #
+# Copyright (c) 2012, Intel Corporation.
+#
 
 #
 # This file is part of Lustre, http://www.lustre.org/
@@ -39,4 +41,5 @@ pkginclude_HEADERS = lustre_idl.h lustre_user.h liblustreapi.h libiam.h \
 	 ll_fiemap.h
 endif
 
-EXTRA_DIST = lustre_idl.h lustre_user.h liblustreapi.h libiam.h ll_fiemap.h
+EXTRA_DIST = lustre_idl.h lustre_user.h liblustreapi.h libiam.h ll_fiemap.h \
+	     lustre_lfsck_user.h

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -39,7 +37,6 @@
 #ifndef LUSTRE_PATCHLESS_COMPAT_H
 #define LUSTRE_PATCHLESS_COMPAT_H
 
-#include <linux/lustre_version.h>
 #include <linux/fs.h>
 
 #ifndef HAVE_TRUNCATE_COMPLETE_PAGE
@@ -53,9 +50,6 @@
 
 #ifndef HAVE_DELETE_FROM_PAGE_CACHE /* 2.6.39 */
 #ifndef HAVE_REMOVE_FROM_PAGE_CACHE /* 2.6.35 - 2.6.38 */
-#ifdef HAVE_NR_PAGECACHE /* 2.6.18 */
-#define __dec_zone_page_state(page, flag) atomic_add(-1, &nr_pagecache);
-#endif /* HAVE_NR_PAGECACHE */
 
 /* XXX copy & paste from 2.6.15 kernel */
 static inline void ll_remove_from_page_cache(struct page *page)

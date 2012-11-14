@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -219,7 +217,8 @@ int mdd_get_md(const struct lu_env *env, struct mdd_object *obj,
                 *md_size = 0;
                 rc = 0;
         } else if (rc < 0) {
-                CERROR("Error %d reading eadata - %d\n", rc, *md_size);
+                CDEBUG(D_OTHER, "Error %d reading eadata - %d\n",
+                       rc, *md_size);
         } else {
                 /* XXX: Convert lov EA but fixed after verification test. */
                 *md_size = rc;
@@ -460,30 +459,36 @@ int mdd_lov_create(const struct lu_env *env, struct mdd_device *mdd,
                 } else {
                         /* get lov ea from parent and set to lov */
                         struct lov_mds_md *_lmm;
-                        int _lmm_size;
+                        int _lmm_size = mdd_lov_mdsize(env, mdd);
 
                         LASSERT(parent != NULL);
 
-                        _lmm_size = mdd_lov_mdsize(env, mdd);
-                        _lmm = mdd_max_lmm_get(env, mdd);
+			/*
+			 * can not create child's lov_mds_md by access it
+			 * thru .lustre path
+			 */
+			if (mdd_object_obf(parent))
+				GOTO(out_oti, rc = -EBADFD);
 
+                        _lmm = mdd_max_lmm_get(env, mdd);
                         if (_lmm == NULL)
                                 GOTO(out_oti, rc = -ENOMEM);
 
                         rc = mdd_get_md_locked(env, parent, _lmm,
                                                &_lmm_size,
                                                XATTR_NAME_LOV);
-                        if (rc > 0)
+                        if (rc > 0) {
+                                _lmm_size = mdd_lov_mdsize(env, mdd);
                                 rc = obd_iocontrol(OBD_IOC_LOV_SETSTRIPE,
-                                                   lov_exp, *lmm_size,
+                                                   lov_exp, _lmm_size,
                                                    &lsm, _lmm);
-
+                        }
                         if (rc)
                                 GOTO(out_oti, rc);
                 }
 
                 OBD_FAIL_TIMEOUT(OBD_FAIL_MDS_OPEN_WAIT_CREATE, 10);
-                rc = obd_create(lov_exp, oa, &lsm, oti);
+                rc = obd_create(env, lov_exp, oa, &lsm, oti);
                 if (rc) {
                         if (rc > 0) {
                                 CERROR("Create error for "DFID": %d\n",
@@ -533,16 +538,14 @@ int mdd_lov_create(const struct lu_env *env, struct mdd_device *mdd,
 
                 /* When setting attr to ost, FLBKSZ is not needed. */
                 oa->o_valid &= ~OBD_MD_FLBLKSZ;
-                obdo_from_la(oa, la, OBD_MD_FLTYPE | OBD_MD_FLATIME |
-                             OBD_MD_FLMTIME | OBD_MD_FLCTIME | OBD_MD_FLSIZE);
-
+                obdo_from_la(oa, la, LA_TYPE | LA_ATIME | LA_MTIME |
+                                     LA_CTIME | LA_SIZE);
                 /*
                  * XXX: Pack lustre id to OST, in OST, it will be packed by
                  * filter_fid, but can not see what is the usages. So just pack
                  * o_seq o_ver here, maybe fix it after this cycle.
                  */
-                obdo_from_inode(oa, NULL,
-                                (struct lu_fid *)mdd_object_fid(child), 0);
+                obdo_set_parent_fid(oa, mdd_object_fid(child));
                 oinfo->oi_oa = oa;
                 oinfo->oi_md = lsm;
                 oinfo->oi_capa = NULL;
@@ -592,12 +595,9 @@ out_ids:
  * used when destroying orphans and from mds_reint_unlink() when MDS wants to
  * destroy objects on OSS.
  */
-static
 int mdd_lovobj_unlink(const struct lu_env *env, struct mdd_device *mdd,
-                      struct mdd_object *obj, struct lu_attr *la,
-                      struct lov_mds_md *lmm, int lmm_size,
-                      struct llog_cookie *logcookies,
-                      int log_unlink)
+		      struct mdd_object *obj, struct lu_attr *la,
+		      struct md_attr *ma, int log_unlink)
 {
         struct obd_device     *obd = mdd2obd_dev(mdd);
         struct obd_export     *lov_exp = obd->u.mds.mds_lov_exp;
@@ -605,7 +605,10 @@ int mdd_lovobj_unlink(const struct lu_env *env, struct mdd_device *mdd,
         struct obd_trans_info *oti = &mdd_env_info(env)->mti_oti;
         struct obdo           *oa = &mdd_env_info(env)->mti_oa;
         struct lu_site        *site = mdd2lu_dev(mdd)->ld_site;
-        int rc;
+	struct lov_mds_md     *lmm = ma->ma_lmm;
+	int                    lmm_size = ma->ma_lmm_size;
+	struct llog_cookie    *logcookies = ma->ma_cookie;
+	int                    rc;
         ENTRY;
 
         if (lmm_size == 0)
@@ -631,17 +634,20 @@ int mdd_lovobj_unlink(const struct lu_env *env, struct mdd_device *mdd,
                 oti->oti_logcookies = logcookies;
         }
 
+	if (!(ma->ma_attr_flags & MDS_UNLINK_DESTROY))
+		oa->o_flags = OBD_FL_DELORPHAN;
+
         CDEBUG(D_INFO, "destroying OSS object "LPU64":"LPU64"\n", oa->o_seq,
                oa->o_id);
 
-        rc = obd_destroy(lov_exp, oa, lsm, oti, NULL, NULL);
+        rc = obd_destroy(env, lov_exp, oa, lsm, oti, NULL, NULL);
 
         obd_free_memmd(lov_exp, &lsm);
         RETURN(rc);
 }
 
 /*
- * called with obj locked. 
+ * called with obj locked.
  */
 int mdd_lov_destroy(const struct lu_env *env, struct mdd_device *mdd,
                     struct mdd_object *obj, struct lu_attr *la)
@@ -690,11 +696,10 @@ int mdd_lov_destroy(const struct lu_env *env, struct mdd_device *mdd,
                 RETURN(rc);
         }
 
-        if (ma->ma_valid & MA_COOKIE)
-                rc = mdd_lovobj_unlink(env, mdd, obj, la,
-                                       ma->ma_lmm, ma->ma_lmm_size,
-                                       ma->ma_cookie, 1);
-        RETURN(rc);
+	if (ma->ma_valid & MA_COOKIE)
+		rc = mdd_lovobj_unlink(env, mdd, obj, la, ma, 1);
+
+	RETURN(rc);
 }
 
 int mdd_declare_unlink_log(const struct lu_env *env, struct mdd_object *obj,
@@ -855,7 +860,7 @@ static int mdd_osc_setattr_async(struct obd_device *obd, __u32 uid, __u32 gid,
                 oti.oti_logcookies = logcookies;
         }
 
-        obdo_from_inode(oinfo.oi_oa, NULL, (struct lu_fid *)parent, 0);
+        obdo_set_parent_fid(oinfo.oi_oa, parent);
         oinfo.oi_capa = oc;
 
         /* do async setattr from mds to ost not waiting for responses. */

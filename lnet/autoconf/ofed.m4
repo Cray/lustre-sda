@@ -5,9 +5,7 @@ AC_DEFUN([LN_CONFIG_OFED_SPEC],
 	LB_LINUX_TRY_COMPILE([
 		#include <linux/version.h>
 		#include <linux/pci.h>
-		#if !HAVE_GFP_T
-		typedef int gfp_t;
-		#endif
+		#include <linux/gfp.h>
 		#include <rdma/ib_verbs.h>
 	],[
 		ib_dma_map_single(NULL, NULL, 0, 0);
@@ -24,9 +22,7 @@ AC_DEFUN([LN_CONFIG_OFED_SPEC],
 	LB_LINUX_TRY_COMPILE([
 		#include <linux/version.h>
 		#include <linux/pci.h>
-		#if !HAVE_GFP_T
-		typedef int gfp_t;
-		#endif
+		#include <linux/gfp.h>
 		#include <rdma/ib_verbs.h>
 	],[
 		ib_create_cq(NULL, NULL, NULL, NULL, 0, 0);
@@ -39,32 +35,11 @@ AC_DEFUN([LN_CONFIG_OFED_SPEC],
 		AC_MSG_RESULT(no)
 	])
 
-	AC_MSG_CHECKING([if OFED supports iWarp transport])
-	LB_LINUX_TRY_COMPILE([
-		#include <linux/version.h>
-		#include <linux/pci.h>
-		#if !HAVE_GFP_T
-		typedef int gfp_t;
-		#endif
-		#include <rdma/ib_verbs.h>
-	],[
-		return RDMA_TRANSPORT_IWARP ==
-		       rdma_node_get_transport(RDMA_NODE_RNIC);
-	],[
-		AC_MSG_RESULT(yes)
-		AC_DEFINE(HAVE_OFED_TRANSPORT_IWARP, 1,
-			  [has transport iWARP])
-	],[
-		AC_MSG_RESULT(no)
-	])
-
 	AC_MSG_CHECKING([if OFED has RDMA_CM_EVENT_ADDR_CHANGE])
 	LB_LINUX_TRY_COMPILE([
 		#include <linux/version.h>
 		#include <linux/pci.h>
-		#if !HAVE_GFP_T
-		typedef int gfp_t;
-		#endif
+		#include <linux/gfp.h>
 		#include <rdma/rdma_cm.h>
 	],[
 		return (RDMA_CM_EVENT_ADDR_CHANGE == 0);
@@ -80,9 +55,7 @@ AC_DEFUN([LN_CONFIG_OFED_SPEC],
 	LB_LINUX_TRY_COMPILE([
 		#include <linux/version.h>
 		#include <linux/pci.h>
-		#if !HAVE_GFP_T
-		typedef int gfp_t;
-		#endif
+		#include <linux/gfp.h>
 		#include <rdma/rdma_cm.h>
 	],[
 		return (RDMA_CM_EVENT_TIMEWAIT_EXIT == 0);
@@ -98,9 +71,7 @@ AC_DEFUN([LN_CONFIG_OFED_SPEC],
 	LB_LINUX_TRY_COMPILE([
 		#include <linux/version.h>
 		#include <linux/pci.h>
-		#if !HAVE_GFP_T
-		typedef int gfp_t;
-		#endif
+		#include <linux/gfp.h>
 		#include <rdma/rdma_cm.h>
 	],[
 		rdma_set_reuseaddr(NULL, 1);

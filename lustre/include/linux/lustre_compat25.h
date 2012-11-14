@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -40,10 +38,6 @@
 #define _LINUX_COMPAT25_H
 
 #ifdef __KERNEL__
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,9)
-#error sorry, lustre requires at least linux kernel 2.6.9 or later
-#endif
 
 #include <linux/fs_struct.h>
 #include <linux/namei.h>
@@ -58,15 +52,6 @@
  #define SEEK_CUR 1
  #define SEEK_END 2
 #endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,14)
-struct ll_iattr {
-        struct iattr    iattr;
-        unsigned int    ia_attr_flags;
-};
-#else
-#define ll_iattr iattr
-#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,14) */
 
 #ifdef HAVE_FS_STRUCT_RWLOCK
 # define LOCK_FS_STRUCT(fs)   cfs_write_lock(&(fs)->lock)
@@ -123,52 +108,12 @@ static inline void ll_set_fs_pwd(struct fs_struct *fs, struct vfsmount *mnt,
  */
 #define ATTR_BLOCKS    (1 << 27)
 
-#if HAVE_INODE_I_MUTEX
-#define UNLOCK_INODE_MUTEX(inode) \
-do {cfs_mutex_unlock(&(inode)->i_mutex); } while(0)
-#define LOCK_INODE_MUTEX(inode) \
-do {cfs_mutex_lock(&(inode)->i_mutex); } while(0)
-#define LOCK_INODE_MUTEX_PARENT(inode) \
-do {cfs_mutex_lock_nested(&(inode)->i_mutex, I_MUTEX_PARENT); } while(0)
-#define TRYLOCK_INODE_MUTEX(inode) cfs_mutex_trylock(&(inode)->i_mutex)
-#else
-#define UNLOCK_INODE_MUTEX(inode) do  cfs_up(&(inode)->i_sem); } while(0)
-#define LOCK_INODE_MUTEX(inode) do  cfs_down(&(inode)->i_sem); } while(0)
-#define TRYLOCK_INODE_MUTEX(inode) (!down_trylock(&(inode)->i_sem))
-#define LOCK_INODE_MUTEX_PARENT(inode) LOCK_INODE_MUTEX(inode)
-#endif /* HAVE_INODE_I_MUTEX */
-
-#ifdef HAVE_SEQ_LOCK
-#define LL_SEQ_LOCK(seq) cfs_mutex_lock(&(seq)->lock)
-#define LL_SEQ_UNLOCK(seq) cfs_mutex_unlock(&(seq)->lock)
-#else
-#define LL_SEQ_LOCK(seq) cfs_down(&(seq)->sem)
-#define LL_SEQ_UNLOCK(seq) cfs_up(&(seq)->sem)
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,15)
-#define d_child d_u.d_child
-#define d_rcu d_u.d_rcu
-#endif
-
-#ifdef HAVE_DQUOTOFF_MUTEX
-#define UNLOCK_DQONOFF_MUTEX(dqopt) cfs_mutex_unlock(&(dqopt)->dqonoff_mutex)
-#define LOCK_DQONOFF_MUTEX(dqopt) cfs_mutex_lock(&(dqopt)->dqonoff_mutex)
-#else
-#define UNLOCK_DQONOFF_MUTEX(dqopt) cfs_up(&(dqopt)->dqonoff_sem)
-#define LOCK_DQONOFF_MUTEX(dqopt) cfs_down(&(dqopt)->dqonoff_sem)
-#endif /* HAVE_DQUOTOFF_MUTEX */
-
 #define current_ngroups current_cred()->group_info->ngroups
 #define current_groups current_cred()->group_info->small_block
 
 #ifndef page_private
 #define page_private(page) ((page)->private)
 #define set_page_private(page, v) ((page)->private = (v))
-#endif
-
-#ifndef HAVE_GFP_T
-#define gfp_t int
 #endif
 
 #define ll_kernel_locked()      kernel_locked()
@@ -202,12 +147,15 @@ do {cfs_mutex_lock_nested(&(inode)->i_mutex, I_MUTEX_PARENT); } while(0)
 #define ll_permission(inode,mask,nd)    permission(inode,mask,nd)
 #endif
 
-#ifdef HAVE_GENERIC_PERMISSION_4ARGS
-#define ll_generic_permission(inode, mask, flags, check_acl) \
-        generic_permission(inode, mask, flags, check_acl)
+#ifdef HAVE_GENERIC_PERMISSION_2ARGS
+# define ll_generic_permission(inode, mask, flags, check_acl) \
+	 generic_permission(inode, mask)
+#elif defined HAVE_GENERIC_PERMISSION_4ARGS
+# define ll_generic_permission(inode, mask, flags, check_acl) \
+	 generic_permission(inode, mask, flags, check_acl)
 #else
-#define ll_generic_permission(inode, mask, flags, check_acl) \
-        generic_permission(inode, mask, check_acl)
+# define ll_generic_permission(inode, mask, flags, check_acl) \
+	 generic_permission(inode, mask, check_acl)
 #endif
 
 #define ll_pgcache_lock(mapping)          cfs_spin_lock(&mapping->page_lock)
@@ -329,99 +277,37 @@ static inline int mapping_has_pages(struct address_space *mapping)
 #define DOWN_READ_I_ALLOC_SEM(i)  down_read(&(i)->i_alloc_sem)
 #define LASSERT_I_ALLOC_SEM_READ_LOCKED(i) LASSERT(down_write_trylock(&(i)->i_alloc_sem) == 0)
 
-#ifndef HAVE_GRAB_CACHE_PAGE_NOWAIT_GFP
-#define grab_cache_page_nowait_gfp(x, y, z) grab_cache_page_nowait((x), (y))
-#endif
-
 #include <linux/mpage.h>        /* for generic_writepages */
-#ifndef HAVE_FILEMAP_FDATAWRITE_RANGE
-#include <linux/backing-dev.h>  /* for mapping->backing_dev_info */
-static inline int filemap_fdatawrite_range(struct address_space *mapping,
-                                           loff_t start, loff_t end)
+
+#ifdef HAVE_HIDE_VFSMOUNT_GUTS
+# include <../fs/mount.h>
+#else
+# define real_mount(mnt)	(mnt)
+#endif
+
+static inline const char *mnt_get_devname(struct vfsmount *mnt)
 {
-        int rc;
-        struct writeback_control wbc = {
-                .sync_mode = WB_SYNC_ALL,
-                .nr_to_write = (end - start + PAGE_SIZE - 1) >> PAGE_SHIFT,
-        };
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,18)
-        wbc.range_start = start;
-        wbc.range_end = end;
-#else
-        wbc.start = start;
-        wbc.end = end;
-#endif
-
-#ifdef HAVE_MAPPING_CAP_WRITEBACK_DIRTY
-        if (!mapping_cap_writeback_dirty(mapping))
-                rc = 0;
-#else
-        if (mapping->backing_dev_info->memory_backed)
-                rc = 0;
-#endif
-        /* do_writepages() */
-        else if (mapping->a_ops->writepages)
-                rc = mapping->a_ops->writepages(mapping, &wbc);
-        else
-                rc = generic_writepages(mapping, &wbc);
-        return rc;
+	return real_mount(mnt)->mnt_devname;
 }
-#else
-int filemap_fdatawrite_range(struct address_space *mapping,
-                             loff_t start, loff_t end);
-#endif /* HAVE_FILEMAP_FDATAWRITE_RANGE */
-
-#ifdef HAVE_VFS_KERN_MOUNT
-static inline struct vfsmount *
-ll_kern_mount(const char *fstype, int flags, const char *name, void *data)
-{
-        struct file_system_type *type = get_fs_type(fstype);
-        struct vfsmount *mnt;
-        if (!type)
-                return ERR_PTR(-ENODEV);
-        mnt = vfs_kern_mount(type, flags, name, data);
-        cfs_module_put(type->owner);
-        return mnt;
-}
-#else
-#define ll_kern_mount(fstype, flags, name, data) do_kern_mount((fstype), (flags), (name), (data))
-#endif
 
 #ifndef HAVE_ATOMIC_MNT_COUNT
 static inline unsigned int mnt_get_count(struct vfsmount *mnt)
 {
 #ifdef CONFIG_SMP
-        unsigned int count = 0;
-        int cpu;
+	unsigned int count = 0;
+	int cpu;
 
-        for_each_possible_cpu(cpu) {
-                count += per_cpu_ptr(mnt->mnt_pcp, cpu)->mnt_count;
-        }
+	for_each_possible_cpu(cpu) {
+		count += per_cpu_ptr(real_mount(mnt)->mnt_pcp, cpu)->mnt_count;
+	}
 
-        return count;
+	return count;
 #else
-        return mnt->mnt_count;
+	return real_mount(mnt)->mnt_count;
 #endif
 }
 #else
-# define mnt_get_count(mnt)      cfs_atomic_read(&mnt->mnt_count)
-#endif
-
-#ifdef HAVE_STATFS_DENTRY_PARAM
-#define ll_do_statfs(sb, sfs) (sb)->s_op->statfs((sb)->s_root, (sfs))
-#else
-#define ll_do_statfs(sb, sfs) (sb)->s_op->statfs((sb), (sfs))
-#endif
-
-#ifndef HAVE_SB_TIME_GRAN
-#ifndef HAVE_S_TIME_GRAN
-#error Need s_time_gran patch!
-#endif
-static inline u32 get_sb_time_gran(struct super_block *sb)
-{
-        return sb->s_time_gran;
-}
+# define mnt_get_count(mnt)      cfs_atomic_read(&(real_mount(mnt)->mnt_count))
 #endif
 
 #ifdef HAVE_RW_TREE_LOCK
@@ -449,11 +335,7 @@ int ll_unregister_blkdev(unsigned int dev, const char *name)
 #define ll_invalidate_bdev(a,b)         invalidate_bdev((a))
 #endif
 
-#ifdef HAVE_INODE_BLKSIZE
-#define ll_inode_blksize(a)     (a)->i_blksize
-#else
 #define ll_inode_blksize(a)     (1<<(a)->i_blkbits)
-#endif
 
 #ifdef HAVE_FS_RENAME_DOES_D_MOVE
 #define LL_RENAME_DOES_D_MOVE   FS_RENAME_DOES_D_MOVE
@@ -487,8 +369,6 @@ static inline struct dentry *d_obtain_alias(struct inode *inode)
 #define ll_crypto_hash_init(desc)               crypto_hash_init(desc)
 #define ll_crypto_hash_update(desc, sl, bytes)  crypto_hash_update(desc, sl, bytes)
 #define ll_crypto_hash_final(desc, out)         crypto_hash_final(desc, out)
-#define ll_crypto_alloc_blkcipher(name, type, mask) \
-                crypto_alloc_blkcipher(name ,type, mask)
 #define ll_crypto_blkcipher_setkey(tfm, key, keylen) \
                 crypto_blkcipher_setkey(tfm, key, keylen)
 #define ll_crypto_blkcipher_set_iv(tfm, src, len) \
@@ -503,6 +383,15 @@ static inline struct dentry *d_obtain_alias(struct inode *inode)
                 crypto_blkcipher_encrypt_iv(desc, dst, src, bytes)
 #define ll_crypto_blkcipher_decrypt_iv(desc, dst, src, bytes) \
                 crypto_blkcipher_decrypt_iv(desc, dst, src, bytes)
+
+static inline
+struct ll_crypto_cipher *ll_crypto_alloc_blkcipher(const char *name,
+						   u32 type, u32 mask)
+{
+	struct ll_crypto_cipher *rtn = crypto_alloc_blkcipher(name, type, mask);
+
+	return (rtn == NULL ? ERR_PTR(-ENOMEM) : rtn);
+}
 
 static inline int ll_crypto_hmac(struct ll_crypto_hash *tfm,
                                  u8 *key, unsigned int *keylen,
@@ -573,25 +462,27 @@ static inline
 struct ll_crypto_cipher *ll_crypto_alloc_blkcipher(const char * algname,
                                                    u32 type, u32 mask)
 {
-        char        buf[CRYPTO_MAX_ALG_NAME + 1];
-        const char *pan = algname;
-        u32         flag = 0;
+	struct ll_crypto_cipher *rtn;
+	char        		 buf[CRYPTO_MAX_ALG_NAME + 1];
+	const char 		*pan = algname;
+	u32         		 flag = 0;
 
-        if (strncmp("cbc(", algname, 4) == 0)
-                flag |= CRYPTO_TFM_MODE_CBC;
-        else if (strncmp("ecb(", algname, 4) == 0)
-                flag |= CRYPTO_TFM_MODE_ECB;
-        if (flag) {
-                char *vp = strnchr(algname, CRYPTO_MAX_ALG_NAME, ')');
-                if (vp) {
-                        memcpy(buf, algname + 4, vp - algname - 4);
-                        buf[vp - algname - 4] = '\0';
-                        pan = buf;
-                } else {
-                        flag = 0;
-                }
-        }
-        return crypto_alloc_tfm(pan, flag);
+	if (strncmp("cbc(", algname, 4) == 0)
+		flag |= CRYPTO_TFM_MODE_CBC;
+	else if (strncmp("ecb(", algname, 4) == 0)
+		flag |= CRYPTO_TFM_MODE_ECB;
+	if (flag) {
+		char *vp = strnchr(algname, CRYPTO_MAX_ALG_NAME, ')');
+		if (vp) {
+			memcpy(buf, algname + 4, vp - algname - 4);
+			buf[vp - algname - 4] = '\0';
+			pan = buf;
+		} else {
+			flag = 0;
+		}
+	}
+	rtn = crypto_alloc_tfm(pan, flag);
+	return (rtn == NULL ?  ERR_PTR(-ENOMEM) : rtn);
 }
 
 static inline
@@ -732,16 +623,6 @@ static inline long labs(long x)
 }
 #endif /* HAVE_REGISTER_SHRINKER */
 
-#ifdef HAVE_INVALIDATE_INODE_PAGES
-#define invalidate_mapping_pages(mapping,s,e) invalidate_inode_pages(mapping)
-#endif
-
-#ifdef HAVE_INODE_IPRIVATE
-#define INODE_PRIVATE_DATA(inode)       ((inode)->i_private)
-#else
-#define INODE_PRIVATE_DATA(inode)       ((inode)->u.generic_ip)
-#endif
-
 #ifndef HAVE_SIMPLE_SETATTR
 #define simple_setattr(dentry, ops) inode_setattr((dentry)->d_inode, ops)
 #endif
@@ -816,17 +697,10 @@ static inline int ll_quota_off(struct super_block *sb, int off, int remount)
 #endif
 
 #ifndef HAVE_VFS_DQ_OFF
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 0, 0)
 # define ll_vfs_dq_init             DQUOT_INIT
 # define ll_vfs_dq_drop             DQUOT_DROP
 # define ll_vfs_dq_transfer         DQUOT_TRANSFER
 # define ll_vfs_dq_off(sb, remount) DQUOT_OFF(sb)
-#else
-# define ll_vfs_dq_init             dquot_initialize
-# define ll_vfs_dq_drop             dq_drop
-# define ll_vfs_dq_transfer         dquot_transfer
-# define ll_vfs_dq_off(sb, remount) dquot_quota_off(sb, remount)
-#endif
 #else
 # define ll_vfs_dq_init             vfs_dq_init
 # define ll_vfs_dq_drop             vfs_dq_drop

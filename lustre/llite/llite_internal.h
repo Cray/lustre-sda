@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -58,6 +56,12 @@
 
 #ifndef VM_FAULT_RETRY
 #define VM_FAULT_RETRY 0
+#endif
+
+/* Kernel 3.1 kills LOOKUP_CONTINUE, LOOKUP_PARENT is equivalent to it.
+ * seem kernel commit 49084c3bb2055c401f3493c13edae14d49128ca0 */
+#ifndef LOOKUP_CONTINUE
+#define LOOKUP_CONTINUE LOOKUP_PARENT
 #endif
 
 /** Only used on client-side for indicating the tail of dir hash/offset. */
@@ -164,7 +168,7 @@ struct ll_inode_info {
         __u64                           lli_open_fd_write_count;
         __u64                           lli_open_fd_exec_count;
         /* Protects access to och pointers and their usage counters, also
-         * atomicity of check-update of lli_smd */
+	 * atomicity of check-update of lli_has_smd */
         cfs_mutex_t                     lli_och_mutex;
 
         struct inode                    lli_vfs_inode;
@@ -221,14 +225,23 @@ struct ll_inode_info {
                         cfs_rw_semaphore_t              f_trunc_sem;
                         cfs_mutex_t                     f_write_mutex;
 
-                        /* for writepage() only to communicate to fsync */
-                        int                             f_async_rc;
-                        int                             f_write_rc;
+			cfs_rw_semaphore_t		f_glimpse_sem;
+			cfs_time_t			f_glimpse_time;
+			cfs_list_t			f_agl_list;
+			__u64				f_agl_index;
 
-                        cfs_rw_semaphore_t              f_glimpse_sem;
-                        cfs_time_t                      f_glimpse_time;
-                        cfs_list_t                      f_agl_list;
-                        __u64                           f_agl_index;
+                        /* for writepage() only to communicate to fsync */
+                        int				f_async_rc;
+
+			/*
+			 * whenever a process try to read/write the file, the
+			 * jobid of the process will be saved here, and it'll
+			 * be packed into the write PRC when flush later.
+			 *
+			 * so the read/write statistics for jobid will not be
+			 * accurate if the file is shared by different jobs.
+			 */
+			char                     f_jobid[JOBSTATS_JOBID_SIZE];
                 } f;
 
 #define lli_size_sem            u.f.f_size_sem
@@ -237,14 +250,14 @@ struct ll_inode_info {
 #define lli_maxbytes            u.f.f_maxbytes
 #define lli_trunc_sem           u.f.f_trunc_sem
 #define lli_write_mutex         u.f.f_write_mutex
-#define lli_async_rc            u.f.f_async_rc
-#define lli_write_rc            u.f.f_write_rc
-#define lli_glimpse_sem         u.f.f_glimpse_sem
-#define lli_glimpse_time        u.f.f_glimpse_time
-#define lli_agl_list            u.f.f_agl_list
-#define lli_agl_index           u.f.f_agl_index
+#define lli_glimpse_sem 	u.f.f_glimpse_sem
+#define lli_glimpse_time	u.f.f_glimpse_time
+#define lli_agl_list		u.f.f_agl_list
+#define lli_agl_index		u.f.f_agl_index
+#define lli_async_rc		u.f.f_async_rc
+#define lli_jobid		u.f.f_jobid
 
-        } u;
+	} u;
 
         /* XXX: For following frequent used members, although they maybe special
          *      used for non-directory object, it is some time-wasting to check
@@ -256,20 +269,22 @@ struct ll_inode_info {
          *      In the future, if more members are added only for directory,
          *      some of the following members can be moved into u.f.
          */
-        struct lov_stripe_md           *lli_smd;
-        struct cl_object               *lli_clob;
+	bool                            lli_has_smd;
+	struct cl_object	       *lli_clob;
+
+	/* mutex to request for layout lock exclusively. */
+	cfs_mutex_t		        lli_layout_mutex;
 };
 
 /*
  * Locking to guarantee consistency of non-atomic updates to long long i_size,
- * consistency between file size and KMS, and consistency within
- * ->lli_smd->lsm_oinfo[]'s.
+ * consistency between file size and KMS.
  *
- * Implemented by ->lli_size_sem and ->lsm_sem, nested in that order.
+ * Implemented by ->lli_size_sem and ->lsm_lock, nested in that order.
  */
 
-void ll_inode_size_lock(struct inode *inode, int lock_lsm);
-void ll_inode_size_unlock(struct inode *inode, int unlock_lsm);
+void ll_inode_size_lock(struct inode *inode);
+void ll_inode_size_unlock(struct inode *inode);
 
 // FIXME: replace the name of this with LL_I to conform to kernel stuff
 // static inline struct ll_inode_info *LL_I(struct inode *inode)
@@ -379,6 +394,9 @@ enum stats_track_type {
 #define LL_SBI_32BIT_API       0x2000 /* generate 32 bit inodes. */
 #define LL_SBI_64BIT_HASH      0x4000 /* support 64-bits dir hash/offset */
 #define LL_SBI_AGL_ENABLED     0x8000 /* enable agl */
+#define LL_SBI_VERBOSE        0x10000 /* verbose mount/umount */
+#define LL_SBI_LAYOUT_LOCK    0x20000 /* layout lock support */
+#define LL_SBI_USER_FID2PATH  0x40000 /* allow fid2path by unprivileged users */
 
 /* default value for ll_sb_info->contention_time */
 #define SBI_DEFAULT_CONTENTION_SECONDS     60
@@ -585,6 +603,10 @@ struct ll_file_data {
         struct ll_file_dir fd_dir;
         __u32 fd_flags;
         struct file *fd_file;
+	/* Indicate whether need to report failure when close.
+	 * true: failure is known, not report again.
+	 * false: unknown failure, should report. */
+	bool fd_write_failed;
 };
 
 struct lov_stripe_md;
@@ -653,6 +675,7 @@ struct page *ll_get_dir_page(struct file *filp, struct inode *dir, __u64 hash,
 int ll_readdir(struct file *filp, void *cookie, filldir_t filldir);
 
 int ll_get_mdt_idx(struct inode *inode);
+char *ll_get_fsname(struct inode *inode);
 /* llite/namei.c */
 int ll_objects_destroy(struct ptlrpc_request *request,
                        struct inode *dir);
@@ -670,9 +693,11 @@ struct dentry *ll_splice_alias(struct inode *inode, struct dentry *de);
 int ll_prepare_write(struct file *, struct page *, unsigned from, unsigned to);
 int ll_commit_write(struct file *, struct page *, unsigned from, unsigned to);
 int ll_writepage(struct page *page, struct writeback_control *wbc);
+int ll_writepages(struct address_space *, struct writeback_control *wbc);
 void ll_removepage(struct page *page);
 int ll_readpage(struct file *file, struct page *page);
 void ll_readahead_init(struct inode *inode, struct ll_readahead_state *ras);
+void ll_truncate(struct inode *inode);
 int ll_file_punch(struct inode *, loff_t, int);
 ssize_t ll_file_lockless_io(struct file *, char *, size_t, loff_t *, int);
 void ll_clear_file_contended(struct inode*);
@@ -755,7 +780,7 @@ int ll_do_fiemap(struct inode *inode, struct ll_user_fiemap *fiemap,
 int ll_merge_lvb(struct inode *inode);
 int ll_get_grouplock(struct inode *inode, struct file *file, unsigned long arg);
 int ll_put_grouplock(struct inode *inode, struct file *file, unsigned long arg);
-int ll_fid2path(struct obd_export *exp, void *arg);
+int ll_fid2path(struct inode *inode, void *arg);
 
 /* llite/dcache.c */
 
@@ -784,16 +809,11 @@ void ll_lli_init(struct ll_inode_info *lli);
 int ll_fill_super(struct super_block *sb, struct vfsmount *mnt);
 void ll_put_super(struct super_block *sb);
 void ll_kill_super(struct super_block *sb);
-struct inode *ll_inode_from_resource(struct ldlm_lock *lock);
 struct inode *ll_inode_from_lock(struct ldlm_lock *lock);
 void ll_clear_inode(struct inode *inode);
 int ll_setattr_raw(struct dentry *dentry, struct iattr *attr);
 int ll_setattr(struct dentry *de, struct iattr *attr);
-#ifndef HAVE_STATFS_DENTRY_PARAM
-int ll_statfs(struct super_block *sb, struct kstatfs *sfs);
-#else
 int ll_statfs(struct dentry *de, struct kstatfs *sfs);
-#endif
 int ll_statfs_internal(struct super_block *sb, struct obd_statfs *osfs,
                        __u64 max_age, __u32 flags);
 void ll_update_inode(struct inode *inode, struct lustre_md *md);
@@ -1035,7 +1055,8 @@ struct ll_lock_tree_node * ll_node_from_inode(struct inode *inode, __u64 start,
                                               __u64 end, ldlm_mode_t mode);
 void policy_from_vma(ldlm_policy_data_t *policy,
                 struct vm_area_struct *vma, unsigned long addr, size_t count);
-struct vm_area_struct *our_vma(unsigned long addr, size_t count);
+struct vm_area_struct *our_vma(struct mm_struct *mm, unsigned long addr,
+                               size_t count);
 
 static inline void ll_invalidate_page(struct page *vmpage)
 {
@@ -1354,14 +1375,21 @@ void ll_iocontrol_unregister(void *magic);
 #define cl_inode_mode(inode) ((inode)->i_mode)
 #define cl_i2sbi ll_i2sbi
 
-static inline void cl_isize_lock(struct inode *inode, int lsmlock)
+static inline struct ll_file_data *cl_iattr2fd(struct inode *inode,
+                                               const struct iattr *attr)
 {
-        ll_inode_size_lock(inode, lsmlock);
+        LASSERT(attr->ia_valid & ATTR_FILE);
+        return LUSTRE_FPRIVATE(attr->ia_file);
 }
 
-static inline void cl_isize_unlock(struct inode *inode, int lsmlock)
+static inline void cl_isize_lock(struct inode *inode)
 {
-        ll_inode_size_unlock(inode, lsmlock);
+	ll_inode_size_lock(inode);
+}
+
+static inline void cl_isize_unlock(struct inode *inode)
+{
+	ll_inode_size_unlock(inode);
 }
 
 static inline void cl_isize_write_nolock(struct inode *inode, loff_t kms)
@@ -1372,9 +1400,9 @@ static inline void cl_isize_write_nolock(struct inode *inode, loff_t kms)
 
 static inline void cl_isize_write(struct inode *inode, loff_t kms)
 {
-        ll_inode_size_lock(inode, 0);
-        i_size_write(inode, kms);
-        ll_inode_size_unlock(inode, 0);
+	ll_inode_size_lock(inode);
+	i_size_write(inode, kms);
+	ll_inode_size_unlock(inode);
 }
 
 #define cl_isize_read(inode)             i_size_read(inode)
@@ -1389,6 +1417,9 @@ static inline int cl_merge_lvb(struct inode *inode)
 #define cl_inode_mtime(inode) LTIME_S((inode)->i_mtime)
 
 struct obd_capa *cl_capa_lookup(struct inode *inode, enum cl_req_type crt);
+
+int cl_sync_file_range(struct inode *inode, loff_t start, loff_t end,
+		       enum cl_fsync_mode mode);
 
 /** direct write pages */
 struct ll_dio_pages {
@@ -1515,5 +1546,8 @@ struct if_quotactl_18 {
 #else
 #warning "remove old LL_IOC_QUOTACTL_18 compatibility code"
 #endif /* LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2,7,50,0) */
+
+int ll_layout_conf(struct inode *inode, const struct cl_object_conf *conf);
+int ll_layout_refresh(struct inode *inode, __u32 *gen);
 
 #endif /* LLITE_INTERNAL_H */

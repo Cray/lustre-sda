@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -292,7 +290,7 @@ static int lov_verify_lmm(void *lmm, int lmm_bytes, __u16 *stripe_count)
 
                         for (i = 0; i < lmm_bytes; i++)
                                 sprintf(buffer+2*i, "%.2X", ((char *)lmm)[i]);
-                        buffer[sz] = '\0';
+			buffer[sz - 1] = '\0';
                         CERROR("%s\n", buffer);
                         OBD_FREE_LARGE(buffer, sz);
                 }
@@ -317,6 +315,7 @@ int lov_alloc_memmd(struct lov_stripe_md **lsmp, __u16 stripe_count,
                 RETURN(-ENOMEM);
         }
 
+	cfs_atomic_set(&(*lsmp)->lsm_refc, 1);
         cfs_spin_lock_init(&(*lsmp)->lsm_lock);
         (*lsmp)->lsm_magic = magic;
         (*lsmp)->lsm_stripe_count = stripe_count;
@@ -332,14 +331,18 @@ int lov_alloc_memmd(struct lov_stripe_md **lsmp, __u16 stripe_count,
         RETURN(lsm_size);
 }
 
-void lov_free_memmd(struct lov_stripe_md **lsmp)
+int lov_free_memmd(struct lov_stripe_md **lsmp)
 {
-        struct lov_stripe_md *lsm = *lsmp;
+	struct lov_stripe_md *lsm = *lsmp;
+	int refc;
 
-        LASSERT(lsm_op_find(lsm->lsm_magic) != NULL);
-        lsm_op_find(lsm->lsm_magic)->lsm_free(lsm);
-
-        *lsmp = NULL;
+	*lsmp = NULL;
+	LASSERT(cfs_atomic_read(&lsm->lsm_refc) > 0);
+	if ((refc = cfs_atomic_dec_return(&lsm->lsm_refc)) == 0) {
+		LASSERT(lsm_op_find(lsm->lsm_magic) != NULL);
+		lsm_op_find(lsm->lsm_magic)->lsm_free(lsm);
+	}
+	return refc;
 }
 
 
@@ -536,7 +539,7 @@ int lov_setea(struct obd_export *exp, struct lov_stripe_md **lsmp,
         for (i = 0; i < lump->lmm_stripe_count; i++) {
                 __u32 len = sizeof(last_id);
                 oexp = lov->lov_tgts[lmm_objects[i].l_ost_idx]->ltd_exp;
-                rc = obd_get_info(oexp, sizeof(KEY_LAST_ID), KEY_LAST_ID,
+                rc = obd_get_info(NULL, oexp, sizeof(KEY_LAST_ID), KEY_LAST_ID,
                                   &len, &last_id, NULL);
                 if (rc)
                         RETURN(rc);

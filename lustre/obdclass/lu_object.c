@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -369,7 +367,8 @@ LU_KEY_INIT_FINI(lu_global, struct lu_cdebug_data);
  * lu_global_init().
  */
 struct lu_context_key lu_global_key = {
-        .lct_tags = LCT_MD_THREAD|LCT_DT_THREAD|LCT_CL_THREAD,
+        .lct_tags = LCT_MD_THREAD | LCT_DT_THREAD |
+                    LCT_MG_THREAD | LCT_CL_THREAD,
         .lct_init = lu_global_key_init,
         .lct_fini = lu_global_key_fini
 };
@@ -887,6 +886,23 @@ cfs_hash_ops_t lu_site_hash_ops = {
         .hs_put_locked  = lu_obj_hop_put_locked,
 };
 
+void lu_dev_add_linkage(struct lu_site *s, struct lu_device *d)
+{
+	cfs_spin_lock(&s->ls_ld_lock);
+	if (cfs_list_empty(&d->ld_linkage))
+		cfs_list_add(&d->ld_linkage, &s->ls_ld_linkage);
+	cfs_spin_unlock(&s->ls_ld_lock);
+}
+EXPORT_SYMBOL(lu_dev_add_linkage);
+
+void lu_dev_del_linkage(struct lu_site *s, struct lu_device *d)
+{
+	cfs_spin_lock(&s->ls_ld_lock);
+	cfs_list_del_init(&d->ld_linkage);
+	cfs_spin_unlock(&s->ls_ld_lock);
+}
+EXPORT_SYMBOL(lu_dev_del_linkage);
+
 /**
  * Initialize site \a s, with \a d as the top level device.
  */
@@ -965,9 +981,7 @@ int lu_site_init(struct lu_site *s, struct lu_device *top)
         CFS_INIT_LIST_HEAD(&s->ls_ld_linkage);
         cfs_spin_lock_init(&s->ls_ld_lock);
 
-        cfs_spin_lock(&s->ls_ld_lock);
-        cfs_list_add(&top->ld_linkage, &s->ls_ld_linkage);
-        cfs_spin_unlock(&s->ls_ld_lock);
+	lu_dev_add_linkage(s, top);
 
         RETURN(0);
 }
@@ -1231,7 +1245,7 @@ enum {
 
 static struct lu_context_key *lu_keys[LU_CONTEXT_KEY_NR] = { NULL, };
 
-static cfs_spinlock_t lu_keys_guard = CFS_SPIN_LOCK_UNLOCKED(lu_keys_guard);
+static DEFINE_SPINLOCK(lu_keys_guard);
 
 /**
  * Global counter incremented whenever key is registered, unregistered,
@@ -1285,13 +1299,14 @@ static void key_fini(struct lu_context *ctx, int index)
                 key->lct_fini(ctx, key, ctx->lc_value[index]);
                 lu_ref_del(&key->lct_reference, "ctx", ctx);
                 cfs_atomic_dec(&key->lct_used);
-                LASSERT(key->lct_owner != NULL);
-                if (!(ctx->lc_tags & LCT_NOREF)) {
-                        LASSERT(cfs_module_refcount(key->lct_owner) > 0);
-                        cfs_module_put(key->lct_owner);
-                }
-                ctx->lc_value[index] = NULL;
-        }
+
+		LASSERT(key->lct_owner != NULL);
+		if ((ctx->lc_tags & LCT_NOREF) == 0) {
+			LINVRNT(cfs_module_refcount(key->lct_owner) > 0);
+			cfs_module_put(key->lct_owner);
+		}
+		ctx->lc_value[index] = NULL;
+	}
 }
 
 /**
@@ -1456,23 +1471,23 @@ EXPORT_SYMBOL(lu_context_key_revive);
 
 static void keys_fini(struct lu_context *ctx)
 {
-        int i;
+	int	i;
 
-        cfs_spin_lock(&lu_keys_guard);
-        if (ctx->lc_value != NULL) {
-                for (i = 0; i < ARRAY_SIZE(lu_keys); ++i)
-                        key_fini(ctx, i);
-                OBD_FREE(ctx->lc_value,
-                         ARRAY_SIZE(lu_keys) * sizeof ctx->lc_value[0]);
-                ctx->lc_value = NULL;
-        }
-        cfs_spin_unlock(&lu_keys_guard);
+	if (ctx->lc_value == NULL)
+		return;
+
+	for (i = 0; i < ARRAY_SIZE(lu_keys); ++i)
+		key_fini(ctx, i);
+
+	OBD_FREE(ctx->lc_value, ARRAY_SIZE(lu_keys) * sizeof ctx->lc_value[0]);
+	ctx->lc_value = NULL;
 }
 
 static int keys_fill(struct lu_context *ctx)
 {
         int i;
 
+        LINVRNT(ctx->lc_value != NULL);
         for (i = 0; i < ARRAY_SIZE(lu_keys); ++i) {
                 struct lu_context_key *key;
 
@@ -1514,17 +1529,11 @@ static int keys_fill(struct lu_context *ctx)
 
 static int keys_init(struct lu_context *ctx)
 {
-        int result;
+	OBD_ALLOC(ctx->lc_value, ARRAY_SIZE(lu_keys) * sizeof ctx->lc_value[0]);
+	if (likely(ctx->lc_value != NULL))
+		return keys_fill(ctx);
 
-        OBD_ALLOC(ctx->lc_value, ARRAY_SIZE(lu_keys) * sizeof ctx->lc_value[0]);
-        if (likely(ctx->lc_value != NULL))
-                result = keys_fill(ctx);
-        else
-                result = -ENOMEM;
-
-        if (result != 0)
-                keys_fini(ctx);
-        return result;
+	return -ENOMEM;
 }
 
 /**
@@ -1532,6 +1541,8 @@ static int keys_init(struct lu_context *ctx)
  */
 int lu_context_init(struct lu_context *ctx, __u32 tags)
 {
+	int	rc;
+
         memset(ctx, 0, sizeof *ctx);
         ctx->lc_state = LCS_INITIALIZED;
         ctx->lc_tags = tags;
@@ -1539,9 +1550,15 @@ int lu_context_init(struct lu_context *ctx, __u32 tags)
                 cfs_spin_lock(&lu_keys_guard);
                 cfs_list_add(&ctx->lc_remember, &lu_context_remembered);
                 cfs_spin_unlock(&lu_keys_guard);
-        } else
-                CFS_INIT_LIST_HEAD(&ctx->lc_remember);
-        return keys_init(ctx);
+	} else {
+		CFS_INIT_LIST_HEAD(&ctx->lc_remember);
+	}
+
+	rc = keys_init(ctx);
+	if (rc != 0)
+		lu_context_fini(ctx);
+
+	return rc;
 }
 EXPORT_SYMBOL(lu_context_init);
 
@@ -1550,12 +1567,19 @@ EXPORT_SYMBOL(lu_context_init);
  */
 void lu_context_fini(struct lu_context *ctx)
 {
-        LINVRNT(ctx->lc_state == LCS_INITIALIZED || ctx->lc_state == LCS_LEFT);
-        ctx->lc_state = LCS_FINALIZED;
-        keys_fini(ctx);
-        cfs_spin_lock(&lu_keys_guard);
-        cfs_list_del_init(&ctx->lc_remember);
-        cfs_spin_unlock(&lu_keys_guard);
+	LINVRNT(ctx->lc_state == LCS_INITIALIZED || ctx->lc_state == LCS_LEFT);
+	ctx->lc_state = LCS_FINALIZED;
+
+	if ((ctx->lc_tags & LCT_REMEMBER) == 0) {
+		LASSERT(cfs_list_empty(&ctx->lc_remember));
+		keys_fini(ctx);
+
+	} else { /* could race with key degister */
+		cfs_spin_lock(&lu_keys_guard);
+		keys_fini(ctx);
+		cfs_list_del_init(&ctx->lc_remember);
+		cfs_spin_unlock(&lu_keys_guard);
+	}
 }
 EXPORT_SYMBOL(lu_context_fini);
 
@@ -1596,12 +1620,12 @@ EXPORT_SYMBOL(lu_context_exit);
 
 /**
  * Allocate for context all missing keys that were registered after context
- * creation.
+ * creation. key_set_version is only changed in rare cases when modules
+ * are loaded and removed.
  */
 int lu_context_refill(struct lu_context *ctx)
 {
-        LINVRNT(ctx->lc_value != NULL);
-        return ctx->lc_version == key_set_version ? 0 : keys_fill(ctx);
+        return likely(ctx->lc_version == key_set_version) ? 0 : keys_fill(ctx);
 }
 EXPORT_SYMBOL(lu_context_refill);
 

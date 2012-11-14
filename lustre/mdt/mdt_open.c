@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -53,6 +51,11 @@ static void mdt_mfd_get(void *mfdp)
 {
 }
 
+static struct portals_handle_ops mfd_handle_ops = {
+	.hop_addref = mdt_mfd_get,
+	.hop_free   = NULL,
+};
+
 /* Create a new mdt_file_data struct, initialize it,
  * and insert it to global hash table */
 struct mdt_file_data *mdt_mfd_new(void)
@@ -64,7 +67,7 @@ struct mdt_file_data *mdt_mfd_new(void)
         if (mfd != NULL) {
                 CFS_INIT_LIST_HEAD(&mfd->mfd_handle.h_link);
                 CFS_INIT_LIST_HEAD(&mfd->mfd_list);
-                class_handle_hash(&mfd->mfd_handle, mdt_mfd_get);
+		class_handle_hash(&mfd->mfd_handle, &mfd_handle_ops);
         }
         RETURN(mfd);
 }
@@ -1071,9 +1074,8 @@ int mdt_open_by_fid(struct mdt_thread_info* info,
         RETURN(rc);
 }
 
-int mdt_open_anon_by_fid(struct mdt_thread_info *info,
-                         struct ldlm_reply *rep,
-                         struct mdt_lock_handle *lhc)
+int mdt_open_by_fid_lock(struct mdt_thread_info *info, struct ldlm_reply *rep,
+			 struct mdt_lock_handle *lhc)
 {
         const struct lu_env     *env   = info->mti_env;
         struct mdt_device       *mdt   = info->mti_mdt;
@@ -1086,7 +1088,7 @@ int mdt_open_anon_by_fid(struct mdt_thread_info *info,
         ldlm_mode_t              lm;
         ENTRY;
 
-        if (md_should_create(flags)) {
+	if (md_should_create(flags) && !(flags & MDS_OPEN_HAS_EA)) {
                 if (!lu_fid_eq(rr->rr_fid1, rr->rr_fid2)) {
                         parent = mdt_object_find(env, mdt, rr->rr_fid1);
                         if (IS_ERR(parent)) {
@@ -1239,7 +1241,7 @@ int mdt_reint_open(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
         OBD_FAIL_TIMEOUT_ORSET(OBD_FAIL_MDS_PAUSE_OPEN, OBD_FAIL_ONCE,
                                (obd_timeout + 1) / 4);
 
-        mdt_counter_incr(req->rq_export, LPROC_MDT_OPEN);
+	mdt_counter_incr(req, LPROC_MDT_OPEN);
         repbody = req_capsule_server_get(info->mti_pill, &RMF_MDT_BODY);
 
         ma->ma_lmm = req_capsule_server_get(info->mti_pill, &RMF_MDT_MD);
@@ -1270,33 +1272,35 @@ int mdt_reint_open(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
                PFID(rr->rr_fid2), create_flags,
                ma->ma_attr.la_mode, msg_flags);
 
-        if (req_is_replay(req) ||
-            (req->rq_export->exp_libclient && create_flags&MDS_OPEN_HAS_EA)) {
-                /* This is a replay request or from liblustre with ea. */
-                result = mdt_open_by_fid(info, ldlm_rep);
+	if (req_is_replay(req) ||
+	    (req->rq_export->exp_libclient && create_flags & MDS_OPEN_HAS_EA)) {
+		/* This is a replay request or from liblustre with ea. */
+		result = mdt_open_by_fid(info, ldlm_rep);
 
-                if (result != -ENOENT) {
-                        if (req->rq_export->exp_libclient &&
-                            create_flags&MDS_OPEN_HAS_EA)
-                                GOTO(out, result = 0);
-                        GOTO(out, result);
-                }
-                /*
-                 * We didn't find the correct object, so we need to re-create it
-                 * via a regular replay.
-                 */
-                if (!(create_flags & MDS_OPEN_CREAT)) {
-                        DEBUG_REQ(D_ERROR, req,
-                                  "OPEN & CREAT not in open replay.");
-                        GOTO(out, result = -EFAULT);
-                }
-                CDEBUG(D_INFO, "Open replay did find object, continue as "
-                       "regular open\n");
-        } else if (rr->rr_namelen == 0 && !info->mti_cross_ref &&
-                   create_flags & MDS_OPEN_LOCK) {
-                result = mdt_open_anon_by_fid(info, ldlm_rep, lhc);
-                GOTO(out, result);
-        }
+		if (result != -ENOENT) {
+			if (req->rq_export->exp_libclient &&
+			    create_flags & MDS_OPEN_HAS_EA)
+				GOTO(out, result = 0);
+			GOTO(out, result);
+		}
+		/* We didn't find the correct object, so we need to re-create it
+		 * via a regular replay. */
+		if (!(create_flags & MDS_OPEN_CREAT)) {
+			DEBUG_REQ(D_ERROR, req,
+				  "OPEN & CREAT not in open replay/by_fid.");
+			GOTO(out, result = -EFAULT);
+		}
+		CDEBUG(D_INFO, "No object(1), continue as regular open.\n");
+	} else if ((rr->rr_namelen == 0 && !info->mti_cross_ref &&
+		    create_flags & MDS_OPEN_LOCK) ||
+		   (create_flags & MDS_OPEN_BY_FID)) {
+		result = mdt_open_by_fid_lock(info, ldlm_rep, lhc);
+		if (result != -ENOENT && !(create_flags & MDS_OPEN_CREAT))
+			GOTO(out, result);
+		if (unlikely(rr->rr_namelen == 0))
+			GOTO(out, result = -EINVAL);
+		CDEBUG(D_INFO, "No object(2), continue as regular open.\n");
+	}
 
         if (OBD_FAIL_CHECK(OBD_FAIL_MDS_OPEN_PACK))
                 GOTO(out, result = err_serious(-ENOMEM));
@@ -1353,15 +1357,15 @@ int mdt_reint_open(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
                 *child_fid = *info->mti_rr.rr_fid2;
                 LASSERTF(fid_is_sane(child_fid), "fid="DFID"\n",
                          PFID(child_fid));
-        } else {
-                /*
-                 * Check for O_EXCL is moved to the mdt_finish_open(), we need to
-                 * return FID back in that case.
-                 */
-                mdt_set_disposition(info, ldlm_rep, DISP_LOOKUP_POS);
-        }
-
-        child = mdt_object_find(info->mti_env, mdt, child_fid);
+		child = mdt_object_new(info->mti_env, mdt, child_fid);
+	} else {
+		/*
+		 * Check for O_EXCL is moved to the mdt_finish_open(), we need to
+		 * return FID back in that case.
+		 */
+		mdt_set_disposition(info, ldlm_rep, DISP_LOOKUP_POS);
+		child = mdt_object_find(info->mti_env, mdt, child_fid);
+	}
         if (IS_ERR(child))
                 GOTO(out_parent, result = PTR_ERR(child));
 
@@ -1372,6 +1376,9 @@ int mdt_reint_open(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
 
         mdt_set_capainfo(info, 1, child_fid, BYPASS_CAPA);
         if (result == -ENOENT) {
+                if (mdt_object_obf(parent))
+                        GOTO(out_child, result = -EPERM);
+
                 /* save versions in reply */
                 mdt_version_get_save(info, parent, 0);
                 mdt_version_get_save(info, child, 1);
@@ -1601,7 +1608,7 @@ int mdt_close(struct mdt_thread_info *info)
         int rc, ret = 0;
         ENTRY;
 
-        mdt_counter_incr(req->rq_export, LPROC_MDT_CLOSE);
+	mdt_counter_incr(req, LPROC_MDT_CLOSE);
         /* Close may come with the Size-on-MDS update. Unpack it. */
         rc = mdt_close_unpack(info);
         if (rc)
@@ -1617,7 +1624,7 @@ int mdt_close(struct mdt_thread_info *info)
         if (mdt_check_resent(info, mdt_reconstruct_generic, NULL)) {
                 mdt_client_compatibility(info);
                 if (rc == 0)
-                        mdt_shrink_reply(info);
+                        mdt_fix_reply(info);
                 RETURN(lustre_msg_get_status(req->rq_repmsg));
         }
 
@@ -1668,7 +1675,7 @@ int mdt_close(struct mdt_thread_info *info)
         }
         if (repbody != NULL) {
                 mdt_client_compatibility(info);
-                mdt_shrink_reply(info);
+                rc = mdt_fix_reply(info);
         }
 
         if (OBD_FAIL_CHECK(OBD_FAIL_MDS_CLOSE_PACK))

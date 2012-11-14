@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -49,7 +47,7 @@
 #include <lustre_handles.h>
 #include <lustre_lib.h>
 
-#if !defined(HAVE_RCU) || !defined(__KERNEL__)
+#ifndef __KERNEL__
 # define list_add_rcu            cfs_list_add
 # define list_del_rcu            cfs_list_del
 # define list_for_each_rcu       cfs_list_for_each
@@ -57,7 +55,7 @@
 # define list_for_each_entry_rcu cfs_list_for_each_entry
 # define rcu_read_lock()         cfs_spin_lock(&bucket->lock)
 # define rcu_read_unlock()       cfs_spin_unlock(&bucket->lock)
-#endif /* ifndef HAVE_RCU */
+#endif /* !__KERNEL__ */
 
 static __u64 handle_base;
 #define HANDLE_INCR 7
@@ -84,7 +82,8 @@ static struct handle_bucket {
  * Generate a unique 64bit cookie (hash) for a handle and insert it into
  * global (per-node) hash-table.
  */
-void class_handle_hash(struct portals_handle *h, portals_handle_addref_cb cb)
+void class_handle_hash(struct portals_handle *h,
+		       struct portals_handle_ops *ops)
 {
         struct handle_bucket *bucket;
         ENTRY;
@@ -110,8 +109,8 @@ void class_handle_hash(struct portals_handle *h, portals_handle_addref_cb cb)
                 handle_base += HANDLE_INCR;
         }
         cfs_spin_unlock(&handle_base_lock);
- 
-        h->h_addref = cb;
+
+	h->h_ops = ops;
         cfs_spin_lock_init(&h->h_lock);
 
         bucket = &handle_hash[h->h_cookie & HANDLE_HASH_MASK];
@@ -124,6 +123,7 @@ void class_handle_hash(struct portals_handle *h, portals_handle_addref_cb cb)
                h, h->h_cookie);
         EXIT;
 }
+EXPORT_SYMBOL(class_handle_hash);
 
 static void class_handle_unhash_nolock(struct portals_handle *h)
 {
@@ -155,6 +155,7 @@ void class_handle_unhash(struct portals_handle *h)
         class_handle_unhash_nolock(h);
         cfs_spin_unlock(&bucket->lock);
 }
+EXPORT_SYMBOL(class_handle_unhash);
 
 void class_handle_hash_back(struct portals_handle *h)
 {
@@ -170,6 +171,7 @@ void class_handle_hash_back(struct portals_handle *h)
 
         EXIT;
 }
+EXPORT_SYMBOL(class_handle_hash_back);
 
 void *class_handle2object(__u64 cookie)
 {
@@ -180,8 +182,8 @@ void *class_handle2object(__u64 cookie)
 
         LASSERT(handle_hash != NULL);
 
-        /* Be careful when you want to change this code. See the 
-         * rcu_read_lock() definition on top this file. - jxiong */
+	/* Be careful when you want to change this code. See the
+	 * rcu_read_lock() definition on top this file. - jxiong */
         bucket = handle_hash + (cookie & HANDLE_HASH_MASK);
 
         rcu_read_lock();
@@ -191,7 +193,7 @@ void *class_handle2object(__u64 cookie)
 
                 cfs_spin_lock(&h->h_lock);
                 if (likely(h->h_in != 0)) {
-                        h->h_addref(h);
+			h->h_ops->hop_addref(h);
                         retval = h;
                 }
                 cfs_spin_unlock(&h->h_lock);
@@ -201,18 +203,19 @@ void *class_handle2object(__u64 cookie)
 
         RETURN(retval);
 }
+EXPORT_SYMBOL(class_handle2object);
 
 void class_handle_free_cb(cfs_rcu_head_t *rcu)
 {
-        struct portals_handle *h = RCU2HANDLE(rcu);
-        if (h->h_free_cb) {
-                h->h_free_cb(h->h_ptr, h->h_size);
-        } else {
-                void *ptr = h->h_ptr;
-                unsigned int size = h->h_size;
-                OBD_FREE(ptr, size);
-        }
+	struct portals_handle *h = RCU2HANDLE(rcu);
+	void *ptr = (void *)(unsigned long)h->h_cookie;
+
+	if (h->h_ops->hop_free != NULL)
+		h->h_ops->hop_free(ptr, h->h_size);
+	else
+		OBD_FREE(ptr, h->h_size);
 }
+EXPORT_SYMBOL(class_handle_free_cb);
 
 int class_handle_init(void)
 {
@@ -254,8 +257,8 @@ static int cleanup_all_handles(void)
 
                 cfs_spin_lock(&handle_hash[i].lock);
                 list_for_each_entry_rcu(h, &(handle_hash[i].head), h_link) {
-                        CERROR("force clean handle "LPX64" addr %p addref %p\n",
-                               h->h_cookie, h, h->h_addref);
+			CERROR("force clean handle "LPX64" addr %p ops %p\n",
+			       h->h_cookie, h, h->h_ops);
 
                         class_handle_unhash_nolock(h);
                         rc++;

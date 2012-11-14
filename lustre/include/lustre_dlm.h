@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2010, 2012, Whamcloud, Inc.
+ * Copyright (c) 2010, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -547,12 +545,6 @@ static inline int ns_is_server(struct ldlm_namespace *ns)
         return ns->ns_client == LDLM_NAMESPACE_SERVER;
 }
 
-static inline int ns_connect_cancelset(struct ldlm_namespace *ns)
-{
-	LASSERT(ns != NULL);
-	return !!(ns->ns_connect_flags & OBD_CONNECT_CANCELSET);
-}
-
 static inline int ns_connect_lru_resize(struct ldlm_namespace *ns)
 {
         LASSERT(ns != NULL);
@@ -593,7 +585,7 @@ struct ldlm_interval_tree {
         struct interval_node *lit_root; /* actually ldlm_interval */
 };
 
-#define LUSTRE_TRACKS_LOCK_EXP_REFS (1)
+#define LUSTRE_TRACKS_LOCK_EXP_REFS (0)
 
 /* Cancel flag. */
 typedef enum {
@@ -609,6 +601,8 @@ struct ldlm_flock {
         __u64 owner;
         __u64 blocking_owner;
         struct obd_export *blocking_export;
+	/* Protected by the hash lock */
+	__u32 blocking_refs;
         __u32 pid;
 };
 
@@ -663,6 +657,12 @@ struct ldlm_lock {
         /**
          * Protected by lr_lock. Requested mode.
          */
+	/**
+	 * Protected by per-bucket exp->exp_flock_hash locks. Per export hash
+	 * of locks.
+	 */
+	cfs_hlist_node_t         l_exp_flock_hash;
+
         ldlm_mode_t              l_req_mode;
         /**
          * Granted mode, also protected by lr_lock.
@@ -733,6 +733,22 @@ struct ldlm_lock {
          * Protected by lock and resource locks.
          */
                               l_destroyed:1,
+	/*
+	 * it's set in lock_res_and_lock() and unset in unlock_res_and_lock().
+	 *
+	 * NB: compare with check_res_locked(), check this bit is cheaper,
+	 * also, spin_is_locked() is deprecated for kernel code, one reason is
+	 * because it works only for SMP so user needs add extra macros like
+	 * LASSERT_SPIN_LOCKED for uniprocessor kernels.
+	 */
+			      l_res_locked:1,
+	/*
+	 * it's set once we call ldlm_add_waiting_lock_res_locked()
+	 * to start the lock-timeout timer and it will never be reset.
+	 *
+	 * Protected by lock_res_and_lock().
+	 */
+			      l_waited:1,
         /**
          * flag whether this is a server namespace lock.
          */
@@ -928,10 +944,9 @@ void _ldlm_lock_debug(struct ldlm_lock *lock,
         ldlm_lock_debug(&msgdata, D_DLMTRACE, NULL, lock, "### " fmt , ##a);\
 } while (0)
 #else /* !LIBCFS_DEBUG */
+# define LDLM_DEBUG_LIMIT(mask, lock, fmt, a...) ((void)0)
 # define LDLM_DEBUG(lock, fmt, a...) ((void)0)
 # define LDLM_ERROR(lock, fmt, a...) ((void)0)
-# define ldlm_lock_debuf(cdls, level, lock, file, func, line, fmt, a...) \
-         ((void)0)
 #endif
 
 #define LDLM_DEBUG_NOLOCK(format, a...)                 \
@@ -1113,7 +1128,6 @@ void ldlm_lock_downgrade(struct ldlm_lock *lock, int new_mode);
 void ldlm_lock_cancel(struct ldlm_lock *lock);
 void ldlm_reprocess_all(struct ldlm_resource *res);
 void ldlm_reprocess_all_ns(struct ldlm_namespace *ns);
-void ldlm_lock_dump(int level, struct ldlm_lock *lock, int pos);
 void ldlm_lock_dump_handle(int level, struct lustre_handle *);
 void ldlm_unlink_lock_skiplist(struct ldlm_lock *req);
 
@@ -1260,7 +1274,6 @@ static inline void lock_res_nested(struct ldlm_resource *res,
 {
         cfs_spin_lock_nested(&res->lr_lock, mode);
 }
-
 
 static inline void unlock_res(struct ldlm_resource *res)
 {

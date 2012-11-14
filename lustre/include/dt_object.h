@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -104,9 +102,14 @@ typedef void (*dt_cb_t)(struct lu_env *env, struct thandle *th,
  * Special per-transaction callback for cases when just commit callback
  * is needed and per-device callback are not convenient to use
  */
+#define TRANS_COMMIT_CB_MAGIC	0xa0a00a0a
+#define MAX_COMMIT_CB_STR_LEN	32
+
 struct dt_txn_commit_cb {
-        cfs_list_t dcb_linkage;
-        dt_cb_t    dcb_func;
+	cfs_list_t	dcb_linkage;
+	dt_cb_t		dcb_func;
+	__u32		dcb_magic;
+	char		dcb_name[MAX_COMMIT_CB_STR_LEN];
 };
 
 /**
@@ -117,7 +120,7 @@ struct dt_device_operations {
          * Return device-wide statistics.
          */
         int   (*dt_statfs)(const struct lu_env *env,
-                           struct dt_device *dev, cfs_kstatfs_t *osfs);
+                           struct dt_device *dev, struct obd_statfs *osfs);
         /**
          * Create transaction, described by \a param.
          */
@@ -153,7 +156,7 @@ struct dt_device_operations {
          *  handling device state, mostly for tests
          */
         int   (*dt_sync)(const struct lu_env *env, struct dt_device *dev);
-        void  (*dt_ro)(const struct lu_env *env, struct dt_device *dev);
+        int   (*dt_ro)(const struct lu_env *env, struct dt_device *dev);
         /**
           * Start a transaction commit asynchronously
           *
@@ -202,7 +205,12 @@ enum dt_index_flags {
         /** index can be modified */
         DT_IND_UPDATE = 1 << 2,
         /** index supports records with non-unique (duplicate) keys */
-        DT_IND_NONUNQ = 1 << 3
+        DT_IND_NONUNQ = 1 << 3,
+        /**
+         * index support fixed-size keys sorted with natural numerical way
+         * and is able to return left-side value if no exact value found
+         */
+        DT_IND_RANGE = 1 << 4,
 };
 
 /**
@@ -210,6 +218,10 @@ enum dt_index_flags {
  * names to fids).
  */
 extern const struct dt_index_features dt_directory_features;
+extern const struct dt_index_features dt_otable_features;
+
+/* index features supported by the accounting objects */
+extern const struct dt_index_features dt_acct_features;
 
 /**
  * This is a general purpose dt allocation hint.
@@ -597,6 +609,32 @@ struct dt_index_operations {
         } dio_it;
 };
 
+enum dt_otable_it_valid {
+	DOIV_ERROR_HANDLE	= 0x0001,
+};
+
+enum dt_otable_it_flags {
+	/* Exit when fail. */
+	DOIF_FAILOUT	= 0x0001,
+
+	/* Reset iteration position to the device beginning. */
+	DOIF_RESET	= 0x0002,
+
+	/* There is up layer component uses the iteration. */
+	DOIF_OUTUSED	= 0x0004,
+};
+
+/* otable based iteration needs to use the common DT interation APIs.
+ * To initialize the iteration, it needs call dio_it::init() firstly.
+ * Here is how the otable based iteration should prepare arguments to
+ * call dt_it_ops::init().
+ *
+ * For otable based iteration, the 32-bits 'attr' for dt_it_ops::init()
+ * is composed of two parts:
+ * low 16-bits is for valid bits, high 16-bits is for flags bits. */
+#define DT_OTABLE_IT_FLAGS_SHIFT	16
+#define DT_OTABLE_IT_FLAGS_MASK 	0xffff0000
+
 struct dt_device {
         struct lu_device                   dd_lu_dev;
         const struct dt_device_operations *dd_ops;
@@ -733,9 +771,24 @@ struct dt_object *dt_store_open(const struct lu_env *env,
                                 const char *filename,
                                 struct lu_fid *fid);
 
+struct dt_object *dt_find_or_create(const struct lu_env *env,
+                                    struct dt_device *dt,
+                                    const struct lu_fid *fid,
+                                    struct dt_object_format *dof,
+                                    struct lu_attr *attr);
+
 struct dt_object *dt_locate(const struct lu_env *env,
                             struct dt_device *dev,
                             const struct lu_fid *fid);
+
+static inline int dt_object_sync(const struct lu_env *env,
+                                 struct dt_object *o)
+{
+        LASSERT(o);
+        LASSERT(o->do_ops);
+        LASSERT(o->do_ops->do_object_sync);
+        return o->do_ops->do_object_sync(env, o);
+}
 
 int dt_declare_version_set(const struct lu_env *env, struct dt_object *o,
                            struct thandle *th);
@@ -744,11 +797,12 @@ void dt_version_set(const struct lu_env *env, struct dt_object *o,
 dt_obj_version_t dt_version_get(const struct lu_env *env, struct dt_object *o);
 
 
+int dt_read(const struct lu_env *env, struct dt_object *dt,
+            struct lu_buf *buf, loff_t *pos);
 int dt_record_read(const struct lu_env *env, struct dt_object *dt,
                    struct lu_buf *buf, loff_t *pos);
 int dt_record_write(const struct lu_env *env, struct dt_object *dt,
                     const struct lu_buf *buf, loff_t *pos, struct thandle *th);
-
 
 static inline struct thandle *dt_trans_create(const struct lu_env *env,
                                               struct dt_device *d)
@@ -781,10 +835,11 @@ static inline int dt_trans_stop(const struct lu_env *env,
 }
 
 static inline int dt_trans_cb_add(struct thandle *th,
-                                  struct dt_txn_commit_cb *dcb)
+				  struct dt_txn_commit_cb *dcb)
 {
-        LASSERT(th->th_dev->dd_ops->dt_trans_cb_add);
-        return th->th_dev->dd_ops->dt_trans_cb_add(th, dcb);
+	LASSERT(th->th_dev->dd_ops->dt_trans_cb_add);
+	dcb->dcb_magic = TRANS_COMMIT_CB_MAGIC;
+	return th->th_dev->dd_ops->dt_trans_cb_add(th, dcb);
 }
 /** @} dt */
 
@@ -798,6 +853,8 @@ static inline int dt_declare_record_write(const struct lu_env *env,
 
         LASSERTF(dt != NULL, "dt is NULL when we want to write record\n");
         LASSERT(th != NULL);
+        LASSERT(dt->do_body_ops);
+        LASSERT(dt->do_body_ops->dbo_declare_write);
         rc = dt->do_body_ops->dbo_declare_write(env, dt, size, pos, th);
         return rc;
 }
@@ -1057,12 +1114,13 @@ static inline int dt_fiemap_get(const struct lu_env *env, struct dt_object *d,
         LASSERT(d);
         if (d->do_body_ops == NULL)
                 return -EPROTO;
-        LASSERT(d->do_body_ops->dbo_fiemap_get);
+	if (d->do_body_ops->dbo_fiemap_get == NULL)
+		return -EOPNOTSUPP;
         return d->do_body_ops->dbo_fiemap_get(env, d, fm);
 }
 
 static inline int dt_statfs(const struct lu_env *env, struct dt_device *dev,
-                            cfs_kstatfs_t *osfs)
+                            struct obd_statfs *osfs)
 {
         LASSERT(dev);
         LASSERT(dev->dd_ops);
@@ -1097,7 +1155,7 @@ static inline int dt_sync(const struct lu_env *env, struct dt_device *dev)
         return dev->dd_ops->dt_sync(env, dev);
 }
 
-static inline void dt_ro(const struct lu_env *env, struct dt_device *dev)
+static inline int dt_ro(const struct lu_env *env, struct dt_device *dev)
 {
         LASSERT(dev);
         LASSERT(dev->dd_ops);
@@ -1248,4 +1306,7 @@ static inline int dt_lookup(const struct lu_env *env,
                 ret = -ENOENT;
         return ret;
 }
+
+#define LU221_BAD_TIME (0x80000000U + 24 * 3600)
+
 #endif /* __LUSTRE_DT_OBJECT_H */

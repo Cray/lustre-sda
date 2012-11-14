@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -28,6 +26,8 @@
 /*
  * Copyright (c) 2005, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
+ *
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -69,6 +69,11 @@ int lov_merge_lvb_kms(struct lov_stripe_md *lsm,
         LASSERT(lsm->lsm_lock_owner == cfs_curproc_pid());
 #endif
 
+	CDEBUG(D_INODE, "MDT FID "DFID" initial value: s="LPU64" m="LPU64
+	       " a="LPU64" c="LPU64" b="LPU64"\n",
+	       lsm->lsm_object_seq, (__u32)lsm->lsm_object_id,
+	       (__u32)(lsm->lsm_object_id >> 32), lvb->lvb_size,
+	       lvb->lvb_mtime, lvb->lvb_atime, lvb->lvb_ctime, lvb->lvb_blocks);
         for (i = 0; i < lsm->lsm_stripe_count; i++) {
                 struct lov_oinfo *loi = lsm->lsm_oinfo[i];
                 obd_size lov_size, tmpsize;
@@ -97,6 +102,13 @@ int lov_merge_lvb_kms(struct lov_stripe_md *lsm,
                         current_atime = loi->loi_lvb.lvb_atime;
                 if (loi->loi_lvb.lvb_ctime > current_ctime)
                         current_ctime = loi->loi_lvb.lvb_ctime;
+		CDEBUG(D_INODE, "MDT FID "DFID" on OST[%u]: s="LPU64" m="LPU64
+		       " a="LPU64" c="LPU64" b="LPU64"\n",
+		       lsm->lsm_object_seq, (__u32)lsm->lsm_object_id,
+		       (__u32)(lsm->lsm_object_id >> 32), loi->loi_ost_idx,
+		       loi->loi_lvb.lvb_size, loi->loi_lvb.lvb_mtime,
+		       loi->loi_lvb.lvb_atime, loi->loi_lvb.lvb_ctime,
+		       loi->loi_lvb.lvb_blocks);
         }
 
         *kms_place = kms;
@@ -120,17 +132,21 @@ int lov_merge_lvb_kms(struct lov_stripe_md *lsm,
 int lov_merge_lvb(struct obd_export *exp,
                   struct lov_stripe_md *lsm, struct ost_lvb *lvb, int kms_only)
 {
-        int   rc;
-        __u64 kms;
+	int   rc;
+	__u64 kms;
 
-        ENTRY;
-        rc = lov_merge_lvb_kms(lsm, lvb, &kms);
-        if (kms_only)
-                lvb->lvb_size = kms;
-        CDEBUG(D_INODE, "merged: "LPU64" "LPU64" "LPU64" "LPU64" "LPU64"\n",
-               lvb->lvb_size, lvb->lvb_mtime, lvb->lvb_atime,
-               lvb->lvb_ctime, lvb->lvb_blocks);
-        RETURN(rc);
+	ENTRY;
+	lov_stripe_lock(lsm);
+	rc = lov_merge_lvb_kms(lsm, lvb, &kms);
+	lov_stripe_unlock(lsm);
+	if (kms_only)
+		lvb->lvb_size = kms;
+	CDEBUG(D_INODE, "merged for FID "DFID" s="LPU64" m="LPU64" a="LPU64
+	       " c="LPU64" b="LPU64"\n",
+	       lsm->lsm_object_seq, (__u32)lsm->lsm_object_id,
+	       (__u32)(lsm->lsm_object_id >> 32), lvb->lvb_size, lvb->lvb_mtime,
+	       lvb->lvb_atime, lvb->lvb_ctime, lvb->lvb_blocks);
+	RETURN(rc);
 }
 
 /* Must be called under the lov_stripe_lock() */
@@ -173,7 +189,7 @@ int lov_adjust_kms(struct obd_export *exp, struct lov_stripe_md *lsm,
         RETURN(0);
 }
 
-void lov_merge_attrs(struct obdo *tgt, struct obdo *src, obd_flag valid,
+void lov_merge_attrs(struct obdo *tgt, struct obdo *src, obd_valid valid,
                      struct lov_stripe_md *lsm, int stripeno, int *set)
 {
         valid &= src->o_valid;
@@ -195,11 +211,18 @@ void lov_merge_attrs(struct obdo *tgt, struct obdo *src, obd_flag valid,
                         tgt->o_ctime = src->o_ctime;
                 if (valid & OBD_MD_FLMTIME && tgt->o_mtime < src->o_mtime)
                         tgt->o_mtime = src->o_mtime;
+                if (valid & OBD_MD_FLDATAVERSION)
+                        tgt->o_data_version += src->o_data_version;
         } else {
                 memcpy(tgt, src, sizeof(*tgt));
                 tgt->o_id = lsm->lsm_object_id;
                 if (valid & OBD_MD_FLSIZE)
                         tgt->o_size = lov_stripe_size(lsm,src->o_size,stripeno);
         }
+
+        /* data_version needs to be valid on all stripes to be correct! */
+        if (!(valid & OBD_MD_FLDATAVERSION))
+                tgt->o_valid &= ~OBD_MD_FLDATAVERSION;
+
         *set += 1;
 }

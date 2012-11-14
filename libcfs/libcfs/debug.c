@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -166,6 +164,8 @@ libcfs_debug_subsys2str(int subsys)
                 return "lov";
         case S_LQUOTA:
                 return "lquota";
+	case S_OSD:
+		return "osd";
         case S_LMV:
                 return "lmv";
         case S_SEC:
@@ -247,7 +247,9 @@ libcfs_debug_dbg2str(int debug)
                 return "quota";
         case D_SEC:
                 return "sec";
-        }
+	case D_LFSCK:
+		return "lfsck";
+	}
 }
 
 int
@@ -333,16 +335,14 @@ libcfs_debug_str2mask(int *mask, const char *str, int is_subsys)
  */
 void libcfs_debug_dumplog_internal(void *arg)
 {
-        static unsigned long log_num = 0;
-
         CFS_DECL_JOURNAL_DATA;
 
         CFS_PUSH_JOURNAL;
 
         if (strncmp(libcfs_debug_file_path_arr, "NONE", 4) != 0) {
                 snprintf(debug_file_name, sizeof(debug_file_name) - 1,
-                         "%s.%lu.%lu." LPLD, libcfs_debug_file_path_arr,
-                         cfs_time_current_sec(), log_num++, (long_ptr_t)arg);
+                         "%s.%ld." LPLD, libcfs_debug_file_path_arr,
+                         cfs_time_current_sec(), (long_ptr_t)arg);
                 printk(CFS_KERN_ALERT "LustreError: dumping log to %s\n",
                        debug_file_name);
                 cfs_tracefile_dump_all_pages(debug_file_name);

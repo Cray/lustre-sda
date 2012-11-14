@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -63,10 +61,8 @@
 
 #ifdef __KERNEL__
 
-#ifdef HAVE_QUOTA_SUPPORT
-
 static cfs_time_t last_print = 0;
-static cfs_spinlock_t last_print_lock = CFS_SPIN_LOCK_UNLOCKED(last_print_lock);
+static DEFINE_SPINLOCK(last_print_lock);
 
 static int filter_quota_setup(struct obd_device *obd)
 {
@@ -198,6 +194,10 @@ static int filter_quota_getflag(struct obd_device *obd, struct obdo *oa)
         for (cnt = 0; cnt < MAXQUOTAS; cnt++) {
                 struct lustre_qunit_size *lqs = NULL;
 
+                /* check if quota is enabled */
+                if (!ll_sb_has_quota_active(obt->obt_sb, cnt))
+                        continue;
+
                 lqs = quota_search_lqs(LQS_KEY(cnt, GET_OA_ID(cnt, oa)),
                                        qctxt, 0);
                 if (IS_ERR(lqs)) {
@@ -291,6 +291,10 @@ static int quota_check_common(struct obd_device *obd, const unsigned int id[],
                 if (isblk)
                         QDATA_SET_BLK(&qdata[i]);
                 qdata[i].qd_count = 0;
+
+                /* check if quota is enabled */
+                if (!ll_sb_has_quota_active(qctxt->lqc_sb, i))
+                        continue;
 
                 /* ignore root user */
                 if (qdata[i].qd_id == 0 && !QDATA_IS_GRP(&qdata[i]))
@@ -399,6 +403,9 @@ int quota_is_set(struct obd_device *obd, const unsigned int id[], int flag)
                 RETURN(0);
 
         for (i = 0; i < MAXQUOTAS; i++) {
+                /* check if quota is enabled */
+                if (!ll_sb_has_quota_active(obd->u.obt.obt_qctxt.lqc_sb, i))
+                        continue;
                 lqs = quota_search_lqs(LQS_KEY(i, id[i]),
                                        &obd->u.obt.obt_qctxt, 0);
                 if (lqs && !IS_ERR(lqs)) {
@@ -444,23 +451,27 @@ static int quota_chk_acq_common(struct obd_device *obd, struct obd_export *exp,
         while ((rc = quota_check_common(obd, id, pending, count, cycle, isblk,
                                         inode, frags)) &
                QUOTA_RET_ACQUOTA) {
+		struct ptlrpc_thread *thr = oti != NULL ?
+					    oti->oti_thread : NULL;
 
-                cfs_spin_lock(&qctxt->lqc_lock);
-                if (!qctxt->lqc_import && oti) {
-                        cfs_spin_unlock(&qctxt->lqc_lock);
-                        LASSERT(oti->oti_thread);
-                        /* The recovery thread doesn't have watchdog
-                         * attached. LU-369 */
-                        if (oti->oti_thread->t_watchdog)
-                                lc_watchdog_disable(oti->oti_thread->\
-                                                t_watchdog);
-                        CDEBUG(D_QUOTA, "sleep for quota master\n");
-                        l_wait_event(qctxt->lqc_wait_for_qmaster, check_qm(qctxt),
-                                     &lwi);
-                        CDEBUG(D_QUOTA, "wake up when quota master is back\n");
-                        if (oti->oti_thread->t_watchdog)
-                                lc_watchdog_touch(oti->oti_thread->t_watchdog,
-                                       CFS_GET_TIMEOUT(oti->oti_thread->t_svc));
+		cfs_spin_lock(&qctxt->lqc_lock);
+		if (!qctxt->lqc_import && oti != NULL) {
+			cfs_spin_unlock(&qctxt->lqc_lock);
+
+			LASSERT(thr != NULL);
+			/* The recovery thread doesn't have watchdog
+			 * attached. LU-369 */
+			if (thr->t_watchdog != NULL)
+				lc_watchdog_disable(thr->t_watchdog);
+			CDEBUG(D_QUOTA, "sleep for quota master\n");
+			l_wait_event(qctxt->lqc_wait_for_qmaster,
+				     check_qm(qctxt), &lwi);
+
+			CDEBUG(D_QUOTA, "wake up when quota master is back\n");
+			if (thr->t_watchdog != NULL) {
+				lc_watchdog_touch(thr->t_watchdog,
+				   ptlrpc_server_get_timeout(thr->t_svcpt));
+			}
                 } else {
                         cfs_spin_unlock(&qctxt->lqc_lock);
                 }
@@ -502,9 +513,9 @@ static int quota_chk_acq_common(struct obd_device *obd, struct obd_export *exp,
                         cfs_waitq_t        waitq;
                         struct l_wait_info lwi;
 
-                        if (oti && oti->oti_thread && oti->oti_thread->t_watchdog)
-                                lc_watchdog_touch(oti->oti_thread->t_watchdog,
-                                       CFS_GET_TIMEOUT(oti->oti_thread->t_svc));
+			if (thr != NULL && thr->t_watchdog != NULL)
+				lc_watchdog_touch(thr->t_watchdog,
+				   ptlrpc_server_get_timeout(thr->t_svcpt));
                         CDEBUG(D_QUOTA, "rc: %d, count_err: %d\n", rc,
                                count_err++);
 
@@ -725,11 +736,6 @@ static int quota_acquire_common(struct obd_device *obd, const unsigned int id[],
         RETURN(rc);
 }
 
-#endif /* HAVE_QUOTA_SUPPORT */
-#endif /* __KERNEL__ */
-
-#ifdef __KERNEL__
-#ifdef HAVE_QUOTA_SUPPORT
 quota_interface_t mds_quota_interface = {
         .quota_init     = mds_quota_init,
         .quota_exit     = mds_quota_exit,
@@ -761,16 +767,11 @@ quota_interface_t filter_quota_interface = {
         .quota_adjust_qunit   = filter_quota_adjust_qunit,
         .quota_pending_commit = quota_pending_commit,
 };
-#endif
-#endif /* __KERNEL__ */
-
-#ifdef __KERNEL__
 
 cfs_proc_dir_entry_t *lquota_type_proc_dir = NULL;
 
 static int __init init_lustre_quota(void)
 {
-#ifdef HAVE_QUOTA_SUPPORT
         int rc = 0;
 
         lquota_type_proc_dir = lprocfs_register(OBD_LQUOTA_DEVICENAME,
@@ -788,13 +789,12 @@ static int __init init_lustre_quota(void)
 
         PORTAL_SYMBOL_REGISTER(filter_quota_interface);
         PORTAL_SYMBOL_REGISTER(mds_quota_interface);
-#endif
+
         return 0;
 }
 
 static void /*__exit*/ exit_lustre_quota(void)
 {
-#ifdef HAVE_QUOTA_SUPPORT
         PORTAL_SYMBOL_UNREGISTER(filter_quota_interface);
         PORTAL_SYMBOL_UNREGISTER(mds_quota_interface);
 
@@ -802,7 +802,6 @@ static void /*__exit*/ exit_lustre_quota(void)
 
         if (lquota_type_proc_dir)
                 lprocfs_remove(&lquota_type_proc_dir);
-#endif
 }
 
 MODULE_AUTHOR("Sun Microsystems, Inc. <http://www.lustre.org/>");
@@ -811,8 +810,6 @@ MODULE_LICENSE("GPL");
 
 cfs_module(lquota, "1.0.0", init_lustre_quota, exit_lustre_quota);
 
-#ifdef HAVE_QUOTA_SUPPORT
 EXPORT_SYMBOL(mds_quota_interface);
 EXPORT_SYMBOL(filter_quota_interface);
-#endif
 #endif /* __KERNEL */

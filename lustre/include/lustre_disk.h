@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -66,7 +64,8 @@
 #define CAPA_KEYS         "capa_keys"
 #define CHANGELOG_USERS   "changelog_users"
 #define MGS_NIDTBL_DIR    "NIDTBL_VERSIONS"
-
+#define QMT_DIR           "quota_master"
+#define QSD_DIR           "quota_slave"
 
 /****************** persistent mount data *********************/
 
@@ -109,12 +108,13 @@
 #define LDD_F_ONDISK_MASK  (LDD_F_SV_TYPE_MASK | LDD_F_IAM_DIR)
 
 enum ldd_mount_type {
-        LDD_MT_EXT3 = 0,
-        LDD_MT_LDISKFS,
-        LDD_MT_SMFS,
-        LDD_MT_REISERFS,
-        LDD_MT_LDISKFS2,
-        LDD_MT_LAST
+	LDD_MT_EXT3 = 0,
+	LDD_MT_LDISKFS,
+	LDD_MT_SMFS,
+	LDD_MT_REISERFS,
+	LDD_MT_LDISKFS2,
+	LDD_MT_ZFS,
+	LDD_MT_LAST
 };
 
 static inline char *mt_str(enum ldd_mount_type mt)
@@ -124,9 +124,23 @@ static inline char *mt_str(enum ldd_mount_type mt)
                 "ldiskfs",
                 "smfs",
                 "reiserfs",
-                "ldiskfs2"
+		"ldiskfs2",
+		"zfs",
         };
         return mount_type_string[mt];
+}
+
+static inline char *mt_type(enum ldd_mount_type mt)
+{
+	static char *mount_type_string[] = {
+		"osd-ldiskfs",
+		"osd-ldiskfs",
+		"osd-smfs",
+		"osd-reiserfs",
+		"osd-ldiskfs",
+		"osd-zfs",
+	};
+	return mount_type_string[mt];
 }
 
 #define LDD_INCOMPAT_SUPP 0
@@ -168,9 +182,10 @@ static inline int server_make_name(__u32 flags, __u16 index, char *fs,
 {
         if (flags & (LDD_F_SV_TYPE_MDT | LDD_F_SV_TYPE_OST)) {
                 if (!(flags & LDD_F_SV_ALL))
-                        sprintf(name, "%.8s-%s%04x", fs,
-                                (flags & LDD_F_SV_TYPE_MDT) ? "MDT" : "OST",
-                                index);
+			sprintf(name, "%.8s%c%s%04x", fs,
+				(flags & LDD_F_VIRGIN) ? ':' : '-',
+				(flags & LDD_F_SV_TYPE_MDT) ? "MDT" : "OST",
+				index);
         } else if (flags & LDD_F_SV_TYPE_MGS) {
                 sprintf(name, "MGS");
         } else {
@@ -205,6 +220,8 @@ struct lustre_mount_data {
         char      *lmd_opts;          /* lustre mount options (as opposed to
                                          _device_ mount options) */
         __u32     *lmd_exclude;       /* array of OSTs to ignore */
+	char	*lmd_mgs;           /* MGS nid */
+	char	*lmd_osd_type;      /* OSD type */
 };
 
 #define LMD_FLG_SERVER       0x0001  /* Mounting a server */
@@ -216,6 +233,7 @@ struct lustre_mount_data {
                                         existing MGS services */
 #define LMD_FLG_WRITECONF    0x0040  /* Rewrite config log */
 #define LMD_FLG_NOIR         0x0080  /* NO imperative recovery */
+#define LMD_FLG_NOSCRUB	     0x0100  /* Do not trigger scrub automatically */
 
 #define lmd_is_client(x) ((x)->lmd_flags & LMD_FLG_CLIENT)
 
@@ -464,6 +482,8 @@ struct lustre_sb_info {
         struct ll_sb_info        *lsi_llsbi;   /* add'l client sbi info */
         struct vfsmount          *lsi_srv_mnt; /* the one server mount */
         cfs_atomic_t              lsi_mounts;  /* references to the srv_mnt */
+	char			  lsi_svname[MTI_NAME_MAXLEN];
+	char			  lsi_osd_type[16];
         struct backing_dev_info   lsi_bdi;     /* each client mountpoint needs
                                                   own backing_dev_info */
 };
@@ -478,6 +498,7 @@ struct lustre_sb_info {
 #define     s2lsi_nocast(sb) ((sb)->s_fs_info)
 
 #define     get_profile_name(sb)   (s2lsi(sb)->lsi_lmd->lmd_profile)
+#define	    get_mount_flags(sb)	   (s2lsi(sb)->lsi_lmd->lmd_flags)
 
 #endif /* __KERNEL__ */
 

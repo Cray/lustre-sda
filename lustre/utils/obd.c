@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -109,8 +107,6 @@ static int nthreads;
 const int thread = 0;
 const int nthreads = 1;
 #endif
-
-#define MAX_IOC_BUFLEN 8192
 
 static int cur_device = -1;
 
@@ -561,8 +557,8 @@ static void shmem_total(int total_threads)
                         &shared_data->body.start_time);
         shmem_unlock();
 
-        printf("Total: total %llu threads %d sec %f %f/second\n", total,
-                total_threads, secs, total / secs);
+        printf("Total: total "LPU64" threads %d sec %f %f/second\n",
+               total, total_threads, secs, total / secs);
 
         return;
 }
@@ -1435,8 +1431,6 @@ int jt_obd_md_common(int argc, char **argv, int cmd)
                         data.ioc_count = MD_STEP_COUNT;
                 }
 
-                child_base_id += data.ioc_count;
-                count += data.ioc_count;
                 if (cmd == ECHO_MD_CREATE || cmd == ECHO_MD_MKDIR) {
                         /*Allocate fids for the create */
                         rc = jt_obd_alloc_fids(&fid_space, &fid,
@@ -1448,6 +1442,10 @@ int jt_obd_md_common(int argc, char **argv, int cmd)
                         data.ioc_obdo1.o_seq = fid.f_seq;
                         data.ioc_obdo1.o_id = fid.f_oid;
                 }
+
+                child_base_id += data.ioc_count;
+                count += data.ioc_count;
+
                 memset(buf, 0, sizeof(rawbuf));
                 rc = obd_ioctl_pack(&data, &buf, sizeof(rawbuf));
                 if (rc) {

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -106,7 +104,7 @@ static struct llog_canceld_ctxt *llcd_alloc(struct llog_commit_master *lcm)
          */
         size = CFS_PAGE_SIZE - lustre_msg_size(LUSTRE_MSG_MAGIC_V2, 1, NULL);
         overhead =  offsetof(struct llog_canceld_ctxt, llcd_cookies);
-        OBD_SLAB_ALLOC(llcd, llcd_cache, CFS_ALLOC_STD, size + overhead);
+	OBD_SLAB_ALLOC_GFP(llcd, llcd_cache, size + overhead, CFS_ALLOC_STD);
         if (!llcd)
                 return NULL;
 
@@ -564,7 +562,7 @@ int llog_obd_repl_connect(struct llog_ctxt *ctxt,
          * Send back cached llcd from llog before recovery if we have any.
          * This is void is nothing cached is found there.
          */
-        llog_sync(ctxt, NULL);
+	llog_sync(ctxt, NULL, 0);
 
         /*
          * Start recovery in separate thread.
@@ -606,7 +604,12 @@ int llog_obd_repl_cancel(struct llog_ctxt *ctxt,
          * Let's check if we have all structures alive. We also check for
          * possible shutdown. Do nothing if we're stopping.
          */
-        if (ctxt->loc_imp == NULL) {
+	if (ctxt->loc_flags & LLOG_CTXT_FLAG_STOP) {
+		CDEBUG(D_RPCTRACE, "Last sync was done for ctxt %p\n", ctxt);
+		GOTO(out, rc = -ENODEV);
+	}
+
+	if (ctxt->loc_imp == NULL) {
                 CDEBUG(D_RPCTRACE, "No import for ctxt %p\n", ctxt);
                 GOTO(out, rc = -ENODEV);
         }
@@ -675,12 +678,17 @@ int llog_obd_repl_cancel(struct llog_ctxt *ctxt,
 out:
         if (rc)
                 llcd_put(ctxt);
+
+	if (flags & OBD_LLOG_FL_EXIT)
+		ctxt->loc_flags = LLOG_CTXT_FLAG_STOP;
+
         cfs_mutex_unlock(&ctxt->loc_mutex);
         return rc;
 }
 EXPORT_SYMBOL(llog_obd_repl_cancel);
 
-int llog_obd_repl_sync(struct llog_ctxt *ctxt, struct obd_export *exp)
+int llog_obd_repl_sync(struct llog_ctxt *ctxt, struct obd_export *exp,
+		       int flags)
 {
         int rc = 0;
         ENTRY;
@@ -696,6 +704,10 @@ int llog_obd_repl_sync(struct llog_ctxt *ctxt, struct obd_export *exp)
                  */
                 CDEBUG(D_RPCTRACE, "Kill cached llcd\n");
                 llcd_put(ctxt);
+
+		if (flags & OBD_LLOG_FL_EXIT)
+			ctxt->loc_flags = LLOG_CTXT_FLAG_STOP;
+
                 cfs_mutex_unlock(&ctxt->loc_mutex);
         } else {
                 /*
@@ -705,7 +717,8 @@ int llog_obd_repl_sync(struct llog_ctxt *ctxt, struct obd_export *exp)
                  */
                 CDEBUG(D_RPCTRACE, "Sync cached llcd\n");
                 cfs_mutex_unlock(&ctxt->loc_mutex);
-                rc = llog_cancel(ctxt, NULL, 0, NULL, OBD_LLOG_FL_SENDNOW);
+		rc = llog_cancel(ctxt, NULL, 0, NULL, OBD_LLOG_FL_SENDNOW |
+				 flags);
         }
         RETURN(rc);
 }

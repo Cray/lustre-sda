@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -95,6 +93,7 @@ int lustre_uuid_to_peer(const char *uuid, lnet_nid_t *peer_nid, int index)
         cfs_spin_unlock(&g_uuid_lock);
         return rc;
 }
+EXPORT_SYMBOL(lustre_uuid_to_peer);
 
 /* Add a nid to a niduuid.  Multiple nids can be added to a single uuid;
    LNET will choose the best one. */

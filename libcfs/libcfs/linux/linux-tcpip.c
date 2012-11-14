@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, Whamcloud, Inc.
+ * Copyright (c) 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -573,22 +571,6 @@ libcfs_sock_listen (struct socket **sockp,
 }
 
 EXPORT_SYMBOL(libcfs_sock_listen);
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,6,12)
-int sock_create_lite(int family, int type, int protocol, struct socket **res)
-{
-        struct socket *sock;
-
-        sock = sock_alloc();
-        if (sock == NULL)
-                return -ENOMEM;
-
-        sock->type = type;
-        *res = sock;
-
-        return 0;
-}
-#endif
 
 int
 libcfs_sock_accept (struct socket **newsockp, struct socket *sock)

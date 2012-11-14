@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -120,8 +118,7 @@ int ptlrpc_init_import(struct obd_import *imp)
 EXPORT_SYMBOL(ptlrpc_init_import);
 
 #define UUID_STR "_UUID"
-static void deuuidify(char *uuid, const char *prefix, char **uuid_start,
-                      int *uuid_len)
+void deuuidify(char *uuid, const char *prefix, char **uuid_start, int *uuid_len)
 {
         *uuid_start = !prefix || strncmp(uuid, prefix, strlen(prefix))
                 ? uuid : uuid + strlen(prefix);
@@ -135,6 +132,7 @@ static void deuuidify(char *uuid, const char *prefix, char **uuid_start,
                     UUID_STR, strlen(UUID_STR)))
                 *uuid_len -= strlen(UUID_STR);
 }
+EXPORT_SYMBOL(deuuidify);
 
 /**
  * Returns true if import was FULL, false if import was already not
@@ -162,15 +160,15 @@ int ptlrpc_set_import_discon(struct obd_import *imp, __u32 conn_cnt)
                           &target_start, &target_len);
 
                 if (imp->imp_replayable) {
-                        LCONSOLE_WARN("%s: Connection to service %.*s via nid "
-                               "%s was lost; in progress operations using this "
-                               "service will wait for recovery to complete.\n",
+                        LCONSOLE_WARN("%s: Connection to %.*s (at %s) was "
+                               "lost; in progress operations using this "
+                               "service will wait for recovery to complete\n",
                                imp->imp_obd->obd_name, target_len, target_start,
                                libcfs_nid2str(imp->imp_connection->c_peer.nid));
                 } else {
-                        LCONSOLE_ERROR_MSG(0x166, "%s: Connection to service "
-                               "%.*s via nid %s was lost; in progress "
-                               "operations using this service will fail.\n",
+                        LCONSOLE_ERROR_MSG(0x166, "%s: Connection to "
+                               "%.*s (at %s) was lost; in progress "
+                               "operations using this service will fail\n",
                                imp->imp_obd->obd_name,
                                target_len, target_start,
                                libcfs_nid2str(imp->imp_connection->c_peer.nid));
@@ -223,6 +221,7 @@ void ptlrpc_deactivate_import(struct obd_import *imp)
         cfs_spin_lock(&imp->imp_lock);
         ptlrpc_deactivate_and_unlock_import(imp);
 }
+EXPORT_SYMBOL(ptlrpc_deactivate_import);
 
 static unsigned int
 ptlrpc_inflight_deadline(struct ptlrpc_request *req, time_t now)
@@ -381,6 +380,7 @@ void ptlrpc_invalidate_import(struct obd_import *imp)
         cfs_atomic_dec(&imp->imp_inval_count);
         cfs_waitq_broadcast(&imp->imp_recovery_waitq);
 }
+EXPORT_SYMBOL(ptlrpc_invalidate_import);
 
 /* unset imp_invalid */
 void ptlrpc_activate_import(struct obd_import *imp)
@@ -393,6 +393,7 @@ void ptlrpc_activate_import(struct obd_import *imp)
         cfs_spin_unlock(&imp->imp_lock);
         obd_import_event(obd, imp, IMP_EVENT_ACTIVE);
 }
+EXPORT_SYMBOL(ptlrpc_activate_import);
 
 void ptlrpc_fail_import(struct obd_import *imp, __u32 conn_cnt)
 {
@@ -421,6 +422,7 @@ void ptlrpc_fail_import(struct obd_import *imp, __u32 conn_cnt)
         }
         EXIT;
 }
+EXPORT_SYMBOL(ptlrpc_fail_import);
 
 int ptlrpc_reconnect_import(struct obd_import *imp)
 {
@@ -460,7 +462,8 @@ static int import_select_connection(struct obd_import *imp)
 {
         struct obd_import_conn *imp_conn = NULL, *conn;
         struct obd_export *dlmexp;
-        int tried_all = 1;
+        char *target_start;
+        int target_len, tried_all = 1;
         ENTRY;
 
         cfs_spin_lock(&imp->imp_lock);
@@ -512,17 +515,16 @@ static int import_select_connection(struct obd_import *imp)
            state associated with the last connection attempt to drain before
            trying to reconnect on it.) */
         if (tried_all && (imp->imp_conn_list.next == &imp_conn->oic_item)) {
-                if (at_get(&imp->imp_at.iat_net_latency) <
-                    CONNECTION_SWITCH_MAX) {
-                        at_measured(&imp->imp_at.iat_net_latency,
-                                    at_get(&imp->imp_at.iat_net_latency) +
-                                    CONNECTION_SWITCH_INC);
-                }
-                LASSERT(imp_conn->oic_last_attempt);
-                CWARN("%s: tried all connections, increasing latency to %ds\n",
-                      imp->imp_obd->obd_name,
-                      at_get(&imp->imp_at.iat_net_latency));
-        }
+		struct adaptive_timeout *at = &imp->imp_at.iat_net_latency;
+		if (at_get(at) < CONNECTION_SWITCH_MAX) {
+			at_measured(at, at_get(at) + CONNECTION_SWITCH_INC);
+			if (at_get(at) > CONNECTION_SWITCH_MAX)
+				at_reset(at, CONNECTION_SWITCH_MAX);
+		}
+		LASSERT(imp_conn->oic_last_attempt);
+		CDEBUG(D_HA, "%s: tried all connections, increasing latency "
+			"to %ds\n", imp->imp_obd->obd_name, at_get(at));
+	}
 
         imp_conn->oic_last_attempt = cfs_time_current_64();
 
@@ -539,10 +541,17 @@ static int import_select_connection(struct obd_import *imp)
         class_export_put(dlmexp);
 
         if (imp->imp_conn_current != imp_conn) {
-                if (imp->imp_conn_current)
-                        CDEBUG(D_HA, "Changing connection for %s to %s/%s\n",
-                               imp->imp_obd->obd_name, imp_conn->oic_uuid.uuid,
+                if (imp->imp_conn_current) {
+                        deuuidify(obd2cli_tgt(imp->imp_obd), NULL,
+                                  &target_start, &target_len);
+
+                        CDEBUG(D_HA, "%s: Connection changing to"
+                               " %.*s (at %s)\n",
+                               imp->imp_obd->obd_name,
+                               target_len, target_start,
                                libcfs_nid2str(imp_conn->oic_conn->c_peer.nid));
+                }
+
                 imp->imp_conn_current = imp_conn;
         }
 
@@ -638,6 +647,8 @@ int ptlrpc_connect_import(struct obd_import *imp)
         /* Reset connect flags to the originally requested flags, in case
          * the server is updated on-the-fly we will get the new features. */
         imp->imp_connect_data.ocd_connect_flags = imp->imp_connect_flags_orig;
+	/* Reset ocd_version each time so the server knows the exact versions */
+	imp->imp_connect_data.ocd_version = LUSTRE_VERSION_CODE;
         imp->imp_msghdr_flags &= ~MSGHDR_AT_SUPPORT;
         imp->imp_msghdr_flags &= ~MSGHDR_CKSUM_INCOMPAT18;
 
@@ -769,6 +780,7 @@ static int ptlrpc_connect_interpret(const struct lu_env *env,
                  * for connecting*/
                 imp->imp_force_reconnect = ptlrpc_busy_reconnect(rc);
                 cfs_spin_unlock(&imp->imp_lock);
+                ptlrpc_maybe_ping_import_soon(imp);
                 GOTO(out, rc);
         }
 	cfs_spin_unlock(&imp->imp_lock);
@@ -868,10 +880,11 @@ static int ptlrpc_connect_interpret(const struct lu_env *env,
                 memset(&old_hdl, 0, sizeof(old_hdl));
                 if (!memcmp(&old_hdl, lustre_msg_get_handle(request->rq_repmsg),
                             sizeof (old_hdl))) {
-                        CERROR("%s@%s didn't like our handle "LPX64
-                               ", failed\n", obd2cli_tgt(imp->imp_obd),
-                               imp->imp_connection->c_remote_uuid.uuid,
-                               imp->imp_dlm_handle.cookie);
+                        LCONSOLE_WARN("Reconnect to %s (at @%s) failed due "
+                                      "bad handle "LPX64"\n",
+                                      obd2cli_tgt(imp->imp_obd),
+                                      imp->imp_connection->c_remote_uuid.uuid,
+                                      imp->imp_dlm_handle.cookie);
                         GOTO(out, rc = -ENOTCONN);
                 }
 
@@ -888,15 +901,27 @@ static int ptlrpc_connect_interpret(const struct lu_env *env,
                          * eviction. If it is in recovery - we are safe to
                          * participate since we can reestablish all of our state
                          * with server again */
-                        CDEBUG(level,"%s@%s changed server handle from "
-                                     LPX64" to "LPX64"%s\n",
-                                     obd2cli_tgt(imp->imp_obd),
-                                     imp->imp_connection->c_remote_uuid.uuid,
-                                     imp->imp_remote_handle.cookie,
-                                     lustre_msg_get_handle(request->rq_repmsg)->
-                                                                        cookie,
-                                     (MSG_CONNECT_RECOVERING & msg_flags) ?
-                                         " but is still in recovery" : "");
+                        if ((MSG_CONNECT_RECOVERING & msg_flags)) {
+                                CDEBUG(level,"%s@%s changed server handle from "
+                                       LPX64" to "LPX64
+                                       " but is still in recovery\n",
+                                       obd2cli_tgt(imp->imp_obd),
+                                       imp->imp_connection->c_remote_uuid.uuid,
+                                       imp->imp_remote_handle.cookie,
+                                       lustre_msg_get_handle(
+                                       request->rq_repmsg)->cookie);
+                        } else {
+                                LCONSOLE_WARN("Evicted from %s (at %s) "
+                                              "after server handle changed from "
+                                              LPX64" to "LPX64"\n",
+                                              obd2cli_tgt(imp->imp_obd),
+                                              imp->imp_connection-> \
+                                              c_remote_uuid.uuid,
+                                              imp->imp_remote_handle.cookie,
+                                              lustre_msg_get_handle(
+                                              request->rq_repmsg)->cookie);
+                        }
+
 
                         imp->imp_remote_handle =
                                      *lustre_msg_get_handle(request->rq_repmsg);
@@ -1015,28 +1040,50 @@ finish:
                                       newer : older, LUSTRE_VERSION_STRING);
                 }
 
-                if (ocd->ocd_connect_flags & OBD_CONNECT_CKSUM) {
-                        /* We sent to the server ocd_cksum_types with bits set
-                         * for algorithms we understand. The server masked off
-                         * the checksum types it doesn't support */
-                        if ((ocd->ocd_cksum_types & cksum_types_supported()) == 0) {
-                                LCONSOLE_WARN("The negotiation of the checksum "
-                                              "alogrithm to use with server %s "
-                                              "failed (%x/%x), disabling "
-                                              "checksums\n",
-                                              obd2cli_tgt(imp->imp_obd),
-                                              ocd->ocd_cksum_types,
-                                              cksum_types_supported());
-                                cli->cl_checksum = 0;
-                                cli->cl_supp_cksum_types = OBD_CKSUM_CRC32;
-                        } else {
-                                cli->cl_supp_cksum_types = ocd->ocd_cksum_types;
-                        }
-                } else {
-                        /* The server does not support OBD_CONNECT_CKSUM.
-                         * Enforce CRC32 for backward compatibility*/
-                        cli->cl_supp_cksum_types = OBD_CKSUM_CRC32;
-                }
+#if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(3, 2, 50, 0)
+		/* Check if server has LU-1252 fix applied to not always swab
+		 * the IR MNE entries. Do this only once per connection.  This
+		 * fixup is version-limited, because we don't want to carry the
+		 * OBD_CONNECT_MNE_SWAB flag around forever, just so long as we
+		 * need interop with unpatched 2.2 servers.  For newer servers,
+		 * the client will do MNE swabbing only as needed.  LU-1644 */
+		if (unlikely((ocd->ocd_connect_flags & OBD_CONNECT_VERSION) &&
+			     !(ocd->ocd_connect_flags & OBD_CONNECT_MNE_SWAB) &&
+			     OBD_OCD_VERSION_MAJOR(ocd->ocd_version) == 2 &&
+			     OBD_OCD_VERSION_MINOR(ocd->ocd_version) == 2 &&
+			     OBD_OCD_VERSION_PATCH(ocd->ocd_version) < 55 &&
+			     strcmp(imp->imp_obd->obd_type->typ_name,
+				    LUSTRE_MGC_NAME) == 0))
+			imp->imp_need_mne_swab = 1;
+		else /* clear if server was upgraded since last connect */
+			imp->imp_need_mne_swab = 0;
+#else
+#warning "LU-1644: Remove old OBD_CONNECT_MNE_SWAB fixup and imp_need_mne_swab"
+#endif
+
+		if (ocd->ocd_connect_flags & OBD_CONNECT_CKSUM) {
+			/* We sent to the server ocd_cksum_types with bits set
+			 * for algorithms we understand. The server masked off
+			 * the checksum types it doesn't support */
+			if ((ocd->ocd_cksum_types &
+			     cksum_types_supported_client()) == 0) {
+				LCONSOLE_WARN("The negotiation of the checksum "
+					      "alogrithm to use with server %s "
+					      "failed (%x/%x), disabling "
+					      "checksums\n",
+					      obd2cli_tgt(imp->imp_obd),
+					      ocd->ocd_cksum_types,
+					      cksum_types_supported_client());
+				cli->cl_checksum = 0;
+				cli->cl_supp_cksum_types = OBD_CKSUM_ADLER;
+			} else {
+				cli->cl_supp_cksum_types = ocd->ocd_cksum_types;
+			}
+		} else {
+			/* The server does not support OBD_CONNECT_CKSUM.
+			 * Enforce ADLER for backward compatibility*/
+			cli->cl_supp_cksum_types = OBD_CKSUM_ADLER;
+		}
                 cli->cl_cksum_type =cksum_type_select(cli->cl_supp_cksum_types);
 
                 if (ocd->ocd_connect_flags & OBD_CONNECT_BRW_SIZE)
@@ -1349,8 +1396,8 @@ int ptlrpc_import_recovery_state_machine(struct obd_import *imp)
 
                 deuuidify(obd2cli_tgt(imp->imp_obd), NULL,
                           &target_start, &target_len);
-                LCONSOLE_INFO("%s: Connection restored to service %.*s "
-                              "using nid %s.\n", imp->imp_obd->obd_name,
+                LCONSOLE_INFO("%s: Connection restored to %.*s (at %s)\n",
+                              imp->imp_obd->obd_name,
                               target_len, target_start,
                               libcfs_nid2str(imp->imp_connection->c_peer.nid));
         }
@@ -1422,17 +1469,10 @@ int ptlrpc_disconnect_import(struct obd_import *imp, int noclose)
                  * if the client doesn't know the server is gone yet. */
                 req->rq_no_resend = 1;
 
-#ifndef CRAY_XT3
                 /* We want client umounts to happen quickly, no matter the
                    server state... */
                 req->rq_timeout = min_t(int, req->rq_timeout,
                                         INITIAL_CONNECT_TIMEOUT);
-#else
-                /* ... but we always want liblustre clients to nicely
-                   disconnect, so only use the adaptive value. */
-                if (AT_OFF)
-                        req->rq_timeout = obd_timeout / 3;
-#endif
 
                 IMPORT_SET_STATE(imp, LUSTRE_IMP_CONNECTING);
                 req->rq_send_state =  LUSTRE_IMP_CONNECTING;
@@ -1453,6 +1493,7 @@ out:
 
         RETURN(rc);
 }
+EXPORT_SYMBOL(ptlrpc_disconnect_import);
 
 void ptlrpc_cleanup_imp(struct obd_import *imp)
 {
@@ -1466,6 +1507,7 @@ void ptlrpc_cleanup_imp(struct obd_import *imp)
 
         EXIT;
 }
+EXPORT_SYMBOL(ptlrpc_cleanup_imp);
 
 /* Adaptive Timeout utils */
 extern unsigned int at_min, at_max, at_history;

@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -542,7 +540,7 @@ static CFS_LIST_HEAD(cl_envs);
 static unsigned cl_envs_cached_nr  = 0;
 static unsigned cl_envs_cached_max = 128; /* XXX: prototype: arbitrary limit
                                            * for now. */
-static cfs_spinlock_t cl_envs_guard = CFS_SPIN_LOCK_UNLOCKED(cl_envs_guard);
+static DEFINE_SPINLOCK(cl_envs_guard);
 
 struct cl_env {
         void             *ce_magic;

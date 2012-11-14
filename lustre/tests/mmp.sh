@@ -1,5 +1,6 @@
 #!/bin/bash
-# vim:expandtab:shiftwidth=4:softtabstop=4:tabstop=4:
+# -*- mode: Bash; tab-width: 4; indent-tabs-mode: t; -*-
+# vim:shiftwidth=4:softtabstop=4:tabstop=4:
 #
 # Tests for multiple mount protection (MMP) feature.
 #
@@ -26,8 +27,6 @@ init_logging
 
 remote_mds_nodsh && skip "remote MDS with nodsh" && exit 0
 remote_ost_nodsh && skip "remote OST with nodsh" && exit 0
-[ "$MDSFSTYPE" != "ldiskfs" ] && skip "MDS not running ldiskfs" && exit 0
-[ "$OSTFSTYPE" != "ldiskfs" ] && skip "OST not running ldiskfs" && exit 0
 
 # unmount and cleanup the Lustre filesystem
 MMP_RESTORE_MOUNT=false
@@ -137,33 +136,56 @@ mmp_is_enabled() {
 
 # Get MMP update interval (in seconds) from the Lustre server target.
 get_mmp_update_interval() {
-    local facet=$1
-    local device=$2
-    local interval
+	local facet=$1
+	local device=$2
+	local interval
 
-    interval=$(do_facet $facet "$DEBUGFS -c -R dump_mmp $device 2>/dev/null \
-                | grep 'MMP Update Interval' | cut -d' ' -f4")
-    [ -z "$interval" ] && interval=1
+	interval=$(do_facet $facet \
+		   "$DEBUGFS -c -R dump_mmp $device 2>/dev/null" |
+		   awk 'tolower($0) ~ /update.interval/ { print $NF }')
+	[ -z "$interval" ] && interval=5
 
-    echo $interval
+	echo $interval
 }
 
 # Get MMP check interval (in seconds) from the Lustre server target.
 get_mmp_check_interval() {
-    local facet=$1
-    local device=$2
-    local interval
+	local facet=$1
+	local device=$2
+	local interval
 
-    interval=$(do_facet $facet "$DEBUGFS -c -R dump_mmp $device 2>/dev/null \
-                | grep 'MMP Check Interval' | cut -d' ' -f4")
-    [ -z "$interval" ] && interval=5
+	interval=$(do_facet $facet \
+		   "$DEBUGFS -c -R dump_mmp $device 2>/dev/null" |
+		   awk 'tolower($0) ~ /check.interval/ { print $NF }')
+	[ -z "$interval" ] && interval=5
 
-    echo $interval
+	echo $interval
+}
+
+# Adjust the MMP update interval (in seconds) on the Lustre server target.
+# Specifying an interval of 0 means to use the default interval.
+set_mmp_update_interval() {
+	local facet=$1
+	local device=$2
+	local interval=${3:-0}
+
+	do_facet $facet "$TUNE2FS -E mmp_update_interval=$interval $device"
+	return ${PIPESTATUS[0]}
 }
 
 # Enable the MMP feature on the Lustre server targets.
 mmp_init() {
-    init_vars
+	init_vars
+
+	if [ $(facet_fstype $MMP_MDS) != ldiskfs ]; then
+		skip "Only applicable to ldiskfs-based MDTs"
+		exit
+	fi
+
+	if [ $(facet_fstype $MMP_OSS) != ldiskfs ]; then
+		skip "Only applicable to ldiskfs-based OSTs"
+		exit
+	fi
 
     # The MMP feature is automatically enabled by mkfs.lustre for
     # new file system at format time if failover is being used.
@@ -217,7 +239,7 @@ mmp_fini() {
     return 0
 }
 
-# Mount the shared target on the failover server after some interval it's 
+# Mount the shared target on the failover server after some interval it's
 # mounted on the primary server.
 mount_after_interval_sub() {
     local interval=$1
@@ -256,7 +278,7 @@ mount_after_interval_sub() {
             return ${PIPESTATUS[0]}
         return 1
     elif [ $second_mount_rc -ne 0 -a $first_mount_rc -ne 0 ]; then
-        error_noexit "failed to mount on the failover pair $facet,$failover_facet"
+	error_noexit "mount failure on failover pair $facet,$failover_facet"
         return $first_mount_rc
     fi
 
@@ -282,7 +304,7 @@ mount_after_interval() {
     return 0
 }
 
-# Mount the shared target on the failover server 
+# Mount the shared target on the failover server
 # during unmounting it on the primary server.
 mount_during_unmount() {
     local device=$1
@@ -324,7 +346,7 @@ mount_during_unmount() {
     return 0
 }
 
-# Mount the shared target on the failover server 
+# Mount the shared target on the failover server
 # after clean unmounting it on the primary server.
 mount_after_unmount() {
     local device=$1
@@ -338,7 +360,7 @@ mount_after_unmount() {
     start $facet $device $mnt_opts || return ${PIPESTATUS[0]}
 
     log "Unmounting $device on $facet..."
-    stop $facet || return ${PIPESTATUS[0]} 
+    stop $facet || return ${PIPESTATUS[0]}
 
     log "Mounting $device on $failover_facet..."
     start $failover_facet $device $mnt_opts || return ${PIPESTATUS[0]}
@@ -382,15 +404,15 @@ mount_after_reboot() {
 
 # Run e2fsck on the Lustre server target.
 run_e2fsck() {
-    local facet=$1
-    shift
-    local device=$1
-    shift
-    local opts="$@"
+	local facet=$1
+	shift
+	local device=$1
+	shift
+	local opts="$@"
 
-    log "Running e2fsck on the device $device on $facet..."
-    do_facet $facet "$E2FSCK $opts $device"
-    return ${PIPESTATUS[0]}
+	echo "Running e2fsck on the device $device on $facet..."
+	do_facet $facet "$E2FSCK $opts $device"
+	return ${PIPESTATUS[0]}
 }
 
 # Check whether there are failover pairs for MDS and OSS servers.
@@ -518,35 +540,54 @@ run_test 7 "mount after reboot"
 
 # Test 8 - mount during e2fsck (should never succeed).
 test_8() {
-    local e2fsck_pid
+	local e2fsck_pid
+	local saved_interval
+	local new_interval
 
-    run_e2fsck $MMP_MDS $MMP_MDSDEV "-fy" &
-    e2fsck_pid=$!
-    sleep 1
+	# After writing a new sequence number into the MMP block, e2fsck will
+	# sleep at least (2 * new_interval + 1) seconds before it goes into
+	# e2fsck passes.
+	new_interval=30
 
-    log "Mounting $MMP_MDSDEV on $MMP_MDS_FAILOVER..."
-    if start $MMP_MDS_FAILOVER $MMP_MDSDEV $MDS_MOUNT_OPTS; then
-        error_noexit "mount $MMP_MDSDEV on $MMP_MDS_FAILOVER should fail"
-        stop $MMP_MDS_FAILOVER || return ${PIPESTATUS[0]}
-        return 1
-    fi
+	# MDT
+	saved_interval=$(get_mmp_update_interval $MMP_MDS $MMP_MDSDEV)
+	set_mmp_update_interval $MMP_MDS $MMP_MDSDEV $new_interval
 
-    wait $e2fsck_pid
+	run_e2fsck $MMP_MDS $MMP_MDSDEV "-fy" &
+	e2fsck_pid=$!
+	sleep 5
 
-    echo
-    run_e2fsck $MMP_OSS $MMP_OSTDEV "-fy" &
-    e2fsck_pid=$!
-    sleep 1
+	if start $MMP_MDS_FAILOVER $MMP_MDSDEV $MDS_MOUNT_OPTS; then
+		error_noexit \
+			"mount $MMP_MDSDEV on $MMP_MDS_FAILOVER should fail"
+		stop $MMP_MDS_FAILOVER || return ${PIPESTATUS[0]}
+		set_mmp_update_interval $MMP_MDS $MMP_MDSDEV $saved_interval
+		return 1
+	fi
 
-    log "Mounting $MMP_OSTDEV on $MMP_OSS_FAILOVER..."
-    if start $MMP_OSS_FAILOVER $MMP_OSTDEV $OST_MOUNT_OPTS; then
-        error_noexit "mount $MMP_OSTDEV on $MMP_OSS_FAILOVER should fail"
-        stop $MMP_OSS_FAILOVER || return ${PIPESTATUS[0]}
-        return 2
-    fi
+	wait $e2fsck_pid
+	set_mmp_update_interval $MMP_MDS $MMP_MDSDEV $saved_interval
 
-    wait $e2fsck_pid
-    return 0
+	# OST
+	echo
+	saved_interval=$(get_mmp_update_interval $MMP_OSS $MMP_OSTDEV)
+	set_mmp_update_interval $MMP_OSS $MMP_OSTDEV $new_interval
+
+	run_e2fsck $MMP_OSS $MMP_OSTDEV "-fy" &
+	e2fsck_pid=$!
+	sleep 5
+
+	if start $MMP_OSS_FAILOVER $MMP_OSTDEV $OST_MOUNT_OPTS; then
+		error_noexit \
+			"mount $MMP_OSTDEV on $MMP_OSS_FAILOVER should fail"
+		stop $MMP_OSS_FAILOVER || return ${PIPESTATUS[0]}
+		set_mmp_update_interval $MMP_OSS $MMP_OSTDEV $saved_interval
+		return 2
+	fi
+
+	wait $e2fsck_pid
+	set_mmp_update_interval $MMP_OSS $MMP_OSTDEV $saved_interval
+	return 0
 }
 run_test 8 "mount during e2fsck"
 
@@ -561,7 +602,7 @@ test_9() {
     stop_services primary || return ${PIPESTATUS[0]}
 
     mark_mmp_block $MMP_MDS $MMP_MDSDEV || return ${PIPESTATUS[0]}
-    
+
     log "Mounting $MMP_MDSDEV on $MMP_MDS..."
     if start $MMP_MDS $MMP_MDSDEV $MDS_MOUNT_OPTS; then
         error_noexit "mount $MMP_MDSDEV on $MMP_MDS should fail"

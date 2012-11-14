@@ -1,6 +1,4 @@
-/* -*- mode: c; c-basic-offset: 8; indent-tabs-mode: nil; -*-
- * vim:expandtab:shiftwidth=8:tabstop=8:
- *
+/*
  * GPL HEADER START
  *
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
@@ -29,7 +27,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2012, Whamcloud, Inc.
+ * Copyright (c) 2011, 2012, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -117,7 +115,7 @@ int cl_glimpse_lock(const struct lu_env *env, struct cl_io *io,
         result = 0;
         if (!(lli->lli_flags & LLIF_MDS_SIZE_LOCK)) {
                 CDEBUG(D_DLMTRACE, "Glimpsing inode "DFID"\n", PFID(fid));
-                if (lli->lli_smd) {
+		if (lli->lli_has_smd) {
                         /* NOTE: this looks like DLM lock request, but it may
                          *       not be one. Due to CEF_ASYNC flag (translated
                          *       to LDLM_FL_HAS_INTENT by osc), this is
@@ -226,6 +224,7 @@ int cl_glimpse_size0(struct inode *inode, int agl)
 
         result = cl_io_get(inode, &env, &io, &refcheck);
         if (result > 0) {
+	again:
                 result = cl_io_init(env, io, CIT_MISC, io->ci_obj);
                 if (result > 0)
                         /*
@@ -237,9 +236,11 @@ int cl_glimpse_size0(struct inode *inode, int agl)
                         result = cl_glimpse_lock(env, io, inode, io->ci_obj,
                                                  agl);
                 cl_io_fini(env, io);
-                cl_env_put(env, &refcheck);
-        }
-        RETURN(result);
+		if (unlikely(io->ci_need_restart))
+			goto again;
+		cl_env_put(env, &refcheck);
+	}
+	RETURN(result);
 }
 
 int cl_local_size(struct inode *inode)
@@ -255,7 +256,7 @@ int cl_local_size(struct inode *inode)
 
         ENTRY;
 
-        if (!cl_i2info(inode)->lli_smd)
+	if (!cl_i2info(inode)->lli_has_smd)
                 RETURN(0);
 
         result = cl_io_get(inode, &env, &io, &refcheck);
