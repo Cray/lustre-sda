@@ -87,7 +87,13 @@ EXPORT_SYMBOL(obd_timeout_set);
 unsigned int ldlm_timeout_set;
 EXPORT_SYMBOL(ldlm_timeout_set);
 /* Adaptive timeout defs here instead of ptlrpc module for /proc/sys/ access */
+#if defined(CONFIG_CRAY_ARIES)
+/* For Aries, use Aries Timer project data */
+#include <aries/aries_timeouts_gpl.h>
+unsigned int at_min = TIMEOUT_SECS(TO_Lustre_adaptive_timeout);
+#else
 unsigned int at_min = 0;
+#endif  /* CONFIG_CRAY_ARIES */
 EXPORT_SYMBOL(at_min);
 unsigned int at_max = 600;
 EXPORT_SYMBOL(at_max);
