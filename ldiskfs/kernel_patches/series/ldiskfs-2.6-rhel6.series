@@ -39,3 +39,4 @@ ext4_export_mb_stream_allocator_variables.patch
 ext4-fix-mbgroups-access.patch
 ext4-dont-check-before-replay.patch 
 ext4-dont-check-in-ro.patch 
+ext4-bitmap-hold.patch
