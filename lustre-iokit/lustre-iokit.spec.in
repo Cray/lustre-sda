@@ -56,26 +56,25 @@ make
 make install DESTDIR=$RPM_BUILD_ROOT
 
 %files
-/usr/bin/ior-survey
-/usr/bin/parse-ior
-/usr/bin/libecho
-/usr/bin/obdfilter-survey
-/usr/bin/plot-obdfilter
-/usr/bin/plot-ost
-/usr/bin/ost-survey
-/usr/bin/sgpdd-survey
-/usr/bin/plot-sgpdd
-/usr/bin/lstats.sh
-/usr/bin/gather_stats_everywhere.sh
-/usr/bin/config.sh
-/usr/bin/mds-survey
-%doc obdfilter-survey/README.obdfilter-survey
-%doc ior-survey/README.ior-survey
-%doc ost-survey/README.ost-survey
-%doc mds-survey/README.mds-survey
-%doc sgpdd-survey/README.sgpdd-survey
-%doc stats-collect/README.lstats.sh
-
+%attr(-,root,root)/usr/bin/ior-survey
+%attr(-,root,root)/usr/bin/parse-ior
+%attr(-,root,root)/usr/bin/libecho
+%attr(-,root,root)/usr/bin/obdfilter-survey
+%attr(-,root,root)/usr/bin/plot-obdfilter
+%attr(-,root,root)/usr/bin/plot-ost
+%attr(-,root,root)/usr/bin/ost-survey
+%attr(-,root,root)/usr/bin/sgpdd-survey
+%attr(-,root,root)/usr/bin/plot-sgpdd
+%attr(-,root,root)/usr/bin/lstats.sh
+%attr(-,root,root)/usr/bin/gather_stats_everywhere.sh
+%attr(-,root,root)/usr/bin/config.sh
+%attr(-,root,root)/usr/bin/mds-survey
+%attr(-,root,root)%doc obdfilter-survey/README.obdfilter-survey
+%attr(-,root,root)%doc ior-survey/README.ior-survey
+%attr(-,root,root)%doc ost-survey/README.ost-survey
+%attr(-,root,root)%doc mds-survey/README.mds-survey
+%attr(-,root,root)%doc sgpdd-survey/README.sgpdd-survey
+%attr(-,root,root)%doc stats-collect/README.lstats.sh
 
 %changelog
 * Fri Jan 13 2012 Minh Diep
