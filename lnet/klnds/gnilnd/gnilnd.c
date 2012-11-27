@@ -2251,7 +2251,11 @@ int kgnilnd_base_startup (void)
         atomic_set(&kgnilnd_data.kgn_npending_conns, 0);
         atomic_set(&kgnilnd_data.kgn_npending_unlink, 0);
         atomic_set(&kgnilnd_data.kgn_npending_detach, 0);
-        /* OK to call kgnilnd_api_shutdown() to cleanup now */
+	atomic_set(&kgnilnd_data.kgn_rev_offset, 0);
+	atomic_set(&kgnilnd_data.kgn_rev_length, 0);
+	atomic_set(&kgnilnd_data.kgn_rev_copy_buff, 0);
+
+	/* OK to call kgnilnd_api_shutdown() to cleanup now */
         kgnilnd_data.kgn_init = GNILND_INIT_DATA;
         PORTAL_MODULE_USE;
 

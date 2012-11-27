@@ -215,6 +215,13 @@ kgnilnd_free_tx (kgn_tx_t *tx)
                 CDEBUG(D_MALLOC, "slab-freed 'tx_phys': %lu at %p.\n",
                        LNET_MAX_IOV * sizeof(gni_mem_segment_t), tx->tx_phys);
         }
+
+	/* Only free the buffer if we used it */
+	if (tx->tx_buffer_copy != NULL) {
+		vfree(tx->tx_buffer_copy);
+		tx->tx_buffer_copy = NULL;
+		CDEBUG(D_MALLOC, "vfreed buffer2\n");
+	}
 #if 0
         KGNILND_POISON(tx, 0x5a, sizeof(kgn_tx_t));
 #endif
@@ -419,14 +426,40 @@ kgnilnd_new_tx_msg (int type, lnet_nid_t source)
 }
 
 static void
-kgnilnd_nak_rdma(kgn_conn_t *conn, int type, int error, __u64 cookie, lnet_nid_t source) {
+kgnilnd_nak_rdma(kgn_conn_t *conn, int rx_type, int error, __u64 cookie, lnet_nid_t source) {
         kgn_tx_t        *tx;
 
+	int		nak_type;
+
+	switch (rx_type) {
+	case GNILND_MSG_GET_REQ:
+	case GNILND_MSG_GET_DONE:
+		nak_type = GNILND_MSG_GET_NAK;
+		break;
+	case GNILND_MSG_PUT_REQ:
+	case GNILND_MSG_PUT_ACK:
+	case GNILND_MSG_PUT_DONE:
+		nak_type = GNILND_MSG_PUT_NAK;
+		break;
+	case GNILND_MSG_PUT_REQ_REV:
+	case GNILND_MSG_PUT_DONE_REV:
+		nak_type = GNILND_MSG_PUT_NAK_REV;
+		break;
+	case GNILND_MSG_GET_REQ_REV:
+	case GNILND_MSG_GET_ACK_REV:
+	case GNILND_MSG_GET_DONE_REV:
+		nak_type = GNILND_MSG_GET_NAK_REV;
+		break;
+	default:
+		CERROR("invalid msg type %s (%d)\n",
+			kgnilnd_msgtype2str(rx_type), rx_type);
+		LBUG();
+	}
         /* only allow NAK on error and truncate to zero */
         LASSERTF(error <= 0, "error %d conn 0x%p, cookie "LPU64"\n",
-                 error, conn, cookie);
+		error, conn, cookie);
 
-        tx = kgnilnd_new_tx_msg(type, source);
+	tx = kgnilnd_new_tx_msg(nak_type, source);
         if (tx == NULL) {
                 CNETERR("can't get TX to NAK RDMA to %s\n",
                         libcfs_nid2str(conn->gnc_peer->gnp_nid));
@@ -738,7 +771,7 @@ kgnilnd_parse_lnet_rdma(lnet_msg_t *lntmsg, unsigned int *niov,
 }
 
 static inline void
-kgnilnd_compute_rdma_cksum (kgn_tx_t *tx)
+kgnilnd_compute_rdma_cksum(kgn_tx_t *tx, int put_len)
 {
         unsigned int     niov, offset, nob;
         lnet_kiov_t     *kiov;
@@ -746,10 +779,18 @@ kgnilnd_compute_rdma_cksum (kgn_tx_t *tx)
         int              dump_cksum = (*kgnilnd_tunables.kgn_checksum_dump > 1);
 
         GNITX_ASSERTF(tx, ((tx->tx_msg.gnm_type == GNILND_MSG_PUT_DONE) || 
-                           (tx->tx_msg.gnm_type == GNILND_MSG_GET_DONE)),
+			   (tx->tx_msg.gnm_type == GNILND_MSG_GET_DONE) ||
+			   (tx->tx_msg.gnm_type == GNILND_MSG_PUT_DONE_REV) ||
+			   (tx->tx_msg.gnm_type == GNILND_MSG_GET_DONE_REV) ||
+			   (tx->tx_msg.gnm_type == GNILND_MSG_GET_ACK_REV) ||
+			   (tx->tx_msg.gnm_type == GNILND_MSG_PUT_REQ_REV)),
                       "bad type %s", kgnilnd_msgtype2str(tx->tx_msg.gnm_type));
 
-
+	if ((tx->tx_msg.gnm_type == GNILND_MSG_PUT_DONE_REV) ||
+	    (tx->tx_msg.gnm_type == GNILND_MSG_GET_DONE_REV)) {
+		tx->tx_msg.gnm_payload_cksum = 0;
+		return;
+	}
         if (*kgnilnd_tunables.kgn_checksum < 3) {
                 tx->tx_msg.gnm_payload_cksum = 0;
                 return;
@@ -758,7 +799,7 @@ kgnilnd_compute_rdma_cksum (kgn_tx_t *tx)
         GNITX_ASSERTF(tx, lntmsg, "no LNet message!", NULL);
 
 	kgnilnd_parse_lnet_rdma(lntmsg, &niov, &offset, &nob, &kiov,
-				tx->tx_rdma_desc.length);
+				put_len);
 
         if (kiov != NULL) {
                 tx->tx_msg.gnm_payload_cksum = kgnilnd_cksum_kiov(niov, kiov, offset, nob, dump_cksum);
@@ -791,8 +832,17 @@ kgnilnd_verify_rdma_cksum(kgn_tx_t *tx, __u16 rx_cksum, int put_len)
 
         /* we can only match certain requests */
         GNITX_ASSERTF(tx, ((tx->tx_msg.gnm_type == GNILND_MSG_GET_REQ) || 
-                           (tx->tx_msg.gnm_type == GNILND_MSG_PUT_ACK)),
+			   (tx->tx_msg.gnm_type == GNILND_MSG_PUT_ACK) ||
+			   (tx->tx_msg.gnm_type == GNILND_MSG_PUT_REQ_REV) ||
+			   (tx->tx_msg.gnm_type == GNILND_MSG_GET_ACK_REV) ||
+			   (tx->tx_msg.gnm_type == GNILND_MSG_GET_DONE_REV) ||
+			   (tx->tx_msg.gnm_type == GNILND_MSG_PUT_DONE_REV)),
                       "bad type %s", kgnilnd_msgtype2str(tx->tx_msg.gnm_type));
+
+	if ((tx->tx_msg.gnm_type == GNILND_MSG_PUT_REQ_REV) ||
+	    (tx->tx_msg.gnm_type == GNILND_MSG_GET_ACK_REV)) {
+		return 0;
+	}
 
         if (rx_cksum == 0)  {
                 if (*kgnilnd_tunables.kgn_checksum >= 3) {
@@ -1027,8 +1077,11 @@ kgnilnd_add_purgatory_tx(kgn_tx_t *tx)
         LIBCFS_ALLOC(gmp, sizeof(*gmp));
         LASSERTF(gmp != NULL, "couldn't allocate MDD purgatory member;"
                 " asserting to avoid data corruption\n");
+	if (tx->tx_buffer_copy)
+		gmp->gmp_map_key = tx->tx_buffer_copy_map_key;
+	else
+		gmp->gmp_map_key = tx->tx_map_key;
 
-        gmp->gmp_map_key = tx->tx_map_key;
         atomic_inc(&conn->gnc_device->gnd_n_mdd_held);
 
         /* ensure that we don't have a blank purgatory - indicating the
@@ -1099,10 +1152,15 @@ kgnilnd_unmap_buffer (kgn_tx_t *tx, int error)
                                  tx->tx_conn->gnc_device, hold_timeout, 
                                  tx->tx_map_key.qword1, tx->tx_map_key.qword2);
                 }
-
-                rrc = kgnilnd_mem_deregister(dev->gnd_handle, &tx->tx_map_key, hold_timeout);
-
-                LASSERTF(rrc == GNI_RC_SUCCESS, "rrc %d\n", rrc);
+		if (tx->tx_buffer_copy != NULL) {
+			rrc = kgnilnd_mem_deregister(dev->gnd_handle, &tx->tx_buffer_copy_map_key, hold_timeout);
+			LASSERTF(rrc == GNI_RC_SUCCESS, "rrc %d\n", rrc);
+			rrc = kgnilnd_mem_deregister(dev->gnd_handle, &tx->tx_map_key, 0);
+			LASSERTF(rrc == GNI_RC_SUCCESS, "rrc %d\n", rrc);
+		} else {
+			rrc = kgnilnd_mem_deregister(dev->gnd_handle, &tx->tx_map_key, hold_timeout);
+			LASSERTF(rrc == GNI_RC_SUCCESS, "rrc %d\n", rrc);
+		}
 
                 tx->tx_buftype--; 
                 kgnilnd_mem_del_map_list(dev, tx);
@@ -1648,6 +1706,8 @@ kgnilnd_queue_tx (kgn_conn_t *conn, kgn_tx_t *tx)
         switch (tx->tx_msg.gnm_type) {
         case GNILND_MSG_PUT_ACK:
         case GNILND_MSG_GET_REQ:
+	case GNILND_MSG_PUT_REQ_REV:
+	case GNILND_MSG_GET_ACK_REV:
                 /* hijacking time! If this messages will authorize our peer to 
                  * send his dirty little bytes in an RDMA, we need to get permission */
                 kgnilnd_queue_rdma(conn, tx);
@@ -1776,8 +1836,12 @@ kgnilnd_rdma(kgn_tx_t *tx, int type,
 {
         kgn_conn_t   *conn = tx->tx_conn;
         unsigned long timestamp;
+	gni_post_type_t post_type;
         gni_return_t  rrc;
-
+	int rc = 0;
+	unsigned int desc_nob = nob;
+	void *desc_buffer = tx->tx_buffer;
+	gni_mem_handle_t desc_map_key = tx->tx_map_key;
         LASSERTF(kgnilnd_tx_mapped(tx),
                 "unmapped tx %p\n", tx);
         LASSERTF(conn != NULL,
@@ -1789,15 +1853,81 @@ kgnilnd_rdma(kgn_tx_t *tx, int type,
                 "nob %d > tx(%p)->tx_nob %d\n",
                 nob, tx, tx->tx_nob);
 
+	switch (type) {
+	case GNILND_MSG_GET_DONE:
+	case GNILND_MSG_PUT_DONE:
+		post_type = GNI_POST_RDMA_PUT;
+		break;
+	case GNILND_MSG_GET_DONE_REV:
+	case GNILND_MSG_PUT_DONE_REV:
+		post_type = GNI_POST_RDMA_GET;
+		break;
+	default:
+		CERROR("invalid msg type %s (%d)\n",
+			kgnilnd_msgtype2str(type), type);
+		LBUG();
+	}
+	if (post_type == GNI_POST_RDMA_GET) {
+		/* Check for remote buffer / local buffer / length alignment. All must be 4 byte
+		 * aligned. If the local buffer is not aligned correctly using the copy buffer
+		 * will fix that issue. If length is misaligned copy buffer will also fix the issue, we end
+		 * up transferring extra bytes into the buffer but only copy the correct nob into the original
+		 * buffer.  Remote offset correction is done through a combination of adjusting the offset,
+		 * making sure the length and addr are aligned and copying the data into the correct location
+		 * once the transfer has completed.
+		 */
+		if ((((__u64)((unsigned long)tx->tx_buffer)) & 3) ||
+		      (sink->gnrd_addr & 3) ||
+		      (nob & 3)) {
+
+			tx->tx_offset = ((__u64)((unsigned long)sink->gnrd_addr)) & 3;
+			if (tx->tx_offset)
+				kgnilnd_admin_addref(kgnilnd_data.kgn_rev_offset);
+
+			if ((nob + tx->tx_offset) & 3) {
+				desc_nob = ((nob + tx->tx_offset) + (4 - ((nob + tx->tx_offset) & 3)));
+				kgnilnd_admin_addref(kgnilnd_data.kgn_rev_length);
+			} else {
+				desc_nob = (nob + tx->tx_offset);
+			}
+
+			if (tx->tx_buffer_copy == NULL) {
+				/* Allocate the largest copy buffer we will need, this will prevent us from overwriting data
+				 * and require at most we allocate a few extra bytes. */
+				tx->tx_buffer_copy = vmalloc(desc_nob);
+
+				if (!tx->tx_buffer_copy) {
+					/* allocation of buffer failed nak the rdma */
+					kgnilnd_nak_rdma(tx->tx_conn, tx->tx_msg.gnm_type, -EFAULT, cookie, tx->tx_msg.gnm_srcnid);
+					kgnilnd_tx_done(tx, -EFAULT);
+					return;
+				}
+				kgnilnd_admin_addref(kgnilnd_data.kgn_rev_copy_buff);
+				rc = kgnilnd_mem_register(conn->gnc_device->gnd_handle, (__u64)tx->tx_buffer_copy, desc_nob, NULL, GNI_MEM_READWRITE, &tx->tx_buffer_copy_map_key);
+				if (rc != GNI_RC_SUCCESS) {
+					/* Registration Failed nak rdma and kill the tx. */
+					vfree(tx->tx_buffer_copy);
+					tx->tx_buffer_copy = NULL;
+					kgnilnd_nak_rdma(tx->tx_conn, tx->tx_msg.gnm_type, -EFAULT, cookie, tx->tx_msg.gnm_srcnid);
+					kgnilnd_tx_done(tx, -EFAULT);
+					return;
+				}
+			}
+			desc_map_key = tx->tx_buffer_copy_map_key;
+			desc_buffer = tx->tx_buffer_copy;
+		}
+	}
+
         memset(&tx->tx_rdma_desc, 0, sizeof(tx->tx_rdma_desc));
         tx->tx_rdma_desc.post_id = tx->tx_id.txe_cookie;
-        tx->tx_rdma_desc.type = GNI_POST_RDMA_PUT;
+	tx->tx_rdma_desc.type = post_type;
         tx->tx_rdma_desc.cq_mode = GNI_CQMODE_GLOBAL_EVENT;
-        tx->tx_rdma_desc.local_addr = (__u64)((unsigned long)tx->tx_buffer);
-        tx->tx_rdma_desc.local_mem_hndl = tx->tx_map_key;
-        tx->tx_rdma_desc.remote_addr = sink->gnrd_addr;
+	tx->tx_rdma_desc.local_addr = (__u64)((unsigned long)desc_buffer);
+	tx->tx_rdma_desc.local_mem_hndl = desc_map_key;
+	tx->tx_rdma_desc.remote_addr = sink->gnrd_addr - tx->tx_offset;
         tx->tx_rdma_desc.remote_mem_hndl = sink->gnrd_key;
-        tx->tx_rdma_desc.length = nob;
+	tx->tx_rdma_desc.length = desc_nob;
+	tx->tx_nob_rdma = nob;
 	if (*kgnilnd_tunables.kgn_bte_dlvr_mode)
 		tx->tx_rdma_desc.dlvr_mode = *kgnilnd_tunables.kgn_bte_dlvr_mode;
         /* prep final completion message */
@@ -1806,7 +1936,7 @@ kgnilnd_rdma(kgn_tx_t *tx, int type,
         /* send actual size RDMA'd in retval */
         tx->tx_msg.gnm_u.completion.gncm_retval = nob;
 
-        kgnilnd_compute_rdma_cksum(tx);
+	kgnilnd_compute_rdma_cksum(tx, nob);
 
         if (nob == 0) { 
                 kgnilnd_queue_tx(conn, tx);
@@ -1817,8 +1947,8 @@ kgnilnd_rdma(kgn_tx_t *tx, int type,
         LASSERTF(!conn->gnc_close_sent, "tx %p on conn %p after close sent %d\n",
                  tx, conn, conn->gnc_close_sent);
 
-        GNIDBG_TX(D_NET, tx, "Post RDMA type 0x%02x dlvr_mode 0x%x",
-               type, tx->tx_rdma_desc.dlvr_mode);
+	GNIDBG_TX(D_NET, tx, "Post RDMA type 0x%02x dlvr_mode 0x%x cookie:"LPX64,
+		type, tx->tx_rdma_desc.dlvr_mode, cookie);
 
         /* set CQ dedicated for RDMA */
         tx->tx_rdma_desc.src_cq_hndl = conn->gnc_device->gnd_snd_rdma_cqh;
@@ -1930,6 +2060,7 @@ kgnilnd_send (lnet_ni_t *ni, void *private, lnet_msg_t *lntmsg)
         kgn_tx_t         *tx;
         int               rc = 0;
         int               mpflag = 0;
+	int               reverse_rdma_flag = *kgnilnd_tunables.kgn_reverse_rdma;
 
         /* NB 'private' is different depending on what we're sending.... */
         LASSERT (!in_interrupt());
@@ -1976,44 +2107,50 @@ kgnilnd_send (lnet_ni_t *ni, void *private, lnet_msg_t *lntmsg)
                 if (lntmsg->msg_md->md_length <= *kgnilnd_tunables.kgn_max_immediate)
                        break;
 
-                tx = kgnilnd_new_tx_msg(GNILND_MSG_GET_REQ, ni->ni_nid);
-                if (tx == NULL) {
-                        rc = -ENOMEM;
-                        goto out;
-                }
+		if ((reverse_rdma_flag & GNILND_REVERSE_GET) == 0)
+			tx = kgnilnd_new_tx_msg(GNILND_MSG_GET_REQ, ni->ni_nid);
+		else
+			tx = kgnilnd_new_tx_msg(GNILND_MSG_GET_REQ_REV, ni->ni_nid);
 
-                /* slightly different options as we might actually have a GET with a 
-                 * MD_KIOV set but a non-NULL md_iov.iov */
-                if ((lntmsg->msg_md->md_options & LNET_MD_KIOV) == 0)
-                        rc = kgnilnd_setup_rdma_buffer(tx, lntmsg->msg_md->md_niov,
-                                                      lntmsg->msg_md->md_iov.iov, NULL,
-                                                      0, lntmsg->msg_md->md_length);
-                else
-                        rc = kgnilnd_setup_rdma_buffer(tx, lntmsg->msg_md->md_niov,
-                                                      NULL, lntmsg->msg_md->md_iov.kiov,
-                                                      0, lntmsg->msg_md->md_length);
-                if (rc != 0) {
-                        CERROR("unable to setup buffer: %d\n", rc);
-                        kgnilnd_tx_done(tx, rc);
-                        rc = -EIO;
-                        goto out;
-                }
+		if (tx == NULL) {
+			rc = -ENOMEM;
+			goto out;
+		}
+		/* slightly different options as we might actually have a GET with a
+		 * MD_KIOV set but a non-NULL md_iov.iov */
+		if ((lntmsg->msg_md->md_options & LNET_MD_KIOV) == 0)
+			rc = kgnilnd_setup_rdma_buffer(tx, lntmsg->msg_md->md_niov,
+							lntmsg->msg_md->md_iov.iov, NULL,
+							0, lntmsg->msg_md->md_length);
+		else
+			rc = kgnilnd_setup_rdma_buffer(tx, lntmsg->msg_md->md_niov,
+							NULL, lntmsg->msg_md->md_iov.kiov,
+							0, lntmsg->msg_md->md_length);
+		if (rc != 0) {
+			CERROR("unable to setup buffer: %d\n", rc);
+			kgnilnd_tx_done(tx, rc);
+			rc = -EIO;
+			goto out;
+		}
 
-                tx->tx_lntmsg[1] = lnet_create_reply_msg(ni, lntmsg);
-                if (tx->tx_lntmsg[1] == NULL) {
-                        CERROR("Can't create reply for GET to %s\n", 
-                               libcfs_nid2str(target.nid));
-                        kgnilnd_tx_done(tx, rc);
-                        rc = -EIO;
-                        goto out;
-                }
+		tx->tx_lntmsg[1] = lnet_create_reply_msg(ni, lntmsg);
+		if (tx->tx_lntmsg[1] == NULL) {
+			CERROR("Can't create reply for GET to %s\n",
+				libcfs_nid2str(target.nid));
+			kgnilnd_tx_done(tx, rc);
+			rc = -EIO;
+			goto out;
+		}
 
-                tx->tx_lntmsg[0] = lntmsg;
-                tx->tx_msg.gnm_u.get.gngm_hdr = *hdr;
-                /* rest of tx_msg is setup just before it is sent */
-                kgnilnd_launch_tx(tx, net, &target);
-                goto out;
+		tx->tx_lntmsg[0] = lntmsg;
+		if ((reverse_rdma_flag & GNILND_REVERSE_GET) == 0)
+			tx->tx_msg.gnm_u.get.gngm_hdr = *hdr;
+		else
+			tx->tx_msg.gnm_u.putreq.gnprm_hdr = *hdr;
 
+		/* rest of tx_msg is setup just before it is sent */
+		kgnilnd_launch_tx(tx, net, &target);
+		goto out;
         case LNET_MSG_REPLY:
         case LNET_MSG_PUT:
                 /* to save on MDDs, we'll handle short kiov by vmap'ing
@@ -2021,25 +2158,33 @@ kgnilnd_send (lnet_ni_t *ni, void *private, lnet_msg_t *lntmsg)
                 if (nob <= *kgnilnd_tunables.kgn_max_immediate)
                        break;
 
-                tx = kgnilnd_new_tx_msg(GNILND_MSG_PUT_REQ, ni->ni_nid);
-                if (tx == NULL) {
-                        rc = -ENOMEM;
-                        goto out;
-                }
+		if ((reverse_rdma_flag & GNILND_REVERSE_PUT) == 0)
+			tx = kgnilnd_new_tx_msg(GNILND_MSG_PUT_REQ, ni->ni_nid);
+		else
+			tx = kgnilnd_new_tx_msg(GNILND_MSG_PUT_REQ_REV, ni->ni_nid);
 
-                rc = kgnilnd_setup_rdma_buffer(tx, niov, iov, kiov, offset, nob);
-                if (rc != 0) {
-                        kgnilnd_tx_done(tx, rc);
-                        rc = -EIO;
-                        goto out;
-                }
+		if (tx == NULL) {
+			rc = -ENOMEM;
+			goto out;
+		}
 
-                tx->tx_lntmsg[0] = lntmsg;
-                tx->tx_msg.gnm_u.putreq.gnprm_hdr = *hdr;
-                /* rest of tx_msg is setup just before it is sent */
-                kgnilnd_launch_tx(tx, net, &target);
-                goto out;
-        }
+		rc = kgnilnd_setup_rdma_buffer(tx, niov, iov, kiov, offset, nob);
+		if (rc != 0) {
+			kgnilnd_tx_done(tx, rc);
+			rc = -EIO;
+			goto out;
+		}
+
+		tx->tx_lntmsg[0] = lntmsg;
+		if ((reverse_rdma_flag & GNILND_REVERSE_PUT) == 0)
+			tx->tx_msg.gnm_u.putreq.gnprm_hdr = *hdr;
+		else
+			tx->tx_msg.gnm_u.get.gngm_hdr = *hdr;
+
+		/* rest of tx_msg is setup just before it is sent */
+		kgnilnd_launch_tx(tx, net, &target);
+		goto out;
+	}
 
         /* send IMMEDIATE */
 
@@ -2070,7 +2215,7 @@ out:
 }
 
 void
-kgnilnd_reply(lnet_ni_t *ni, kgn_rx_t *rx, lnet_msg_t *lntmsg)
+kgnilnd_setup_rdma(lnet_ni_t *ni, kgn_rx_t *rx, lnet_msg_t *lntmsg, int mlen)
 {
         kgn_conn_t    *conn = rx->grx_conn;
         kgn_msg_t     *rxmsg = rx->grx_msg;
@@ -2079,10 +2224,26 @@ kgnilnd_reply(lnet_ni_t *ni, kgn_rx_t *rx, lnet_msg_t *lntmsg)
         lnet_kiov_t   *kiov = lntmsg->msg_kiov;
         unsigned int   offset = lntmsg->msg_offset;
         unsigned int   nob = lntmsg->msg_len;
+	int            done_type;
         kgn_tx_t      *tx;
         int            rc = 0;
 
-        tx = kgnilnd_new_tx_msg(GNILND_MSG_GET_DONE, ni->ni_nid);
+	switch (rxmsg->gnm_type) {
+	case GNILND_MSG_PUT_REQ_REV:
+		done_type = GNILND_MSG_PUT_DONE_REV;
+		nob = mlen;
+		break;
+	case GNILND_MSG_GET_REQ:
+		done_type = GNILND_MSG_GET_DONE;
+		break;
+	default:
+		CERROR("invalid msg type %s (%d)\n",
+			kgnilnd_msgtype2str(rxmsg->gnm_type),
+			rxmsg->gnm_type);
+		LBUG();
+	}
+
+	tx = kgnilnd_new_tx_msg(done_type, ni->ni_nid);
         if (tx == NULL)
                 goto failed_0;
 
@@ -2109,7 +2270,7 @@ kgnilnd_reply(lnet_ni_t *ni, kgn_rx_t *rx, lnet_msg_t *lntmsg)
 
  failed_1:
         kgnilnd_tx_done(tx, rc);
-        kgnilnd_nak_rdma(conn, GNILND_MSG_GET_NAK, rc, rxmsg->gnm_u.get.gngm_cookie, ni->ni_nid);
+	kgnilnd_nak_rdma(conn, done_type, rc, rxmsg->gnm_u.get.gngm_cookie, ni->ni_nid);
  failed_0:
         lnet_finalize(ni, lntmsg, rc);
 }
@@ -2313,14 +2474,14 @@ kgnilnd_recv (lnet_ni_t *ni, void *private, lnet_msg_t *lntmsg,
 
                         /* only error if lntmsg == NULL, otherwise we are just
                          * short circuiting the rdma process of 0 bytes */
-                        kgnilnd_nak_rdma(conn, GNILND_MSG_PUT_NAK, 
-                                        lntmsg == NULL ? -ENOENT : 0,
-                                        rxmsg->gnm_u.get.gngm_cookie,
-                                        ni->ni_nid);
+			kgnilnd_nak_rdma(conn, rxmsg->gnm_type,
+					lntmsg == NULL ? -ENOENT : 0,
+					rxmsg->gnm_u.get.gngm_cookie,
+					ni->ni_nid);
                         RETURN(0);
                 }
                 /* sending ACK with sink buff. info */
-                tx = kgnilnd_new_tx_msg(GNILND_MSG_PUT_ACK, ni->ni_nid);
+		tx = kgnilnd_new_tx_msg(GNILND_MSG_PUT_ACK, ni->ni_nid);
                 if (tx == NULL) {
                         kgnilnd_consume_rx(rx);
                         RETURN(-ENOMEM);
@@ -2358,20 +2519,93 @@ kgnilnd_recv (lnet_ni_t *ni, void *private, lnet_msg_t *lntmsg,
 
 nak_put_req:
                 /* make sure we send an error back when the PUT fails */
-                kgnilnd_nak_rdma(conn, GNILND_MSG_PUT_NAK, rc, rxmsg->gnm_u.get.gngm_cookie, ni->ni_nid);
+		kgnilnd_nak_rdma(conn, rxmsg->gnm_type, rc, rxmsg->gnm_u.get.gngm_cookie, ni->ni_nid);
+		kgnilnd_tx_done(tx, rc);
+		kgnilnd_consume_rx(rx);
+
+		/* return magic LNet network error */
+		RETURN(-EIO);
+	case GNILND_MSG_GET_REQ_REV:
+		/* LNET wants to truncate or drop transaction, sending NAK */
+		if (mlen == 0) {
+			kgnilnd_consume_rx(rx);
+			lnet_finalize(ni, lntmsg, 0);
+
+			/* only error if lntmsg == NULL, otherwise we are just
+			 * short circuiting the rdma process of 0 bytes */
+			kgnilnd_nak_rdma(conn, rxmsg->gnm_type,
+					lntmsg == NULL ? -ENOENT : 0,
+					rxmsg->gnm_u.get.gngm_cookie,
+					ni->ni_nid);
+			RETURN(0);
+		}
+		/* sending ACK with sink buff. info */
+		tx = kgnilnd_new_tx_msg(GNILND_MSG_GET_ACK_REV, ni->ni_nid);
+		if (tx == NULL) {
+			kgnilnd_consume_rx(rx);
+			RETURN(-ENOMEM);
+		}
+
+		rc = kgnilnd_set_tx_id(tx, conn);
+		if (rc != 0)
+			GOTO(nak_get_req_rev, rc);
+
+
+		rc = kgnilnd_setup_rdma_buffer(tx, niov, iov, kiov, offset, mlen);
+		if (rc != 0)
+			GOTO(nak_get_req_rev, rc);
+
+
+		tx->tx_msg.gnm_u.putack.gnpam_src_cookie =
+			rxmsg->gnm_u.putreq.gnprm_cookie;
+		tx->tx_msg.gnm_u.putack.gnpam_dst_cookie = tx->tx_id.txe_cookie;
+		tx->tx_msg.gnm_u.putack.gnpam_desc.gnrd_addr =
+			(__u64)((unsigned long)tx->tx_buffer);
+		tx->tx_msg.gnm_u.putack.gnpam_desc.gnrd_nob = mlen;
+
+		tx->tx_lntmsg[0] = lntmsg; /* finalize this on RDMA_DONE */
+
+		/* we only queue from kgnilnd_recv - we might get called from other contexts
+		 * and we don't want to block the mutex in those cases */
+
+		spin_lock(&tx->tx_conn->gnc_device->gnd_lock);
+		kgnilnd_tx_add_state_locked(tx, NULL, tx->tx_conn, GNILND_TX_MAPQ, 1);
+		spin_unlock(&tx->tx_conn->gnc_device->gnd_lock);
+		kgnilnd_schedule_device(tx->tx_conn->gnc_device);
+
+		kgnilnd_consume_rx(rx);
+		RETURN(0);
+
+nak_get_req_rev:
+		/* make sure we send an error back when the GET fails */
+		kgnilnd_nak_rdma(conn, rxmsg->gnm_type, rc, rxmsg->gnm_u.get.gngm_cookie, ni->ni_nid);
                 kgnilnd_tx_done(tx, rc);
                 kgnilnd_consume_rx(rx);
 
                 /* return magic LNet network error */
                 RETURN(-EIO);
 
+
+	case GNILND_MSG_PUT_REQ_REV:
+		if (lntmsg != NULL) {
+			/* Matched! */
+			kgnilnd_setup_rdma(ni, rx, lntmsg, mlen);
+		} else {
+			/* No match */
+			kgnilnd_nak_rdma(conn, rxmsg->gnm_type,
+					-ENOENT,
+					rxmsg->gnm_u.get.gngm_cookie,
+					ni->ni_nid);
+		}
+		kgnilnd_consume_rx(rx);
+		RETURN(0);
         case GNILND_MSG_GET_REQ:
                 if (lntmsg != NULL) {
                         /* Matched! */
-                        kgnilnd_reply(ni, rx, lntmsg);
+			kgnilnd_setup_rdma(ni, rx, lntmsg, mlen);
                 } else {
                         /* No match */
-                        kgnilnd_nak_rdma(conn, GNILND_MSG_GET_NAK,
+			kgnilnd_nak_rdma(conn, rxmsg->gnm_type,
                                         -ENOENT,
                                         rxmsg->gnm_u.get.gngm_cookie,
                                         ni->ni_nid);
@@ -2766,6 +3000,25 @@ kgnilnd_reaper (void *arg)
 }
 
 int
+kgnilnd_recv_bte_get(kgn_tx_t *tx) {
+	unsigned niov, offset, nob;
+	lnet_kiov_t	*kiov;
+	lnet_msg_t *lntmsg = tx->tx_lntmsg[0];
+	kgnilnd_parse_lnet_rdma(lntmsg, &niov, &offset, &nob, &kiov, tx->tx_nob_rdma);
+
+	if (kiov != NULL) {
+		lnet_copy_flat2kiov(
+			niov, kiov, offset,
+			nob,
+			tx->tx_buffer_copy, tx->tx_offset, nob);
+	} else {
+		memcpy(tx->tx_buffer, tx->tx_buffer_copy + tx->tx_offset, nob);
+	}
+	return 0;
+}
+
+
+int
 kgnilnd_check_rdma_cq (kgn_device_t *dev)
 {
         gni_return_t           rrc;
@@ -2833,18 +3086,38 @@ kgnilnd_check_rdma_cq (kgn_device_t *dev)
                         continue;
                 }
 
-                GNITX_ASSERTF(tx, tx->tx_msg.gnm_type == GNILND_MSG_PUT_DONE ||
-                        tx->tx_msg.gnm_type == GNILND_MSG_GET_DONE,
+		GNITX_ASSERTF(tx, tx->tx_msg.gnm_type == GNILND_MSG_PUT_DONE ||
+			tx->tx_msg.gnm_type == GNILND_MSG_GET_DONE ||
+			tx->tx_msg.gnm_type == GNILND_MSG_PUT_DONE_REV ||
+			tx->tx_msg.gnm_type == GNILND_MSG_GET_DONE_REV,
                         "tx %p with type %d\n", tx, tx->tx_msg.gnm_type);
 
                 GNIDBG_TX(D_NET, tx, "RDMA completion for %d bytes", tx->tx_nob);
+
+		if (tx->tx_msg.gnm_type == GNILND_MSG_GET_DONE_REV) {
+			lnet_set_reply_msg_len(NULL, tx->tx_lntmsg[1],
+					       tx->tx_msg.gnm_u.completion.gncm_retval);
+		}
+
+		rc = 0;
+		if (tx->tx_msg.gnm_type == GNILND_MSG_GET_DONE_REV && desc->status == GNI_RC_SUCCESS) {
+			if (tx->tx_buffer_copy != NULL)
+				kgnilnd_recv_bte_get(tx);
+			rc = kgnilnd_verify_rdma_cksum(tx, tx->tx_putinfo.gnpam_payload_cksum, tx->tx_nob_rdma);
+		}
+
+		if (tx->tx_msg.gnm_type == GNILND_MSG_PUT_DONE_REV && desc->status == GNI_RC_SUCCESS) {
+			if (tx->tx_buffer_copy != NULL)
+				kgnilnd_recv_bte_get(tx);
+			rc = kgnilnd_verify_rdma_cksum(tx, tx->tx_getinfo.gngm_payload_cksum, tx->tx_nob_rdma);
+		}
 
                 /* remove from rdmaq */
                 spin_lock(&conn->gnc_list_lock);
                 kgnilnd_tx_del_state_locked(tx, NULL, conn, GNILND_TX_ALLOCD);
                 spin_unlock(&conn->gnc_list_lock);
 
-                if (likely(desc->status == GNI_RC_SUCCESS)) {
+		if (likely(desc->status == GNI_RC_SUCCESS) && rc == 0) {
                         atomic_inc(&dev->gnd_rdma_ntx);
                         atomic64_add(tx->tx_nob, &dev->gnd_rdma_txbytes);
                         /* transaction succeeded, add into fmaq */
@@ -2875,14 +3148,15 @@ kgnilnd_check_rdma_cq (kgn_device_t *dev)
                 GNIDBG_TX(D_NETERROR, tx, "RDMA %s error (%s)", 
                         should_retry ? "transient" : "unrecoverable", err_str);
 
-                if (tx->tx_msg.gnm_type == GNILND_MSG_PUT_DONE) {
+		if (tx->tx_msg.gnm_type == GNILND_MSG_PUT_DONE ||
+		    tx->tx_msg.gnm_type == GNILND_MSG_GET_DONE_REV) {
                         if (should_retry) {
-                                kgnilnd_rdma(tx, GNILND_MSG_PUT_DONE,
+				kgnilnd_rdma(tx, tx->tx_msg.gnm_type,
                                              &tx->tx_putinfo.gnpam_desc,
                                              tx->tx_putinfo.gnpam_desc.gnrd_nob,
                                              tx->tx_putinfo.gnpam_dst_cookie);
                         } else {
-                                kgnilnd_nak_rdma(conn, GNILND_MSG_PUT_NAK,
+				kgnilnd_nak_rdma(conn, tx->tx_msg.gnm_type,
                                                 -EFAULT,
                                                 tx->tx_putinfo.gnpam_dst_cookie,
                                                 tx->tx_msg.gnm_srcnid);
@@ -2890,12 +3164,12 @@ kgnilnd_check_rdma_cq (kgn_device_t *dev)
                         }
                 } else {
                         if (should_retry) {
-                                kgnilnd_rdma(tx, GNILND_MSG_GET_DONE,
+				kgnilnd_rdma(tx, tx->tx_msg.gnm_type,
                                              &tx->tx_getinfo.gngm_desc,
                                              tx->tx_lntmsg[0]->msg_len,
                                              tx->tx_getinfo.gngm_cookie);
                         } else {
-                                kgnilnd_nak_rdma(conn, GNILND_MSG_GET_NAK,
+				kgnilnd_nak_rdma(conn, tx->tx_msg.gnm_type,
                                                 -EFAULT,
                                                 tx->tx_getinfo.gngm_cookie,
                                                 tx->tx_msg.gnm_srcnid);
@@ -3235,7 +3509,7 @@ kgnilnd_send_mapped_tx(kgn_tx_t *tx, int try_map_if_full)
                 }
                 /* redirect to FMAQ on failure, no need to infinite loop here in MAPQ */
                 rc = kgnilnd_sendmsg(tx, NULL, 0, &tx->tx_conn->gnc_list_lock, GNILND_TX_FMAQ);
-                break;
+		break;
         case GNILND_MSG_PUT_ACK:
                 tx->tx_msg.gnm_u.putack.gnpam_desc.gnrd_key = tx->tx_map_key;
                 tx->tx_state = GNILND_TX_WAITING_COMPLETION | GNILND_TX_WAITING_REPLY;
@@ -3260,6 +3534,43 @@ kgnilnd_send_mapped_tx(kgn_tx_t *tx, int try_map_if_full)
                              tx->tx_getinfo.gngm_cookie);
 
                 break;
+	case GNILND_MSG_PUT_REQ_REV:
+		tx->tx_msg.gnm_u.get.gngm_desc.gnrd_key = tx->tx_map_key;
+		tx->tx_msg.gnm_u.get.gngm_cookie = tx->tx_id.txe_cookie;
+		tx->tx_msg.gnm_u.get.gngm_desc.gnrd_addr = (__u64)((unsigned long)tx->tx_buffer);
+		tx->tx_msg.gnm_u.get.gngm_desc.gnrd_nob = tx->tx_nob;
+		tx->tx_state = GNILND_TX_WAITING_COMPLETION | GNILND_TX_WAITING_REPLY;
+		kgnilnd_compute_rdma_cksum(tx, tx->tx_nob);
+		tx->tx_msg.gnm_u.get.gngm_payload_cksum = tx->tx_msg.gnm_payload_cksum;
+
+		rc = kgnilnd_sendmsg(tx, NULL, 0, &tx->tx_conn->gnc_list_lock, GNILND_TX_FMAQ);
+		break;
+	case GNILND_MSG_PUT_DONE_REV:
+		kgnilnd_rdma(tx, GNILND_MSG_PUT_DONE_REV,
+			     &tx->tx_getinfo.gngm_desc,
+			     tx->tx_lntmsg[0]->msg_len,
+			     tx->tx_getinfo.gngm_cookie);
+		break;
+	case GNILND_MSG_GET_ACK_REV:
+		tx->tx_msg.gnm_u.putack.gnpam_desc.gnrd_key = tx->tx_map_key;
+		tx->tx_state = GNILND_TX_WAITING_COMPLETION | GNILND_TX_WAITING_REPLY;
+		/* LNET_GETS are a special case for parse */
+		kgnilnd_compute_rdma_cksum(tx, tx->tx_msg.gnm_u.putack.gnpam_desc.gnrd_nob);
+		tx->tx_msg.gnm_u.putack.gnpam_payload_cksum = tx->tx_msg.gnm_payload_cksum;
+
+		if (CFS_FAIL_CHECK(CFS_FAIL_GNI_PUT_ACK_AGAIN))
+			tx->tx_state |= GNILND_TX_FAIL_SMSG;
+
+		/* redirect to FMAQ on failure, no need to infinite loop here in MAPQ */
+		rc = kgnilnd_sendmsg(tx, NULL, 0, &tx->tx_conn->gnc_list_lock, GNILND_TX_FMAQ);
+		break;
+	case GNILND_MSG_GET_REQ_REV:
+		kgnilnd_rdma(tx, GNILND_MSG_GET_DONE_REV,
+				&tx->tx_putinfo.gnpam_desc,
+				tx->tx_putinfo.gnpam_desc.gnrd_nob,
+				tx->tx_putinfo.gnpam_dst_cookie);
+
+		break;
         }
 
         RETURN(rc);
@@ -3362,15 +3673,22 @@ kgnilnd_process_fmaq (kgn_conn_t *conn)
 
         case GNILND_MSG_GET_DONE:
         case GNILND_MSG_PUT_DONE:
+	case GNILND_MSG_PUT_DONE_REV:
+	case GNILND_MSG_GET_DONE_REV:
         case GNILND_MSG_PUT_NAK:
         case GNILND_MSG_GET_NAK:
+	case GNILND_MSG_GET_NAK_REV:
+	case GNILND_MSG_PUT_NAK_REV:
                 tx->tx_state = GNILND_TX_WAITING_COMPLETION;
                 break;
 
         case GNILND_MSG_PUT_REQ:
+	case GNILND_MSG_GET_REQ_REV:
                 tx->tx_msg.gnm_u.putreq.gnprm_cookie = tx->tx_id.txe_cookie;
 
         case GNILND_MSG_PUT_ACK:
+	case GNILND_MSG_PUT_REQ_REV:
+	case GNILND_MSG_GET_ACK_REV:
         case GNILND_MSG_GET_REQ:
                 /* This is really only to handle the retransmit of SMSG once these
                  * two messages are setup in send_mapped_tx */
@@ -3548,7 +3866,7 @@ _kgnilnd_match_reply(kgn_conn_t *conn, int type1, int type2, __u64 cookie)
                         tx->tx_state, GNILND_TX_WAITING_REPLY,
                         libcfs_nid2str(conn->gnc_peer->gnp_nid));
         } else {
-                CWARN("Unmatched reply %02x, or %02x/"LPX64" from %s\n",
+		CWARN("Unmatched reply %02x, or %02x /"LPX64" from %s\n",
                       type1, type2, cookie, libcfs_nid2str(conn->gnc_peer->gnp_nid));
         }
         return tx;
@@ -3771,10 +4089,12 @@ kgnilnd_check_fma_rx (kgn_conn_t *conn)
 
                 /* NB message type checked below; NOT here... */
                 switch (msg->gnm_type) {
+		case GNILND_MSG_GET_ACK_REV:
                 case GNILND_MSG_PUT_ACK:
                         kgnilnd_swab_rdma_desc(&msg->gnm_u.putack.gnpam_desc);
                         break;
 
+		case GNILND_MSG_PUT_REQ_REV:
                 case GNILND_MSG_GET_REQ:
                         kgnilnd_swab_rdma_desc(&msg->gnm_u.get.gngm_desc);
                         break;
@@ -3879,13 +4199,20 @@ kgnilnd_check_fma_rx (kgn_conn_t *conn)
                                 msg->gnm_srcnid, rx, 0);
                 repost = rc < 0;
                 break;
-
+	case GNILND_MSG_GET_REQ_REV:
         case GNILND_MSG_PUT_REQ:
                 rc = lnet_parse(net->gnn_ni, &msg->gnm_u.putreq.gnprm_hdr, 
                                 msg->gnm_srcnid, rx, 1);
                 repost = rc < 0;
                 break;
+	case GNILND_MSG_GET_NAK_REV:
+		tx = kgnilnd_match_reply_either(conn, GNILND_MSG_GET_REQ_REV, GNILND_MSG_GET_ACK_REV,
+					msg->gnm_u.completion.gncm_cookie);
+		if (tx == NULL)
+			break;
 
+		kgnilnd_complete_tx(tx, msg->gnm_u.completion.gncm_retval);
+		break;
         case GNILND_MSG_PUT_NAK:
                 tx = kgnilnd_match_reply_either(conn, GNILND_MSG_PUT_REQ, GNILND_MSG_PUT_ACK,
                                         msg->gnm_u.completion.gncm_cookie);
@@ -3894,7 +4221,6 @@ kgnilnd_check_fma_rx (kgn_conn_t *conn)
 
                 kgnilnd_complete_tx(tx, msg->gnm_u.completion.gncm_retval);
                 break;
-
         case GNILND_MSG_PUT_ACK:
                 tx = kgnilnd_match_reply(conn, GNILND_MSG_PUT_REQ,
                                         msg->gnm_u.putack.gnpam_src_cookie);
@@ -3932,7 +4258,42 @@ kgnilnd_check_fma_rx (kgn_conn_t *conn)
                                 kgnilnd_tx_done(tx, rc);
                 }
                 break;
+	case GNILND_MSG_GET_ACK_REV:
+		tx = kgnilnd_match_reply(conn, GNILND_MSG_GET_REQ_REV,
+					msg->gnm_u.putack.gnpam_src_cookie);
+		if (tx == NULL)
+			break;
 
+		/* store putack data for later: deferred rdma or re-try */
+		tx->tx_putinfo = msg->gnm_u.putack;
+		saw_complete = 0;
+		spin_lock(&tx->tx_conn->gnc_list_lock);
+
+		GNITX_ASSERTF(tx, tx->tx_state & GNILND_TX_WAITING_REPLY,
+			"not waiting for reply", NULL);
+
+		tx->tx_state &= ~GNILND_TX_WAITING_REPLY;
+
+		if (likely(!(tx->tx_state & GNILND_TX_WAITING_COMPLETION))) {
+			kgnilnd_tx_del_state_locked(tx, NULL, conn, GNILND_TX_ALLOCD);
+			/* sample under lock as follow on steps require gnc_list_lock
+			 * - or call kgnilnd_tx_done which requires no locks held over
+			 *   call to lnet_finalize */
+			saw_complete = 1;
+		} else {
+			/* cannot launch rdma if still waiting for fma-msg completion */
+			CDEBUG(D_NET, "tx 0x%p type 0x%02x will need to "
+					"wait for SMSG completion\n", tx, tx->tx_msg.gnm_type);
+			tx->tx_state |= GNILND_TX_PENDING_RDMA;
+		}
+		spin_unlock(&tx->tx_conn->gnc_list_lock);
+
+		if (saw_complete) {
+			rc = kgnilnd_send_mapped_tx(tx, 0);
+			if (rc < 0)
+				kgnilnd_tx_done(tx, rc);
+		}
+		break;
         case GNILND_MSG_PUT_DONE:
                 tx = kgnilnd_match_reply(conn, GNILND_MSG_PUT_ACK,
                                         msg->gnm_u.completion.gncm_cookie);
@@ -3945,7 +4306,7 @@ kgnilnd_check_fma_rx (kgn_conn_t *conn)
 
                 kgnilnd_finalize_rx_done(tx, msg);
                 break;
-
+	case GNILND_MSG_PUT_REQ_REV:
         case GNILND_MSG_GET_REQ:
                 rc = lnet_parse(net->gnn_ni, &msg->gnm_u.get.gngm_hdr, 
                                 msg->gnm_srcnid, rx, 1);
@@ -3980,7 +4341,46 @@ kgnilnd_check_fma_rx (kgn_conn_t *conn)
 
                 kgnilnd_finalize_rx_done(tx, msg);
                 break;
-        }
+	case GNILND_MSG_GET_DONE_REV:
+		tx = kgnilnd_match_reply(conn, GNILND_MSG_GET_ACK_REV,
+					msg->gnm_u.completion.gncm_cookie);
+		if (tx == NULL)
+			break;
+
+		GNITX_ASSERTF(tx, tx->tx_buftype == GNILND_BUF_PHYS_MAPPED ||
+				tx->tx_buftype == GNILND_BUF_VIRT_MAPPED,
+				"bad tx buftype %d", tx->tx_buftype);
+
+		kgnilnd_finalize_rx_done(tx, msg);
+		break;
+
+	case GNILND_MSG_PUT_DONE_REV:
+		tx = kgnilnd_match_reply(conn, GNILND_MSG_PUT_REQ_REV,
+					msg->gnm_u.completion.gncm_cookie);
+
+		if (tx == NULL)
+			break;
+
+		GNITX_ASSERTF(tx, tx->tx_buftype == GNILND_BUF_PHYS_MAPPED ||
+			       tx->tx_buftype == GNILND_BUF_VIRT_MAPPED,
+			       "bad tx buftype %d", tx->tx_buftype);
+
+		kgnilnd_finalize_rx_done(tx, msg);
+		break;
+	case GNILND_MSG_PUT_NAK_REV:
+		tx = kgnilnd_match_reply(conn, GNILND_MSG_PUT_REQ_REV,
+					msg->gnm_u.completion.gncm_cookie);
+
+		if (tx == NULL)
+			break;
+
+		GNITX_ASSERTF(tx, tx->tx_buftype == GNILND_BUF_PHYS_MAPPED ||
+			       tx->tx_buftype == GNILND_BUF_VIRT_MAPPED,
+				"bad tx buftype %d", tx->tx_buftype);
+
+		kgnilnd_complete_tx(tx, msg->gnm_u.completion.gncm_retval);
+		break;
+	}
 
  out:
         if (rc < 0)                             /* protocol/comms error */
@@ -4255,8 +4655,20 @@ kgnilnd_process_mapped_tx(kgn_device_t *dev)
                        GNIDBG_TX(D_NETERROR, tx,
                                "giving up on TX, too many retries", NULL);
                        spin_unlock(&dev->gnd_lock);
-                       kgnilnd_tx_done(tx, -ENOMEM);
-                       GOTO(get_out_mapped, rc);
+		       if (tx->tx_msg.gnm_type == GNILND_MSG_PUT_REQ ||
+			   tx->tx_msg.gnm_type == GNILND_MSG_GET_REQ_REV) {
+			       kgnilnd_nak_rdma(tx->tx_conn, tx->tx_msg.gnm_type,
+						-ENOMEM,
+						tx->tx_putinfo.gnpam_dst_cookie,
+						tx->tx_msg.gnm_srcnid);
+			} else {
+				kgnilnd_nak_rdma(tx->tx_conn, tx->tx_msg.gnm_type,
+						-ENOMEM,
+						tx->tx_getinfo.gngm_cookie,
+						tx->tx_msg.gnm_srcnid);
+			}
+			kgnilnd_tx_done(tx, -ENOMEM);
+			GOTO(get_out_mapped, rc);
                 } else {
                        GNIDBG_TX(log_retrans_level, tx, 
                                 "transient map failure #%d %d pages/%d bytes phys %u@%u "

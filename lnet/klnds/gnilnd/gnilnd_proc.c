@@ -236,7 +236,10 @@ kgnilnd_proc_stats_read (char *page, char **start, off_t off,
                            "RDMA rx_bytes: %ld\n"
                            "VMAP short: %d\n"
                            "VMAP cksum: %d\n"
-                           "KMAP short: %d\n",
+			   "KMAP short: %d\n"
+			   "RDMA REV length: %d\n"
+			   "RDMA REV offset: %d\n"
+			   "RDMA REV copy: %d\n",
                 now.tv_sec, now.tv_usec,
                 atomic_read(&kgnilnd_data.kgn_ntx),
                 atomic_read(&kgnilnd_data.kgn_npeers),
@@ -262,7 +265,10 @@ kgnilnd_proc_stats_read (char *page, char **start, off_t off,
                 atomic_read(&dev->gnd_rdma_nrx), atomic64_read(&dev->gnd_rdma_rxbytes),
                 atomic_read(&kgnilnd_data.kgn_nvmap_short), 
                 atomic_read(&kgnilnd_data.kgn_nvmap_cksum),
-                atomic_read(&kgnilnd_data.kgn_nkmap_short));
+		atomic_read(&kgnilnd_data.kgn_nkmap_short),
+		atomic_read(&kgnilnd_data.kgn_rev_length),
+		atomic_read(&kgnilnd_data.kgn_rev_offset),
+		atomic_read(&kgnilnd_data.kgn_rev_copy_buff));
 
         return rc;
 }

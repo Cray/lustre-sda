@@ -187,6 +187,13 @@
 #define GNILND_MSG_GET_NAK           0x08        /* gnm_u.completion (no GET match: src->sink) */
 #define GNILND_MSG_GET_DONE          0x09        /* gnm_u.completion (src->sink) */
 #define GNILND_MSG_CLOSE             0x0a        /* empty gnm_u */
+#define GNILND_MSG_PUT_REQ_REV       0x0b	 /* gnm_u.get (src->sink) */
+#define GNILND_MSG_PUT_DONE_REV      0x0c	 /* gnm_u.completion (sink->src) */
+#define GNILND_MSG_PUT_NAK_REV       0x0d        /* gnm_u.completion (no PUT match: sink->src) */
+#define GNILND_MSG_GET_REQ_REV       0x0e        /* gnm_u.get (sink->src ) */
+#define GNILND_MSG_GET_ACK_REV       0x0f        /* gnm_u.getack (GET matched: src->sink) */
+#define GNILND_MSG_GET_DONE_REV      0x10	 /* gnm_u.completion (sink -> src) */
+#define GNILND_MSG_GET_NAK_REV       0x11        /* gnm_u.completeion (no GET match: sink -> src) */
 
 /* defines for gnc_*scheduled states */
 #define GNILND_CONN_IDLE             0
@@ -231,6 +238,12 @@
 #define GNILND_RCA_NODE_UP           0
 #define GNILND_RCA_NODE_DOWN         1
 #define GNILND_RCA_NODE_UNKNOWN      2
+
+/* defines for reverse RDMA states */
+#define GNILND_REVERSE_NONE		0
+#define GNILND_REVERSE_GET		1
+#define GNILND_REVERSE_PUT		2
+#define GNILND_REVERSE_BOTH		(GNILND_REVERSE_GET | GNILND_REVERSE_PUT)
 
 typedef enum kgn_fmablk_state {
         GNILND_FMABLK_IDLE = 0, /* is allocated or ready to be freed */
@@ -378,12 +391,14 @@ typedef struct {
 typedef struct {
         __u64             gnpam_src_cookie;     /* reflected completion cookie */
         __u64             gnpam_dst_cookie;     /* opaque completion cookie */
+	__u16		  gnpam_payload_cksum;  /* checksum for get msg */
         kgn_rdma_desc_t   gnpam_desc;           /* sender's sink buffer */
 } WIRE_ATTR kgn_putack_msg_t;
 
 typedef struct {
         lnet_hdr_t        gngm_hdr;             /* LNet header */
         __u64             gngm_cookie;          /* opaque completion cookie */
+	__u16		  gngm_payload_cksum;   /* checksum for put msg */
         kgn_rdma_desc_t   gngm_desc;            /* sender's sink buffer */
 } WIRE_ATTR kgn_get_msg_t;
 
@@ -446,6 +461,7 @@ typedef struct kgn_tunables {
         int              *kgn_mdd_timeout;      /* max time for ghal to hold an mdd in minutes */
 	int		 *kgn_sched_timeout;    /* max time for scheduler to run before yielding */
 	int		 *kgn_sched_nice;	/* nice value for kgnilnd scheduler threads */
+	int		 *kgn_reverse_rdma;	/* Reverse RDMA setting */
 #if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM
         cfs_sysctl_table_header_t *kgn_sysctl;  /* sysctl interface */
 #endif
@@ -628,6 +644,7 @@ typedef struct kgn_tx {                         /* message descriptor */
         int                       tx_buftype;   /* payload buffer type */
         int                       tx_phys_npages; /* # physical pages */
         gni_mem_handle_t          tx_map_key;   /* mapping key */
+	gni_mem_handle_t	  tx_buffer_copy_map_key;  /* mapping key for page aligned copy */
         gni_mem_segment_t        *tx_phys;      /* page descriptors */
         kgn_msg_t                 tx_msg;       /* FMA message buffer */
         kgn_tx_ev_id_t            tx_id;        /* who are you, who ? who ? */
@@ -635,6 +652,9 @@ typedef struct kgn_tx {                         /* message descriptor */
         int                       tx_retrans;   /* retrans count of RDMA */
         int                       tx_rc;        /* if we need to stash the ret code until we see completion */
         void                     *tx_buffer;    /* source/sink buffer */
+	void			 *tx_buffer_copy;   /* pointer to page aligned buffer */
+	unsigned int		  tx_nob_rdma;  /* nob actually rdma */
+	unsigned int		  tx_offset;	/* offset of data into copied buffer */
         union {
                 gni_post_descriptor_t     tx_rdma_desc; /* rdma descriptor */
                 struct page              *tx_imm_pages[GNILND_MAX_IMMEDIATE/PAGE_SIZE];  /* page array to map kiov for immediate send */
@@ -809,6 +829,9 @@ typedef struct kgn_data {
         atomic_t                kgn_npending_detach;  /* # of conns with a pending detach */
 	unsigned long		kgn_last_scheduled;   /* last time schedule was called in a sched thread */
 	unsigned long		kgn_last_condresched; /* last time cond_resched was called in a sched thread */
+	atomic_t		kgn_rev_offset;	      /* number of time REV rdma have been misaligned offsets */
+	atomic_t		kgn_rev_length;	      /* Number of times REV rdma have been misaligned lengths */
+	atomic_t		kgn_rev_copy_buff;    /* Number of times REV rdma have had to make a copy buffer */
 } kgn_data_t;
 
 extern kgn_data_t         kgnilnd_data;
@@ -1777,6 +1800,13 @@ kgnilnd_msgtype2str(int type)
                 DO_TYPE(GNILND_MSG_GET_NAK);
                 DO_TYPE(GNILND_MSG_GET_DONE);
                 DO_TYPE(GNILND_MSG_CLOSE);
+		DO_TYPE(GNILND_MSG_PUT_REQ_REV);
+		DO_TYPE(GNILND_MSG_PUT_DONE_REV);
+		DO_TYPE(GNILND_MSG_PUT_NAK_REV);
+		DO_TYPE(GNILND_MSG_GET_REQ_REV);
+		DO_TYPE(GNILND_MSG_GET_ACK_REV);
+		DO_TYPE(GNILND_MSG_GET_DONE_REV);
+		DO_TYPE(GNILND_MSG_GET_NAK_REV);
         }
         return "<unknown msg type>";
 }
