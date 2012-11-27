@@ -704,9 +704,20 @@ kgnilnd_setup_rdma_buffer (kgn_tx_t *tx, unsigned int niov,
         return rc;
 }
 
+/* kgnilnd_parse_lnet_rdma()
+ * lntmsg - message passed in from lnet.
+ * niov, kiov, offset - see lnd_t in lib-types.h for descriptions.
+ * nob - actual number of bytes to in this message.
+ * put_len - It is possible for PUTs to have a different length than the
+ *           length stored in lntmsg->msg_len since LNET can adjust this
+ *           length based on it's buffer size and offset.
+ *           lnet_try_match_md() sets the mlength that we use to do the RDMA
+ *           transfer.
+ */
 static void
-kgnilnd_parse_lnet_rdma(lnet_msg_t *lntmsg, unsigned int *niov, unsigned int *offset,
-                        unsigned int *nob, lnet_kiov_t **kiov)
+kgnilnd_parse_lnet_rdma(lnet_msg_t *lntmsg, unsigned int *niov,
+			unsigned int *offset, unsigned int *nob,
+			lnet_kiov_t **kiov, int put_len)
 {
         /* GETs are weird, see kgnilnd_send */
         if (lntmsg->msg_type == LNET_MSG_GET) {
@@ -721,7 +732,7 @@ kgnilnd_parse_lnet_rdma(lnet_msg_t *lntmsg, unsigned int *niov, unsigned int *of
         } else {
                 *kiov = lntmsg->msg_kiov;
                 *niov = lntmsg->msg_niov;
-                *nob = lntmsg->msg_len;
+		*nob = put_len;
                 *offset = lntmsg->msg_offset;
         }
 }
@@ -746,7 +757,8 @@ kgnilnd_compute_rdma_cksum (kgn_tx_t *tx)
 
         GNITX_ASSERTF(tx, lntmsg, "no LNet message!", NULL);
 
-        kgnilnd_parse_lnet_rdma(lntmsg, &niov, &offset, &nob, &kiov);
+	kgnilnd_parse_lnet_rdma(lntmsg, &niov, &offset, &nob, &kiov,
+				tx->tx_rdma_desc.length);
 
         if (kiov != NULL) {
                 tx->tx_msg.gnm_payload_cksum = kgnilnd_cksum_kiov(niov, kiov, offset, nob, dump_cksum);
@@ -762,8 +774,13 @@ kgnilnd_compute_rdma_cksum (kgn_tx_t *tx)
         }
 }
 
+/* kgnilnd_verify_rdma_cksum()
+ * tx - PUT_DONE/GET_DONE matched tx.
+ * rx_cksum - received checksum to compare against.
+ * put_len - see kgnilnd_parse_lnet_rdma comments.
+ */
 static inline int
-kgnilnd_verify_rdma_cksum (kgn_tx_t *tx, __u16 rx_cksum)
+kgnilnd_verify_rdma_cksum(kgn_tx_t *tx, __u16 rx_cksum, int put_len)
 {
         int              rc = 0;
         __u16            cksum;
@@ -787,7 +804,7 @@ kgnilnd_verify_rdma_cksum (kgn_tx_t *tx, __u16 rx_cksum)
 
         GNITX_ASSERTF(tx, lntmsg, "no LNet message!", NULL);
 
-        kgnilnd_parse_lnet_rdma(lntmsg, &niov, &offset, &nob, &kiov);
+	kgnilnd_parse_lnet_rdma(lntmsg, &niov, &offset, &nob, &kiov, put_len);
 
         if (kiov != NULL) {
                 cksum = kgnilnd_cksum_kiov(niov, kiov, offset, nob, 0);
@@ -3574,7 +3591,9 @@ kgnilnd_finalize_rx_done (kgn_tx_t *tx, kgn_msg_t *msg)
         atomic_inc(&conn->gnc_device->gnd_rdma_nrx);
         atomic64_add(tx->tx_nob, &conn->gnc_device->gnd_rdma_rxbytes);
 
-        rc = kgnilnd_verify_rdma_cksum(tx, msg->gnm_payload_cksum);
+	/* the gncm_retval is passed in for PUTs */
+	rc = kgnilnd_verify_rdma_cksum(tx, msg->gnm_payload_cksum,
+				       msg->gnm_u.completion.gncm_retval);
 
         kgnilnd_complete_tx(tx, rc);
 }
