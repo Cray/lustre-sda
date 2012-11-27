@@ -154,6 +154,10 @@ static int sched_nice = GNILND_SCHED_NICE;
 CFS_MODULE_PARM(sched_nice, "i", int, 0444,
 		"scheduler's nice setting, default compute 0 service -20");
 
+static int reverse_rdma = GNILND_REVERSE_RDMA;
+CFS_MODULE_PARM(reverse_rdma, "i", int, 0644,
+		"Normal 0: Reverse GET: 1 Reverse Put: 2 Reverse Both: 3");
+
 kgn_tunables_t kgnilnd_tunables = {
         .kgn_min_reconnect_interval = &min_reconnect_interval,
         .kgn_max_reconnect_interval = &max_reconnect_interval,
@@ -184,7 +188,8 @@ kgn_tunables_t kgnilnd_tunables = {
         .kgn_hardware_timeout       = &hardware_timeout,
 	.kgn_mdd_timeout            = &mdd_timeout,
 	.kgn_sched_timeout	    = &sched_timeout,
-	.kgn_sched_nice		    = &sched_nice
+	.kgn_sched_nice		    = &sched_nice,
+	.kgn_reverse_rdma           = &reverse_rdma
 };
 
 #if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM
@@ -427,6 +432,14 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
 		.data	  = &sched_nice,
 		.maxlen	  = sizeof(int),
 		.mode	  = 0444,
+		.proc_handler = &proc_dointvec
+	},
+	{
+		INIT_CTL_NAME(34)
+		.procname = "reverse_rdma",
+		.data     = &reverse_rdma,
+		.maxlen   = sizeof(int),
+		.mode     = 0644,
 		.proc_handler = &proc_dointvec
 	},
         {0}

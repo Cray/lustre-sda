@@ -31,7 +31,7 @@
 #define GNILND_BASE_TIMEOUT        60            /* default sane timeout */
 #define GNILND_CHECKSUM_DEFAULT     3            /* all on for Gemini */
 
-
+#define GNILND_REVERSE_RDMA	    GNILND_REVERSE_NONE
 #define GNILND_RDMA_DLVR_OPTION     GNI_DLVMODE_PERFORMANCE
 
 /* plug in our functions for use on the simulator */
