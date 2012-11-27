@@ -1266,7 +1266,7 @@ static int osc_lock_wait(const struct lu_env *env,
                 int rc;
 
                 LASSERT(olck->ols_agl);
-
+		olck->ols_agl = 0;
                 rc = osc_lock_enqueue(env, slice, NULL, CEF_ASYNC | CEF_MUST);
                 if (rc != 0)
                         return rc;
