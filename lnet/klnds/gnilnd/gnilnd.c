@@ -1965,9 +1965,11 @@ kgnilnd_dev_init(kgn_device_t *dev)
          * - this works because we have a single PTAG, if we had more
          * then we'd need to have multiple handlers */
         if (dev->gnd_id == 0) {
-                rrc = kgnilnd_subscribe_errors(dev->gnd_handle, GNI_ERRMASK_CRITICAL, 
-                                              0, NULL, kgnilnd_critical_error,
-                                              &dev->gnd_err_handle);
+		rrc = kgnilnd_subscribe_errors(dev->gnd_handle,
+						GNI_ERRMASK_CRITICAL |
+						GNI_ERRMASK_UNKNOWN_TRANSACTION,
+						0, NULL, kgnilnd_critical_error,
+						&dev->gnd_err_handle);
                 if (rrc != GNI_RC_SUCCESS) {
                         CERROR("Can't subscribe for errors on device %d: rc %d\n", 
                                 dev->gnd_id, rrc);
