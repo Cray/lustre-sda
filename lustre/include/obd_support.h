@@ -109,21 +109,23 @@ int obd_alloc_fail(const void *ptr, const char *name, const char *type,
 #define HASH_CL_ENV_BITS        10
 
 /* Timeout definitions */
-#define OBD_TIMEOUT_DEFAULT             100
 #if defined(CONFIG_CRAY_GEMINI)
 /*
  * For Gemini, a minimum of 70s to handle a gnilnd timeout of 60s. The gnilnd 
  * timeout can creep up to 65s depending on system load and how often the 
  * reaper thread runs, so 70s should give us some head room.
  */
+#define OBD_TIMEOUT_DEFAULT             100
 #define LDLM_TIMEOUT_DEFAULT            70
 #define MDS_LDLM_TIMEOUT_DEFAULT        70
 #elif defined (CONFIG_CRAY_ARIES)
 /* For Aries, use Aries Timer project data */
 #include <aries/aries_timeouts_gpl.h>
+#define OBD_TIMEOUT_DEFAULT             TIMEOUT_SECS(TO_Lustre_obd_timeout)
 #define LDLM_TIMEOUT_DEFAULT            TIMEOUT_SECS(TO_Lustre_ldlm_timeout)
 #define MDS_LDLM_TIMEOUT_DEFAULT        TIMEOUT_SECS(TO_Lustre_ldlm_timeout)
 #else
+#define OBD_TIMEOUT_DEFAULT             100
 #define LDLM_TIMEOUT_DEFAULT            20
 #define MDS_LDLM_TIMEOUT_DEFAULT        6
 #endif /* CONFIG_CRAY_GEMINI */
