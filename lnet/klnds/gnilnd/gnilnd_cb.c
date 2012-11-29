@@ -4307,8 +4307,14 @@ kgnilnd_process_conns(kgn_device_t *dev, unsigned long deadline)
                         /* based on intent see if we should run again. */
                         kgnilnd_schedule_process_conn(conn, intent);
 			error_inject = 1;
-                        /* drop ref from gnd_ready_conns */
-                        kgnilnd_conn_decref(conn);
+			/* drop ref from gnd_ready_conns */
+			if (atomic_read(&conn->gnc_refcount) == 1) {
+				down_write(&dev->gnd_conn_sem);
+				kgnilnd_conn_decref(conn);
+				up_write(&dev->gnd_conn_sem);
+			} else {
+				kgnilnd_conn_decref(conn);
+			}
                         /* clear this so that scheduler thread doesn't spin */
                         found_work = 0;
                         /* break with lock held... */
@@ -4317,7 +4323,9 @@ kgnilnd_process_conns(kgn_device_t *dev, unsigned long deadline)
                 }
                 
 		if (unlikely(conn->gnc_state == GNILND_CONN_CLOSED)) {
-                        /* CONN_CLOSED set in procces_fmaq when CLOSE is sent */
+			down_write(&dev->gnd_conn_sem);
+
+			/* CONN_CLOSED set in procces_fmaq when CLOSE is sent */
 			if (unlikely(atomic_read(&conn->gnc_tx_in_use))) {
 				/* If there are tx's currently in use in another
 				 * thread we dont want to complete the close
@@ -4326,24 +4334,38 @@ kgnilnd_process_conns(kgn_device_t *dev, unsigned long deadline)
 				kgnilnd_schedule_conn(conn);
 			} else
 				kgnilnd_complete_closed_conn(conn);
+
+			up_write(&dev->gnd_conn_sem);
                 } else if (unlikely(conn->gnc_state == GNILND_CONN_DESTROY_EP)) { 
                         /* DESTROY_EP set in kgnilnd_conn_decref on gnc_refcount = 1 */
                         /* serialize SMSG CQs with ep_bind and smsg_release */
+			down_write(&dev->gnd_conn_sem);
                         kgnilnd_destroy_conn_ep(conn);
+			up_write(&dev->gnd_conn_sem);
                 } else if (unlikely(conn->gnc_state == GNILND_CONN_CLOSING)) {
                        /* if we need to do some CLOSE sending, etc done here do it */ 
+			down_write(&dev->gnd_conn_sem);
                         kgnilnd_send_conn_close(conn);
                         kgnilnd_check_fma_rx(conn);
+			up_write(&dev->gnd_conn_sem);
                 } else if (atomic_read(&conn->gnc_peer->gnp_dirty_eps) == 0) { 
                         /* start moving traffic if the old conns are cleared out */
+			down_read(&dev->gnd_conn_sem);
                         kgnilnd_check_fma_rx(conn);
                         kgnilnd_process_fmaq(conn);
+			up_read(&dev->gnd_conn_sem);
                 }
 
                 kgnilnd_schedule_process_conn(conn, 0);
 
-                /* drop ref from gnd_ready_conns */
-                kgnilnd_conn_decref(conn);
+		/* drop ref from gnd_ready_conns */
+		if (atomic_read(&conn->gnc_refcount) == 1) {
+			down_write(&dev->gnd_conn_sem);
+			kgnilnd_conn_decref(conn);
+			up_write(&dev->gnd_conn_sem);
+		} else {
+			kgnilnd_conn_decref(conn);
+		}
 
                 /* check list again with lock held */
                 spin_lock(&dev->gnd_lock);
@@ -4400,6 +4422,7 @@ kgnilnd_scheduler (void *arg)
                  *   schedule_device calls to put us back to IRQ */
                 (void)cmpxchg(&dev->gnd_ready, GNILND_DEV_IRQ, GNILND_DEV_LOOP);
 
+		down_read(&dev->gnd_conn_sem);
                 /* always check these - they are super low cost  */
                 found_work += kgnilnd_check_fma_send_cq(dev);
                 found_work += kgnilnd_check_fma_rcv_cq(dev);
@@ -4420,6 +4443,8 @@ kgnilnd_scheduler (void *arg)
                  * transistion 
                  * ...should.... */
        
+		up_read(&dev->gnd_conn_sem);
+
                 /* process all conns ready now */
 		found_work += kgnilnd_process_conns(dev, deadline);
 

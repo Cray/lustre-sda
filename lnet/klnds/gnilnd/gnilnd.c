@@ -2213,6 +2213,7 @@ int kgnilnd_base_startup (void)
                 spin_lock_init(&dev->gnd_dgram_lock);
                 spin_lock_init(&dev->gnd_rdmaq_lock);
                 INIT_LIST_HEAD(&dev->gnd_rdmaq);
+		init_rwsem(&dev->gnd_conn_sem);
 
                 /* alloc & setup nid based dgram table */
                 LIBCFS_ALLOC(dev->gnd_dgrams,
