@@ -956,11 +956,19 @@ AC_DEFINE(HAVE_TRUNCATE_RANGE, 1,
 ])
 
 AC_DEFUN([LC_EXPORT_D_REHASH_COND],
-[LB_CHECK_SYMBOL_EXPORT([d_rehash_cond],
-[fs/dcache.c],[
-AC_DEFINE(HAVE_D_REHASH_COND, 1,
-            [d_rehash_cond is exported by the kernel])
+[AC_MSG_CHECKING([if Linux was built with symbol d_rehash_cond exported])
+LB_LINUX_TRY_COMPILE([
+	#include <linux/dcache.h>
 ],[
+	struct dentry *dentry;
+
+	d_rehash_cond(dentry, 0);
+],[
+	AC_MSG_RESULT([yes])
+	AC_DEFINE(HAVE_D_REHASH_COND, 1,
+		[kernel export d_rehash_cond])
+],[
+	AC_MSG_RESULT([no])
 ])
 ])
 
@@ -974,11 +982,20 @@ AC_DEFINE(HAVE___D_REHASH, 1,
 ])
 
 AC_DEFUN([LC_EXPORT_D_MOVE_LOCKED],
-[LB_CHECK_SYMBOL_EXPORT([d_move_locked],
-[fs/dcache.c],[
-AC_DEFINE(HAVE_D_MOVE_LOCKED, 1,
-            [d_move_locked is exported by the kernel])
+[AC_MSG_CHECKING([if Linux was built with d_move_locked exported])
+LB_LINUX_TRY_COMPILE([
+	#inclue <linux/dcache.h>
 ],[
+	struct dentry *dentry;
+	struct dentry *target;
+
+	d_move_locked(dentry, target);
+],[
+	AC_MSG_RESULT([yes])
+	AC_DEFINE(HAVE_D_MOVE_LOCKED, 1,
+		[kernel export d_move_locked])
+],[
+	AC_MSG_RESULT([no])
 ])
 ])
 
