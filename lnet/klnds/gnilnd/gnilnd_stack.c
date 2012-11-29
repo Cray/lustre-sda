@@ -603,8 +603,7 @@ kgnilnd_rca(void *arg)
 	rca_krt = KRCA_NULL_TICKET;
 	rc = krca_register(&rca_krt, RCA_SVCTYPE_GNILND, current->pid, 0);
 	if (rc < 0) {
-		printk(KERN_ERR "DVS: heartbeat_thread(%x): register ret %d\n",
-			current->pid, rc);
+		CNETERR("krca_register(%x) returned %d\n", current->pid, rc);
 		goto done;
 	}
 
@@ -635,16 +634,16 @@ subscribe_retry:
 		/* wait here for a subscribed event */
 		rc = krca_wait_event(&rca_krt);
 
-		if (!rc) {
-			/* krca_wakeup_wait_event caused krca_wait_event
-			 * return */
+		/* RCA return values:
+		 * 0 indicates krca_wakeup_wait_event caused krca_wait_event
+		 *   return.
+		 * -ERESTARTSYS indicates krca_wait_event returned because of a
+		 *   signal.
+		 * -ENOSPC indicates no space available to create an rcad_reg_t
+		 * 1 indicates a message is waiting.
+		 */
+		if (rc <= 0) {
 			continue;
-		} else if (rc < 0) {
-			/* RCA failures:
-			 * -ERESTARTSYS if wait_event_interruptible failed
-			 * -ENOSPC if there is no space available to create an
-			 * rcad_reg_t */
-			break;
 		}
 
 		if (krca_get_message(&rca_krt, &event) == 0) {
