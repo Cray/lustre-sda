@@ -900,11 +900,21 @@ LB_LINUX_TRY_COMPILE([
 ])
 
 AC_DEFUN([LC_EXPORT_TRUNCATE_COMPLETE_PAGE],
-[LB_CHECK_SYMBOL_EXPORT([truncate_complete_page],
-[mm/truncate.c],[
-AC_DEFINE(HAVE_TRUNCATE_COMPLETE_PAGE, 1,
-            [kernel export truncate_complete_page])
+[AC_MSG_CHECKING([if Linux was built with symbol truncate_complete_page exported])
+LB_LINUX_TRY_COMPILE([
+        #include <linux/mm.h>
+        #include <linux/fs.h>
 ],[
+        struct address_space *mapping;
+        struct page *page;
+
+        truncate_complete_page(mapping, page);
+],[
+        AC_MSG_RESULT([yes])
+        AC_DEFINE(HAVE_TRUNCATE_COMPLETE_PAGE, 1,
+                        [kernel export truncate_complete_page])
+],[
+        AC_MSG_RESULT([no])
 ])
 ])
 
