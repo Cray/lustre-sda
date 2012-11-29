@@ -88,6 +88,15 @@ int mdc_resource_get_unused(struct obd_export *exp, struct ll_fid *fid,
         int count;
         ENTRY;
 
+        /* Return, i.e. cancel nothing, only if ELC is supported (flag in
+         * export) but disabled through procfs (flag in NS).
+         *
+         * This distinguishes from a case when ELC is not supported originally,
+         * when we still want to cancel locks in advance and just cancel them
+         * locally, without sending any RPC. */
+       if (exp_connect_cancelset(exp) && !ns_connect_cancelset(ns))
+               RETURN(0);
+
         fid_build_reg_res_name((struct lu_fid*)fid, &res_id);
         res = ldlm_resource_get(ns, NULL, res_id, 0, 0);
 

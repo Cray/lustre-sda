@@ -286,6 +286,28 @@ static void ptlrpc_at_timer(unsigned long castmeharder)
         cfs_waitq_signal(&svc->srv_waitq);
 }
 
+static int ptlrpc_hpreq_check(struct ptlrpc_request *req)
+{
+        return 1;
+}
+
+static struct ptlrpc_hpreq_ops ptlrpc_hpreq_common = {
+        .hpreq_lock_match  = NULL,
+        .hpreq_check       = ptlrpc_hpreq_check,
+};
+
+/* Hi-Priority RPC check by RPC operation code. */
+int ptlrpc_hpreq_handler(struct ptlrpc_request *req)
+{
+        int opc = lustre_msg_get_opc(req->rq_reqmsg);
+
+        if (req->rq_export &&
+            (opc == OBD_PING || opc == MDS_CONNECT || opc == OST_CONNECT))
+                req->rq_ops = &ptlrpc_hpreq_common;
+
+        return 0;
+}
+
 /* @threadname should be 11 characters or less - 3 will be added on */
 struct ptlrpc_service *
 ptlrpc_init_svc(int nbufs, int bufsize, int max_req_size, int max_reply_size,
@@ -1066,13 +1088,8 @@ void ptlrpc_hpreq_reorder(struct ptlrpc_request *req)
 /** Check if the request if a high priority one. */
 static int ptlrpc_server_hpreq_check(struct ptlrpc_request *req)
 {
-        int opc, rc = 0;
+        int rc = 0;
         ENTRY;
-
-        /* Check by request opc. */
-        opc = lustre_msg_get_opc(req->rq_reqmsg);
-        if (opc == OBD_PING)
-                RETURN(1);
 
         /* Perform request specific check. */
         if (req->rq_ops && req->rq_ops->hpreq_check)
