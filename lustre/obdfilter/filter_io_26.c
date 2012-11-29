@@ -171,11 +171,7 @@ static int dio_complete_routine(struct bio *bio, unsigned int done, int error)
         }
 
         /* the check is outside of the cycle for performance reason -bzzz */
-#ifdef CONFIG_LUSTRE_PATCH	/* hack to recognize SLES11SP2 */
-        if (!(bio->bi_rw & REQ_WRITE))
-#else
         if (!test_bit(BIO_RW, &bio->bi_rw))
-#endif
 					    {
                 bio_for_each_segment(bvl, bio, i) {
                         if (likely(error == 0))
@@ -378,20 +374,6 @@ int filter_do_bio(struct obd_export *exp, struct inode *inode,
                                        bdev_get_queue(bio->bi_bdev);
 
                                 /* Dang! I have to fragment this I/O */
-#ifdef CONFIG_LUSTRE_PATCH	/* hack to recognize SLES11SP2 */
-                                CDEBUG(D_INODE, "bio++ sz %d vcnt %d(%d) "
-                                       "sectors %d(%d) psg %d(%d) hsg %d(%d) "
-                                       "sector "LPU64" next "LPU64"\n",
-                                       bio->bi_size,
-                                       bio->bi_vcnt, bio->bi_max_vecs,
-                                       bio->bi_size >> 9, queue_max_sectors(q),
-                                       bio_phys_segments(q, bio),
-                                       queue_max_segments(q),
-                                       bio_hw_segments(q, bio),
-                                       queue_max_segments(q),
-                                       (u64)bio->bi_sector,
-                                       (u64)sector);
-#else
                                 CDEBUG(D_INODE, "bio++ sz %d vcnt %d(%d) "
                                        "sectors %d(%d) psg %d(%d) max hsg %d "
                                        "sector "LPU64" next "LPU64"\n",
@@ -403,7 +385,6 @@ int filter_do_bio(struct obd_export *exp, struct inode *inode,
                                        queue_max_hw_segments(q),
                                        (u64)bio->bi_sector,
                                        (u64)sector);
-#endif
 
                                 record_start_io(iobuf, rw, bio->bi_size, exp);
                                 rc = fsfilt_send_bio(rw, obd, inode, bio);
