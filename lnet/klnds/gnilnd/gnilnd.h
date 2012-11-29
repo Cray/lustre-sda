@@ -106,10 +106,12 @@
 #define GNILND_SCHED_THREADS      1             /* default # of kgnilnd_scheduler threads */
 #define GNILND_FMABLK             64            /* default number of mboxes per fmablk */
 #define GNILND_SCHED_NICE         0		/* default nice value for scheduler threads */
+#define GNILND_COMPUTE            1             /* compute image */
 #else
 #define GNILND_SCHED_THREADS      3             /* default # of kgnilnd_scheduler threads */
 #define GNILND_FMABLK             1024          /* default number of mboxes per fmablk */
 #define GNILND_SCHED_NICE         -20		/* default nice value for scheduler threads */
+#define GNILND_COMPUTE            0             /* service image */
 #endif
 
 /* EXTRA_BITS are there to allow us to hide NOOP/CLOSE and anything else out of band */
@@ -225,6 +227,10 @@
 #define GNILND_DEL_CONN              0
 #define GNILND_DEL_PEER              1
 #define GNILND_CLEAR_PURGATORY       2
+
+#define GNILND_RCA_NODE_UP           0
+#define GNILND_RCA_NODE_DOWN         1
+#define GNILND_RCA_NODE_UNKNOWN      2
 
 typedef enum kgn_fmablk_state {
         GNILND_FMABLK_IDLE = 0, /* is allocated or ready to be freed */
@@ -719,6 +725,9 @@ typedef struct kgn_peer {
         unsigned long       gnp_reconnect_time;         /* CURRENT_SECONDS when reconnect OK */
         unsigned long       gnp_reconnect_interval;     /* exponential backoff */
         atomic_t            gnp_dirty_eps;              /* # of old but yet to be destroyed EPs from conns */
+	int                 gnp_down;                   /* rca says peer down */
+	unsigned long       gnp_down_event_time;        /* time peer down */
+	unsigned long       gnp_up_event_time;          /* time peer back up */
 } kgn_peer_t;
 
 /* the kgn_rx_t is a struct for handing to LNET as the private pointer for things
@@ -1188,7 +1197,7 @@ kgnilnd_conn_clean_errno(int errno)
 {
         /*  - ESHUTDOWN - LND is unloading 
          *  - EUCLEAN - admin requested via "lctl del_peer"
-         *  - ENETRESET - admin requested via "lctl disconnect"
+	 *  - ENETRESET - admin requested via "lctl disconnect" or rca event
          *  - ENOTRECOVERABLE - stack reset 
          *  - EISCONN - cleared via "lctl push"
          *  not doing ESTALE - that isn't clean */
@@ -1670,6 +1679,7 @@ void kgnilnd_schedule_device_timer(unsigned long arg);
 int kgnilnd_reaper (void *arg);
 int kgnilnd_scheduler (void *arg);
 int kgnilnd_dgram_mover(void *arg);
+int kgnilnd_rca(void *arg);
 
 int kgnilnd_create_conn(kgn_conn_t **connp, kgn_device_t *dev);
 int kgnilnd_conn_isdup_locked(kgn_peer_t *peer, kgn_conn_t *newconn);
@@ -1687,6 +1697,9 @@ void kgnilnd_complete_closed_conn(kgn_conn_t *conn);
 void kgnilnd_destroy_conn_ep(kgn_conn_t *conn);
 
 int kgnilnd_close_peer_conns_locked (kgn_peer_t *peer, int why);
+int kgnilnd_report_node_state(lnet_nid_t nid, int down);
+void kgnilnd_wakeup_rca_thread(void);
+int kgnilnd_start_rca_thread(void);
 
 int kgnilnd_tunables_init(void);
 void kgnilnd_tunables_fini(void);

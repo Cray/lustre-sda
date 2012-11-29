@@ -1699,6 +1699,13 @@ kgnilnd_launch_tx (kgn_tx_t *tx, kgn_net_t *net, lnet_process_id_t *target)
                         read_unlock(&kgnilnd_data.kgn_peer_conn_lock);
                         RETURN_EXIT;
                 }
+
+		/* don't create a connection if the peer is marked down */
+		if (peer->gnp_down == GNILND_RCA_NODE_DOWN) {
+			read_unlock(&kgnilnd_data.kgn_peer_conn_lock);
+			rc = -ENETRESET;
+			GOTO(no_peer, rc);
+		}
         }
         
         /* creating peer or conn; I'll need a write lock... */
@@ -2391,10 +2398,16 @@ kgnilnd_check_conn_timeouts_locked (kgn_conn_t *conn)
         newest_last_rx = GNILND_LASTRX(conn);
 
         if (time_after_eq(now, newest_last_rx + timeout)) {
-                GNIDBG_CONN(D_CONSOLE|D_NETERROR, conn, "No gnilnd traffic received from %s for %lu "
-                        "seconds, terminating connection. Is node down? ", 
-                        libcfs_nid2str(conn->gnc_peer->gnp_nid),
-                        cfs_duration_sec(now - newest_last_rx));
+		uint32_t level = D_CONSOLE|D_NETERROR;
+
+		if (conn->gnc_peer->gnp_down == GNILND_RCA_NODE_DOWN) {
+			level = D_NET;
+		}
+			GNIDBG_CONN(level, conn,
+			"No gnilnd traffic received from %s for %lu "
+			"seconds, terminating connection. Is node down?",
+			libcfs_nid2str(conn->gnc_peer->gnp_nid),
+			cfs_duration_sec(now - newest_last_rx));
                 return -ETIMEDOUT;
         }
 
@@ -2504,7 +2517,8 @@ kgnilnd_check_peer_timeouts_locked (kgn_peer_t *peer, struct list_head *todie,
         /* Don't reconnect if we are still trying to clear out old conns. 
          * This prevents us sending traffic on the new mbox before ensuring we are done
          * with the old one */
-        reconnect = (atomic_read(&peer->gnp_dirty_eps) == 0); 
+	reconnect = (peer->gnp_down == GNILND_RCA_NODE_UP) &&
+		    (atomic_read(&peer->gnp_dirty_eps) == 0);
 
         /* if we are not connected and there are tx on the gnp_tx_queue waiting
          * to be sent, we'll check the reconnect interval and fire up a new

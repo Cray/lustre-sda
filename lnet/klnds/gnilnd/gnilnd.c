@@ -572,7 +572,8 @@ kgnilnd_close_conn_locked(kgn_conn_t *conn, int error)
         }
 
         /* if we NETERROR, make sure it is rate limited */
-        if (!kgnilnd_conn_clean_errno(error)) {
+	if (!kgnilnd_conn_clean_errno(error) &&
+	    peer->gnp_down == GNILND_RCA_NODE_UP) {
                 CNETERR("closing conn to %s: error %d\n", 
                        libcfs_nid2str(peer->gnp_nid), error);
         } else {
@@ -746,18 +747,18 @@ kgnilnd_complete_closed_conn(kgn_conn_t *conn)
         logmsg = (nlive + nrdma + nq_rdma);
 
         if (logmsg) {
-                if (conn->gnc_peer_error != 0) {
+		if (conn->gnc_peer->gnp_down == GNILND_RCA_NODE_UP) {
                         CNETERR("Closed conn 0x%p->%s (errno %d, peer errno %d): "
                                 "canceled %d TX, %d/%d RDMA\n",
                                 conn, libcfs_nid2str(conn->gnc_peer->gnp_nid), 
                                 conn->gnc_error, conn->gnc_peer_error,
                                 nlive, nq_rdma, nrdma);
                 } else {
-                        CNETERR("Closed conn 0x%p->%s (errno %d): "
-                                "canceled %d TX, %d/%d RDMA\n",
-                                conn, libcfs_nid2str(conn->gnc_peer->gnp_nid), 
-                                conn->gnc_error, 
-                                nlive, nq_rdma, nrdma);
+			CDEBUG(D_NET, "Closed conn 0x%p->%s (errno %d,"
+				" peer errno %d): canceled %d TX, %d/%d RDMA\n",
+				conn, libcfs_nid2str(conn->gnc_peer->gnp_nid),
+				conn->gnc_error, conn->gnc_peer_error,
+				nlive, nq_rdma, nrdma);
                 }
         }
 
@@ -935,6 +936,7 @@ kgnilnd_create_peer_safe (kgn_peer_t **peerp, lnet_nid_t nid, kgn_net_t *net)
                 return -ENOMEM;
 
         peer->gnp_nid = nid;
+	peer->gnp_down = GNILND_RCA_NODE_UP;
 
         /* translate from nid to nic addr & store */
         rc = kgnilnd_nid_to_nicaddrs(LNET_NIDADDR(nid), 1, &peer->gnp_host_id);
@@ -1641,6 +1643,96 @@ kgnilnd_close_peer_conns_locked (kgn_peer_t *peer, int why)
 }
 
 int
+kgnilnd_report_node_state(lnet_nid_t nid, int down)
+{
+	int         rc;
+	kgn_peer_t  *peer, *new_peer;
+	CFS_LIST_HEAD(zombies);
+
+	write_lock(&kgnilnd_data.kgn_peer_conn_lock);
+	peer = kgnilnd_find_peer_locked(nid);
+
+	if (peer == NULL) {
+		int       i;
+		int       found_net = 0;
+		kgn_net_t *net;
+
+		write_unlock(&kgnilnd_data.kgn_peer_conn_lock);
+
+		/* Don't add a peer for node up events */
+		if (down == GNILND_RCA_NODE_UP) {
+			return 0;
+		}
+
+		/* find any valid net - we don't care which one... */
+		down_read(&kgnilnd_data.kgn_net_rw_sem);
+		for (i = 0; i < *kgnilnd_tunables.kgn_net_hash_size; i++) {
+			list_for_each_entry(net, &kgnilnd_data.kgn_nets[i],
+					    gnn_list) {
+				found_net = 1;
+				break;
+			}
+
+			if (found_net) {
+				break;
+			}
+		}
+		up_read(&kgnilnd_data.kgn_net_rw_sem);
+
+		if (!found_net) {
+			CNETERR("Could not find a net for nid %lld\n", nid);
+			return 1;
+		}
+
+		/* The nid passed in does not yet contain the net portion.
+		 * Let's build it up now
+		 */
+		nid = LNET_MKNID(LNET_NIDNET(net->gnn_ni->ni_nid), nid);
+		rc = kgnilnd_add_peer(net, nid, &new_peer);
+
+		if (rc) {
+			CNETERR("Could not add peer for nid %lld, rc %d\n",
+				nid, rc);
+			return 1;
+		}
+
+		write_lock(&kgnilnd_data.kgn_peer_conn_lock);
+		peer = kgnilnd_find_peer_locked(nid);
+
+		if (peer == NULL) {
+			CNETERR("Could not find peer for nid %lld\n", nid);
+			write_unlock(&kgnilnd_data.kgn_peer_conn_lock);
+			return 1;
+		}
+	}
+
+	peer->gnp_down = down;
+
+	if (down == GNILND_RCA_NODE_DOWN) {
+		peer->gnp_down_event_time = jiffies;
+		kgnilnd_cancel_peer_connect_locked(peer, &zombies);
+	} else {
+		peer->gnp_up_event_time = jiffies;
+	}
+
+	write_unlock(&kgnilnd_data.kgn_peer_conn_lock);
+
+	if (down == GNILND_RCA_NODE_DOWN) {
+		/* using ENETRESET so we don't get messages from
+		 * kgnilnd_tx_done
+		 */
+		kgnilnd_txlist_done(&zombies, -ENETRESET);
+
+		if (*kgnilnd_tunables.kgn_peer_health) {
+			kgnilnd_peer_notify(peer, -ECONNRESET);
+		}
+	}
+
+	CDEBUG(D_INFO, "marking nid %lld %s\n", nid, down ? "down" : "up");
+	return 0;
+}
+
+int
 kgnilnd_ctl(lnet_ni_t *ni, unsigned int cmd, void *arg)
 {
         struct libcfs_ioctl_data *data = arg;
@@ -2305,6 +2397,12 @@ int kgnilnd_base_startup (void)
                 GOTO(failed, rc);
         }
 
+	rc = kgnilnd_start_rca_thread();
+	if (rc != 0) {
+		CERROR("Can't spawn gnilnd rca: %d\n", rc);
+		GOTO(failed, rc);
+	}
+
         /*
          * Start ruhroh thread.  We can't use kgnilnd_thread_start() because
          * we don't want this thread included in kgnilnd_data.kgn_nthreads
@@ -2427,6 +2525,8 @@ kgnilnd_base_shutdown (void)
         spin_lock(&kgnilnd_data.kgn_reaper_lock);
         wake_up_all(&kgnilnd_data.kgn_reaper_waitq);
         spin_unlock(&kgnilnd_data.kgn_reaper_lock);
+
+	kgnilnd_wakeup_rca_thread();
 
         /* Wait for threads to exit */
         i = 2;

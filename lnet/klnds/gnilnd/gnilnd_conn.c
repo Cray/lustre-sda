@@ -1744,6 +1744,12 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
                 }
         }
 
+	if (peer->gnp_down == GNILND_RCA_NODE_DOWN) {
+		CNETERR("Received connection request from %s that RCA thinks is"
+			" down.\n", libcfs_nid2str(her_nid));
+		peer->gnp_down = GNILND_RCA_NODE_UP;
+	}
+
         nstale = kgnilnd_close_stale_conns_locked(peer, conn);
 
         /* either way with peer (new or existing), we are ok with ref counts here as the
