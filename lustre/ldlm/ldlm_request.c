@@ -601,7 +601,7 @@ struct ptlrpc_request *ldlm_prep_elc_req(struct obd_export *exp, int version,
 
         if (cancels == NULL)
                 cancels = &head;
-        if (exp_connect_cancelset(exp)) {
+        if (ns_connect_cancelset(ns)) {
                 /* Estimate the amount of free space in the request. */
                 LASSERT(bufoff < bufcount);
 
@@ -627,7 +627,7 @@ struct ptlrpc_request *ldlm_prep_elc_req(struct obd_export *exp, int version,
         req = ptlrpc_prep_req(class_exp2cliimp(exp), version,
                               opc, bufcount, size, NULL);
         req->rq_export = class_export_get(exp);
-        if (exp_connect_cancelset(exp) && req) {
+        if (ns_connect_cancelset(ns) && req) {
                 if (canceloff) {
                         dlm = lustre_msg_buf(req->rq_reqmsg, bufoff,
                                              sizeof(*dlm));
@@ -1010,9 +1010,6 @@ int ldlm_cli_cancel_req(struct obd_export *exp,
                                       size, NULL);
                 if (!req)
                         GOTO(out, rc = -ENOMEM);
-
-                req->rq_no_resend = 1;
-                req->rq_no_delay = 1;
 
                 req->rq_request_portal = LDLM_CANCEL_REQUEST_PORTAL;
                 req->rq_reply_portal = LDLM_CANCEL_REPLY_PORTAL;

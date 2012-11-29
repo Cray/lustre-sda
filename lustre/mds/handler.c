@@ -2593,7 +2593,7 @@ static int mdt_setup(struct obd_device *obd, obd_count len, void *buf)
                                 mds_handle, LUSTRE_MDS_NAME,
                                 obd->obd_proc_entry, target_print_req,
                                 mds_min_threads, mds_max_threads, "ll_mdt",
-                                NULL);
+                                ptlrpc_hpreq_handler);
 
         if (!mds->mds_service) {
                 CERROR("failed to start service\n");
