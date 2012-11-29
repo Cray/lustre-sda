@@ -262,6 +262,7 @@ kgnilnd_unmap_fmablk(kgn_device_t *dev, kgn_fma_memblock_t *fma_blk)
         /* PHYS blocks don't get mapped */
         if (fma_blk->gnm_state != GNILND_FMABLK_PHYS) {
                 atomic64_sub(fma_blk->gnm_blk_size, &dev->gnd_nbytes_map);
+		fma_blk->gnm_state = GNILND_FMABLK_IDLE;
         } else if (kgnilnd_data.kgn_in_reset) {
                 /* in stack reset, clear MDD handle for PHYS blocks, as we'll 
                  * re-use the fma_blk after reset so we don't have to drop/allocate
