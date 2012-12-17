@@ -73,7 +73,8 @@ kgnilnd_bump_timeouts(__u32 nap_time, char *reason)
                                  * we'll back it up and schedule the conn to trigger
                                  * a NOOP */
                                 conn->gnc_last_tx = jiffies - timeout;
-				kgnilnd_schedule_conn(conn);
+				if (conn->gnc_state != GNILND_CONN_DONE)
+					kgnilnd_schedule_conn(conn);
                         }
                 }
         }
