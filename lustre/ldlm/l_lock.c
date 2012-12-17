@@ -67,3 +67,21 @@ void unlock_res_and_lock(struct ldlm_lock *lock)
         if (!lock->l_ns_srv)
                 cfs_spin_unlock(&lock->l_lock);
 }
+
+struct ldlm_resource * lock_res_and_lock_read(struct ldlm_lock *lock)
+{
+        /* on server-side resource of lock doesn't change */
+        if (!lock->l_ns_srv)
+                cfs_spin_lock(&lock->l_lock);
+
+        lock_res_read(lock->l_resource);
+        return lock->l_resource;
+}
+
+void unlock_res_and_lock_read(struct ldlm_lock *lock)
+{
+        /* on server-side resource of lock doesn't change */
+        unlock_res_read(lock->l_resource);
+        if (!lock->l_ns_srv)
+                cfs_spin_unlock(&lock->l_lock);
+}

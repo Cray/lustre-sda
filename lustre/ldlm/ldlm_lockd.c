@@ -2887,3 +2887,5 @@ EXPORT_SYMBOL(target_handle_disconnect);
 /* l_lock.c */
 EXPORT_SYMBOL(lock_res_and_lock);
 EXPORT_SYMBOL(unlock_res_and_lock);
+EXPORT_SYMBOL(lock_res_and_lock_read);
+EXPORT_SYMBOL(unlock_res_and_lock_read);

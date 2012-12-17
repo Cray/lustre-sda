@@ -90,6 +90,7 @@ typedef struct cfs_spin_lock cfs_spinlock_t;
 
 #define CFS_SPIN_LOCK_UNLOCKED(lock) (cfs_spinlock_t) { }
 #define LASSERT_SPIN_LOCKED(lock) do {(void)sizeof(lock);} while(0)
+#define LASSERT_RW_LOCKED(lock) do {(void)sizeof(lock);} while(0)
 #define LINVRNT_SPIN_LOCKED(lock) do {(void)sizeof(lock);} while(0)
 #define LASSERT_SEM_LOCKED(sem) do {(void)sizeof(sem);} while(0)
 #define LASSERT_MUTEX_LOCKED(x) do {(void)sizeof(x);} while(0)

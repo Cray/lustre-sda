@@ -813,7 +813,7 @@ struct ldlm_resource {
 
         /* protected by ns_hash_lock */
         cfs_hlist_node_t       lr_hash;
-        cfs_spinlock_t         lr_lock;
+        cfs_rwlock_t           lr_lock;
 
         /* protected by lr_lock */
         cfs_list_t             lr_granted;
@@ -1252,28 +1252,35 @@ enum lock_res_type {
 
 static inline void lock_res(struct ldlm_resource *res)
 {
-        cfs_spin_lock(&res->lr_lock);
+        cfs_write_lock(&res->lr_lock);
 }
 
-static inline void lock_res_nested(struct ldlm_resource *res,
-                                   enum lock_res_type mode)
+static inline void lock_res_read(struct ldlm_resource *res)
 {
-        cfs_spin_lock_nested(&res->lr_lock, mode);
+        cfs_read_lock(&res->lr_lock);
 }
-
 
 static inline void unlock_res(struct ldlm_resource *res)
 {
-        cfs_spin_unlock(&res->lr_lock);
+        cfs_write_unlock(&res->lr_lock);
 }
+
+static inline void unlock_res_read(struct ldlm_resource *res)
+{
+        cfs_read_unlock(&res->lr_lock);
+}
+
 
 static inline void check_res_locked(struct ldlm_resource *res)
 {
-        LASSERT_SPIN_LOCKED(&res->lr_lock);
+        LASSERT_RW_LOCKED(&res->lr_lock);
 }
 
 struct ldlm_resource * lock_res_and_lock(struct ldlm_lock *lock);
 void unlock_res_and_lock(struct ldlm_lock *lock);
+
+struct ldlm_resource * lock_res_and_lock_read(struct ldlm_lock *lock);
+void unlock_res_and_lock_read(struct ldlm_lock *lock);
 
 /* ldlm_pool.c */
 void ldlm_pools_recalc(ldlm_side_t client);

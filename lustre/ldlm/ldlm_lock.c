@@ -497,17 +497,17 @@ int ldlm_lock_change_resource(struct ldlm_namespace *ns, struct ldlm_lock *lock,
         cfs_spin_lock(&lock->l_lock);
         oldres = lock->l_resource;
         if (oldres < newres) {
-                lock_res(oldres);
-                lock_res_nested(newres, LRT_NEW);
+                lock_res_read(oldres);
+                lock_res_read(newres);
         } else {
-                lock_res(newres);
-                lock_res_nested(oldres, LRT_NEW);
+                lock_res_read(newres);
+                lock_res_read(oldres);
         }
         LASSERT(memcmp(new_resid, &oldres->lr_name,
                        sizeof oldres->lr_name) != 0);
         lock->l_resource = newres;
-        unlock_res(oldres);
-        unlock_res_and_lock(lock);
+        unlock_res_read(oldres);
+        unlock_res_and_lock_read(lock);
 
         /* ...and the flowers are still standing! */
         lu_ref_del(&oldres->lr_reference, "lock", lock);

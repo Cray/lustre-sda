@@ -1040,7 +1040,7 @@ static struct ldlm_resource *ldlm_resource_new(void)
         }
 
         cfs_atomic_set(&res->lr_refcount, 1);
-        cfs_spin_lock_init(&res->lr_lock);
+        cfs_rwlock_init(&res->lr_lock);
         lu_ref_init(&res->lr_reference);
 
         /* one who creates the resource must unlock

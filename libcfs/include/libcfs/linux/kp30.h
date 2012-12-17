@@ -105,9 +105,11 @@ do {                                                                          \
 #ifdef CONFIG_SMP
 #define LASSERT_SPIN_LOCKED(lock) LASSERT(spin_is_locked(lock))
 #define LINVRNT_SPIN_LOCKED(lock) LINVRNT(spin_is_locked(lock))
+#define LASSERT_RW_LOCKED(lock) LASSERT(write_trylock(lock) == 0)
 #else
 #define LASSERT_SPIN_LOCKED(lock) do {(void)sizeof(lock);} while(0)
 #define LINVRNT_SPIN_LOCKED(lock) do {(void)sizeof(lock);} while(0)
+#define LASSERT_RW_LOCKED(lock) do {(void)sizeof(lock);} while(0)
 #endif
 
 #define LASSERT_SEM_LOCKED(sem) LASSERT(down_trylock(sem) != 0)
