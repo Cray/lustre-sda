@@ -1719,17 +1719,8 @@ kgnilnd_queue_tx (kgn_conn_t *conn, kgn_tx_t *tx)
                 if (rc >= 0) {
                         /* it was sent, break out of switch to avoid default case of queueing */
                         break;
-                } else if (rc == -EAGAIN) {
-                        /* needs to queue to try again, so  fall through to default case */
-                } else {
-                        /* bail: it wasnt sent and we didn't get EAGAIN inidicating
-                         * we should retrans - We do not close the conn due to locking 
-                         * we let the reaper thread take care of it. There are no hard 
-                         * errors from send_msg that would require close to be called
-                         */
-                        kgnilnd_tx_done(tx, rc);
-                        break;
                 }
+		/* needs to queue to try again, so fall through to default case */
         case GNILND_MSG_NOOP:
                 /* Just make sure this goes out first for this conn */
                 add_tail = 0;
