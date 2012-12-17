@@ -53,8 +53,10 @@
 
 #ifdef CONFIG_SMP
 #define LASSERT_SPIN_LOCKED(lock) do {} while(0) /* XXX */
+#define LASSERT_RW_LOCKED(lock) do {} while(0) /* XXX */
 #else
 #define LASSERT_SPIN_LOCKED(lock) do {} while(0)
+#define LASSERT_RW_LOCKED(lock) do {} while(0)
 #endif
 #define LASSERT_SEM_LOCKED(sem) do {} while(0) /* XXX */
 

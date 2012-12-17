@@ -1903,7 +1903,7 @@ int ldlm_resource_foreach(struct ldlm_resource *res, ldlm_iterator_t iter,
         if (!res)
                 RETURN(LDLM_ITER_CONTINUE);
 
-        lock_res(res);
+        lock_res_read(res);
         cfs_list_for_each_safe(tmp, next, &res->lr_granted) {
                 lock = cfs_list_entry(tmp, struct ldlm_lock, l_res_link);
 
@@ -1925,7 +1925,7 @@ int ldlm_resource_foreach(struct ldlm_resource *res, ldlm_iterator_t iter,
                         GOTO(out, rc = LDLM_ITER_STOP);
         }
  out:
-        unlock_res(res);
+        unlock_res_read(res);
         RETURN(rc);
 }
 

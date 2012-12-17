@@ -43,6 +43,7 @@
 #define CFS_SYSFS_MODULE_PARM    0 /* no sysfs access to module parameters */
 
 #define LASSERT_SPIN_LOCKED(lock) do {} while(0)
+#define LASSERT_RW_LOCKED(lock) do {} while(0)
 #define LASSERT_SEM_LOCKED(sem) LASSERT(down_trylock(sem) != 0)
 
 /* winnt panic */
