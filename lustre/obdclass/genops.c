@@ -1640,11 +1640,13 @@ static int obd_zombie_is_idle(void)
 void obd_zombie_barrier(void)
 {
         struct l_wait_info lwi = { 0 };
+	ENTRY;
 
         if (obd_zombie_pid == cfs_curproc_pid())
                 /* don't wait for myself */
                 return;
         l_wait_event(obd_zombie_waitq, obd_zombie_is_idle(), &lwi);
+	EXIT;
 }
 EXPORT_SYMBOL(obd_zombie_barrier);
 
@@ -1671,6 +1673,8 @@ static int obd_zombie_impexp_thread(void *unused)
 
                 l_wait_event(obd_zombie_waitq,
                              !obd_zombie_impexp_check(NULL), &lwi);
+		/* simulate a scheduller timeout */
+		CFS_FAIL_TIMEOUT(OBD_FAIL_OBD_ZOMBIE_SLEEP, 3);
                 obd_zombie_impexp_cull();
 
                 /*
