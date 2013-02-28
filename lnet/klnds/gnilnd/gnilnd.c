@@ -1709,8 +1709,15 @@ kgnilnd_report_node_state(lnet_nid_t nid, int down)
 	peer->gnp_down = down;
 
 	if (down == GNILND_RCA_NODE_DOWN) {
+		kgn_conn_t *conn;
+
 		peer->gnp_down_event_time = jiffies;
 		kgnilnd_cancel_peer_connect_locked(peer, &zombies);
+		conn = kgnilnd_find_conn_locked(peer);
+
+		if (conn != NULL) {
+			kgnilnd_close_conn_locked(conn, -ENETRESET);
+		}
 	} else {
 		peer->gnp_up_event_time = jiffies;
 	}
