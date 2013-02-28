@@ -158,6 +158,10 @@ static int reverse_rdma = GNILND_REVERSE_RDMA;
 CFS_MODULE_PARM(reverse_rdma, "i", int, 0644,
 		"Normal 0: Reverse GET: 1 Reverse Put: 2 Reverse Both: 3");
 
+static int dgram_timeout = GNILND_DGRAM_TIMEOUT;
+CFS_MODULE_PARM(dgram_timeout, "i", int, 0644,
+		"dgram thread aliveness seconds max time");
+
 kgn_tunables_t kgnilnd_tunables = {
         .kgn_min_reconnect_interval = &min_reconnect_interval,
         .kgn_max_reconnect_interval = &max_reconnect_interval,
@@ -189,7 +193,8 @@ kgn_tunables_t kgnilnd_tunables = {
 	.kgn_mdd_timeout            = &mdd_timeout,
 	.kgn_sched_timeout	    = &sched_timeout,
 	.kgn_sched_nice		    = &sched_nice,
-	.kgn_reverse_rdma           = &reverse_rdma
+	.kgn_reverse_rdma           = &reverse_rdma,
+	.kgn_dgram_timeout          = &dgram_timeout
 };
 
 #if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM
@@ -438,6 +443,13 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
 		INIT_CTL_NAME(34)
 		.procname = "reverse_rdma",
 		.data     = &reverse_rdma,
+		.maxlen   = sizeof(int),
+		.mode     = 0644,
+		.proc_handler = &proc_dointvec
+	},
+		INIT_CTL_NAME(34)
+		.procname = "dgram_timeout"
+		.data     = &dgram_timeout,
 		.maxlen   = sizeof(int),
 		.mode     = 0644,
 		.proc_handler = &proc_dointvec
