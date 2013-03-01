@@ -726,6 +726,7 @@ typedef struct kgn_conn {
         short               gnc_needs_closing;  /* flag set in del_conns when called from kgnilnd_del_peer_or_conn */
 	atomic_t	    gnc_tx_in_use;	/* # of tx's currently in use by another thread use kgnilnd_peer_conn_lock */
 	kgn_dgram_type_t    gnc_dgram_type;     /* save dgram type used to establish this conn */
+	void               *remote_mbox_addr;   /* save remote mbox address */
 } kgn_conn_t;
 
 typedef struct kgn_mdd_purgatory {
