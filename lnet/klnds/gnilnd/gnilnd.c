@@ -610,6 +610,7 @@ kgnilnd_close_conn_locked(kgn_conn_t *conn, int error)
         /* Remove from conn hash table: no new callbacks */
         list_del_init(&conn->gnc_hashlist);
         kgnilnd_data.kgn_conn_version++;
+	kgnilnd_conn_decref(conn);
 
         /* if we are in reset, go right to CLOSED as there is no scheduler
          * thread to move from CLOSING to CLOSED */
@@ -637,11 +638,6 @@ kgnilnd_close_conn_locked(kgn_conn_t *conn, int error)
         /* schedule sending CLOSE - if we are in quiesce, this adds to
          * gnd_ready_conns and allows us to find it in quiesce processing */
 	kgnilnd_schedule_conn(conn);
-
-        /* lose peer's ref */
-        kgnilnd_conn_decref(conn);
-        /* -1 for conn table */
-        kgnilnd_conn_decref(conn);
 
         EXIT;
 }
@@ -793,6 +789,8 @@ kgnilnd_complete_closed_conn(kgn_conn_t *conn)
         /* Remove from peer's list of valid connections if its not in purgatory */
         if (!conn->gnc_in_purgatory) {
                 list_del_init(&conn->gnc_list);
+		/* Lose peers reference on the conn */
+		kgnilnd_conn_decref(conn);
         }
 
         /* NB - only unlinking if we set pending in del_peer_locked from admin or 
@@ -1055,9 +1053,6 @@ kgnilnd_add_purgatory_locked(kgn_conn_t *conn, kgn_peer_t *peer)
         CDEBUG(D_NET, "conn %p peer %p dev %p\n", conn, peer,
                 conn->gnc_device);
 
-        /* add ref for mbox purgatory hold */
-        kgnilnd_peer_addref(peer);
-        kgnilnd_conn_addref(conn);
         conn->gnc_in_purgatory = 1;
 
         mbox = &conn->gnc_fma_blk->gnm_mbox_info[conn->gnc_mbox_id];
@@ -1112,7 +1107,6 @@ kgnilnd_detach_purgatory_locked(kgn_conn_t *conn, struct list_head *conn_list)
                  * on the peer's conn_list anymore.
                  */
 
-                kgnilnd_peer_decref(conn->gnc_peer);
                 list_del_init(&conn->gnc_list);
 
                 /* NB - only unlinking if we set pending in del_peer_locked from admin or 
