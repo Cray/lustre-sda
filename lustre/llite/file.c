@@ -2046,6 +2046,11 @@ int cl_sync_file_range(struct inode *inode, loff_t start, loff_t end)
 	RETURN(result);
 }
 
+/* 
+ * When dentry is provided (the 'else' case), *file may be null
+ * and dentry must be used directly rather than pulled from *file
+ * as is done otherwise.
+ */
 #ifdef HAVE_FILE_FSYNC_4ARGS
 int ll_fsync(struct file *file, loff_t start, loff_t end, int data)
 #elif defined(HAVE_FILE_FSYNC_2ARGS)
@@ -2054,8 +2059,12 @@ int ll_fsync(struct file *file, int data)
 int ll_fsync(struct file *file, struct dentry *dentry, int data)
 #endif
 {
+#if defined(HAVE_FILE_FSYNC_4ARGS) || defined(HAVE_FILE_FSYNC_2ARGS)
         struct inode *inode = file->f_dentry->d_inode;
-        struct ll_inode_info *lli = ll_i2info(inode);
+#else
+        struct inode *inode = dentry->d_inode;
+#endif	
+	struct ll_inode_info *lli = ll_i2info(inode);
         struct ptlrpc_request *req;
         struct obd_capa *oc;
 	struct lov_stripe_md *lsm;
