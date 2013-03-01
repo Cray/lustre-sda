@@ -812,10 +812,8 @@ void ll_io_init(struct cl_io *io, const struct file *file, int write)
         struct inode *inode = file->f_dentry->d_inode;
 
         io->u.ci_rw.crw_nonblock = file->f_flags & O_NONBLOCK;
-	if (write) {
-		io->u.ci_wr.wr_append = !!(file->f_flags & O_APPEND);
-		io->u.ci_wr.wr_sync = file->f_flags & O_SYNC || IS_SYNC(inode);
-	}
+        if (write)
+                io->u.ci_wr.wr_append = !!(file->f_flags & O_APPEND);
         io->ci_obj     = ll_i2info(inode)->lli_clob;
         io->ci_lockreq = CILR_MAYBE;
         if (ll_file_nolock(file)) {
@@ -2008,11 +2006,8 @@ int ll_flush(struct file *file, fl_owner_t id)
 /**
  * Called to make sure a portion of file has been written out.
  * if @local_only is not true, it will send OST_SYNC RPCs to ost.
- *
- * Return how many pages have been written.
  */
-int cl_sync_file_range(struct inode *inode, loff_t start, loff_t end,
-		       enum cl_fsync_mode mode)
+int cl_sync_file_range(struct inode *inode, loff_t start, loff_t end)
 {
 	struct cl_env_nest nest;
 	struct lu_env *env;
@@ -2021,10 +2016,6 @@ int cl_sync_file_range(struct inode *inode, loff_t start, loff_t end,
 	struct cl_fsync_io *fio;
 	int result;
 	ENTRY;
-
-	if (mode != CL_FSYNC_NONE && mode != CL_FSYNC_LOCAL &&
-	    mode != CL_FSYNC_DISCARD && mode != CL_FSYNC_ALL)
-		RETURN(-EINVAL);
 
 	env = cl_env_nested_get(&nest);
 	if (IS_ERR(env))
@@ -2042,15 +2033,11 @@ int cl_sync_file_range(struct inode *inode, loff_t start, loff_t end,
 	fio->fi_start = start;
 	fio->fi_end = end;
 	fio->fi_fid = ll_inode2fid(inode);
-	fio->fi_mode = mode;
-	fio->fi_nr_written = 0;
 
 	if (cl_io_init(env, io, CIT_FSYNC, io->ci_obj) == 0)
 		result = cl_io_loop(env, io);
 	else
 		result = io->ci_result;
-	if (result == 0)
-		result = fio->fi_nr_written;
 	cl_io_fini(env, io);
 	cl_env_nested_put(&nest, env);
 
@@ -2112,9 +2099,8 @@ int ll_fsync(struct file *file, struct dentry *dentry, int data)
 	if (data && lsm) {
 		struct ll_file_data *fd = LUSTRE_FPRIVATE(file);
 
-		err = cl_sync_file_range(inode, 0, OBD_OBJECT_EOF,
-				CL_FSYNC_ALL);
-		if (rc == 0 && err < 0)
+		err = cl_sync_file_range(inode, 0, OBD_OBJECT_EOF);
+		if (!rc)
 			rc = err;
 		if (rc < 0)
 			fd->fd_write_failed = true;

@@ -693,7 +693,6 @@ struct dentry *ll_splice_alias(struct inode *inode, struct dentry *de);
 int ll_prepare_write(struct file *, struct page *, unsigned from, unsigned to);
 int ll_commit_write(struct file *, struct page *, unsigned from, unsigned to);
 int ll_writepage(struct page *page, struct writeback_control *wbc);
-int ll_writepages(struct address_space *, struct writeback_control *wbc);
 void ll_removepage(struct page *page);
 int ll_readpage(struct file *file, struct page *page);
 void ll_readahead_init(struct inode *inode, struct ll_readahead_state *ras);
@@ -1418,8 +1417,7 @@ static inline int cl_merge_lvb(struct inode *inode)
 
 struct obd_capa *cl_capa_lookup(struct inode *inode, enum cl_req_type crt);
 
-int cl_sync_file_range(struct inode *inode, loff_t start, loff_t end,
-		       enum cl_fsync_mode mode);
+int cl_sync_file_range(struct inode *inode, loff_t start, loff_t end);
 
 /** direct write pages */
 struct ll_dio_pages {

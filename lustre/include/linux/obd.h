@@ -57,7 +57,6 @@ struct ll_iattr {
 	unsigned int	ia_attr_flags;
 };
 
-#define CLIENT_OBD_LIST_LOCK_DEBUG 1
 typedef struct {
         cfs_spinlock_t          lock;
 

@@ -429,7 +429,7 @@ union ptlrpc_async_args {
          * least big enough for that.
          */
         void      *pointer_arg[11];
-	__u64      space[7];
+        __u64      space[6];
 };
 
 struct ptlrpc_request_set;

@@ -36,7 +36,6 @@
  * Implementation of cl_page for VVP layer.
  *
  *   Author: Nikita Danilov <nikita.danilov@sun.com>
- *   Author: Jinshan Xiong <jinshan.xiong@whamcloud.com>
  */
 
 #define DEBUG_SUBSYSTEM S_LLITE
@@ -226,15 +225,21 @@ static int vvp_page_prep_write(const struct lu_env *env,
                                const struct cl_page_slice *slice,
                                struct cl_io *unused)
 {
-	cfs_page_t *vmpage = cl2vm_page(slice);
+        struct cl_page *cp     = slice->cpl_page;
+        cfs_page_t     *vmpage = cl2vm_page(slice);
+        int result;
 
-	LASSERT(PageLocked(vmpage));
-	LASSERT(!PageDirty(vmpage));
+        if (clear_page_dirty_for_io(vmpage)) {
+                set_page_writeback(vmpage);
+                vvp_write_pending(cl2ccc(slice->cpl_obj), cl2ccc_page(slice));
+                result = 0;
 
-	set_page_writeback(vmpage);
-	vvp_write_pending(cl2ccc(slice->cpl_obj), cl2ccc_page(slice));
-
-	return 0;
+                /* only turn on writeback for async write. */
+                if (cp->cp_sync_io == NULL)
+                        unlock_page(vmpage);
+        } else
+                result = -EALREADY;
+        return result;
 }
 
 /**
@@ -337,32 +342,37 @@ static void vvp_page_completion_write(const struct lu_env *env,
  * truncated. Skip it.
  */
 static int vvp_page_make_ready(const struct lu_env *env,
-			       const struct cl_page_slice *slice)
+                               const struct cl_page_slice *slice)
 {
-	cfs_page_t *vmpage = cl2vm_page(slice);
-	struct cl_page *pg = slice->cpl_page;
-	int result = 0;
+        cfs_page_t *vmpage = cl2vm_page(slice);
+        struct cl_page *pg = slice->cpl_page;
+        int result;
 
-	lock_page(vmpage);
-	if (clear_page_dirty_for_io(vmpage)) {
-		LASSERT(pg->cp_state == CPS_CACHED);
-		/* This actually clears the dirty bit in the radix
-		 * tree. */
-		set_page_writeback(vmpage);
-		vvp_write_pending(cl2ccc(slice->cpl_obj),
-				cl2ccc_page(slice));
-		CL_PAGE_HEADER(D_PAGE, env, pg, "readied\n");
-	} else if (pg->cp_state == CPS_PAGEOUT) {
-		/* is it possible for osc_flush_async_page() to already
-		 * make it ready? */
-		result = -EALREADY;
-	} else {
-		CL_PAGE_DEBUG(D_ERROR, env, pg, "Unexpecting page state %d.\n",
-			      pg->cp_state);
-		LBUG();
-	}
-	unlock_page(vmpage);
-	RETURN(result);
+        result = -EAGAIN;
+        /* we're trying to write, but the page is locked.. come back later */
+        if (!TestSetPageLocked(vmpage)) {
+                if (pg->cp_state == CPS_CACHED) {
+                        /*
+                         * We can cancel IO if page wasn't dirty after all.
+                         */
+                        clear_page_dirty_for_io(vmpage);
+                        /*
+                         * This actually clears the dirty bit in the radix
+                         * tree.
+                         */
+                        set_page_writeback(vmpage);
+                        vvp_write_pending(cl2ccc(slice->cpl_obj),
+                                          cl2ccc_page(slice));
+                        CL_PAGE_HEADER(D_PAGE, env, pg, "readied\n");
+                        result = 0;
+                } else
+                        /*
+                         * Page was concurrently truncated.
+                         */
+                        LASSERT(pg->cp_state == CPS_FREEING);
+                unlock_page(vmpage);
+        }
+        RETURN(result);
 }
 
 static int vvp_page_print(const struct lu_env *env,
