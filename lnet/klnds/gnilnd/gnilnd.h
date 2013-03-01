@@ -100,6 +100,7 @@
 #define GNILND_MAXDEVS            1             /* max # of GNI devices currently supported */
 #define GNILND_MBOX_CREDITS       256           /* number of credits per mailbox */
 #define GNILND_COOKIE             0xa3579       /* cookie used by along with ptag by GNI */
+#define GNILND_CONN_MAGIC         0xa100f       /* magic value for verifying connection validity */
 
 /* tune down some COMPUTE options as they won't see the same number of connections and 
  * don't need the throughput of multiple threads by default */
@@ -675,6 +676,7 @@ typedef struct kgn_tx {                         /* message descriptor */
 typedef struct kgn_conn {
         kgn_device_t       *gnc_device;         /* which device */
         struct kgn_peer    *gnc_peer;           /* owning peer */
+	int                 gnc_magic;          /* magic value cleared before free */
         struct list_head    gnc_list;           /* stash on peer's conn list - or pending purgatory lists as we clear them */
         struct list_head    gnc_hashlist;       /* stash in connection hash table */
         struct list_head    gnc_schedlist;      /* schedule (on gnd_?_conns) for attention */
@@ -846,7 +848,7 @@ extern kgn_tunables_t     kgnilnd_tunables;
 
 extern void kgnilnd_destroy_peer(kgn_peer_t *peer);
 extern void kgnilnd_destroy_conn(kgn_conn_t *conn);
-extern void _kgnilnd_schedule_conn(kgn_conn_t *conn, const char *caller, int line);
+extern int _kgnilnd_schedule_conn(kgn_conn_t *conn, const char *caller, int line, int refheld);
 
 /* Macro wrapper for _kgnilnd_schedule_conn. This will store the function
  * and the line of the calling function to allow us to debug problematic
@@ -854,10 +856,10 @@ extern void _kgnilnd_schedule_conn(kgn_conn_t *conn, const char *caller, int lin
  * the location manually.
  */
 #define kgnilnd_schedule_conn(conn)					\
-do {									\
-	_kgnilnd_schedule_conn(conn, __func__, __LINE__);		\
-} while (0)
+	_kgnilnd_schedule_conn(conn, __func__, __LINE__, 0);
 
+#define kgnilnd_schedule_conn_refheld(conn, refheld)				\
+	_kgnilnd_schedule_conn(conn, __func__, __LINE__, refheld);
 
 static inline int
 kgnilnd_thread_start (int(*fn)(void *arg), void *arg, char *name, int id)
@@ -1087,7 +1089,7 @@ do {                                                                            
         LASSERTF(val >= 0, "peer %p refcount %d\n", peer, val);                 \
         CDEBUG(D_NETTRACE, "peer %p->%s--(%d)\n", peer,                         \
                libcfs_nid2str(peer->gnp_nid), val);                             \
-        if (atomic_read(&peer->gnp_refcount) == 0)                              \
+	if (val == 0)      				                        \
                 kgnilnd_destroy_peer(peer);                                     \
 } while(0)
 
@@ -1097,7 +1099,8 @@ do {                                                                    \
                                                                         \
         smp_wmb();                                                      \
         val = atomic_inc_return(&conn->gnc_refcount);                   \
-        LASSERTF(val >= 0, "conn %p refc %d to %s\n",                   \
+	LASSERTF(val > 1 && conn->gnc_magic == GNILND_CONN_MAGIC,       \
+		"conn %p refc %d to %s\n",                              \
                 conn, val,                                              \
                 conn->gnc_peer                                          \
                         ? libcfs_nid2str(conn->gnc_peer->gnp_nid)       \
@@ -1176,12 +1179,12 @@ do {                                                                    \
                         : "<?>",                                        \
                 val);                                                   \
         smp_rmb();                                                      \
-        if ((atomic_read(&conn->gnc_refcount) == 1) &&                  \
+	if ((val == 1) &&                                               \
             (conn->gnc_ephandle != NULL) &&                             \
             (conn->gnc_state != GNILND_CONN_DESTROY_EP)) {              \
                 set_mb(conn->gnc_state, GNILND_CONN_DESTROY_EP);        \
 		kgnilnd_schedule_conn(conn);                            \
-        } else if (atomic_read(&conn->gnc_refcount) == 0) {             \
+	} else if (val == 0) {                                          \
                 kgnilnd_destroy_conn(conn);                             \
         }                                                               \
 } while (0)
@@ -1688,8 +1691,8 @@ kgn_tx_t *kgnilnd_new_tx_msg (int type, lnet_nid_t source);
 void kgnilnd_tx_done (kgn_tx_t *tx, int completion);
 void kgnilnd_txlist_done(struct list_head *txlist, int error);
 void kgnilnd_unlink_peer_locked (kgn_peer_t *peer);
-void _kgnilnd_schedule_conn(kgn_conn_t *conn, const char *caller, int line);
-void kgnilnd_schedule_process_conn(kgn_conn_t *conn, int sched_intent);
+int _kgnilnd_schedule_conn(kgn_conn_t *conn, const char *caller, int line, int refheld);
+int kgnilnd_schedule_process_conn(kgn_conn_t *conn, int sched_intent);
 
 void kgnilnd_schedule_dgram (kgn_device_t *dev);
 int kgnilnd_create_peer_safe(kgn_peer_t **peerp, lnet_nid_t nid, kgn_net_t *net);

@@ -214,6 +214,7 @@ kgnilnd_create_conn(kgn_conn_t **connp, kgn_device_t *dev)
         INIT_LIST_HEAD(&conn->gnc_mdd_list);
         spin_lock_init(&conn->gnc_list_lock);
         spin_lock_init(&conn->gnc_tx_lock);
+	conn->gnc_magic = GNILND_CONN_MAGIC;
 
         /* set tx id to nearly the end to make sure we find wrapping
          * issues soon */
@@ -397,13 +398,15 @@ kgnilnd_destroy_conn(kgn_conn_t *conn)
                 list_empty(&conn->gnc_list) &&
                 list_empty(&conn->gnc_hashlist) &&
                 list_empty(&conn->gnc_schedlist) &&
-                list_empty(&conn->gnc_mdd_list),
-                "conn 0x%p->%s IRQ %d sched %d purg %d ep 0x%p lists %d/%d/%d/%d\n",
+		list_empty(&conn->gnc_mdd_list) &&
+		conn->gnc_magic == GNILND_CONN_MAGIC,
+		"conn 0x%p->%s IRQ %d sched %d purg %d ep 0x%p Mg %d lists %d/%d/%d/%d\n",
                 conn, conn->gnc_peer ? libcfs_nid2str(conn->gnc_peer->gnp_nid)
                                      : "<?>",
                 !!in_interrupt(), conn->gnc_scheduled,
                 conn->gnc_in_purgatory,
                 conn->gnc_ephandle,
+		conn->gnc_magic,
                 list_empty(&conn->gnc_list),
                 list_empty(&conn->gnc_hashlist),
                 list_empty(&conn->gnc_schedlist),
@@ -421,6 +424,9 @@ kgnilnd_destroy_conn(kgn_conn_t *conn)
 
         CDEBUG(D_NET, "destroying conn %p ephandle %p error %d\n",
                 conn, conn->gnc_ephandle, conn->gnc_error);
+
+	/* We are freeing this memory remove the magic value from the connection */
+	conn->gnc_magic = 0;
 
         /* if there is an FMA blk left here, we'll tear it down */
         if (conn->gnc_fma_blk) {
