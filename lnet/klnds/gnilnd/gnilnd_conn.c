@@ -388,6 +388,8 @@ kgnilnd_find_free_mbox(kgn_conn_t *conn)
 
                 mbox = &fma_blk->gnm_mbox_info[id];
                 mbox->mbx_create_conn_memset = jiffies;
+		mbox->mbx_nallocs++;
+		mbox->mbx_nallocs_total++;
                 
                 /* zero mbox to remove any old data from our last use.
                  * this better be safe, if not our purgatory timers
@@ -508,6 +510,7 @@ kgnilnd_release_mbox(kgn_conn_t *conn, int purgatory_hold)
                         "conn %p bit %d already cleared in fma_blk %p\n", 
                          conn, id, fma_blk);
                 conn->gnc_fma_blk = NULL;
+		mbox->mbx_nallocs--;
         }
 
         if (CFS_FAIL_CHECK(CFS_FAIL_GNI_FMABLK_AVAIL)) {
@@ -1771,6 +1774,9 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
          */
         conn->gnc_last_tx = jiffies - (cfs_time_seconds(GNILND_TO2KA(conn->gnc_timeout)) * 2);
         conn->gnc_state = GNILND_CONN_ESTABLISHED;
+
+	/* save the dgram type used to establish this connection */
+	conn->gnc_dgram_type = dgram->gndg_type;
 
         /* refs are not transferred from dgram to tables, so increment to
          * take ownership */

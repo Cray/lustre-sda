@@ -471,11 +471,14 @@ typedef struct kgn_tunables {
 
 typedef struct kgn_mbox_info {
         lnet_nid_t mbx_prev_nid;
+	lnet_nid_t mbx_prev_purg_nid;
         unsigned long mbx_create_conn_memset;
         unsigned long mbx_add_purgatory;
         unsigned long mbx_detach_of_purgatory;
         unsigned long mbx_release_from_purgatory;
         unsigned long mbx_release_purg_active_dgram;
+	int           mbx_nallocs;
+	int           mbx_nallocs_total;
 } kgn_mbox_info_t;
 
 typedef struct kgn_fma_memblock {
@@ -722,6 +725,7 @@ typedef struct kgn_conn {
         short               gnc_needs_detach;   /* flag set in detach_purgatory_all_locked so reaper will clear out purgatory */
         short               gnc_needs_closing;  /* flag set in del_conns when called from kgnilnd_del_peer_or_conn */
 	atomic_t	    gnc_tx_in_use;	/* # of tx's currently in use by another thread use kgnilnd_peer_conn_lock */
+	kgn_dgram_type_t    gnc_dgram_type;     /* save dgram type used to establish this conn */
 } kgn_conn_t;
 
 typedef struct kgn_mdd_purgatory {
@@ -1891,6 +1895,17 @@ kgnilnd_dgram_type2str(kgn_dgram_t *dgram)
         return "<?type?>";
 }
 
+static inline const char *
+kgnilnd_conn_dgram_type2str(kgn_dgram_type_t type)
+{
+	switch (type) {
+		DO_TYPE(GNILND_DGRAM_REQ);
+		DO_TYPE(GNILND_DGRAM_WC_REQ);
+		DO_TYPE(GNILND_DGRAM_NAK);
+		DO_TYPE(GNILND_DGRAM_CLOSE);
+	}
+	return "<?type?>";
+}
 
 #undef DO_TYPE
 

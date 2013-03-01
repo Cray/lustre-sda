@@ -424,6 +424,11 @@ kgnilnd_destroy_conn(kgn_conn_t *conn)
 
         /* if there is an FMA blk left here, we'll tear it down */
         if (conn->gnc_fma_blk) {
+		if (conn->gnc_peer) {
+			kgn_mbox_info_t *mbox;
+			mbox = &conn->gnc_fma_blk->gnm_mbox_info[conn->gnc_mbox_id];
+			mbox->mbx_prev_nid = conn->gnc_peer->gnp_nid;
+		}
                 kgnilnd_release_mbox(conn, 0);
         }
 
@@ -1049,7 +1054,7 @@ kgnilnd_add_purgatory_locked(kgn_conn_t *conn, kgn_peer_t *peer)
         conn->gnc_in_purgatory = 1;
 
         mbox = &conn->gnc_fma_blk->gnm_mbox_info[conn->gnc_mbox_id];
-        mbox->mbx_prev_nid = peer->gnp_nid;
+	mbox->mbx_prev_purg_nid = peer->gnp_nid;
         mbox->mbx_add_purgatory = jiffies;
         kgnilnd_release_mbox(conn, 1); 
 
