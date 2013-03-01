@@ -114,6 +114,10 @@ static int peer_health = 0;
 CFS_MODULE_PARM(peer_health, "i", int, 0444,
                 "Disable peer timeout for LNet peer health, default off, > 0 to enable");
 
+static int peer_timeout = -1;
+CFS_MODULE_PARM(peer_timeout, "i", int, 0444,
+		"Peer timeout used for peer_health, default based on gnilnd timeout, > -1 to manually set");
+
 static int vmap_cksum = 0;
 CFS_MODULE_PARM(vmap_cksum, "i", int, 0644,
                 "use vmap for all kiov checksumming, default off");
@@ -183,6 +187,7 @@ kgn_tunables_t kgnilnd_tunables = {
         .kgn_loops                  = &loops,
         .kgn_peer_hash_size         = &hash_size,
         .kgn_peer_health            = &peer_health,
+	.kgn_peer_timeout           = &peer_timeout,
         .kgn_vmap_cksum             = &vmap_cksum,
         .kgn_mbox_per_block         = &mbox_per_block,
         .kgn_nphys_mbox             = &nphys_mbox,
@@ -447,11 +452,19 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
 		.mode     = 0644,
 		.proc_handler = &proc_dointvec
 	},
-		INIT_CTL_NAME(34)
+		INIT_CTL_NAME(35)
 		.procname = "dgram_timeout"
 		.data     = &dgram_timeout,
 		.maxlen   = sizeof(int),
 		.mode     = 0644,
+		.proc_handler = &proc_dointvec
+	},
+	{
+		INIT_CTL_NAME(36)
+		.procname = "peer_timeout"
+		.data     = &peer_timeout,
+		.maxlen   = sizeof(int),
+		.mode     = 0444,
 		.proc_handler = &proc_dointvec
 	},
         {0}
