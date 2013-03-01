@@ -21,6 +21,7 @@ CPU=`awk '/model/ {print $4}' /proc/cpuinfo`
 case `uname -r` in
 2.4*) FSTYPE=${FSTYPE:-ext3} ;;
 2.6*) FSTYPE=${FSTYPE:-ldiskfs} ;;
+3.0*) FSTYPE=${FSTYPE:-ldiskfs} ;;
 *) error "unsupported kernel" ;;
 esac
 
@@ -5223,6 +5224,22 @@ test_102k() {
         rm -rf $DIR/$tfile $test_kdir
 }
 run_test 102k "setfattr without parameter of value shouldn't cause a crash"
+
+test_102l() {
+	# LU-532 trusted. xattr is invisible to non-root
+	local testfile=$DIR/$tfile
+
+	touch $testfile
+
+	echo "listxattr as user..."
+	chown $RUNAS_ID $testfile
+	$RUNAS getfattr -d -m '.*' $testfile 2>&1 |
+	    grep -q "trusted" &&
+		error "$testfile trusted xattrs are user visible"
+
+	return 0;
+}
+run_test 102l "listxattr filter test =================================="
 
 cleanup_test102
 
