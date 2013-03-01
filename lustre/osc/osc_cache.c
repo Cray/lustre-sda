@@ -2841,7 +2841,6 @@ int osc_cache_writeback_range(const struct lu_env *env, struct osc_object *obj,
 			 * we don't know how long we will wait for it to be
 			 * flushed since it may be blocked at awaiting more
 			 * grants. We do this for the correctness of fsync. */
-			LASSERT(hp == 0 && discard == 0);
 			ext->oe_urgent = 1;
 			break;
 		case OES_TRUNC:
