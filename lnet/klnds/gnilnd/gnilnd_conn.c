@@ -2210,7 +2210,7 @@ kgnilnd_dgram_waitq(void *arg)
 }
 
 int
-kgnilnd_start_outbound_dgrams(kgn_device_t *dev)
+kgnilnd_start_outbound_dgrams(kgn_device_t *dev, unsigned long deadline)
 {
         int                      did_something = 0, rc;
         kgn_peer_t              *peer = NULL;
@@ -2218,7 +2218,7 @@ kgnilnd_start_outbound_dgrams(kgn_device_t *dev)
         spin_lock(&dev->gnd_connd_lock);
 
         /* Active connect - we added this in kgnilnd_launch_tx */
-        while (!list_empty(&dev->gnd_connd_peers)) {
+	while (!list_empty(&dev->gnd_connd_peers) && time_before(jiffies, deadline)) {
                 peer = list_first_entry(&dev->gnd_connd_peers,
                                         kgn_peer_t, gnp_connd_list);
 
@@ -2321,6 +2321,7 @@ kgnilnd_repost_wc_dgrams(kgn_device_t *dev)
 		} else {
 			CDEBUG(D_NETERROR, "error %d: dev %d could not post wildcard datagram\n",
 				rerc, dev->gnd_id);
+			break;
 		}
 	}
 
@@ -2346,6 +2347,7 @@ kgnilnd_dgram_mover(void *arg)
         unsigned long            next_purge_check = jiffies - 1;
         unsigned long            timeout;
         struct timer_list        timer;
+	unsigned long		 deadline = 0;
         DEFINE_WAIT(wait);
 
         snprintf(name, sizeof(name), "kgnilnd_dg_%02d", dev->gnd_id);
@@ -2357,7 +2359,7 @@ kgnilnd_dgram_mover(void *arg)
         /* we are ok not locking for these variables as the dgram waitq threads
          * will block both due to tying up net (kgn_shutdown) and the completion
          * event for the dgram_waitq (kgn_quiesce_trigger) */
-
+	deadline = jiffies + cfs_time_seconds(*kgnilnd_tunables.kgn_dgram_timeout);
         while (!kgnilnd_data.kgn_shutdown) {
                 /* Safe: kgn_shutdown only set when quiescent */
 
@@ -2385,8 +2387,10 @@ kgnilnd_dgram_mover(void *arg)
 
                 up_read(&kgnilnd_data.kgn_net_rw_sem);
 
+		CFS_FAIL_TIMEOUT(CFS_FAIL_GNI_DGRAM_DEADLINE,
+			(*kgnilnd_tunables.kgn_dgram_timeout + 1));
                 /* start new outbound dgrams */
-                did_something += kgnilnd_start_outbound_dgrams(dev);
+		did_something += kgnilnd_start_outbound_dgrams(dev, deadline);
 
                 /* find dead dgrams */
                 if (time_after_eq(jiffies, next_purge_check)) {
@@ -2395,7 +2399,8 @@ kgnilnd_dgram_mover(void *arg)
                         
                         next_purge_check = (long) jiffies + 
                                       cfs_time_seconds(kgnilnd_data.kgn_new_min_timeout / 4);
-                } 
+		}
+
 		did_something += kgnilnd_repost_wc_dgrams(dev);
 
                 /* careful with the jiffy wrap... */
@@ -2404,7 +2409,7 @@ kgnilnd_dgram_mover(void *arg)
                 CDEBUG(D_INFO, "did %d timeout %lu next %lu jiffies %lu\n", 
                        did_something, timeout, next_purge_check, jiffies);
 
-                if (did_something || timeout <= 0) {
+		if ((did_something || timeout <= 0) && time_before(jiffies, deadline)) {
                         did_something = 0;
                         continue;
                 }
@@ -2417,8 +2422,9 @@ kgnilnd_dgram_mover(void *arg)
                 /* last second chance for others to poke us */
                 did_something += xchg(&dev->gnd_dgram_ready, GNILND_DGRAM_IDLE);
 
-                /* check flag variables before comitting */
-                if (!did_something &&
+		/* check flag variables before comittingi even if we did something;
+		 * if we are after the deadline call schedule */
+		if ((!did_something || time_after(jiffies, deadline)) &&
                     !kgnilnd_data.kgn_shutdown && 
                     !kgnilnd_data.kgn_quiesce_trigger) {
                         CDEBUG(D_INFO, "schedule timeout %ld (%lu sec)\n",
@@ -2426,6 +2432,7 @@ kgnilnd_dgram_mover(void *arg)
                         wake_up_all(&dev->gnd_dgping_waitq);
                         schedule();
                         CDEBUG(D_INFO, "awake after schedule\n");
+			deadline = jiffies + cfs_time_seconds(*kgnilnd_tunables.kgn_dgram_timeout);
                 }
                 
                 del_singleshot_timer_sync(&timer);
