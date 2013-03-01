@@ -815,6 +815,7 @@ kgnilnd_set_conn_params(kgn_dgram_t *dgram)
         kgn_gniparams_t        *rem_param = &connreq->gncr_gnparams;
         gni_return_t            rrc;
         int                     rc = 0;
+	gni_smsg_attr_t        *remote = &connreq->gncr_gnparams.gnpr_smsg_attr;
 
         /* set timeout vals in conn early so we can use them for the NAK */
 
@@ -849,7 +850,6 @@ kgnilnd_set_conn_params(kgn_dgram_t *dgram)
                         &connreq->gncr_gnparams.gnpr_smsg_attr);
         if (unlikely(rrc == GNI_RC_INVALID_PARAM)) {
                 gni_smsg_attr_t *local = &conn->gnpr_smsg_attr;
-                gni_smsg_attr_t *remote = &connreq->gncr_gnparams.gnpr_smsg_attr;
                 /* help folks figure out if there is a tunable off, etc. */
                 LCONSOLE_ERROR("SMSG attribute mismatch. Data from local/remote:"
                                " type %d/%d msg_maxsize %u/%u"
@@ -884,6 +884,7 @@ kgnilnd_set_conn_params(kgn_dgram_t *dgram)
 
         conn->gnc_peerstamp = connreq->gncr_peerstamp;
         conn->gnc_peer_connstamp = connreq->gncr_connstamp;
+	conn->remote_mbox_addr = (void *)((char *)remote->msg_buffer + remote->mbox_offset);
 
         /* We update the reaper timeout once we have a valid conn and timeout */
         kgnilnd_update_reaper_timeout(GNILND_TO2KA(conn->gnc_timeout));
