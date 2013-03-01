@@ -94,7 +94,7 @@ _kgnilnd_debug_tx(kgn_tx_t *tx, struct libcfs_debug_msg_data *msgdata,
 }
 
 void
-_kgnilnd_api_rc_lbug(const char *rcstr, int rc, struct libcfs_debug_msg_data *msgdata,
+_kgnilnd_api_rc_lbug(const char* rcstr, int rc, struct libcfs_debug_msg_data *msgdata,
 			const char *fmt, ...)
 {
 	va_list args;
