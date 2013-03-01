@@ -101,6 +101,11 @@
 #define GNILND_MBOX_CREDITS       256           /* number of credits per mailbox */
 #define GNILND_COOKIE             0xa3579       /* cookie used by along with ptag by GNI */
 #define GNILND_CONN_MAGIC         0xa100f       /* magic value for verifying connection validity */
+/* checksum values */
+#define GNILND_CHECKSUM_OFF		0	/* checksum turned off */
+#define GNILND_CHECKSUM_SMSG_HEADER	1	/* Only checksum SMSG header */
+#define GNILND_CHECKSUM_SMSG		2	/* checksum entire SMSG packet */
+#define GNILND_CHECKSUM_SMSG_BTE	3	/* Full checksum support */
 
 /* tune down some COMPUTE options as they won't see the same number of connections and 
  * don't need the throughput of multiple threads by default */
@@ -148,8 +153,8 @@
 /* Macro for finding last_rx 2 datapoints are compared 
  * and the most recent one in jiffies is returned.
  */
-#define GNILND_LASTRX(conn) time_after(conn->gnc_last_rx, conn->gnc_last_rx_cq) \
-                            ? conn->gnc_last_rx : conn->gnc_last_rx_cq 
+#define GNILND_LASTRX(conn) (time_after(conn->gnc_last_rx, conn->gnc_last_rx_cq) \
+				? conn->gnc_last_rx : conn->gnc_last_rx_cq)
 
 /************************************************************************
  * Enum, flag and tag data
@@ -280,8 +285,8 @@ typedef enum kgn_conn_state {
 } kgn_conn_state_t;
 
 /* changing these requires a change to GNILND_CONNREQ_VERSION and
- * will result in dropped packets intead of NAKs. Adding to this is
- * acceptible without changing the CONNREQ_VERSION, but code should
+ * will result in dropped packets instead of NAKs. Adding to this is
+ * acceptable without changing the CONNREQ_VERSION, but code should
  * be ready to handle NAKs on version mismatch  */
 typedef enum kgn_connreq_type {
         GNILND_CONNREQ_REQ = 1,         /* how YOU doin' ? */
@@ -826,6 +831,7 @@ typedef struct kgn_data {
         cfs_mem_cache_t        *kgn_dgram_cache;      /* outgoing datagrams */
 
         struct page          ***kgn_cksum_map_pages;  /* page arrays for mapping pages on checksum */
+	__u64			kgn_cksum_npages;     /* Number of pages allocated for checksumming */
         atomic_t                kgn_nvmap_cksum;      /* # times we vmapped for checksums */
         atomic_t                kgn_nvmap_short;      /* # times we vmapped for short kiov */
 

@@ -604,7 +604,7 @@ kgnilnd_close_conn_locked(kgn_conn_t *conn, int error)
          * open up the peer count so that a new ESTABLISHED conn is then free
          * to send new messages -- sending before the previous EPs are destroyed
          * could end up with messages on the network for the old conn _after_
-         * the new conn and break the mbox saftey protocol */
+	 * the new conn and break the mbox safety protocol */
         kgnilnd_admin_addref(conn->gnc_peer->gnp_dirty_eps);
 
         /* Remove from conn hash table: no new callbacks */
@@ -657,8 +657,7 @@ kgnilnd_close_conn(kgn_conn_t *conn, int error)
 void
 kgnilnd_complete_closed_conn(kgn_conn_t *conn)
 {
-        CFS_LIST_HEAD           (sinners);
-        CFS_LIST_HEAD           (souls);
+	LIST_HEAD		(sinners);
         kgn_tx_t               *tx, *txn;
         int                     nlive = 0;
         int                     nrdma = 0;
@@ -934,17 +933,18 @@ kgnilnd_create_peer_safe (kgn_peer_t **peerp, lnet_nid_t nid, kgn_net_t *net)
                 if (rc < 0)
                         return rc;
         } else {
-                /* find net takes a reference adds a reference on the net
-                 * if we are not usuing it we must do it manually so the net
-                 * references are correct when tearing down the net
+		/* find net adds a reference on the net if we are not using
+		 * it we must do it manually so the net references are
+		 * correct when tearing down the net
                  */
                 kgnilnd_net_addref(net);
         }       
 
         LIBCFS_ALLOC(peer, sizeof(*peer));
-        if (peer == NULL)
+	if (peer == NULL) {
+		kgnilnd_net_decref(net);
                 return -ENOMEM;
-
+	}
         peer->gnp_nid = nid;
 	peer->gnp_down = GNILND_RCA_NODE_UP;
 
@@ -1272,7 +1272,6 @@ kgnilnd_get_peer_info(int index,
         for (i = 0; i < *kgnilnd_tunables.kgn_peer_hash_size; i++) {
 
                 list_for_each(ptmp, &kgnilnd_data.kgn_peers[i]) {
-
                         peer = list_entry(ptmp, kgn_peer_t, gnp_list);
 
                         if (index-- > 0)
@@ -1291,7 +1290,6 @@ kgnilnd_get_peer_info(int index,
                         goto out;
                 }
         }
-        
  out:
         read_unlock(&kgnilnd_data.kgn_peer_conn_lock);
         if (rc)
@@ -1360,8 +1358,8 @@ kgnilnd_add_peer (kgn_net_t *net, lnet_nid_t nid, kgn_peer_t **peerp)
         kgnilnd_add_peer_locked(nid, peer, peerp);
 
         CDEBUG(D_NET, "peer 0x%p->%s connecting %d\n",
-               peer, libcfs_nid2str(peer->gnp_nid),
-               peer->gnp_connecting);  
+	       peerp, libcfs_nid2str((*peerp)->gnp_nid),
+	       (*peerp)->gnp_connecting);
 
         write_unlock(&kgnilnd_data.kgn_peer_conn_lock);
         RETURN(0);
@@ -1446,8 +1444,8 @@ int
 kgnilnd_del_conn_or_peer (kgn_net_t *net, lnet_nid_t nid, int command, 
                           int error)
 {
-        CFS_LIST_HEAD     (souls);
-        CFS_LIST_HEAD     (zombies);
+	LIST_HEAD		(souls);
+	LIST_HEAD		(zombies);
         struct list_head  *ptmp, *pnxt;
         kgn_peer_t        *peer;
         int                lo;
@@ -1614,7 +1612,6 @@ kgnilnd_get_conn_info(kgn_peer_t *peer,
         *fmaq_len = kgnilnd_count_list(&conn->gnc_fmaq);
         *nfma = atomic_read(&conn->gnc_nlive_fma);
         *nrdma = atomic_read(&conn->gnc_nlive_rdma);
-
  out:
         read_unlock(&kgnilnd_data.kgn_peer_conn_lock);
         return rc;
@@ -1801,7 +1798,6 @@ kgnilnd_ctl(lnet_ni_t *ni, unsigned int cmd, void *arg)
                         data->ioc_u32[3] = rx_seq;
                         data->ioc_u32[4] = nrdma;
                 }
-
                 break;
         }
         case IOC_LIBCFS_ADD_PEER: {
@@ -1912,7 +1908,7 @@ kgnilnd_query(lnet_ni_t *ni, lnet_nid_t nid, cfs_time_t *when)
          * new TX to trigger conn setup */
         read_unlock(&kgnilnd_data.kgn_peer_conn_lock);
 
-       /* if we coulnd't find him, we'll fire up a TX and get connected -
+	/* if we couldn't find him, we'll fire up a TX and get connected -
          * if we don't do this, after ni_peer_timeout, LNet will declare him dead.
          * So really we treat kgnilnd_query as a bit of a 'connect now' type
          * event because it'll only do this when it wants to send 
@@ -1942,7 +1938,7 @@ kgnilnd_dev_init(kgn_device_t *dev)
         unsigned int      cq_size;
         ENTRY;
 
-        /* size of these CQs should be able to accomodate the outgoing 
+	/* size of these CQs should be able to accommodate the outgoing
          * RDMA and SMSG transactions.  Since we really don't know what we
          * really need here, we'll take credits * 2 * 3 to allow a bunch.
          * We need to dig into this more with the performance work. */
@@ -2150,46 +2146,6 @@ int kgnilnd_base_startup (void)
         /* zero pointers, flags etc */
         memset(&kgnilnd_data, 0, sizeof(kgnilnd_data)); 
 
-        switch (*kgnilnd_tunables.kgn_checksum) {
-        default:
-                CERROR("Invalid checksum module paramenter: %d\n", 
-                        *kgnilnd_tunables.kgn_checksum);
-                rc = -EINVAL;
-                GOTO(out, rc);
-        case 0:
-                /* no checksumming */
-                break;;
-        case 1:
-                LCONSOLE_INFO("SMSG header only checksumming enabled\n");
-                break;
-        case 2:
-                LCONSOLE_INFO("SMSG checksumming enabled\n");
-                break;
-        case 3:
-                LCONSOLE_INFO("SMSG + BTE checksumming enabled\n");
-                break;
-        }
-
-        if (*kgnilnd_tunables.kgn_max_immediate > GNILND_MAX_IMMEDIATE) {
-                LCONSOLE_ERROR("kgnilnd module parameter 'max_immediate' too large %d > %d\n",
-                               *kgnilnd_tunables.kgn_max_immediate, GNILND_MAX_IMMEDIATE);
-                rc = -EINVAL;
-                GOTO(out, rc);
-        }
-
-        if (*kgnilnd_tunables.kgn_mbox_per_block < 1) {
-                *kgnilnd_tunables.kgn_mbox_per_block = 1;
-        }
-
-        if (*kgnilnd_tunables.kgn_concurrent_sends == 0) {
-                *kgnilnd_tunables.kgn_concurrent_sends = *kgnilnd_tunables.kgn_peer_credits;
-        } else if (*kgnilnd_tunables.kgn_concurrent_sends > *kgnilnd_tunables.kgn_peer_credits) {
-                LCONSOLE_ERROR("kgnilnd parameter 'concurrent_sends' too large: %d > %d (peer_credits)\n",
-                        *kgnilnd_tunables.kgn_concurrent_sends, *kgnilnd_tunables.kgn_peer_credits);
-                rc = -EINVAL;
-                GOTO(out, rc);
-        } 
-
         /* CAVEAT EMPTOR: Every 'Fma' message includes the sender's NID and
          * a unique (for all time) connstamp so we can uniquely identify
          * the sender.  The connstamp is an incrementing counter
@@ -2375,9 +2331,11 @@ int kgnilnd_base_startup (void)
                 rc = -ENOMEM;
                 GOTO(failed, rc);
         }
-        memset(kgnilnd_data.kgn_cksum_map_pages, 0, num_online_cpus() * sizeof (struct page *));
+	kgnilnd_data.kgn_cksum_npages = num_possible_cpus();
+	memset(kgnilnd_data.kgn_cksum_map_pages, 0,
+		kgnilnd_data.kgn_cksum_npages * sizeof (struct page *));
 
-        for (i = 0; i < num_online_cpus(); i++) {
+	for (i = 0; i < kgnilnd_data.kgn_cksum_npages; i++) {
                 kgnilnd_data.kgn_cksum_map_pages[i] = kmalloc(LNET_MAX_IOV * sizeof (struct page *),
                                                               GFP_KERNEL);
                 if (kgnilnd_data.kgn_cksum_map_pages[i] == NULL) {
@@ -2485,7 +2443,6 @@ int kgnilnd_base_startup (void)
 
 failed:
         kgnilnd_base_shutdown();
-out:
         kgnilnd_data.kgn_init = GNILND_INIT_NOTHING;
         RETURN(rc);
 }
@@ -2638,7 +2595,7 @@ kgnilnd_base_shutdown (void)
         }
 
         if (kgnilnd_data.kgn_cksum_map_pages != NULL) {
-                for (i = 0; i < num_online_cpus(); i++) {
+		for (i = 0; i < kgnilnd_data.kgn_cksum_npages; i++) {
                         if (kgnilnd_data.kgn_cksum_map_pages[i] != NULL) {
                                 kfree(kgnilnd_data.kgn_cksum_map_pages[i]);
                         }
@@ -2669,7 +2626,7 @@ kgnilnd_startup (lnet_ni_t *ni)
         if (kgnilnd_data.kgn_init == GNILND_INIT_NOTHING) {
                 rc = kgnilnd_base_startup();
                 if (rc != 0)
-                        return rc;
+			RETURN(rc);
         }
 
         /* Serialize with shutdown. */

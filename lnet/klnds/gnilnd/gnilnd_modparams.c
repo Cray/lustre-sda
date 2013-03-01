@@ -283,7 +283,7 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
                 .maxlen   = sizeof(int),
                 .mode     = 0444,
                 .proc_handler = &proc_dointvec
-
+	},
         {
                 INIT_CTL_NAME(14)
                 .procname = "nwildcard",
@@ -481,38 +481,67 @@ static cfs_sysctl_table_t kgnilnd_top_ctl_table[] = {
         },
         {       INIT_CTL_NAME(0)   }
 };
+#endif
 
 int
 kgnilnd_tunables_init ()
 {
+	int rc = 0;
+
+#if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM
         kgnilnd_tunables.kgn_sysctl =
                 cfs_register_sysctl_table(kgnilnd_top_ctl_table, 0);
 
         if (kgnilnd_tunables.kgn_sysctl == NULL)
                 CWARN("Can't setup /proc tunables\n");
-
-        return 0;
-}
-
-void
-kgnilnd_tunables_fini ()
-{
-        if (kgnilnd_tunables.kgn_sysctl != NULL)
-                cfs_unregister_sysctl_table(kgnilnd_tunables.kgn_sysctl);
-}
-
-#else
-
-int
-kgnilnd_tunables_init ()
-{
-        return 0;
-}
-
-void
-kgnilnd_tunables_fini ()
-{
-}
-
 #endif
+	switch (*kgnilnd_tunables.kgn_checksum) {
+	default:
+		CERROR("Invalid checksum module parameter: %d\n",
+		       *kgnilnd_tunables.kgn_checksum);
+		rc = -EINVAL;
+		GOTO(out, rc);
+	case GNILND_CHECKSUM_OFF:
+		/* no checksumming */
+		break;
+	case GNILND_CHECKSUM_SMSG_HEADER:
+		LCONSOLE_INFO("SMSG header only checksumming enabled\n");
+		break;
+	case GNILND_CHECKSUM_SMSG:
+		LCONSOLE_INFO("SMSG checksumming enabled\n");
+		break;
+	case GNILND_CHECKSUM_SMSG_BTE:
+		LCONSOLE_INFO("SMSG + BTE checksumming enabled\n");
+		break;
+}
 
+	if (*kgnilnd_tunables.kgn_max_immediate > GNILND_MAX_IMMEDIATE) {
+		LCONSOLE_ERROR("kgnilnd module parameter 'max_immediate' too large %d > %d\n",
+		*kgnilnd_tunables.kgn_max_immediate, GNILND_MAX_IMMEDIATE);
+		rc = -EINVAL;
+		GOTO(out, rc);
+}
+
+	if (*kgnilnd_tunables.kgn_mbox_per_block < 1) {
+		*kgnilnd_tunables.kgn_mbox_per_block = 1;
+	}
+
+	if (*kgnilnd_tunables.kgn_concurrent_sends == 0) {
+		*kgnilnd_tunables.kgn_concurrent_sends = *kgnilnd_tunables.kgn_peer_credits;
+	} else if (*kgnilnd_tunables.kgn_concurrent_sends > *kgnilnd_tunables.kgn_peer_credits) {
+		LCONSOLE_ERROR("kgnilnd parameter 'concurrent_sends' too large: %d > %d (peer_credits)\n",
+			       *kgnilnd_tunables.kgn_concurrent_sends, *kgnilnd_tunables.kgn_peer_credits);
+		rc = -EINVAL;
+	}
+out:
+	return rc;
+}
+
+void
+kgnilnd_tunables_fini ()
+{
+#if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM
+	if (kgnilnd_tunables.kgn_sysctl != NULL)
+		cfs_unregister_sysctl_table(kgnilnd_tunables.kgn_sysctl);
+#endif
+}
