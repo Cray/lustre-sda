@@ -50,9 +50,11 @@
 /* For Aries, use Aries Timer project data */
 #include <aries/aries_timeouts_gpl.h>
 int ldlm_enqueue_min = TIMEOUT_SECS(TO_Lustre_ldlm_enqueue_min);
+#elif defined (CONFIG_CRAY_GEMINI)
+int ldlm_enqueue_min = OBD_TIMEOUT_DEFAULT;
 #else
 int ldlm_enqueue_min = OBD_TIMEOUT_DEFAULT;
-#endif
+#endif /* CONFIG_CRAY_ARIES && CONFIG_CRAY_GEMINI */
 CFS_MODULE_PARM(ldlm_enqueue_min, "i", int, 0644,
                 "lock enqueue timeout minimum");
 
