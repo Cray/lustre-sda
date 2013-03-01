@@ -22,10 +22,92 @@
 #ifndef _GNILND_API_WRAP_H
 #define _GNILND_API_WRAP_H
 
+/* LNet is allocated failure locations 0xe000 to 0xffff */
+
+/* GNILND has 0xf0XX */
+#define CFS_FAIL_GNI			0xf000
+#define CFS_FAIL_GNI_PHYS_MAP		0xf001
+#define CFS_FAIL_GNI_VIRT_MAP		0xf002
+#define CFS_FAIL_GNI_GET_UNMAP		0xf003
+#define CFS_FAIL_GNI_PUT_UNMAP		0xf004
+#define CFS_FAIL_GNI_MAP_TX		0xf005
+#define CFS_FAIL_GNI_SMSG_SEND		0xf006
+#define CFS_FAIL_GNI_CLOSE_SEND		0xf007
+#define CFS_FAIL_GNI_CDM_CREATE		0xf008
+#define CFS_FAIL_GNI_CDM_DESTROY	0xf009
+#define CFS_FAIL_GNI_CDM_ATTACH		0xf00a
+#define CFS_FAIL_GNI_CQ_CREATE		0xf00b
+#define CFS_FAIL_GNI_CQ_DESTROY		0xf00c
+#define CFS_FAIL_GNI_EP_BIND		0xf00d
+#define CFS_FAIL_GNI_EP_UNBIND		0xf00e
+#define CFS_FAIL_GNI_EP_SET_EVDATA	0xf00f
+#define CFS_FAIL_GNI_SMSG_INIT		0xf010
+#define CFS_FAIL_GNI_SMSG_RELEASE	0xf011
+#define CFS_FAIL_GNI_POST_RDMA		0xf012
+#define CFS_FAIL_GNI_GET_COMPLETED	0xf013
+#define CFS_FAIL_GNI_EP_DESTROY		0xf015
+#define CFS_FAIL_GNI_VIRT_UNMAP		0xf016
+#define CFS_FAIL_GNI_MDD_RELEASE	0xf017
+#define CFS_FAIL_GNI_NOOP_SEND		0xf018
+#define CFS_FAIL_GNI_ERR_SUBSCRIBE	0xf01a
+#define CFS_FAIL_GNI_QUIESCE_RACE	0xf01b
+#define CFS_FAIL_GNI_DG_TERMINATE	0xf01c
+#define CFS_FAIL_GNI_REG_QUIESCE	0xf01d
+#define CFS_FAIL_GNI_IN_QUIESCE		0xf01e
+#define CFS_FAIL_GNI_DELAY_RDMA		0xf01f
+#define CFS_FAIL_GNI_SR_DOWN_RACE	0xf020
+#define CFS_FAIL_GNI_ALLOC_TX		0xf021
+#define CFS_FAIL_GNI_FMABLK_AVAIL	0xf022
+#define CFS_FAIL_GNI_EP_CREATE		0xf023
+#define CFS_FAIL_GNI_CQ_GET_EVENT	0xf024
+#define CFS_FAIL_GNI_PROBE		0xf025
+#define CFS_FAIL_GNI_EP_TEST		0xf026
+#define CFS_FAIL_GNI_CONNREQ_DROP	0xf027
+#define CFS_FAIL_GNI_CONNREQ_PROTO	0xf028
+#define CFS_FAIL_GNI_CONND_PILEUP	0xf029
+#define CFS_FAIL_GNI_PHYS_SETUP		0xf02a
+#define CFS_FAIL_GNI_FIND_TARGET	0xf02b
+#define CFS_FAIL_GNI_WC_DGRAM_FREE	0xf02c
+#define CFS_FAIL_GNI_DROP_CLOSING	0xf02d
+#define CFS_FAIL_GNI_RX_CLOSE_CLOSING	0xf02e
+#define CFS_FAIL_GNI_RX_CLOSE_CLOSED	0xf02f
+#define CFS_FAIL_GNI_EP_POST		0xf030
+#define CFS_FAIL_GNI_PACK_SRCNID	0xf031
+#define CFS_FAIL_GNI_PACK_DSTNID	0xf032
+#define CFS_FAIL_GNI_PROBE_WAIT		0xf033
+#define CFS_FAIL_GNI_SMSG_CKSUM1	0xf034
+#define CFS_FAIL_GNI_SMSG_CKSUM2	0xf035
+#define CFS_FAIL_GNI_SMSG_CKSUM3	0xf036
+#define CFS_FAIL_GNI_DROP_DESTROY_EP	0xf037
+#define CFS_FAIL_GNI_SMSG_GETNEXT	0xf038
+#define CFS_FAIL_GNI_FINISH_PURG	0xf039
+#define CFS_FAIL_GNI_PURG_REL_DELAY	0xf03a
+#define CFS_FAIL_GNI_DONT_NOTIFY	0xf03b
+#define CFS_FAIL_GNI_VIRT_SMALL_MAP	0xf03c
+#define CFS_FAIL_GNI_DELAY_RDMAQ	0xf03d
+#define CFS_FAIL_GNI_PAUSE_SHUTDOWN	0xf03e
+#define CFS_FAIL_GNI_PAUSE_DGRAM_COMP	0xf03f
+#define CFS_FAIL_GNI_NET_LOOKUP		0xf040
+#define CFS_FAIL_GNI_RECV_TIMEOUT	0xf041
+#define CFS_FAIL_GNI_SEND_TIMEOUT	0xf042
+#define CFS_FAIL_GNI_ONLY_NOOP		0xf043
+#define CFS_FAIL_GNI_FINISH_PURG2	0xf044
+#define CFS_FAIL_GNI_RACE_RESET		0xf045
+#define CFS_FAIL_GNI_GNP_CONNECTING1	0xf046
+#define CFS_FAIL_GNI_GNP_CONNECTING2	0xf047
+#define CFS_FAIL_GNI_GNP_CONNECTING3	0xf048
+#define CFS_FAIL_GNI_SCHEDULE_COMPLETE	0xf049
+#define CFS_FAIL_GNI_PUT_ACK_AGAIN	0xf050
+#define CFS_FAIL_GNI_GET_REQ_AGAIN	0xf051
+#define CFS_FAIL_GNI_SCHED_DEADLINE	0xf052
+#define CFS_FAIL_GNI_DGRAM_DEADLINE	0xf053
+
+
 /* helper macros */
 extern void
 _kgnilnd_api_rc_lbug(const char *rcstr, int rc, struct libcfs_debug_msg_data *data, 
-                        const char *fmt, ...);
+			const char *fmt, ...)
+	__attribute__ ((format (printf, 4, 5)));
 
 #define kgnilnd_api_rc_lbug(msgdata, rc, fmt, a...)                           \
 do {                                                                          \
@@ -58,7 +140,6 @@ kgnilnd_api_rc2str(gni_return_t rrc)
         LBUG();
 }
 #undef DO_RETCODE
-
 
 /* log an error and LBUG for unhandled rc from gni api function
  * the fmt should be something like:
@@ -125,7 +206,7 @@ do {                                                                          \
 
 /* TODO: RETURN wrapper that translates integer to GNI API RC string */
 
-#define apick_fn "gni_cdm_create"
+#define apick_fn "kgnilnd_cdm_create"
 #define apick_fmt "%u, %u, %u, %u, 0x%p"
 static inline gni_return_t kgnilnd_cdm_create(
 		IN uint32_t		inst_id,
@@ -166,7 +247,7 @@ static inline gni_return_t kgnilnd_cdm_create(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_cdm_attach"
+#define apick_fn "kgnilnd_cdm_attach"
 #define apick_fmt "0x%p, %u, 0x%p, 0x%p"
 static inline gni_return_t kgnilnd_cdm_attach(
 		IN gni_cdm_handle_t	cdm_hndl,
@@ -209,7 +290,7 @@ static inline gni_return_t kgnilnd_cdm_attach(
 #undef apick_fmt
 #undef apick_fn
 
-#define apick_fn "gni_cdm_destroy"
+#define apick_fn "kgnilnd_cdm_destroy"
 #define apick_fmt "0x%p"
 static inline gni_return_t kgnilnd_cdm_destroy(
                 IN gni_cdm_handle_t     cdm_hndl
@@ -244,7 +325,7 @@ static inline gni_return_t kgnilnd_cdm_destroy(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_subscribe_errors"
+#define apick_fn "kgnilnd_subscribe_errors"
 #define apick_fmt "0x%p,%x,%u,0x%p,0x%p,0x%p"
 static inline gni_return_t kgnilnd_subscribe_errors (
                 IN gni_nic_handle_t  nic_handle,
@@ -291,7 +372,7 @@ static inline gni_return_t kgnilnd_subscribe_errors (
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_release_errors"
+#define apick_fn "kgnilnd_release_errors"
 #define apick_fmt "0x%p"
 static inline gni_return_t kgnilnd_release_errors (
                 IN gni_err_handle_t err_handle
@@ -321,7 +402,7 @@ static inline gni_return_t kgnilnd_release_errors (
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_set_quiesce_callback"
+#define apick_fn "kgnilnd_set_quiesce_callback"
 #define apick_fmt "0x%p,0x%p"
 static inline gni_return_t kgnilnd_set_quiesce_callback (
                 IN gni_nic_handle_t  nic_handle,
@@ -357,7 +438,7 @@ static inline gni_return_t kgnilnd_set_quiesce_callback (
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_get_quiesce_status"
+#define apick_fn "kgnilnd_get_quiesce_status"
 #define apick_fmt "0x%p"
 static inline gni_return_t kgnilnd_get_quiesce_status (
                 IN gni_nic_handle_t  nic_handle
@@ -393,7 +474,7 @@ static inline gni_return_t kgnilnd_get_quiesce_status (
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_cq_create"
+#define apick_fn "kgnilnd_cq_create"
 #define apick_fmt "0x%p, %u, %u, 0x%p, "LPX64", 0x%p"
 static inline gni_return_t kgnilnd_cq_create(
 		IN gni_nic_handle_t 	nic_hndl,
@@ -441,7 +522,7 @@ static inline gni_return_t kgnilnd_cq_create(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_cq_destroy"
+#define apick_fn "kgnilnd_cq_destroy"
 #define apick_fmt "0x%p"
 static inline gni_return_t kgnilnd_cq_destroy(
                 IN gni_cq_handle_t cq_hndl
@@ -481,7 +562,7 @@ static inline gni_return_t kgnilnd_cq_destroy(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_cq_get_event"
+#define apick_fn "kgnilnd_cq_get_event"
 #define apick_fmt "0x%p, 0x%p"
 static inline gni_return_t kgnilnd_cq_get_event(
                 IN gni_cq_handle_t cq_hndl,
@@ -522,7 +603,7 @@ static inline gni_return_t kgnilnd_cq_get_event(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_smsg_init"
+#define apick_fn "kgnilnd_smsg_init"
 #define apick_fmt "0x%p, 0x%p, 0x%p"
 static inline gni_return_t kgnilnd_smsg_init(
                 IN gni_ep_handle_t      ep_hndl,
@@ -566,7 +647,7 @@ static inline gni_return_t kgnilnd_smsg_init(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_smsg_send"
+#define apick_fn "kgnilnd_smsg_send"
 #define apick_fmt "0x%p, 0x%p, %d, 0x%p, %u %u"
 static inline gni_return_t kgnilnd_smsg_send(
                 IN gni_ep_handle_t      ep_hndl,
@@ -616,7 +697,7 @@ static inline gni_return_t kgnilnd_smsg_send(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_smsg_getnext"
+#define apick_fn "kgnilnd_smsg_getnext"
 #define apick_fmt "0x%p,0x%p"
 static inline gni_return_t kgnilnd_smsg_getnext(
                 IN gni_ep_handle_t      ep_hndl,
@@ -655,7 +736,7 @@ static inline gni_return_t kgnilnd_smsg_getnext(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_smsg_release"
+#define apick_fn "kgnilnd_smsg_release"
 #define apick_fmt "0x%p"
 static inline gni_return_t kgnilnd_smsg_release(
                 IN gni_ep_handle_t      ep_hndl
@@ -692,7 +773,7 @@ static inline gni_return_t kgnilnd_smsg_release(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_ep_create"
+#define apick_fn "kgnilnd_ep_create"
 #define apick_fmt "0x%p, 0x%p, 0x%p"
 static inline gni_return_t kgnilnd_ep_create(
                 IN gni_nic_handle_t     nic_hndl,
@@ -733,7 +814,7 @@ static inline gni_return_t kgnilnd_ep_create(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_ep_bind"
+#define apick_fn "kgnilnd_ep_bind"
 #define apick_fmt "0x%p, %x, %x"
 static inline gni_return_t kgnilnd_ep_bind(
                 IN gni_ep_handle_t      ep_hndl,
@@ -772,7 +853,7 @@ static inline gni_return_t kgnilnd_ep_bind(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_ep_set_eventdata"
+#define apick_fn "kgnilnd_ep_set_eventdata"
 #define apick_fmt "0x%p, %x, %x"
 static inline gni_return_t kgnilnd_ep_set_eventdata(
                 IN gni_ep_handle_t      ep_hndl,
@@ -809,7 +890,7 @@ static inline gni_return_t kgnilnd_ep_set_eventdata(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_ep_unbind"
+#define apick_fn "kgnilnd_ep_unbind"
 #define apick_fmt "0x%p"
 static inline gni_return_t kgnilnd_ep_unbind(
                 IN gni_ep_handle_t      ep_hndl
@@ -846,7 +927,7 @@ static inline gni_return_t kgnilnd_ep_unbind(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_ep_destroy"
+#define apick_fn "kgnilnd_ep_destroy"
 #define apick_fmt "0x%p"
 static inline gni_return_t kgnilnd_ep_destroy(
                 IN gni_ep_handle_t      ep_hndl
@@ -881,7 +962,7 @@ static inline gni_return_t kgnilnd_ep_destroy(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_ep_postdata_w_id"
+#define apick_fn "kgnilnd_ep_postdata_w_id"
 #define apick_fmt "0x%p, 0x%p, %d, 0x%p, %d, "LPU64""
 static inline gni_return_t kgnilnd_ep_postdata_w_id(
                 IN gni_ep_handle_t ep_hndl,
@@ -927,7 +1008,7 @@ static inline gni_return_t kgnilnd_ep_postdata_w_id(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_ep_postdata_test_by_id"
+#define apick_fn "kgnilnd_ep_postdata_test_by_id"
 #define apick_fmt "0x%p, "LPU64", 0x%p, 0x%p, 0x%p"
 static inline gni_return_t kgnilnd_ep_postdata_test_by_id(
                 IN gni_ep_handle_t      ep_hndl,
@@ -983,7 +1064,7 @@ static inline gni_return_t kgnilnd_ep_postdata_test_by_id(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_ep_postdata_cancel_by_id"
+#define apick_fn "kgnilnd_ep_postdata_cancel_by_id"
 #define apick_fmt "0x%p, "LPU64""
 static inline gni_return_t kgnilnd_ep_postdata_cancel_by_id(
                 IN gni_ep_handle_t      ep_hndl,
@@ -1017,7 +1098,7 @@ static inline gni_return_t kgnilnd_ep_postdata_cancel_by_id(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_postdata_probe_by_id"
+#define apick_fn "kgnilnd_postdata_probe_by_id"
 #define apick_fmt "0x%p, 0x%p"
 static inline gni_return_t kgnilnd_postdata_probe_by_id(
                 IN gni_nic_handle_t    nic_hndl,
@@ -1054,7 +1135,7 @@ static inline gni_return_t kgnilnd_postdata_probe_by_id(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_postdata_probe_wait_by_id"
+#define apick_fn "kgnilnd_postdata_probe_wait_by_id"
 #define apick_fmt "0x%p, %d, 0x%p"
 static inline gni_return_t kgnilnd_postdata_probe_wait_by_id(
                 IN gni_nic_handle_t nic_hndl,
@@ -1092,7 +1173,7 @@ static inline gni_return_t kgnilnd_postdata_probe_wait_by_id(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_post_rdma"
+#define apick_fn "kgnilnd_post_rdma"
 #define apick_fmt "0x%p, 0x%p"
 static inline gni_return_t kgnilnd_post_rdma(
                 IN gni_ep_handle_t               ep_hndl,
@@ -1123,7 +1204,7 @@ static inline gni_return_t kgnilnd_post_rdma(
                 break;
         default:  
                 GNILND_API_RC_LBUG(
-                        ep_hndl);
+			ep_hndl, post_descr);
 
                 /* LBUG never returns, but just for style and consistency */
                 break;
@@ -1133,7 +1214,7 @@ static inline gni_return_t kgnilnd_post_rdma(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_get_completed"
+#define apick_fn "kgnilnd_get_completed"
 #define apick_fmt "0x%p,"LPX64",0x%p"
 static inline gni_return_t kgnilnd_get_completed(
                 IN gni_cq_handle_t              cq_hndl,
@@ -1178,7 +1259,7 @@ static inline gni_return_t kgnilnd_get_completed(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_cq_error_str"
+#define apick_fn "kgnilnd_cq_error_str"
 #define apick_fmt LPX64",0x%p,%d"
 static inline gni_return_t kgnilnd_cq_error_str(
                 IN gni_cq_entry_t       entry,
@@ -1223,7 +1304,7 @@ static inline gni_return_t kgnilnd_cq_error_str(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_cq_error_recoverable"
+#define apick_fn "kgnilnd_cq_error_recoverable"
 #define apick_fmt LPX64",0x%p"
 static inline gni_return_t kgnilnd_cq_error_recoverable(
                 IN gni_cq_entry_t       entry,
@@ -1263,7 +1344,7 @@ static inline gni_return_t kgnilnd_cq_error_recoverable(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_mem_register_segments"
+#define apick_fn "kgnilnd_mem_register_segments"
 #define apick_fmt "0x%p,0x%p,%u,0x%p,%x,0x%p"
 static inline gni_return_t 
 kgnilnd_mem_register_segments(
@@ -1308,7 +1389,7 @@ kgnilnd_mem_register_segments(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_mem_register"
+#define apick_fn "kgnilnd_mem_register"
 #define apick_fmt "0x%p,"LPX64","LPX64"0x%p,%u,0x%p"
 static inline gni_return_t kgnilnd_mem_register(
                 IN gni_nic_handle_t     nic_hndl,
@@ -1355,7 +1436,7 @@ static inline gni_return_t kgnilnd_mem_register(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_mem_deregister"
+#define apick_fn "kgnilnd_mem_deregister"
 #define apick_fmt "0x%p,0x%p,%d"
 static inline gni_return_t kgnilnd_mem_deregister(
                 IN gni_nic_handle_t     nic_hndl,
@@ -1392,7 +1473,7 @@ static inline gni_return_t kgnilnd_mem_deregister(
 #undef apick_fn
 #undef apick_fmt
 
-#define apick_fn "gni_mem_mdd_release"
+#define apick_fn "kgnilnd_mem_mdd_release"
 #define apick_fmt "0x%p,0x%p"
 static inline gni_return_t kgnilnd_mem_mdd_release(
                 IN gni_nic_handle_t     nic_hndl,

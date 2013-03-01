@@ -23,6 +23,7 @@
  *
  */
 
+#include <linux/nmi.h>
 #include "gnilnd.h"
 
 /* this is useful when needed to debug wire corruption. */
@@ -1420,11 +1421,11 @@ kgnilnd_sendmsg_nolock(kgn_tx_t *tx, void *immediate, unsigned int immediatenob,
                 msg, msg->gnm_type, immediatenob);
 
         /* make sure we catch all the cases where we'd send on a dirty old mbox 
-         * but allow case for sending CLOSE. Since this check is within the CQ mutex barrier
-         * and the close message is only sent through kgnilnd_send_conn_close the last message
-         * out the door will be the close message.
+	 * but allow case for sending CLOSE. Since this check is within the CQ
+	 * mutex barrier and the close message is only sent through
+	 * kgnilnd_send_conn_close the last message out the door will be the
+	 * close message.
          */
-
         if (atomic_read(&conn->gnc_peer->gnp_dirty_eps) != 0 && msg->gnm_type != GNILND_MSG_CLOSE) {
                 mutex_unlock(&conn->gnc_device->gnd_cq_mutex);
                 /* Return -ETIME, we are closing the connection already so we dont want to
@@ -1767,7 +1768,7 @@ kgnilnd_launch_tx (kgn_tx_t *tx, kgn_net_t *net, lnet_process_id_t *target)
                       "tx already has connection %p", tx->tx_conn);
 
         /* do all of the peer & conn searching in one swoop - this avoids
-         * nastiness when droppping locks and needing to maintain a sane state
+	 * nastiness when dropping locks and needing to maintain a sane state
          * in the face of stack reset or something else nuking peers & conns */
 
         /* I expect to find him, so only take a read lock */
@@ -2416,7 +2417,7 @@ kgnilnd_recv (lnet_ni_t *ni, void *private, lnet_msg_t *lntmsg,
                                 rxmsg->gnm_payload_len);
                         rc = -EINVAL;
                         kgnilnd_consume_rx(rx);
-                        break;
+			RETURN(rc);
                 }
 
                 /* rxmsg[1] is a pointer to the payload, sitting in the buffer
@@ -2672,7 +2673,7 @@ kgnilnd_check_conn_timeouts_locked (kgn_conn_t *conn)
         /* we don't timeout on last_tx stalls - we are going to trust the 
          * underlying network to let us know when sends are failing.
          * At worst, the peer will timeout our RX stamp and drop the connection
-         * at that point. We'll then see his CLOSE or at workst his RX 
+	 * at that point. We'll then see his CLOSE or at worst his RX
          * stamp stop and drop the connection on our end */
 
         if (time_after_eq(now, conn->gnc_last_tx + keepalive)) {
@@ -3069,7 +3070,7 @@ kgnilnd_check_rdma_cq (kgn_device_t *dev)
 
                 LASSERTF(!GNI_CQ_OVERRUN(event_data), 
                         "this is bad, somehow our credits didn't protect us"
-                        " from CQ overrun");
+			" from CQ overrun\n");
                 LASSERTF(GNI_CQ_GET_TYPE(event_data) == GNI_CQ_EVENT_TYPE_POST,
                         "rrc %d, GNI_CQ_GET_TYPE("LPX64") = "LPX64"\n", rrc, 
                         event_data, GNI_CQ_GET_TYPE(event_data));
@@ -3320,7 +3321,7 @@ kgnilnd_check_fma_send_cq (kgn_device_t *dev)
 
                         if (tx->tx_state & GNILND_TX_PENDING_RDMA) {
                                 /* we already got reply & were waiting for 
-                                 * completion of inital send */
+				 * completion of initial send */
                                 /* to initiate RDMA transaction */
                                 GNIDBG_TX(D_NET, tx,
                                          "Pending RDMA 0x%p type 0x%02x",
@@ -3945,7 +3946,7 @@ kgnilnd_check_fma_rx (kgn_conn_t *conn)
          * It's likely that its about to be closed as stale.
          */
         if (conn->gnc_ephandle == NULL)
-                return;
+		RETURN_EXIT;
 
         timestamp = jiffies;
         mutex_lock(&conn->gnc_device->gnd_cq_mutex);
@@ -4155,8 +4156,7 @@ kgnilnd_check_fma_rx (kgn_conn_t *conn)
                         /* only error if we are not already closing */
                         if (conn->gnc_peer_error == -ETIMEDOUT) {
                                 unsigned long           now = jiffies;
-                                LCONSOLE_NETERR(
-                                       "peer 0x%p->%s closed connection 0x%p due to timeout. "
+				CNETERR("peer 0x%p->%s closed connection 0x%p due to timeout. "
                                        "Is node down? "
                                        "RX %d @ %lus/%lus; TX %d @ %lus/%lus; "
                                        "NOOP %lus/%lus/%lus; sched %lus/%lus/%lus ago\n",
@@ -4398,6 +4398,7 @@ kgnilnd_check_fma_rx (kgn_conn_t *conn)
         }
 
         /* we got an event so assume more there and call for reschedule */
+	if (rc >= 0)
 	kgnilnd_schedule_conn(conn);
         EXIT;
 }
@@ -4472,7 +4473,6 @@ static inline void
 kgnilnd_send_conn_close(kgn_conn_t *conn)
 {
         kgn_tx_t        *tx;
-        int             rc;
 
         /* we are closing the conn - we will try to send the CLOSE msg
          * but will not wait for anything else to flush */
@@ -4490,8 +4490,9 @@ kgnilnd_send_conn_close(kgn_conn_t *conn)
                  * so this check is here to make sure we dont attempt to send with a null ep_handle.
                  */
                 if (conn->gnc_ephandle != NULL) {
-                        tx = kgnilnd_new_tx_msg(GNILND_MSG_CLOSE, conn->gnc_peer->gnp_net->gnn_ni->ni_nid);
+			int rc = 0;
 
+			tx = kgnilnd_new_tx_msg(GNILND_MSG_CLOSE, conn->gnc_peer->gnp_net->gnn_ni->ni_nid);
                          if (tx != NULL) {
                                 tx->tx_msg.gnm_u.completion.gncm_retval = conn->gnc_error;
                                 tx->tx_state = GNILND_TX_WAITING_COMPLETION;

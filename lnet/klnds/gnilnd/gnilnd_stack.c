@@ -171,7 +171,7 @@ kgnilnd_reset_stack(void)
         int              i, rc = 0;
         kgn_net_t       *net;
         kgn_peer_t      *peer, *peerN;
-        CFS_LIST_HEAD   (souls);
+	LIST_HEAD	 (souls);
         char            *reason = "critical hardware error";
         __u32            seconds;
         unsigned long    start, end;

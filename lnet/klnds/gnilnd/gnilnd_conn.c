@@ -1351,7 +1351,6 @@ kgnilnd_probe_for_dgram(kgn_device_t *dev, kgn_dgram_t **dgramp)
         int                      rc = 0;
         __u64                    readyid;
         __u32                    remote_addr = 0, remote_id = 0;
-
         ENTRY;
 
         /* Probe with the lock held. That way if we get a dgram we dont have it canceled
@@ -1360,7 +1359,6 @@ kgnilnd_probe_for_dgram(kgn_device_t *dev, kgn_dgram_t **dgramp)
          * once its off the list so we don't need to worry about others changing it at 
          * that point. */
         spin_lock(&dev->gnd_dgram_lock);
-
         grc = kgnilnd_postdata_probe_by_id(dev->gnd_handle, &readyid);
         if (grc != GNI_RC_SUCCESS) {
                 spin_unlock(&dev->gnd_dgram_lock);
@@ -1678,7 +1676,6 @@ kgnilnd_finish_connect(kgn_dgram_t *dgram)
 {
         kgn_conn_t        *conn = dgram->gndg_conn;
         lnet_nid_t         her_nid = dgram->gndg_conn_in.gncr_srcnid;
-        CFS_LIST_HEAD     (souls);
         kgn_peer_t        *new_peer, *peer = NULL;
         kgn_tx_t          *tx;
         kgn_tx_t          *txn;
