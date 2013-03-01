@@ -803,13 +803,14 @@ static void osc_announce_cached(struct client_obd *cli, struct obdo *oa,
         oa->o_valid |= bits;
         client_obd_list_lock(&cli->cl_loi_list_lock);
         oa->o_dirty = cli->cl_dirty;
-        if (cli->cl_dirty - cli->cl_dirty_transit > cli->cl_dirty_max) {
+        if (unlikely(cli->cl_dirty - cli->cl_dirty_transit >
+                     cli->cl_dirty_max)) {
                 CERROR("dirty %lu - %lu > dirty_max %lu\n",
                        cli->cl_dirty, cli->cl_dirty_transit, cli->cl_dirty_max);
                 oa->o_undirty = 0;
-        } else if (cfs_atomic_read(&obd_dirty_pages) -
-                   cfs_atomic_read(&obd_dirty_transit_pages) >
-                   obd_max_dirty_pages + 1){
+        } else if (unlikely(cfs_atomic_read(&obd_dirty_pages) -
+                            cfs_atomic_read(&obd_dirty_transit_pages) >
+                            (long)(obd_max_dirty_pages + 1))) {
                 /* The cfs_atomic_read() allowing the cfs_atomic_inc() are
                  * not covered by a lock thus they may safely race and trip
                  * this CERROR() unless we add in a small fudge factor (+1). */
@@ -818,16 +819,18 @@ static void osc_announce_cached(struct client_obd *cli, struct obdo *oa,
                        cfs_atomic_read(&obd_dirty_transit_pages),
                        obd_max_dirty_pages);
                 oa->o_undirty = 0;
-        } else if (cli->cl_dirty_max - cli->cl_dirty > 0x7fffffff) {
+        } else if (unlikely(cli->cl_dirty_max - cli->cl_dirty > 0x7fffffff)) {
                 CERROR("dirty %lu - dirty_max %lu too big???\n",
                        cli->cl_dirty, cli->cl_dirty_max);
                 oa->o_undirty = 0;
         } else {
-                long max_in_flight = (cli->cl_max_pages_per_rpc << CFS_PAGE_SHIFT)*
-                                (cli->cl_max_rpcs_in_flight + 1);
+                long max_in_flight = (cli->cl_max_pages_per_rpc <<
+                                      CFS_PAGE_SHIFT)*
+                                     (cli->cl_max_rpcs_in_flight + 1);
                 oa->o_undirty = max(cli->cl_dirty_max, max_in_flight);
         }
-        oa->o_grant = cli->cl_avail_grant;
+
+	oa->o_grant = cli->cl_avail_grant;
         oa->o_dropped = cli->cl_lost_grant;
         cli->cl_lost_grant = 0;
         client_obd_list_unlock(&cli->cl_loi_list_lock);
