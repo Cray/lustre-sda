@@ -193,6 +193,7 @@ kgn_tunables_t kgnilnd_tunables = {
         .kgn_hardware_timeout       = &hardware_timeout,
 	.kgn_mdd_timeout            = &mdd_timeout,
 	.kgn_sched_timeout	    = &sched_timeout,
+	.kgn_dgram_timeout          = &dgram_timeout,
 	.kgn_sched_nice		    = &sched_nice
 };
 
