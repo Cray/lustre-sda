@@ -983,7 +983,7 @@ kgnilnd_proc_peer_conns_read(char *page, char **start, off_t off,
 	list_for_each_entry(conn, &peer->gnp_conns, gnc_list) {
 		len += scnprintf(page, count - len,
 			"%04ld-%02d-%02dT%02d:%02d:%02d.%06ld %s "
-			"mbox adr %llx "
+			"mbox adr %p "
 			"dg type %s "
 			"%s "
 			"purg %d "
@@ -995,7 +995,7 @@ kgnilnd_proc_peer_conns_read(char *page, char **start, off_t off,
 			ctm.tm_year+1900, ctm.tm_mon+1, ctm.tm_mday,
 			ctm.tm_hour, ctm.tm_min, ctm.tm_sec, now.tv_nsec,
 			libcfs_nid2str(peer->gnp_nid),
-			(u64)conn->gnpr_smsg_attr.msg_buffer + conn->gnpr_smsg_attr.mbox_offset,
+			conn->remote_mbox_addr,
 			kgnilnd_conn_dgram_type2str(conn->gnc_dgram_type),
 			kgnilnd_conn_state2str(conn),
 			conn->gnc_in_purgatory,
@@ -1383,6 +1383,7 @@ remove_dir:
 void
 kgnilnd_proc_fini(void)
 {
+	remove_proc_entry(GNILND_PROC_PEER_CONNS, kgn_proc_root);
         remove_proc_entry(GNILND_PROC_PEER, kgn_proc_root);
         remove_proc_entry(GNILND_PROC_CONN, kgn_proc_root);
         remove_proc_entry(GNILND_PROC_MDD, kgn_proc_root);
