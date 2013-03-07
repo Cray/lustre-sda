@@ -158,6 +158,10 @@ static int sched_nice = GNILND_SCHED_NICE;
 CFS_MODULE_PARM(sched_nice, "i", int, 0444,
 		"scheduler's nice setting, default compute 0 service -20");
 
+static int dgram_timeout = GNILND_DGRAM_TIMEOUT;
+CFS_MODULE_PARM(dgram_timeout, "i", int, 0644,
+		"dgram thread aliveness seconds max time");
+
 kgn_tunables_t kgnilnd_tunables = {
         .kgn_min_reconnect_interval = &min_reconnect_interval,
         .kgn_max_reconnect_interval = &max_reconnect_interval,
@@ -440,6 +444,14 @@ static cfs_sysctl_table_t kgnilnd_ctl_table[] = {
 		.data	  = &sched_nice,
 		.maxlen	  = sizeof(int),
 		.mode	  = 0444,
+		.proc_handler = &proc_dointvec
+	},
+	{
+		.ctl_name = 34,
+		.procname = "dgram_timeout"
+		.data     = &dgram_timeout,
+		.maxlen   = sizeof(int),
+		.mode     = 0644,
 		.proc_handler = &proc_dointvec
 	},
         {0}

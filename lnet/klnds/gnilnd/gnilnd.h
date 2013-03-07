@@ -81,6 +81,7 @@
 #define GNILND_HARDWARE_TIMEOUT    15            /* maximum time for data to travel between nodes */
 #define GNILND_MDD_TIMEOUT         15            /* MDD hold timeout in minutes */
 #define GNILND_SCHED_TIMEOUT       1
+#define GNILND_DGRAM_TIMEOUT       2
 #define GNILND_FAST_MAPPING_TRY   \
         *kgnilnd_tunables.kgn_max_retransmits   /* maximum number to attempt mapping of a tx */
 #define GNILND_MAP_RETRY_RATE      1            /* interval between mapping attempts in jiffies */
@@ -446,6 +447,7 @@ typedef struct kgn_tunables {
         int              *kgn_hardware_timeout; /* max time for a message to get across the network */
         int              *kgn_mdd_timeout;      /* max time for ghal to hold an mdd in minutes */
 	int		 *kgn_sched_timeout;    /* max time for scheduler to run before yielding */
+	int              *kgn_dgram_timeout;    /* max time for dgram mover to run before scheduling */
 	int		 *kgn_sched_nice;	/* nice value for kgnilnd scheduler threads */
 #if CONFIG_SYSCTL && !CFS_SYSFS_MODULE_PARM
         cfs_sysctl_table_header_t *kgn_sysctl;  /* sysctl interface */

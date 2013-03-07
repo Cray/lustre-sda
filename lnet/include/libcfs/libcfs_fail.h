@@ -121,6 +121,7 @@ extern int cfs_race_state;
 #define CFS_FAIL_GNI_PUT_ACK_AGAIN      0xf050
 #define CFS_FAIL_GNI_GET_REQ_AGAIN      0xf051
 #define CFS_FAIL_GNI_SCHED_DEADLINE	0xf052
+#define CFS_FAIL_GNI_DGRAM_DEADLINE     0xf053
 
 /* Failure injection control */
 #define CFS_FAIL_MASK_SYS    0x0000FF00
