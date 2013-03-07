@@ -116,8 +116,11 @@ kgnilnd_device_callback(__u32 devid, __u64 arg)
  * < 0 : do not reschedule under any circumstances
  * == 0: reschedule if someone marked him WANTS_SCHED
  * > 0 : force a reschedule */
+/* Return code 0 means it did not schedule the conn, 1
+ *  means it succesfully scheduled the conn.
+ */
 
-void
+int
 kgnilnd_schedule_process_conn(kgn_conn_t *conn, int sched_intent)
 {
         int     conn_sched;
@@ -135,22 +138,27 @@ kgnilnd_schedule_process_conn(kgn_conn_t *conn, int sched_intent)
 
         if (sched_intent >= 0) {
                 if ((sched_intent > 0 || (conn_sched == GNILND_CONN_WANTS_SCHED))) {
-			kgnilnd_schedule_conn(conn);
+			return kgnilnd_schedule_conn_refheld(conn, 1);
                 }
         }
+	return 0;
 }
 
-void
-_kgnilnd_schedule_conn(kgn_conn_t *conn, const char * caller, int line)
+/* Return of 0 for conn not scheduled, 1 returned if conn was scheduled or marked
+ * as scheduled */
+
+int
+_kgnilnd_schedule_conn(kgn_conn_t *conn, const char *caller, int line, int refheld)
 {
         kgn_device_t        *dev = conn->gnc_device;
         int                  sched;
-  
+	int		     rc;
+
         sched = xchg(&conn->gnc_scheduled, GNILND_CONN_WANTS_SCHED);
 	/* we only care about the last person who marked want_sched since they
 	 * are most likely the culprit
 	 */
-	strncpy(conn->gnc_sched_caller, caller, sizeof(conn->gnc_sched_caller));
+	memcpy(conn->gnc_sched_caller, caller, sizeof(conn->gnc_sched_caller));
 	conn->gnc_sched_line = line;
         /* if we are IDLE, add to list - only one guy sees IDLE and "wins"
          * the chance to put it onto gnd_ready_conns.
@@ -161,8 +169,14 @@ _kgnilnd_schedule_conn(kgn_conn_t *conn, const char * caller, int line)
         if (sched == GNILND_CONN_IDLE) {
                 /* if the conn is already scheduled, we've already requested
                  * the scheduler thread wakeup */
-                kgnilnd_conn_addref(conn);       /* +1 ref for scheduler */
-
+		if (!refheld) {
+			/* Add a reference to the conn if we are not holding a reference
+			 * already from the exisiting scheduler. We now use the same
+			 * reference if we need to reschedule a conn while in a scheduler
+			 * thread.
+			 */
+			kgnilnd_conn_addref(conn);
+		}
                 LASSERTF(list_empty(&conn->gnc_schedlist), "conn %p already sched state %d\n",
                          conn, sched);
 
@@ -172,14 +186,16 @@ _kgnilnd_schedule_conn(kgn_conn_t *conn, const char * caller, int line)
                 list_add_tail(&conn->gnc_schedlist, &dev->gnd_ready_conns);
                 spin_unlock(&dev->gnd_lock);
                 set_mb(conn->gnc_last_sched_ask, jiffies);
-
+		rc = 1;
         } else {
 		CDEBUG(D_INFO, "not scheduling conn 0x%p: %d caller %s:%d\n", conn, sched, caller, line);
+		rc = 0;
         }
 
         /* make sure thread(s) going to process conns - but let it make
          * separate decision from conn schedule */
         kgnilnd_schedule_device(dev);
+	return rc;
 }
 
 void
@@ -4264,12 +4280,14 @@ kgnilnd_process_conns(kgn_device_t *dev, unsigned long deadline)
         int              conn_sched;
         int              intent = 0;
 	int		 error_inject = 0;
+	int		 rc = 0;
         kgn_conn_t      *conn;
 
         spin_lock(&dev->gnd_lock);
 	while (!list_empty(&dev->gnd_ready_conns) && time_before(jiffies, deadline)) {
                 dev->gnd_sched_alive = jiffies;
 		error_inject = 0;
+		rc = 0;
 
                 if (unlikely(kgnilnd_data.kgn_quiesce_trigger)) {
                         /* break with lock held */
@@ -4296,14 +4314,14 @@ kgnilnd_process_conns(kgn_device_t *dev, unsigned long deadline)
                 if (kgnilnd_check_conn_fail_loc(dev, conn, &intent)) {
 
                         /* based on intent see if we should run again. */
-                        kgnilnd_schedule_process_conn(conn, intent);
+			rc = kgnilnd_schedule_process_conn(conn, intent);
 			error_inject = 1;
 			/* drop ref from gnd_ready_conns */
-			if (atomic_read(&conn->gnc_refcount) == 1) {
+			if (atomic_read(&conn->gnc_refcount) == 1 && rc != 1) {
 				down_write(&dev->gnd_conn_sem);
 				kgnilnd_conn_decref(conn);
 				up_write(&dev->gnd_conn_sem);
-			} else {
+			} else if (rc != 1) {
 				kgnilnd_conn_decref(conn);
 			}
                         /* clear this so that scheduler thread doesn't spin */
@@ -4347,14 +4365,14 @@ kgnilnd_process_conns(kgn_device_t *dev, unsigned long deadline)
 			up_read(&dev->gnd_conn_sem);
                 }
 
-                kgnilnd_schedule_process_conn(conn, 0);
+		rc = kgnilnd_schedule_process_conn(conn, 0);
 
 		/* drop ref from gnd_ready_conns */
-		if (atomic_read(&conn->gnc_refcount) == 1) {
+		if (atomic_read(&conn->gnc_refcount) == 1 && rc != 1) {
 			down_write(&dev->gnd_conn_sem);
 			kgnilnd_conn_decref(conn);
 			up_write(&dev->gnd_conn_sem);
-		} else {
+		} else if (rc != 1) {
 			kgnilnd_conn_decref(conn);
 		}
 
