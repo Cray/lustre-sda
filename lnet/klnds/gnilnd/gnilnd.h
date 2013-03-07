@@ -439,6 +439,7 @@ typedef struct kgn_tunables {
         int              *kgn_loops;            /* # of loops sched does before flush/heartbeat tickle */
         int              *kgn_peer_hash_size;   /* size of kgn_peers */
         int              *kgn_peer_health;      /* enable/disable peer health */
+	int              *kgn_peer_timeout;     /* Override of the default peer_timeout used by peer_health */
         int              *kgn_vmap_cksum;       /* enable/disable vmap of kiov checksums */
         int              *kgn_mbox_per_block;   /* mailboxes per fmablk */
         int              *kgn_nphys_mbox;       /* # mailboxes to preallocate with physical memory */

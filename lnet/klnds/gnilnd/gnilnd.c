@@ -2690,12 +2690,24 @@ kgnilnd_startup (lnet_ni_t *ni)
 
         if (*kgnilnd_tunables.kgn_peer_health) {
                 int     fudge;
-
+		int     timeout;
                 /* give this a bit of leeway - we don't have a hard timeout
                  * as we only check timeouts periodically - see comment in kgnilnd_reaper */
                 fudge = (GNILND_TO2KA(*kgnilnd_tunables.kgn_timeout) / GNILND_REAPER_NCHECKS);
+		timeout = *kgnilnd_tunables.kgn_timeout + fudge;
 
-                ni->ni_peertimeout = *kgnilnd_tunables.kgn_timeout + fudge;
+		if (*kgnilnd_tunables.kgn_peer_timeout >= timeout)
+			ni->ni_peertimeout = *kgnilnd_tunables.kgn_peer_timeout;
+		else if (*kgnilnd_tunables.kgn_peer_timeout > -1) {
+			LCONSOLE_ERROR("Peer_timeout is set to %d but needs to be >= %d\n",
+					*kgnilnd_tunables.kgn_peer_timeout,
+					timeout);
+			ni->ni_data = NULL;
+			LIBCFS_FREE(net, sizeof(*net));
+			rc = -EINVAL;
+			GOTO(failed, rc);
+		} else
+			ni->ni_peertimeout = timeout;
 
                 LCONSOLE_INFO("Enabling LNet peer health for gnilnd, timeout %ds\n",
                               ni->ni_peertimeout);
