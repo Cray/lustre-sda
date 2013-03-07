@@ -1,7 +1,9 @@
-SERIES                VERSION                  COMMENT
+SERIES                VERSION                       COMMENT
 
 SUPPORTED KERNELS:
 2.6-rhel5             RHEL5: 2.6.18-308.4.1.el5
+2.6-sles11            SLES11SP1: 2.6.32.59-0.7.1_1  Supported by Cray
 
 CLIENT SUPPORT FOR UNPATCHED KERNELS:
                    kernel.org 2.6.16-2.6.32
+		   SLES11SP1 2.6.32.59-0.7.1_1      Supported by Cray
