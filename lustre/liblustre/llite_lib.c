@@ -174,7 +174,7 @@ int liblustre_process_log(struct config_llog_instance *cfg,
                 GOTO(out_cleanup, rc = -ENOMEM);
 
         ocd->ocd_connect_flags = OBD_CONNECT_VERSION | OBD_CONNECT_AT |
-                                 OBD_CONNECT_VBR;
+                                 OBD_CONNECT_VBR | OBD_CONNECT_FLOCK_OWNER;
 #ifdef LIBLUSTRE_POSIX_ACL
         ocd->ocd_connect_flags |= OBD_CONNECT_ACL;
 #endif

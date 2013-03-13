@@ -555,7 +555,7 @@ void llu_clear_inode(struct inode *inode)
 
         llu_inode2fid(&fid, inode);
         clear_bit(LLI_F_HAVE_MDS_SIZE_LOCK, &(lli->lli_flags));
-        mdc_change_cbdata(sbi->ll_mdc_exp, &fid, null_if_equal, inode);
+        mdc_change_cbdata(sbi->ll_mdc_exp, &fid, NULL, inode);
 
         if (lli->lli_smd)
                 obd_change_cbdata(sbi->ll_osc_exp, lli->lli_smd,
@@ -2042,7 +2042,8 @@ llu_fsswop_mount(const char *source,
                            sizeof(async), &async, NULL);
 
         ocd.ocd_connect_flags = OBD_CONNECT_IBITS | OBD_CONNECT_VERSION |
-                                OBD_CONNECT_AT | OBD_CONNECT_VBR;
+                                OBD_CONNECT_AT | OBD_CONNECT_VBR |
+                                OBD_CONNECT_FLOCK_OWNER;
 #ifdef LIBLUSTRE_POSIX_ACL
         ocd.ocd_connect_flags |= OBD_CONNECT_ACL;
 #endif
@@ -2079,7 +2080,8 @@ llu_fsswop_mount(const char *source,
         obd_register_lock_cancel_cb(obd, llu_extent_lock_cancel_cb);
 
         ocd.ocd_connect_flags = OBD_CONNECT_SRVLOCK | OBD_CONNECT_REQPORTAL |
-                OBD_CONNECT_VERSION | OBD_CONNECT_TRUNCLOCK | OBD_CONNECT_AT;
+                OBD_CONNECT_VERSION | OBD_CONNECT_TRUNCLOCK | OBD_CONNECT_AT |
+                OBD_CONNECT_FLOCK_OWNER;
         ocd.ocd_version = LUSTRE_VERSION_CODE;
         err = obd_connect(&osc_conn, obd, &sbi->ll_sb_uuid, &ocd, &sbi->ll_osc_exp);
         if (err) {

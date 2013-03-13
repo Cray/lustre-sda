@@ -1559,24 +1559,6 @@ lst_lnet_stat_value(int bw, int send, int off)
         return *p;
 }
 
-#if  0
-static void
-lst_timeval_diff(struct timeval *tv1,
-                 struct timeval *tv2, struct timeval *df)
-{
-        if (tv1->tv_usec >= tv2->tv_usec) {
-                df->tv_sec  = tv1->tv_sec - tv2->tv_sec;
-                df->tv_usec = tv1->tv_usec - tv2->tv_usec;
-                return;
-        }
-
-        df->tv_sec  = tv1->tv_sec - 1 - tv2->tv_sec;
-        df->tv_usec = tv1->tv_sec + 1000000 - tv2->tv_usec;
-
-        return;
-}
-#endif
-
 void
 lst_cal_lnet_stat(float delta, lnet_counters_t *lnet_new,
                   lnet_counters_t *lnet_old)
@@ -1759,7 +1741,8 @@ lst_print_stat(char *name, struct list_head *resultp,
                 /* use the timestamp from the remote node, not our rpe_stamp
                  * from when we copied up the data out of the kernel */
 
-                delta = (float) (sfwk_new->running - sfwk_old->running) / 1000;
+                delta = (float) (sfwk_new->running_ms -
+                                 sfwk_old->running_ms) / 1000;
 
                 if (!lnet) /* TODO */
                         continue;

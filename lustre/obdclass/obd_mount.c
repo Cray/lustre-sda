@@ -739,7 +739,7 @@ static int lustre_start_mgc(struct super_block *sb)
         if (data == NULL)
                 GOTO(out, rc = -ENOMEM);
         data->ocd_connect_flags = OBD_CONNECT_VERSION | OBD_CONNECT_AT |
-                                  OBD_CONNECT_FID;
+                                  OBD_CONNECT_FID | OBD_CONNECT_FLOCK_OWNER;
         data->ocd_version = LUSTRE_VERSION_CODE;
         /* We connect to the MGS at setup, and don't disconnect until cleanup */
         rc = obd_connect(&mgc_conn, obd, &(obd->obd_uuid), data, &exp);

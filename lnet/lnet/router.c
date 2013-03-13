@@ -103,11 +103,15 @@ lnet_peers_start_down(void)
  * Must be called with LNET_LOCK held.				*/
 static void lnet_do_ul_notify_locked(lnet_peer_t *lp)
 {
+#ifdef __KERNEL__
         lnet_notify_entry_t *entry;
 
         list_for_each_entry (entry, &the_lnet.ln_notify_cbs, ln_list) {
                 (entry->ln_cb)(lp->lp_ni, lp->lp_nid, lp->lp_alive, lp->lp_last_alive);
         }
+#else
+        /* not supported */
+#endif
 }
 
 void

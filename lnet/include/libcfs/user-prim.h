@@ -336,6 +336,14 @@ struct cfs_stack_trace {
                 (remainder);            \
         })
 
+#ifndef min
+# define min(x,y) ((x)<(y) ? (x) : (y))
+#endif
+
+#ifndef max
+# define max(x,y) ((x)>(y) ? (x) : (y))
+#endif
+
 #define cfs_get_random_bytes_prim(val, size)     (*val) = 0
 
 /* !__KERNEL__ */

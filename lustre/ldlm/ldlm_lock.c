@@ -73,6 +73,48 @@ char *ldlm_typename[] = {
         [LDLM_IBITS] "IBT",
 };
 
+static ldlm_policy_wire_to_local_t ldlm_policy_wire_to_local[] = {
+        [LDLM_PLAIN - LDLM_MIN_TYPE] ldlm_plain_policy_wire_to_local,
+        [LDLM_EXTENT - LDLM_MIN_TYPE] ldlm_extent_policy_wire_to_local,
+        [LDLM_FLOCK - LDLM_MIN_TYPE] ldlm_flock_policy_wire_to_local,
+        [LDLM_IBITS - LDLM_MIN_TYPE] ldlm_ibits_policy_wire_to_local,
+};
+
+static ldlm_policy_local_to_wire_t ldlm_policy_local_to_wire[] = {
+        [LDLM_PLAIN - LDLM_MIN_TYPE] ldlm_plain_policy_local_to_wire,
+        [LDLM_EXTENT - LDLM_MIN_TYPE] ldlm_extent_policy_local_to_wire,
+        [LDLM_FLOCK - LDLM_MIN_TYPE] ldlm_flock_policy_local_to_wire,
+        [LDLM_IBITS - LDLM_MIN_TYPE] ldlm_ibits_policy_local_to_wire,
+};
+
+/**
+ * Converts lock policy from local format to on the wire lock_desc format
+ */
+void ldlm_convert_policy_to_wire(ldlm_type_t type,
+                                 const ldlm_policy_data_t *lpolicy,
+                                 ldlm_wire_policy_data_t *wpolicy)
+{
+        ldlm_policy_local_to_wire_t convert;
+
+        convert = ldlm_policy_local_to_wire[type - LDLM_MIN_TYPE];
+
+        convert(lpolicy, wpolicy);
+}
+
+/**
+ * Converts lock policy from on the wire lock_desc format to local format
+ */
+void ldlm_convert_policy_to_local(ldlm_type_t type,
+                                  const ldlm_wire_policy_data_t *wpolicy,
+                                  ldlm_policy_data_t *lpolicy)
+{
+        ldlm_policy_wire_to_local_t convert;
+
+        convert = ldlm_policy_wire_to_local[type - LDLM_MIN_TYPE];
+
+        convert(wpolicy, lpolicy);
+}
+
 char *ldlm_it2str(int it)
 {
         switch (it) {
@@ -513,7 +555,9 @@ void ldlm_lock2desc(struct ldlm_lock *lock, struct ldlm_lock_desc *desc)
                 ldlm_res2desc(lock->l_resource, &desc->l_resource);
                 desc->l_req_mode = lock->l_req_mode;
                 desc->l_granted_mode = lock->l_granted_mode;
-                desc->l_policy_data = lock->l_policy_data;
+                ldlm_convert_policy_to_wire(lock->l_resource->lr_type,
+                                            &lock->l_policy_data,
+                                            &desc->l_policy_data);
         }
 }
 
@@ -1325,6 +1369,11 @@ ldlm_send_and_maybe_create_set(struct ldlm_cb_set_arg *arg, int do_create)
                 arg->set = ptlrpc_prep_set();
 }
 
+static int condition(struct ptlrpc_request_set *set)
+{
+        return (atomic_read(&set->set_remaining) < PARALLEL_AST_LIMIT) ? 1 : 0;
+}
+
 int ldlm_run_bl_ast_work(struct list_head *rpc_list)
 {
         struct ldlm_cb_set_arg arg;
@@ -1342,6 +1391,8 @@ int ldlm_run_bl_ast_work(struct list_head *rpc_list)
                 RETURN(-ERESTART);
         atomic_set(&arg.restart, 0);
         arg.type = LDLM_BL_CALLBACK;
+        arg.set->set_condition = condition;
+        arg.set->set_arg = &arg;
 
         ast_count = 0;
         list_for_each_safe(tmp, pos, rpc_list) {
@@ -1365,25 +1416,15 @@ int ldlm_run_bl_ast_work(struct list_head *rpc_list)
                 rc = lock->l_blocking_ast(lock, &d, (void *)&arg,
                                           LDLM_CB_BLOCKING);
                 LDLM_LOCK_PUT(lock);
-                ast_count++;
-
-                /* Send the request set if it exceeds the PARALLEL_AST_LIMIT,
-                 * and create a new set for requests that remained in
-                 * @rpc_list */
-                if (unlikely(ast_count == PARALLEL_AST_LIMIT)) {
-                        ldlm_send_and_maybe_create_set(&arg, 1);
-                        ast_count = 0;
-                }
+                if (atomic_read(&arg.set->set_remaining) == PARALLEL_AST_LIMIT)
+                        ptlrpc_set_wait(arg.set);
         }
 
-        if (ast_count > 0)
-                ldlm_send_and_maybe_create_set(&arg, 0);
-        else
-                /* In case when number of ASTs is multiply of
-                 * PARALLEL_AST_LIMIT or @rpc_list was initially empty,
-                 * @arg.set must be destroyed here, otherwise we get
-                 * write memory leaking. */
-                ptlrpc_set_destroy(arg.set);
+        arg.set->set_condition = NULL;
+        ptlrpc_set_wait(arg.set);
+        if (arg.type == LDLM_BL_CALLBACK)
+                OBD_FAIL_TIMEOUT(OBD_FAIL_LDLM_GLIMPSE, 2);
+        ptlrpc_set_destroy(arg.set);
 
         RETURN(atomic_read(&arg.restart) ? -ERESTART : 0);
 }
@@ -1589,19 +1630,6 @@ void ldlm_lock_cancel(struct ldlm_lock *lock)
         unlock_res_and_lock(lock);
 
         EXIT;
-}
-
-int ldlm_lock_set_data(struct lustre_handle *lockh, void *data)
-{
-        struct ldlm_lock *lock = ldlm_handle2lock(lockh);
-        ENTRY;
-
-        if (lock == NULL)
-                RETURN(-EINVAL);
-
-        lock->l_ast_data = data;
-        LDLM_LOCK_PUT(lock);
-        RETURN(0);
 }
 
 void ldlm_cancel_locks_for_export_cb(void *obj, void *data)

@@ -25,7 +25,7 @@
 
 /* helper macros */
 extern void
-_kgnilnd_api_rc_lbug(int rc, struct libcfs_debug_msg_data *data, 
+_kgnilnd_api_rc_lbug(const char *rcstr, int rc, struct libcfs_debug_msg_data *data, 
                         const char *fmt, ... );
 
 #define kgnilnd_api_rc_lbug(cdls, rc, file, func, line, fmt, a...)            \
@@ -34,8 +34,35 @@ do {                                                                          \
         DEBUG_MSG_DATA_INIT(cdls, DEBUG_SUBSYSTEM, file, func, line);         \
         CHECK_STACK();                                                        \
         /* we don't mask this - it is always at D_ERROR */                    \
-        _kgnilnd_api_rc_lbug((rc), &_msg_dbg_data, fmt, ##a);                 \
+        _kgnilnd_api_rc_lbug(kgnilnd_api_rc2str(rc), (rc), &_msg_dbg_data,    \
+                             fmt, ##a);                 \
 } while(0)
+
+#define DO_RETCODE(x) case x: return #x;
+static inline const char *
+kgnilnd_api_rc2str(gni_return_t rrc)
+{
+
+        switch(rrc) {
+                DO_RETCODE(GNI_RC_SUCCESS)
+                DO_RETCODE(GNI_RC_NOT_DONE);
+                DO_RETCODE(GNI_RC_INVALID_PARAM);
+                DO_RETCODE(GNI_RC_ERROR_RESOURCE);
+                DO_RETCODE(GNI_RC_TIMEOUT);
+                DO_RETCODE(GNI_RC_PERMISSION_ERROR);
+                DO_RETCODE(GNI_RC_DESCRIPTOR_ERROR);
+                DO_RETCODE(GNI_RC_ALIGNMENT_ERROR);
+                DO_RETCODE(GNI_RC_INVALID_STATE);
+                DO_RETCODE(GNI_RC_NO_MATCH);
+                DO_RETCODE(GNI_RC_SIZE_ERROR);
+                DO_RETCODE(GNI_RC_TRANSACTION_ERROR);
+                DO_RETCODE(GNI_RC_ILLEGAL_OP);
+                DO_RETCODE(GNI_RC_ERROR_NOMEM);
+        }
+        LBUG();
+}
+#undef DO_RETCODE
+
 
 /* log an error and LBUG for unhandled rc from gni api function
  * the fmt should be something like:
@@ -54,26 +81,26 @@ do {                                                                            
 
 #define GNILND_API_SWBUG(args...)                                               \
 do {                                                                            \
-        CERROR("likely SOFTWARE BUG "apick_fn"("apick_fmt") rc %d\n",           \
-                 ##args, rrc);                                                  \
+        CERROR("likely SOFTWARE BUG "apick_fn"("apick_fmt") rc %s\n",           \
+                 ##args, kgnilnd_api_rc2str(rrc));                              \
 } while (0)
 
 #define GNILND_API_EINVAL(args...)                                              \
 do {                                                                            \
-        CERROR("invalid parameter to "apick_fn"("apick_fmt") rc %d\n",          \
-                 ##args, rrc);                                                  \
+        CERROR("invalid parameter to "apick_fn"("apick_fmt") rc %s\n",          \
+                 ##args, kgnilnd_api_rc2str(rrc));                              \
 } while (0)
 
 #define GNILND_API_RESOURCE(args...)                                            \
 do {                                                                            \
-        CERROR("no resources for "apick_fn"("apick_fmt") rc %d\n",              \
-                ##args, rrc);                                                   \
+        CERROR("no resources for "apick_fn"("apick_fmt") rc %s\n",              \
+                ##args, kgnilnd_api_rc2str(rrc));                               \
 } while (0)
 
 #define GNILND_API_BUSY(args...)                                                \
 do {                                                                            \
-        CERROR("resources busy for "apick_fn"("apick_fmt") rc %d\n",            \
-                ##args, rrc);                                                   \
+        CERROR("resources busy for "apick_fn"("apick_fmt") rc %s\n",            \
+                ##args, kgnilnd_api_rc2str(rrc));                               \
 } while (0)
 
 #undef DEBUG_SMSG_CREDITS
@@ -614,6 +641,7 @@ static inline gni_return_t kgnilnd_smsg_getnext(
         /* both of these are OK, upper SW needs to handle */
         case GNI_RC_SUCCESS:
         case GNI_RC_NOT_DONE:
+        case GNI_RC_INVALID_STATE:
                 break;
         case GNI_RC_INVALID_PARAM:
                 GNILND_API_SWBUG(

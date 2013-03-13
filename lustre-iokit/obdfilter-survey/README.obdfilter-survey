@@ -40,7 +40,8 @@ in the script.
 In all cases the script will attempt to load the obdecho module where it is
 needed.
 
-In all cases a Lustre configuration should be created using your normal methods.
+In "disk" and "netdisk" cases a Lustre configuration should be created using your
+normal methods. In case "network" no Lustre configuration is needed.
 A mounted Lustre client is only required for case=netdisk.
 
 To profile Object Storage Targets directly
@@ -58,7 +59,6 @@ Invoke obdfilter-survey from the OSS node whose OST(s) you wish to exercise,
 and specify any customization variables at the command line.
 e.g. : $ nobjhi=2 thrhi=2 size=1024 case=disk sh obdfilter-survey
 
---OR--
 
 2. Manual run:
 - Create a Lustre configuraton using your normal methods. No Lustre clients
@@ -90,16 +90,19 @@ or if the script is invoked on oss01:
 targets='oss01-sdb oss01-sdd oss02:oss02-sdi' \
    nobjhi=2 thrhi=2 size=1024 case=disk sh obdfilter-survey
 
+
 To run against a network:
 ------------------------
 - It is suggested that there should be passwordless entry between client
   and server machine to avoid typing password.
 
 1. Automated run:
-- Create a Lustre configuraton using your normal methods. No Lustre clients
-need be mounted, however obdfilter-survey is invoked from a client node.
-- On the client node, use lctl to check the device list. The device list
-must be empty.
+- You do not need to configure Lustre for case=network, you only need
+to load the Lustre modules. It is possible to have the server devices UP,
+the obdfilter-survey does not touch these existing devices.
+It creates the tested server device and cleanups it at the end.
+The obdfilter-survey is invoked from a client node, but the device
+list on client node must be empty, use lctl to check the device list.
 
 e.g.
     $ lctl dl
@@ -116,17 +119,20 @@ or
        case=network sh obdfilter-survey
 
 On server side you can see the stats at :
-        /proc/fs/lustre/obdecho/<echo_srv>/stats
+        /proc/fs/lustre/obdecho/echo_srv/stats
 where, 'echo_srv' is the obdecho server created through script.
 
 NOTE: In network test only automated run is supported.
+
 
 To run against network-disk:
 ----------------------------
 1. Automated run:
 - Create a Lustre configuration using your normal methods. Mount the
 Lustre filesystem on the client node where obdfilter-survey will be invoked.
-Then, on the Lustre client node, invoke the obdfilter-survey script with
+Please make sure that there is only one Lustre client is mounted
+on the client node.
+On the Lustre client node, invoke the obdfilter-survey script with
 parameter case=netdisk.
 e.g. : $ nobjhi=2 thrhi=2 size=1024 case=netdisk sh obdfilter-survey
 
@@ -142,7 +148,7 @@ iokit2-OST0003-osc-ffff8801eee34000
 
 Set the shell variable 'targets' to the names of the OSCs under test.
 # targets="iokit2-OST0003-osc-ffff8801eee34000" \
-    nobjhi=2 thrhi=2 size=1024 obdfilter-survey
+    nobjhi=2 thrhi=2 size=1024 case=netdisk sh obdfilter-survey
 
 
 Output files:
@@ -167,8 +173,30 @@ required, possibly including killing any running instances of 'lctl' (local
 or remote), removing echo_client instances created by the script and
 unloading obdecho.
 
-XXX: We should give guidance/point to instructions on how to do these things.
-lctl is not well documented for these procedures.
+Example:
+- use lctl to see the devices created by obdfilter-survey
+
+e.g. $ lctl dl
+       0 UP obdecho echo_srv echo_srv_UUID 3
+       1 UP ost OSS OSS_UUID 3
+
+- cleanup OSS device
+
+e.g. $ lctl << EOF
+     > cfg_device OSS
+     > cleanup
+     > detach
+     > EOF
+
+- cleanup echo_srv device
+
+e.g. $ lctl << EOF
+     > cfg_device echo_srv
+     > cleanup
+     > detach
+     > EOF
+
+
 
 Script output
 -------------

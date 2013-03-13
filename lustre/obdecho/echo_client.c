@@ -1353,7 +1353,8 @@ echo_client_setup(struct obd_device *obddev, obd_count len, void *buf)
                        lustre_cfg_string(lcfg, 1));
                 return -ENOMEM;
         }
-        ocd->ocd_connect_flags = OBD_CONNECT_VERSION | OBD_CONNECT_REQPORTAL;
+        ocd->ocd_connect_flags = OBD_CONNECT_VERSION | OBD_CONNECT_REQPORTAL |
+                                 OBD_CONNECT_FLOCK_OWNER;
         ocd->ocd_version = LUSTRE_VERSION_CODE;
 
         if ((strncmp(tgt->obd_type->typ_name, LUSTRE_OSC_NAME,

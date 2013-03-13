@@ -808,7 +808,7 @@ kiblnd_post_tx_locked (kib_conn_t *conn, kib_tx_t *tx, int credit)
         tx->tx_queued = 0;
 
         if (msg->ibm_type == IBLND_MSG_NOOP &&
-            (!kiblnd_send_noop(conn) ||     /* redundant NOOP */
+            (!kiblnd_need_noop(conn) ||     /* redundant NOOP */
              (IBLND_OOB_CAPABLE(ver) && /* posted enough NOOP */
               conn->ibc_noops_posted == IBLND_OOB_MSGS(ver)))) {
                 /* OK to drop when posted enough NOOPs, since
@@ -917,7 +917,7 @@ kiblnd_check_sends (kib_conn_t *conn)
                 conn->ibc_reserved_credits--;
         }
 
-        if (kiblnd_send_noop(conn)) {
+        if (kiblnd_need_noop(conn)) {
                 spin_unlock(&conn->ibc_lock);
 
                 tx = kiblnd_get_idle_tx(ni);
@@ -2886,14 +2886,11 @@ kiblnd_cm_callback(struct rdma_cm_id *cmid, struct rdma_cm_event *event)
         }
 }
 
-int
-kiblnd_check_txs (kib_conn_t *conn, struct list_head *txs)
+static int
+kiblnd_check_txs_locked(kib_conn_t *conn, struct list_head *txs)
 {
         kib_tx_t          *tx;
         struct list_head  *ttmp;
-        int                timed_out = 0;
-
-        spin_lock(&conn->ibc_lock);
 
         list_for_each (ttmp, txs) {
                 tx = list_entry (ttmp, kib_tx_t, tx_list);
@@ -2906,31 +2903,31 @@ kiblnd_check_txs (kib_conn_t *conn, struct list_head *txs)
                 }
 
                 if (time_after_eq (jiffies, tx->tx_deadline)) {
-                        timed_out = 1;
                         CERROR("Timed out tx: %s, %lu seconds\n",
                                kiblnd_queue2str(conn, txs),
                                cfs_duration_sec(jiffies - tx->tx_deadline));
-                        break;
+                        return 1;
                 }
         }
 
-        spin_unlock(&conn->ibc_lock);
-        return timed_out;
+        return 0;
 }
 
-int
-kiblnd_conn_timed_out (kib_conn_t *conn)
+static int
+kiblnd_conn_timed_out_locked(kib_conn_t *conn)
 {
-        return  kiblnd_check_txs(conn, &conn->ibc_tx_queue) ||
-                kiblnd_check_txs(conn, &conn->ibc_tx_noops) ||
-                kiblnd_check_txs(conn, &conn->ibc_tx_queue_rsrvd) ||
-                kiblnd_check_txs(conn, &conn->ibc_tx_queue_nocred) ||
-                kiblnd_check_txs(conn, &conn->ibc_active_txs);
+        return  kiblnd_check_txs_locked(conn, &conn->ibc_tx_queue) ||
+                kiblnd_check_txs_locked(conn, &conn->ibc_tx_noops) ||
+                kiblnd_check_txs_locked(conn, &conn->ibc_tx_queue_rsrvd) ||
+                kiblnd_check_txs_locked(conn, &conn->ibc_tx_queue_nocred) ||
+                kiblnd_check_txs_locked(conn, &conn->ibc_active_txs);
 }
 
 void
 kiblnd_check_conns (int idx)
 {
+        LIST_HEAD(closes);
+        LIST_HEAD(checksends);
         struct list_head  *peers = &kiblnd_data.kib_peers[idx];
         struct list_head  *ptmp;
         kib_peer_t        *peer;
@@ -2938,9 +2935,8 @@ kiblnd_check_conns (int idx)
         struct list_head  *ctmp;
         unsigned long      flags;
 
- again:
         /* NB. We expect to have a look at all the peers and not find any
-         * rdmas to time out, so we just use a shared lock while we
+         * RDMAs to time out, so we just use a shared lock while we
          * take a look... */
         read_lock_irqsave(&kiblnd_data.kib_global_lock, flags);
 
@@ -2948,41 +2944,65 @@ kiblnd_check_conns (int idx)
                 peer = list_entry (ptmp, kib_peer_t, ibp_list);
 
                 list_for_each (ctmp, &peer->ibp_conns) {
-                        conn = list_entry (ctmp, kib_conn_t, ibc_list);
+                        int timedout;
+                        int sendnoop;
+
+                        conn = list_entry(ctmp, kib_conn_t, ibc_list);
 
                         LASSERT (conn->ibc_state == IBLND_CONN_ESTABLISHED);
 
-                        /* In case we have enough credits to return via a
-                         * NOOP, but there were no non-blocking tx descs
-                         * free to do it last time... */
-                        kiblnd_check_sends(conn);
+                        spin_lock(&conn->ibc_lock);
 
-                        if (!kiblnd_conn_timed_out(conn))
+                        sendnoop = kiblnd_need_noop(conn);
+                        timedout = kiblnd_conn_timed_out_locked(conn);
+                        if (!sendnoop && !timedout) {
+                                spin_unlock(&conn->ibc_lock);
                                 continue;
+                        }
+                        if (timedout) {
+                                CERROR("Timed out RDMA with %s (%lu): "
+                                       "c: %u, oc: %u, rc: %u\n",
+                                       libcfs_nid2str(peer->ibp_nid),
+                                       cfs_duration_sec(cfs_time_current() -
+                                                        peer->ibp_last_alive),
+                                       conn->ibc_credits,
+                                       conn->ibc_outstanding_credits,
+                                       conn->ibc_reserved_credits);
+                                list_add(&conn->ibc_connd_list, &closes);
+                        } else {
+                                list_add(&conn->ibc_connd_list,
+                                         &checksends);
+                        }
+                        /* +ref for 'closes' or 'checksends' */
+                        kiblnd_conn_addref(conn);
 
-                        /* Handle timeout by closing the whole connection.  We
-                         * can only be sure RDMA activity has ceased once the
-                         * QP has been modified. */
-
-                        kiblnd_conn_addref(conn); /* 1 ref for me... */
-
-                        read_unlock_irqrestore(&kiblnd_data.kib_global_lock,
-                                               flags);
-
-                        CERROR("Timed out RDMA with %s (%lu)\n",
-                               libcfs_nid2str(peer->ibp_nid),
-                               cfs_duration_sec(cfs_time_current() -
-                                                peer->ibp_last_alive));
-
-                        kiblnd_close_conn(conn, -ETIMEDOUT);
-                        kiblnd_conn_decref(conn); /* ...until here */
-
-                        /* start again now I've dropped the lock */
-                        goto again;
+                        spin_unlock(&conn->ibc_lock);
                 }
         }
 
         read_unlock_irqrestore(&kiblnd_data.kib_global_lock, flags);
+
+        /* Handle timeout by closing the whole
+         * connection. We can only be sure RDMA activity
+         * has ceased once the QP has been modified. */
+        while (!list_empty(&closes)) {
+                conn = list_entry(closes.next,
+                                  kib_conn_t, ibc_connd_list);
+                list_del(&conn->ibc_connd_list);
+                kiblnd_close_conn(conn, -ETIMEDOUT);
+                kiblnd_conn_decref(conn);
+        }
+
+        /* In case we have enough credits to return via a
+         * NOOP, but there were no non-blocking tx descs
+         * free to do it last time... */
+        while (!list_empty(&checksends)) {
+                conn = list_entry(checksends.next,
+                                  kib_conn_t, ibc_connd_list);
+                list_del(&conn->ibc_connd_list);
+                kiblnd_check_sends(conn);
+                kiblnd_conn_decref(conn);
+        }
 }
 
 void

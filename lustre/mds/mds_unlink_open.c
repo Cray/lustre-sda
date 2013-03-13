@@ -350,7 +350,7 @@ int mds_check_stale_orphan(struct obd_device *obd, struct ll_fid *fid)
         /** open by fid like mds_fid2dentry does */
         snprintf(fidname, sizeof(fidname), "0x%lx", (unsigned long)(fid->id));
         fidlen = strlen(fidname);
-        result = mds_lookup(obd, fidname, mds->mds_fid_de, fidlen);
+        result = ll_lookup_one_len(fidname, mds->mds_fid_de, fidlen);
         if (IS_ERR(result))
                 RETURN(0);
         inode = result->d_inode;

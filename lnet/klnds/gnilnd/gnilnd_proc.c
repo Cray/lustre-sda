@@ -208,6 +208,7 @@ kgnilnd_proc_stats_read (char *page, char **start, off_t off,
                            "npeers: %d\n"
                            "nconns: %d\n"
                            "nEPs: %d\n"
+                           "ndgrams: %d\n"
                            "nfmablk: %d\n"
                            "n_mdd: %d\n"
                            "n_mdd_held: %d\n"
@@ -226,7 +227,6 @@ kgnilnd_proc_stats_read (char *page, char **start, off_t off,
                            "SMSG fast_try: %d\n"
                            "SMSG fast_ok: %d\n"
                            "SMSG fast_block: %d\n"
-                           "MAPQ foreign: %d\n"
                            "SMSG ntx: %d\n"
                            "SMSG tx_bytes: %ld\n"
                            "SMSG nrx: %d\n"
@@ -242,7 +242,8 @@ kgnilnd_proc_stats_read (char *page, char **start, off_t off,
                 atomic_read(&kgnilnd_data.kgn_ntx),
                 atomic_read(&kgnilnd_data.kgn_npeers),
                 atomic_read(&kgnilnd_data.kgn_nconns), 
-                atomic_read(&dev->gnd_neps), 
+                atomic_read(&dev->gnd_neps),
+                atomic_read(&dev->gnd_ndgrams), 
                 atomic_read(&dev->gnd_nfmablk),
                 atomic_read(&dev->gnd_n_mdd), atomic_read(&dev->gnd_n_mdd_held),
                 atomic64_read(&dev->gnd_nbytes_map),
@@ -250,13 +251,12 @@ kgnilnd_proc_stats_read (char *page, char **start, off_t off,
                 dev->gnd_map_nphys, dev->gnd_map_physnop * PAGE_SIZE, 
                 dev->gnd_map_nvirt, dev->gnd_map_virtnob,
                 atomic64_read(&dev->gnd_rdmaq_bytes_out),
-                dev->gnd_rdmaq_bytes_ok,
-                dev->gnd_rdmaq_nstalls,
+                atomic64_read(&dev->gnd_rdmaq_bytes_ok),
+                atomic_read(&dev->gnd_rdmaq_nstalls),
                 dev->gnd_mutex_delay,
                 atomic_read(&dev->gnd_n_yield), atomic_read(&dev->gnd_n_schedule),
                 atomic_read(&dev->gnd_fast_try), atomic_read(&dev->gnd_fast_ok),
                 atomic_read(&dev->gnd_fast_block),
-                atomic_read(&dev->gnd_foreign_mapq),
                 atomic_read(&dev->gnd_short_ntx), atomic64_read(&dev->gnd_short_txbytes),
                 atomic_read(&dev->gnd_short_nrx), atomic64_read(&dev->gnd_short_rxbytes),
                 atomic_read(&dev->gnd_rdma_ntx), atomic64_read(&dev->gnd_rdma_txbytes),
@@ -291,10 +291,9 @@ kgnilnd_proc_stats_write(struct file *file, const char *ubuffer,
         atomic_set(&dev->gnd_fast_ok, 0);
         atomic_set(&dev->gnd_fast_try, 0);
         atomic_set(&dev->gnd_fast_block, 0);
-        atomic_set(&dev->gnd_foreign_mapq, 0);
         atomic64_set(&dev->gnd_rdma_txbytes, 0);
         atomic64_set(&dev->gnd_rdma_rxbytes, 0);
-        set_mb(dev->gnd_rdmaq_nstalls, 0);
+        atomic_set(&dev->gnd_rdmaq_nstalls, 0);
         set_mb(dev->gnd_mutex_delay, 0);
         atomic_set(&dev->gnd_n_yield, 0);
         atomic_set(&dev->gnd_n_schedule, 0);
