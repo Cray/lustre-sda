@@ -1,0 +1,786 @@
+# Ukrainian translation for encfs
+# Copyright (c) 2007 Rosetta Contributors and Canonical Ltd 2007
+# This file is distributed under the same license as the encfs package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2007.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: encfs\n"
+"Report-Msgid-Bugs-To: vgough@pobox.com\n"
+"POT-Creation-Date: 2010-11-18 00:12-0800\n"
+"PO-Revision-Date: 2009-10-08 23:19+0000\n"
+"Last-Translator: atany <Unknown>\n"
+"Language-Team: Ukrainian <uk@li.org>\n"
+"Language: uk\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=n%10==1 && n%100!=11 ? 0 : n%10>=2 && n"
+"%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2;\n"
+"X-Launchpad-Export-Date: 2010-06-17 04:44+0000\n"
+"X-Generator: Launchpad (build Unknown)\n"
+
+#: encfs/BlockFileIO.cpp:414
+#, c-format
+msgid "truncate failure: read %i bytes, partial block of %i"
+msgstr "помилка відсікання: прочитано %i байтів, частина блоку %i"
+
+#: encfs/BlockNameIO.cpp:50
+msgid "Block encoding, hides file name size somewhat"
+msgstr "Блокова дешифровка частково приховує розмір імені файлу"
+
+#: encfs/FileUtils.cpp:322
+#, c-format
+msgid "The directory \"%s\" does not exist. Should it be created? (y,n) "
+msgstr "Папки \"%s\" не існує. Створити її? (y,n) "
+
+#: encfs/FileUtils.cpp:331
+msgid "Unable to create directory: "
+msgstr "Неможливо створити папку: "
+
+#: encfs/FileUtils.cpp:338
+msgid "Directory not created."
+msgstr "Папка не створена."
+
+#: encfs/FileUtils.cpp:360
+#, c-format
+msgid "Found config file %s, but failed to load"
+msgstr "Знайдено конфігураційний файл \"%s\", але його завантажити не вдалося"
+
+#: encfs/FileUtils.cpp:439
+#, c-format
+msgid ""
+"Config subversion %i found, but this version of encfs only supports up to "
+"version %i."
+msgstr ""
+"Конфігураційне порушення %i знайдено, але версія encfs підтримує тільки до %i"
+
+#: encfs/FileUtils.cpp:446
+msgid ""
+"This version of EncFS doesn't support filesystems created before 2004-08-13"
+msgstr ""
+"Дана версія EncFS не підтримує файлові системи, що були створені до "
+"2004-08-13"
+
+#: encfs/FileUtils.cpp:646
+msgid "The following cipher algorithms are available:"
+msgstr "Наступні алгоритми шифрування зараз доступні:"
+
+#: encfs/FileUtils.cpp:658
+#, c-format
+msgid " -- key length %i bits"
+msgstr " -- довжина ключа %i біт(а)"
+
+#: encfs/FileUtils.cpp:665
+#, c-format
+msgid " -- Supports key lengths of %i to %i bits"
+msgstr " -- Підтримується довжина ключа від %i до %i біт"
+
+#: encfs/FileUtils.cpp:674
+#, c-format
+msgid " -- block size %i bytes"
+msgstr " -- розмір блоку %i байт"
+
+#: encfs/FileUtils.cpp:681
+#, c-format
+msgid " -- Supports block sizes of %i to %i bytes"
+msgstr " -- Підтримується розмір блоку від %i до %i байт"
+
+#: encfs/FileUtils.cpp:687 encfs/FileUtils.cpp:732
+msgid "Enter the number corresponding to your choice: "
+msgstr "Введіть номер. котрий є Вашим вибором: "
+
+#: encfs/FileUtils.cpp:695 encfs/FileUtils.cpp:740
+msgid "Invalid selection."
+msgstr "Помилка при виборі"
+
+#: encfs/FileUtils.cpp:706 encfs/FileUtils.cpp:749
+#, c-format
+msgid "Selected algorithm \"%s\""
+msgstr "Обраний алгоритм \"%s\""
+
+#: encfs/FileUtils.cpp:720
+msgid "The following filename encoding algorithms are available:"
+msgstr "Доступні наступні алгоритми шифрування:"
+
+#: encfs/FileUtils.cpp:761 encfs/FileUtils.cpp:808
+#, c-format
+msgid "Using key size of %i bits"
+msgstr "Використання ключа. розмір якого %i біт(а)"
+
+#: encfs/FileUtils.cpp:768
+#, c-format
+msgid ""
+"Please select a key size in bits.  The cipher you have chosen\n"
+"supports sizes from %i to %i bits in increments of %i bits.\n"
+"For example: "
+msgstr ""
+"Будь ласка виберіть розмір ключа в бітах. Шифр, котрий Ви обрали\n"
+"підтримує розміри від %i до %i біт в зростанні %i біт.\n"
+"Наприклад: "
+
+#: encfs/FileUtils.cpp:798
+msgid "Selected key size: "
+msgstr "Оберіть розмір символів: "
+
+#: encfs/FileUtils.cpp:820 encfs/FileUtils.cpp:847
+#, c-format
+msgid "Using filesystem block size of %i bytes"
+msgstr "Використовується розмір блоку файлової системи рівний %i байтам"
+
+#: encfs/FileUtils.cpp:827
+#, c-format
+msgid ""
+"Select a block size in bytes.  The cipher you have chosen\n"
+"supports sizes from %i to %i bytes in increments of %i.\n"
+"Or just hit enter for the default (%i bytes)\n"
+msgstr ""
+"Оберіть розмір блоку в байтах. Обраний вами шифр\n"
+"підтримує розмір від %i до %i байта з кроком у %i байт.\n"
+"Або натисніть Enter для вибору по замовченню (%i байт)\n"
+
+#: encfs/FileUtils.cpp:834
+msgid "filesystem block size: "
+msgstr "розмір блоку файлової системи: "
+
+#: encfs/FileUtils.cpp:857
+msgid ""
+"The default here is No.\n"
+"Any response that does not begin with 'y' will mean No: "
+msgstr ""
+
+#: encfs/FileUtils.cpp:875
+msgid ""
+"Enable block authentication code headers\n"
+"on every block in a file?  This adds about 12 bytes per block\n"
+"to the storage requirements for a file, and significantly affects\n"
+"performance but it also means [almost] any modifications or errors\n"
+"within a block will be caught and will cause a read error."
+msgstr ""
+
+#: encfs/FileUtils.cpp:887
+msgid ""
+"Add random bytes to each block header?\n"
+"This adds a performance penalty, but ensures that blocks\n"
+"have different authentication codes.  Note that you can\n"
+"have the same benefits by enabling per-file initialization\n"
+"vectors, which does not come with as great of performance\n"
+"penalty. \n"
+"Select a number of bytes, from 0 (no random bytes) to 8: "
+msgstr ""
+"Додати випадкові байти в кожен заголовок блоку?\n"
+"Дана опція зменшить швидкодію системи, але гарантує\n"
+"різноманітні коди аутентифікації. Також ви можете \n"
+"ввімкнути ініціалізацію векторів на кожен файл, що не призведе\n"
+"до великої втрати швидкодії. \n"
+"Введіть кількість байт від 0 (не випадковий байт) до 8: "
+
+#: encfs/FileUtils.cpp:913
+msgid ""
+"The default here is Yes.\n"
+"Any response that does not begin with 'n' will mean Yes: "
+msgstr ""
+
+#: encfs/FileUtils.cpp:931
+msgid ""
+"Enable per-file initialization vectors?\n"
+"This adds about 8 bytes per file to the storage requirements.\n"
+"It should not affect performance except possibly with applications\n"
+"which rely on block-aligned file io for performance."
+msgstr ""
+
+#: encfs/FileUtils.cpp:942
+msgid ""
+"Enable filename initialization vector chaining?\n"
+"This makes filename encoding dependent on the complete path, \n"
+"rather then encoding each path element individually."
+msgstr ""
+
+#: encfs/FileUtils.cpp:952
+msgid ""
+"Enable filename to IV header chaining?\n"
+"This makes file data encoding dependent on the complete file path.\n"
+"If a file is renamed, it will not decode sucessfully unless it\n"
+"was renamed by encfs with the proper key.\n"
+"If this option is enabled, then hard links will not be supported\n"
+"in the filesystem."
+msgstr ""
+
+#: encfs/FileUtils.cpp:965
+msgid ""
+"Enable file-hole pass-through?\n"
+"This avoids writing encrypted blocks when file holes are created."
+msgstr ""
+
+#: encfs/FileUtils.cpp:985
+msgid "Creating new encrypted volume."
+msgstr "Створення нового зашифрованого розділу."
+
+#: encfs/FileUtils.cpp:991
+msgid ""
+"Please choose from one of the following options:\n"
+" enter \"x\" for expert configuration mode,\n"
+" enter \"p\" for pre-configured paranoia mode,\n"
+" anything else, or an empty line will select standard mode.\n"
+"?> "
+msgstr ""
+"Оберіть одну із наступних опцій:\n"
+" натисніть \"x\" для режиму експерта,\n"
+" натисніть \"p\" для режиму максимальної таємності,\n"
+" або іншу букву чи пусту лінію для стандартного режиму.\n"
+"?> "
+
+#: encfs/FileUtils.cpp:1027
+msgid "Paranoia configuration not supported for --reverse"
+msgstr "Режим таємності не підтримується для --reverse"
+
+#: encfs/FileUtils.cpp:1032
+msgid "Paranoia configuration selected."
+msgstr "Обраний режим максимальної таємності."
+
+#: encfs/FileUtils.cpp:1051
+msgid "Standard configuration selected."
+msgstr "Обраний режим стандартної конфігурації."
+
+#: encfs/FileUtils.cpp:1063 encfs/FileUtils.cpp:1094
+msgid "--reverse specified, not using unique/chained IV"
+msgstr "--reverse специфікація не використовує unique/chained IV"
+
+#: encfs/FileUtils.cpp:1077
+msgid ""
+"Sorry, unable to locate cipher for predefined configuration...\n"
+"Falling through to Manual configuration mode."
+msgstr ""
+"Неможливо підібрати шифр для обраної конфігурації...\n"
+"Повернення до режиму ручної конфігурації."
+
+#: encfs/FileUtils.cpp:1083
+msgid "Manual configuration mode selected."
+msgstr "Обрана ручна конфігурація"
+
+#: encfs/FileUtils.cpp:1104
+msgid ""
+"External chained IV disabled, as both 'IV chaining'\n"
+"and 'unique IV' features are required for this option."
+msgstr ""
+
+#: encfs/FileUtils.cpp:1117
+#, c-format
+msgid "Unable to instanciate cipher %s, key size %i, block size %i"
+msgstr "Неможливо встановите шифр %s, розмір ключа %i та розмір блоку %i"
+
+#: encfs/FileUtils.cpp:1148
+msgid ""
+"Configuration finished.  The filesystem to be created has\n"
+"the following properties:"
+msgstr ""
+"Конфігурація завершена. Файлова система була створена\n"
+"з наступними властивостями:"
+
+#: encfs/FileUtils.cpp:1155
+msgid "-------------------------- WARNING --------------------------\n"
+msgstr "-------------------------- УВАГА --------------------------\n"
+
+#: encfs/FileUtils.cpp:1157
+msgid ""
+"The external initialization-vector chaining option has been\n"
+"enabled.  This option disables the use of hard links on the\n"
+"filesystem. Without hard links, some programs may not work.\n"
+"The programs 'mutt' and 'procmail' are known to fail.  For\n"
+"more information, please see the encfs mailing list.\n"
+"If you would like to choose another configuration setting,\n"
+"please press CTRL-C now to abort and start over."
+msgstr ""
+"Опція поверхневої ініціалізації векторного зв'язування ввімкнута.\n"
+"Ця опція забороняє використання жорстких посилань до файлової системи.\n"
+"Без жорстких посилань деякі програми не будуть працювати.\n"
+"Також не будуть працювати такі програми, як 'mutt' та 'procmail'.\n"
+"Для більш детальної інформації читайте списки розсилань encfs.\n"
+"Якщо ви бажаєте обрати інші налаштування конфігурації\n"
+"будь-ласка натисність CTRL+C і розпочніть спочатку."
+
+#: encfs/FileUtils.cpp:1168
+msgid ""
+"Now you will need to enter a password for your filesystem.\n"
+"You will need to remember this password, as there is absolutely\n"
+"no recovery mechanism.  However, the password can be changed\n"
+"later using encfsctl.\n"
+"\n"
+msgstr ""
+"Зараз ви маєте ввести пароль для вашої файлової системи.\n"
+"Ви повинні запам'ятати цей пароль, тому, що ви більше не\n"
+"будете мати змоги відновити його. У будь якому випадку\n"
+"пароль може бути змінений пізніше за допомогою encfsctl.\n"
+"\n"
+
+#: encfs/FileUtils.cpp:1196
+msgid "Failure generating new volume key! Please report this error."
+msgstr ""
+"Помилка генерації нового ключа для розділу! Будь ласка повідомте про помилку "
+"програми."
+
+#: encfs/FileUtils.cpp:1209
+msgid "Name coding interface not supported"
+msgstr "Ім'я кодового інтерфейсу не підтримується"
+
+#: encfs/FileUtils.cpp:1210
+msgid "The filename encoding interface requested is not available"
+msgstr "Інтерфейс дешифрування імен файлів не доступний"
+
+#: encfs/FileUtils.cpp:1243
+#, c-format
+msgid "Filesystem cipher: \"%s\", version %i:%i:%i"
+msgstr "Шифр файлової системи: \"%s\", версія %i:%i:%i"
+
+#: encfs/FileUtils.cpp:1248 encfs/FileUtils.cpp:1274 encfs/FileUtils.cpp:1293
+msgid " (NOT supported)\n"
+msgstr " (НЕ підтримується)\n"
+
+#: encfs/FileUtils.cpp:1256 encfs/FileUtils.cpp:1281
+#, c-format
+msgid " (using %i:%i:%i)\n"
+msgstr " (використовує %i:%i:%i)\n"
+
+#: encfs/FileUtils.cpp:1264
+#, c-format
+msgid "Filename encoding: \"%s\", version %i:%i:%i"
+msgstr "Дешифрування імені файлу: \"%s\", версії %i:%i:%i"
+
+#: encfs/FileUtils.cpp:1288
+#, c-format
+msgid "Key Size: %i bits"
+msgstr "Розмір ключе: %i біт"
+
+#: encfs/FileUtils.cpp:1299
+#, c-format
+msgid "Using PBKDF2, with %i iterations"
+msgstr ""
+
+#: encfs/FileUtils.cpp:1301
+#, fuzzy, c-format
+msgid "Salt Size: %i bits"
+msgstr "Розмір ключе: %i біт"
+
+#: encfs/FileUtils.cpp:1310
+#, c-format
+msgid "Block Size: %i bytes + %i byte MAC header"
+msgstr "Розмір блоку: %i байт + %i біт MAC заголовку"
+
+#: encfs/FileUtils.cpp:1318
+#, c-format
+msgid "Block Size: %i bytes, including %i byte MAC header"
+msgstr "Розмір блоку: %i байт, включаючи %i байт MAC заголовку"
+
+#: encfs/FileUtils.cpp:1325
+#, c-format
+msgid "Block Size: %i bytes"
+msgstr "Розмір блоку: %i байт"
+
+#: encfs/FileUtils.cpp:1332
+msgid "Each file contains 8 byte header with unique IV data.\n"
+msgstr "Кожен файл містить 8 байт заголовку з унікальними IV даними.\n"
+
+#: encfs/FileUtils.cpp:1337
+msgid "Filenames encoded using IV chaining mode.\n"
+msgstr "Файлові імена зашифровані з використанням IV моду.\n"
+
+#: encfs/FileUtils.cpp:1342
+msgid "File data IV is chained to filename IV.\n"
+msgstr "Файл даних IV пов'язаний з іменем файлу IV. (бред якийсь)\n"
+
+#: encfs/FileUtils.cpp:1347
+msgid "File holes passed through to ciphertext.\n"
+msgstr ""
+
+#: encfs/FileUtils.cpp:1402
+msgid "Error creating salt\n"
+msgstr ""
+
+#: encfs/FileUtils.cpp:1431
+msgid "EncFS Password: "
+msgstr "Пароль EncFS: "
+
+#: encfs/FileUtils.cpp:1437
+msgid "Zero length password not allowed\n"
+msgstr "Пароль довжиною 0 не можливий\n"
+
+#: encfs/FileUtils.cpp:1483
+msgid "Internal error: socketpair() failed"
+msgstr "Внутрішня помилка: помилка socketpair()"
+
+#: encfs/FileUtils.cpp:1491
+msgid "Internal error: fork() failed"
+msgstr "Внутрішня помилка: помилка fork()"
+
+#: encfs/FileUtils.cpp:1533
+msgid "Internal error: failed to exec program"
+msgstr "Внутрішня помилка: failed to exec program"
+
+#: encfs/FileUtils.cpp:1561
+msgid "New Encfs Password: "
+msgstr "Новий пароль Encfs: "
+
+#: encfs/FileUtils.cpp:1564
+msgid "Verify Encfs Password: "
+msgstr "Підтвердіть пароль EncFS: "
+
+#: encfs/FileUtils.cpp:1573
+msgid "Passwords did not match, please try again\n"
+msgstr "Паролі не співпадають, спробуйте ще раз\n"
+
+#: encfs/FileUtils.cpp:1596
+msgid "The configuration loaded is not compatible with --reverse\n"
+msgstr "Завантажена конфігурація не допустима з --reverse\n"
+
+#: encfs/FileUtils.cpp:1605
+#, c-format
+msgid "Unable to find cipher %s, version %i:%i:%i"
+msgstr "Неможливо знайти шифр  %s, версії %i:%i:%i"
+
+#: encfs/FileUtils.cpp:1611
+msgid "The requested cipher interface is not available\n"
+msgstr "Інтерфейс шифру не доступний.\n"
+
+#: encfs/FileUtils.cpp:1637
+msgid "Error decoding volume key, password incorrect\n"
+msgstr "Помилка дешифрування ключа розділа. Невірний пароль\n"
+
+#: encfs/FileUtils.cpp:1645
+#, c-format
+msgid "Unable to find nameio interface %s, version %i:%i:%i"
+msgstr "Неможливо знайти nameio інтерфейс %s, версії %i:%i:%i"
+
+#: encfs/FileUtils.cpp:1651
+msgid "The requested filename coding interface is not available\n"
+msgstr "Даний інтерфейс кодування файлового імені не доступний\n"
+
+#: encfs/FileUtils.cpp:1696
+msgid "Remount failed"
+msgstr "Помилка перейменування"
+
+#: encfs/MACFileIO.cpp:216
+#, c-format
+msgid "MAC comparison failure in block %li"
+msgstr "Помилка MAC порівняння у блоці %li"
+
+#: encfs/MACFileIO.cpp:222
+msgid "MAC comparison failure, refusing to read"
+msgstr "Помилка MAC порівнянн. Відміна читання"
+
+#: encfs/SSL_Cipher.cpp:201
+msgid "8 byte block cipher"
+msgstr "8-ми байтовий блоковий шифр"
+
+#: encfs/StreamNameIO.cpp:39
+msgid "Stream encoding, keeps filenames as short as possible"
+msgstr "Шифрування потоку зберігає імена файлів короткими по можливості"
+
+#: encfs/encfsctl.cpp:85
+msgid "  -- show information (Default command)"
+msgstr "  --показати інформацію (Команда по-замовченню)"
+
+#: encfs/encfsctl.cpp:88
+msgid "  -- show key"
+msgstr ""
+
+#: encfs/encfsctl.cpp:91
+msgid "  -- change password for volume"
+msgstr "  --змінити пароль для розділу"
+
+#: encfs/encfsctl.cpp:94
+msgid ""
+"  -- change password for volume, taking password from standard input.\n"
+"\tNo prompts are issued."
+msgstr ""
+"  --змінити пароль для розділу, узяти пароль зі стандартнного вводу.\n"
+"\tНіяких підказок немає."
+
+#: encfs/encfsctl.cpp:99
+msgid "  -- show undecodable filenames in the volume"
+msgstr "  --показати імена файлів у розділі, що не розшифровуються"
+
+#: encfs/encfsctl.cpp:102
+msgid "  -- decodes the file and cats it to standard out"
+msgstr "  --розшифровує файл та виводить результат"
+
+#: encfs/encfsctl.cpp:105
+msgid "  -- decodes name and prints plaintext version"
+msgstr "  --розшифровує ім'я та виводить у вигляді тексту"
+
+#: encfs/encfsctl.cpp:108
+msgid "  -- encodes a filename and print result"
+msgstr "  --розшифровує ім'я та виводить результат"
+
+#: encfs/encfsctl.cpp:111
+msgid "  -- decrypts a volume and writes results to path"
+msgstr "  --розшифовує розділ та записує результат по вказаному шляху"
+
+#: encfs/encfsctl.cpp:114
+msgid "  -- print version number and exit"
+msgstr "  --показати номер версії та вийти"
+
+#: encfs/encfsctl.cpp:123 encfs/encfsctl.cpp:167
+#, c-format
+msgid "encfsctl version %s"
+msgstr "версія  \tencfsctl %s"
+
+#: encfs/encfsctl.cpp:124
+msgid "Usage:\n"
+msgstr "Використання:\n"
+
+#: encfs/encfsctl.cpp:127
+#, c-format
+msgid ""
+"%s (root dir)\n"
+"  -- displays information about the filesystem, or \n"
+msgstr ""
+"%s (коренева директорія)\n"
+"  --показує інформацію про файлову систему або \n"
+
+#: encfs/encfsctl.cpp:144
+#, c-format
+msgid ""
+"Example: \n"
+"%s info ~/.crypt\n"
+msgstr ""
+"Наприклад: \n"
+"%s info ~/.cryp\n"
+
+#: encfs/encfsctl.cpp:152
+#, c-format
+msgid "directory %s does not exist.\n"
+msgstr "директорія %s не існує\n"
+
+#: encfs/encfsctl.cpp:187 encfs/encfsctl.cpp:708
+msgid "Unable to load or parse config file\n"
+msgstr "Неможливо прочитати конфігураційний файл\n"
+
+#: encfs/encfsctl.cpp:191
+msgid ""
+"A really old EncFS filesystem was found. \n"
+"It is not supported in this EncFS build.\n"
+msgstr ""
+"Знайдена стара файлова система EncFS. \n"
+"Вона не підтримується цією версією EncFS.\n"
+
+#: encfs/encfsctl.cpp:196
+#, c-format
+msgid "Version 3 configuration; created by %s\n"
+msgstr "Конфігурація 3-ої версії; створена %s\n"
+
+#: encfs/encfsctl.cpp:201
+#, c-format
+msgid "Version 4 configuration; created by %s\n"
+msgstr "Конфігурація 4-ої версії. створеної %s\n"
+
+#: encfs/encfsctl.cpp:206
+#, c-format
+msgid "Version 5 configuration; created by %s (revision %i)\n"
+msgstr "Конфігурація 5 версії; створена %s (виправлення %i)\n"
+
+#: encfs/encfsctl.cpp:212
+#, c-format
+msgid "Version 6 configuration; created by %s (revision %i)\n"
+msgstr ""
+
+#: encfs/encfsctl.cpp:250 encfs/main.cpp:331
+#, c-format
+msgid "getopt error: %i"
+msgstr "помилка getopt: %i"
+
+#: encfs/encfsctl.cpp:260
+#, fuzzy
+msgid "Incorrect number of arguments"
+msgstr "Некоректне число аргументів для команди \"%s\""
+
+#: encfs/encfsctl.cpp:272 encfs/encfsctl.cpp:293
+msgid "Unable to initialize encrypted filesystem - check path.\n"
+msgstr ""
+"Неможливо інітиалізувати зашифровану файлову систему - перевірка "
+"місцеположення\n"
+
+#: encfs/encfsctl.cpp:642
+#, c-format
+msgid "In directory %s: \n"
+msgstr "У теці %s \n"
+
+#: encfs/encfsctl.cpp:690
+#, c-format
+msgid "Found %i invalid file."
+msgid_plural "Found %i invalid files."
+msgstr[0] "Знайдено %i зіпсований файл."
+msgstr[1] "Знайдено %i зіпсованих файлів."
+msgstr[2] "Знайдено %i зіпсованих файлів."
+
+#: encfs/encfsctl.cpp:717
+#, c-format
+msgid "Unable to find specified cipher \"%s\"\n"
+msgstr "Неможливо знайти шифр \"%s\"\n"
+
+#: encfs/encfsctl.cpp:723
+msgid "Enter current Encfs password\n"
+msgstr "Введіть Ваш Encfs пароль\n"
+
+#: encfs/encfsctl.cpp:734
+msgid "Invalid password\n"
+msgstr "Невірний пароль\n"
+
+#: encfs/encfsctl.cpp:740
+msgid "Enter new Encfs password\n"
+msgstr "Введіть новий Encfs пароль\n"
+
+#: encfs/encfsctl.cpp:766
+msgid "Volume Key successfully updated.\n"
+msgstr "Регулятор гучності успішно оновлений.\n"
+
+#: encfs/encfsctl.cpp:770
+msgid "Error saving modified config file.\n"
+msgstr "Помилка збереження модифікованого файла конфігурації.\n"
+
+#: encfs/encfsctl.cpp:774
+msgid "Error creating key\n"
+msgstr ""
+
+#: encfs/encfsctl.cpp:839
+#, c-format
+msgid "invalid command: \"%s\""
+msgstr "невірна команда: \"%s\""
+
+#: encfs/encfsctl.cpp:846
+#, c-format
+msgid "Incorrect number of arguments for command \"%s\""
+msgstr "Некоректне число аргументів для команди \"%s\""
+
+#: encfs/main.cpp:127
+#, c-format
+msgid "Build: encfs version %s"
+msgstr "Зборка: encfs версії %s"
+
+#: encfs/main.cpp:130
+#, c-format
+msgid "Usage: %s [options] rootDir mountPoint [-- [FUSE Mount Options]]"
+msgstr ""
+"Використовується: %s [options] rootDir mountPoint [-- [FUSE Mount Options]]"
+
+#: encfs/main.cpp:132
+msgid ""
+"Common Options:\n"
+"  -H\t\t\tshow optional FUSE Mount Options\n"
+"  -s\t\t\tdisable multithreaded operation\n"
+"  -f\t\t\trun in foreground (don't spawn daemon).\n"
+"\t\t\tError messages will be sent to stderr\n"
+"\t\t\tinstead of syslog.\n"
+msgstr ""
+
+#: encfs/main.cpp:140
+msgid ""
+"  -v, --verbose\t\tverbose: output encfs debug messages\n"
+"  -i, --idle=MINUTES\tAuto unmount after period of inactivity\n"
+"  --anykey\t\tDo not verify correct key is being used\n"
+"  --forcedecode\t\tdecode data even if an error is detected\n"
+"\t\t\t(for filesystems using MAC block headers)\n"
+msgstr ""
+
+#: encfs/main.cpp:145
+msgid ""
+"  --public\t\tact as a typical multi-user filesystem\n"
+"\t\t\t(encfs must be run as root)\n"
+msgstr ""
+
+#: encfs/main.cpp:147
+msgid "  --reverse\t\treverse encryption\n"
+msgstr ""
+
+#: encfs/main.cpp:150
+msgid ""
+"  --extpass=program\tUse external program for password prompt\n"
+"\n"
+"Example, to mount at ~/crypt with raw storage in ~/.crypt :\n"
+"    encfs ~/.crypt ~/crypt\n"
+"\n"
+msgstr ""
+
+#: encfs/main.cpp:156
+msgid "For more information, see the man page encfs(1)"
+msgstr "Для додаткової інформації зверніться до довідки encfs(1)"
+
+#: encfs/main.cpp:164
+msgid ""
+"encfs [options] rootDir mountPoint -- [FUSE Mount Options]\n"
+"valid FUSE Mount Options follow:\n"
+msgstr ""
+"encfs [options] rootDir mountPoint -- [FUSE Mount Options]\n"
+"Доступні наступн опції монтування:\n"
+
+#: encfs/main.cpp:305
+msgid "option '--public' ignored for non-root user"
+msgstr "опція '--public' ігнорується для всіх користувачів окрім root"
+
+#: encfs/main.cpp:317
+#, c-format
+msgid "encfs version %s"
+msgstr ""
+
+#: encfs/main.cpp:356
+msgid "Missing one or more arguments, aborting."
+msgstr "Неправильний один або декілька аргументів. Зупинено."
+
+#: encfs/main.cpp:381
+msgid ""
+"When specifying daemon mode, you must use absolute paths (beginning with '/')"
+msgstr ""
+"Коли запускається у режимі демона, необхідно вказати повний шлях "
+"(починається з '/')"
+
+#: encfs/main.cpp:397
+msgid "The raw directory may not be a subdirectory of the mount point."
+msgstr "Папка не може бути підкаталогом точки монтування."
+
+#: encfs/main.cpp:407
+msgid "Must set password program when using mount-on-demand"
+msgstr "При використанні монтування через демон необхідно вказати пароль"
+
+#: encfs/main.cpp:416
+msgid "Unable to locate root directory, aborting."
+msgstr "Неможливо знайти кореневу папку. Аварійне завершення."
+
+#: encfs/main.cpp:422
+msgid "Unable to locate mount point, aborting."
+msgstr "Неможливо знайти точку монтування. Аварійне завершення."
+
+#: encfs/main.cpp:605
+msgid ""
+"Note: requested single-threaded mode, but an idle\n"
+"timeout was specified.  The filesystem will operate\n"
+"single-threaded, but threads will still be used to\n"
+"implement idle checking."
+msgstr ""
+"Примітка: запущений однопоточний режим, але не вказано\n"
+"час простою. Файлова система буде працювати в\n"
+"однопоточному режимі, а потоки будуть здійснювати\n"
+"перевірку часу простою."
+
+#: encfs/main.cpp:656
+#, c-format
+msgid ""
+"fuse failed.  Common problems:\n"
+" - fuse kernel module not installed (modprobe fuse)\n"
+" - invalid options -- see usage message\n"
+msgstr ""
+"fuse помилка. Можливі помилки:\n"
+" - fuse kernel модуль не встановлений (modprobe fuse)\n"
+" - невірна опція -- перегляньте довідку\n"
+
+#: encfs/main.cpp:663
+#, c-format
+msgid "Internal error: Caught exception from main loop: %s"
+msgstr "Внутрішня помилка: Виникло виключення з головного циклу: %s"
+
+#: encfs/main.cpp:667
+msgid "Internal error: Caught unexpected exception"
+msgstr "Внутрішня помилка: Непередбачуване виключення"
+
+#: encfs/main.cpp:757
+#, c-format
+msgid "Unmounting filesystem %s due to inactivity"
+msgstr "Розмонтування файлової системи %s через її бездіяльність"
