@@ -1,0 +1,141 @@
+
+SRCDIR = dta/dta
+OBJDIR = ../lib/linux
+LIBDIR = ../lib/linux
+BINDIR = ../bin/linux
+PLFDIR = $(SRCDIR)/platform/linux32
+CMPDIR = $(SRCDIR)/compilers/gcc
+
+
+LNXDIR = dta/dtad/platform/linux32
+TPTDIR = $(LNXDIR)/transports
+SYSDIR = $(LNXDIR)/syscore
+
+INCDIR = dta
+
+CPPFLAG = -Wall -g 
+
+OBJECTS = Ata.o atatasks.o dta.o parseoptions.o satcdb.o Scsi.o tfr.o tfrSAT.o
+
+OSOBJECTS = osLogObject.o osCreateLocalSystemObject.o osLocalSystemObject.o \
+            GetClassDevs.o osATAPT.o osDTSession.o osES.o osRAID.o \
+            osSAT.o osTfrATAPT.o osTfrRAID.o
+
+OSCOREOBJ = osutils.o scsiCore.o
+
+#SOURCE = $(SRCDIR)/Ata.cpp
+
+HEADER = $(PLFDIR)/Pcommon.h \
+         $(CMPDIR)/Xcommon.h \
+         $(SRCDIR)/common.h \
+         $(SRCDIR)/errors.h \
+         $(SRCDIR)/dta.hpp \
+         $(SRCDIR)/tfr.hpp \
+         $(SRCDIR)/Ata.hpp \
+         $(SRCDIR)/atatasks.hpp \
+         $(SRCDIR)/parseoptions.hpp \
+         $(SRCDIR)/SATCDB.hpp \
+         $(SRCDIR)/Scsi.hpp \
+         $(SRCDIR)/tfr.hpp
+
+dtad.a: $(OBJECTS) $(OSOBJECTS) $(OSCOREOBJ)
+	ar -cvr $(LIBDIR)/dtad.a $(OBJECTS) $(OSOBJECTS) $(OSCOREOBJ)
+	mv $(OBJECTS) $(OBJDIR)
+	mv $(OSOBJECTS) $(OBJDIR)
+	mv $(OSCOREOBJ) $(OBJDIR)
+
+Ata.o: $(HEADER) $(SRCDIR)/Ata.cpp
+	g++ -c $(CPPFLAG) -Idta $(HEADER) $(SRCDIR)/Ata.cpp
+
+atatasks.o: $(HEADER) $(SRCDIR)/atatasks.cpp	
+	g++ -c $(CPPFLAG) -Idta $(HEADER) $(SRCDIR)/atatasks.cpp
+
+dta.o: $(HEADER) $(SRCDIR)/dta.cpp
+	g++ -c $(CPPFLAG) -Idta $(HEADER) $(SRCDIR)/dta.cpp
+
+parseoptions.o: $(HEADER) $(SRCDIR)/parseoptions.cpp
+	g++ -c $(CPPFLAG) -Idta $(HEADER) $(SRCDIR)/parseoptions.cpp
+
+satcdb.o: $(HEADER) $(SRCDIR)/satcdb.cpp
+	g++ -c $(CPPFLAG) -Idta $(HEADER) $(SRCDIR)/satcdb.cpp
+
+Scsi.o: $(HEADER) $(SRCDIR)/Scsi.cpp
+	g++ -c $(CPPFLAG) -Idta $(HEADER) $(SRCDIR)/Scsi.cpp
+
+tfr.o: $(HEADER) $(SRCDIR)/tfr.cpp
+	g++ -c $(CPPFLAG) -Idta $(HEADER) $(SRCDIR)/tfr.cpp
+
+tfrSAT.o: $(HEADER) $(SRCDIR)/tfrSAT.cpp
+	g++ -c $(CPPFLAG) -Idta $(HEADER) $(SRCDIR)/tfrSAT.cpp
+
+
+#osLayer.a: $(OSOBJECTS)
+#	ar -cvq osLayer.a $(OSOBJECTS)
+
+#################################
+# now we are working on osLayer
+#
+osLogObject.o: $(HEADER) $(PLFDIR)/osLogObject.cpp
+	g++ -c $(CPPFLAG) -Idta -I$(TPTDIR) -I$(LNXDIR) -I$(SYSDIR) $(PLFDIR)/osLogObject.cpp
+
+osCreateLocalSystemObject.o: $(HEADER) $(LNXDIR)/osCreateLocalSystemObject.cpp
+	g++ -c $(CPPFLAG) -Idta -I$(TPTDIR) -I$(LNXDIR) -I$(SYSDIR) $(LNXDIR)/osCreateLocalSystemObject.cpp
+
+osDTSession.o: $(HEADER) $(LNXDIR)/osDTSession.cpp
+	g++ -c $(CPPFLAG) -Idta -I$(TPTDIR) -I$(LNXDIR) -I$(SYSDIR) $(LNXDIR)/osDTSession.cpp
+
+osLocalSystemObject.o: $(HEADER) $(LNXDIR)/osLocalSystemObject.cpp
+	g++ -c $(CPPFLAG) -Idta -I$(TPTDIR) -I$(LNXDIR) -I$(SYSDIR) $(LNXDIR)/osLocalSystemObject.cpp
+#################################
+
+#################################
+# now we are working on Transport
+#
+osATAPT.o: $(HEADER) $(TPTDIR)/osATAPT.cpp
+	g++ -c $(CPPFLAG) -Idta -I$(TPTDIR) -I$(LNXDIR) -I$(SYSDIR) -I$(TPTDIR) $(TPTDIR)/osATAPT.cpp
+
+osES.o: $(HEADER) $(TPTDIR)/osES.cpp
+	g++ -c $(CPPFLAG) -Idta -I$(TPTDIR) -I$(LNXDIR) -I$(SYSDIR) -I$(TPTDIR) $(TPTDIR)/osES.cpp
+
+osRAID.o: $(HEADER) $(TPTDIR)/osRAID.cpp
+	g++ -c $(CPPFLAG) -Idta -I$(TPTDIR) -I$(LNXDIR) -I$(SYSDIR) -I$(TPTDIR) $(TPTDIR)/osRAID.cpp
+
+osSAT.o: $(HEADER) $(TPTDIR)/osSAT.cpp
+	g++ -c $(CPPFLAG) -Idta -I$(TPTDIR) -I$(LNXDIR) -I$(SYSDIR) -I$(TPTDIR) $(TPTDIR)/osSAT.cpp
+
+osTfrATAPT.o: $(HEADER) $(TPTDIR)/osTfrATAPT.cpp
+	g++ -c $(CPPFLAG) -Idta -I$(TPTDIR) -I$(LNXDIR) -I$(SYSDIR) -I$(TPTDIR) $(TPTDIR)/osTfrATAPT.cpp
+
+osTfrRAID.o: $(HEADER) $(TPTDIR)/osTfrRAID.cpp
+	g++ -c $(CPPFLAG) -Idta -I$(TPTDIR) -I$(LNXDIR) -I$(SYSDIR) -I$(TPTDIR) $(TPTDIR)/osTfrRAID.cpp
+#################################
+
+#################################
+# now we are working on Setup DI
+#
+GetClassDevs.o: $(HEADER) $(LNXDIR)/setupdi/GetClassDevs.cpp
+	g++ -c $(CPPFLAG) -Idta -I$(TPTDIR) -I$(LNXDIR) -I$(SYSDIR) $(LNXDIR)/setupdi/GetClassDevs.cpp
+#################################
+
+#################################
+# now we are working on OS System Core
+#
+osutils.o: $(HEADER) $(LNXDIR)/syscore/osutils.cpp
+	g++ -c $(CPPFLAG) $(LNXDIR)/syscore/osutils.cpp
+
+scsiCore.o: $(HEADER) $(LNXDIR)/syscore/scsiCore.cpp
+	g++ -c $(CPPFLAG) $(LNXDIR)/syscore/scsiCore.cpp
+#################################
+
+.PHONY: clean
+
+clean:
+	rm -f ../linuxout/lib/dtad.a
+	rm -f ../linuxout/obj/Ata.o
+	rm -f ../linuxout/obj/atatasks.o
+	rm -f ../linuxout/obj/dta.o
+	rm -f ../linuxout/obj/parseoptions.o
+	rm -f ../linuxout/obj/satcdb.o
+	rm -f ../linuxout/obj/Scsi.o
+	rm -f ../linuxout/obj/tfr.o
+	rm -f ../linuxout/obj/tfrSAT.o

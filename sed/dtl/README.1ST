@@ -1,0 +1,46 @@
+
+      Readme for Win32 Version of the SDK Libs/Bins
+
+               Updated Sept 2012 - jls
+
+The SDK incorporates multiple builds so that an ala-carte release 
+can be accomodated. All versions are rooted on the "DTL" component,
+which includes individual components that can be separately built:
+
+DTA -	The low-level transport that performs I/O to SEDs. This 
+	layer (broken into DTA and DTAD subdirs) only understands 
+	the fundamental transport and does not parse or interpret
+	data "blobs". This component must be linked when building
+	either the SCI or TCG components. All platform-specific 
+      and OS-specific functions are included in this layer.
+
+DTI -	This is the DriveTrust/SeaCOS component that translates 
+	DTI function calls into the APDUs that the DriveTrust SEDs
+      understand.  There is generally a 1 to 1 mappping of DTI
+	functions to APDUs at this layer. (This will become the
+      SCI component in a future SDK.)
+
+TCGI-	This is the TCG Opal/Enterprise component that translates
+	TCG function calls into the ComPackets that the TCG SEDs
+	understand.  There is generally a 1 to 1 mapping of TCG
+	functions to ComPkts at this layer.
+
+SED -	This is a combination of SCI and TCG components to allow
+	a common SDK that support both SeaCOS/DriveTrust and TCG
+	Opal/Enterprise drives. This layer provides some abstraction
+	of common functions, but does not attempt to abstract all
+	functions of the different SEDs.
+
+TDT -	(DEPRECATED) This is a "shim" that translates the first
+      DriveTrust SDK library calls into calls to the SCI component 
+      of the current SDK. This shim emulates the old calls on 
+      top of the new SDK so that ISVs who do not have source 
+      code do not have to rewrite their applications that used 
+      the old SDK.
+
+DXY -	This is the Doxygen content and help component. It uses
+	Doxygen to create a WinHelp file that is compiled by a
+	Microsoft tool into the concise Windows Help module.
+
+
+

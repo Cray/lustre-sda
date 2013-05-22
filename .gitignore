@@ -1,11 +1,11 @@
 #
 # N.B.
-# This is the toplevel .gitignore file.  
-# This is not the place for entries that are specific to 
-# a subdirectory.  Instead add those files to the 
+# This is the toplevel .gitignore file.
+# This is not the place for entries that are specific to
+# a subdirectory.  Instead add those files to the
 # .gitignore file in that subdirectory.
 #
-# N.B. 
+# N.B.
 # Please use 'git ls-files -i --exclude-standard'
 # command after changing this file, to see if there are
 # any tracked files which get ignored after the change.
@@ -75,3 +75,10 @@ cscope.*
 
 # doxygen files
 doxygen.*
+
+#XML file SED
+*.xml
+*.out
+*.gch
+*.a
+*.o

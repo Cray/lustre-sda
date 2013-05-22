@@ -1,0 +1,1058 @@
+/*! \file dtlcrypto.cpp
+    \brief Isolation of all MS CryptoAPI code for cryptography.
+
+    \legal 
+    All software, source code, and any additional materials contained
+    herein (the "Software") are owned by Seagate Technology LLC and are 
+    protected by law and international treaties.  No rights to the 
+    Software, including any rights to distribute, reproduce, sell, or 
+    use the Software, are granted unless a license agreement has been 
+    mutually agreed to and executed between Seagate Technology LLC and 
+    an authorized licensee. 
+
+    The Software contains SEAGATE CONFIDENTIAL INFORMATION AND SEAGATE 
+    TRADE SECRET INFORMATION that must be protected as such.
+
+    Copyright © 2008.  Seagate Technology LLC  All Rights Reserved.
+
+    The Software is provided under the Agreement No. 134849 between Seagate
+    Technology and Calsoft. All Intellectual Property rights to the Software,
+    as between Calsoft and Seagate, will be governed under the terms of the 
+    Agreement No. 134849; no other rights to the Software are granted.
+*/
+
+/*=================================
+// Include files
+//===============================*/
+//#include <win32helper.h>
+#include "dtlcrypto.h"
+#include "hash.h"
+#include "buffer.h"
+   
+/*=================================
+// Constant definitions             
+//===============================*/
+
+/*=================================
+// Static and external variables                
+//===============================*/
+
+/*=================================
+// Structures and type definitions     
+//===============================*/
+
+/*=================================
+// Class & function definitions
+//===============================*/
+/// An implementation of the DTLCRYPTO::CDTLCrypto virtual
+/// base class using Microsoft's CryptoAPI for implementation.
+/// It largely allows a caller to quickly and easily do 
+/// two key 3DES (ECB) encryption and decryption.
+class CMSCAPI3DES : public DTLCRYPTO::CDTLCrypto
+{
+public:
+   CMSCAPI3DES( const tUINT8 *pbKey, bool modeECB=false );
+   virtual ~CMSCAPI3DES();
+
+   virtual tINT32 Decrypt(
+      tUINT8         *unencrypted,
+      const tINT32  unencryptedMaxLen,
+      const tUINT8   *encrypted,
+      const tINT32  encryptedLen,
+      ePadOptions        padding
+      );
+
+   virtual tINT32 Encrypt(
+      tUINT8         *encrypted,
+      const tINT32  encryptedMaxLen,
+      const tUINT8   *unencrypted,
+      const tINT32  unencryptedLen,
+      ePadOptions        padding
+      );
+
+   virtual DTLCRYPTO::DATA_LENGTH KeyLength() const
+   { return TRIPLEDES_TWO_KEY_LENGTH; }
+   virtual DTLCRYPTO::DATA_LENGTH BlockSize() const
+   { return m_blockSize; }
+
+   virtual inline void SetCryptoIV( MSCAPI::CBuffer buffer)
+   {
+      if ( !CryptSetKeyParam( m_key, KP_IV, buffer, 0 ) )
+      {
+         throw ::GetLastError();
+      }
+   }
+
+protected:
+   DTLCRYPTO::DATA_LENGTH    m_blockSize;
+   DTLCRYPTO::DATA_LENGTH    m_keyLength;
+   MSCAPI::CContext          m_prov;
+   MSCAPI::CKey              m_key;
+};
+
+/// An implementation of the DTLCRYPTO::CDTLCrypto virtual
+/// base class using Microsoft's CryptoAPI for implementation.
+/// It largely allows a caller to quickly and easily do 
+/// 128-bit AES (ECB) encryption and decryption.
+class CMSCAPIAES : public DTLCRYPTO::CDTLCrypto
+{
+public:
+   CMSCAPIAES( const tUINT8 *pbKey, bool modeECB=false, const tUINT16 bitSize=128);
+   virtual ~CMSCAPIAES();
+
+   virtual tINT32 Decrypt(
+      tUINT8         *unencrypted,
+      const tINT32  unencryptedMaxLen,
+      const tUINT8   *encrypted,
+      const tINT32  encryptedLen,
+      ePadOptions        padding
+      );
+
+   virtual tINT32 Encrypt(
+      tUINT8         *encrypted,
+      const tINT32  encryptedMaxLen,
+      const tUINT8   *unencrypted,
+      const tINT32  unencryptedLen,
+      ePadOptions        padding
+      );
+
+   virtual DTLCRYPTO::DATA_LENGTH KeyLength() const
+   { return m_keyLength; }
+   virtual DTLCRYPTO::DATA_LENGTH BlockSize() const
+   { return m_blockSize; }
+
+   virtual inline void SetCryptoIV( MSCAPI::CBuffer buffer)
+   {
+      if ( !CryptSetKeyParam( m_key, KP_IV, buffer, 0 ) )
+      {
+         throw ::GetLastError();
+      }
+   }
+
+protected:
+   DTLCRYPTO::DATA_LENGTH    m_blockSize;
+   DTLCRYPTO::DATA_LENGTH    m_keyLength;
+   MSCAPI::CContext          m_prov;
+   MSCAPI::CKey              m_key;
+   tUINT16                   m_bitSize;
+};
+
+/// An implementation of the DTLCRYPTO::CDTLCrypto virtual
+/// base class using Microsoft's CryptoAPI for implementation.
+/// It largely allows a caller to quickly and easily do 
+/// 1024-bit RSA encryption and decryption.
+class CMSCAPIRSA : public DTLCRYPTO::CDTLCrypto
+{
+public:
+   CMSCAPIRSA( const tUINT8 *pbKey, const tUINT16 bitSize=1024);
+   virtual ~CMSCAPIRSA();
+
+   virtual tINT32 Decrypt(
+      tUINT8         *unencrypted,
+      const tINT32  unencryptedMaxLen,
+      const tUINT8   *encrypted,
+      const tINT32  encryptedLen,
+      ePadOptions        padding
+      );
+
+   virtual tINT32 Encrypt(
+      tUINT8         *encrypted,
+      const tINT32  encryptedMaxLen,
+      const tUINT8   *unencrypted,
+      const tINT32  unencryptedLen,
+      ePadOptions        padding
+      );
+
+   virtual DTLCRYPTO::DATA_LENGTH KeyLength() const
+   { return m_keyLength; }
+   virtual DTLCRYPTO::DATA_LENGTH BlockSize() const
+   { return m_blockSize; }
+
+   virtual inline void SetCryptoIV( MSCAPI::CBuffer buffer)
+   {
+      if ( !CryptSetKeyParam( m_key, KP_IV, buffer, 0 ) )
+      {
+         throw ::GetLastError();
+      }
+   }
+
+protected:
+   DTLCRYPTO::DATA_LENGTH    m_blockSize;
+   DTLCRYPTO::DATA_LENGTH    m_keyLength;
+   MSCAPI::CContext          m_prov;
+   MSCAPI::CKey              m_key;
+   tUINT16                   m_bitSize;
+};
+/*=================================
+// Code
+//===============================*/
+
+///
+/// Import 3DES key material into the CryptoAPI context.
+/// CryptoAPI attempts to keep keys hidden from the user
+/// as much as possible, so it takes some work to get
+/// raw key material imported into CryptoAPI for use
+/// during the encryption / decryption process.
+///
+void ImportKeyData(MSCAPI::CKey &newKey,
+                        MSCAPI::CContext& prov, 
+                        ALG_ID Algid, 
+                        const tUINT8 *pbKeyData,
+                        DWORD cbKeyData,
+                        BYTE bType=SIMPLEBLOB
+                        ) 
+{
+   MSCAPI::CKey key;
+   prov.GetUserKey( key, AT_KEYEXCHANGE );
+
+   DWORD cbData = key.Encrypt( NULL, cbKeyData, cbKeyData );
+
+   // Create the local fixed memory for the buffer.  The buffer is
+   // fixed in memory and will be copied from the key data provided.
+   MSCAPI::CBuffer  blob( sizeof(BLOBHEADER) + sizeof(ALG_ID) + cbData );
+   BLOBHEADER      *pBlob   = blob.Ptr<BLOBHEADER>();
+   ALG_ID          *pAlgId  = (ALG_ID*)(pBlob + 1);
+   tUINT8            *pData   = (tUINT8*)  (pAlgId + 1);
+
+   // The BLOB consists of a BLOBHEADER, an ALG_ID, and our
+   // to-be-encrypted key.  Go and fill out each piece of the
+   // combined puzzle.
+
+   // The BLOBHEADER!
+   pBlob->bType    = bType;
+   pBlob->bVersion = 2;
+   pBlob->reserved = 0;
+   pBlob->aiKeyAlg = Algid;
+
+   // The ALG_ID!
+   key.GetParam( KP_ALGID, (tUINT8*)pAlgId, sizeof(ALG_ID) );
+
+   // The data buffer, which needs to contain an encrypted
+   // copy of the 3DES key given to us!
+   CopyMemory( pData, pbKeyData, cbKeyData);
+   key.Encrypt( pData, cbData, cbKeyData );
+
+   // The three-headed monster is complete.  Now import
+   // the 3DES key as packaged into the context.
+   prov.ImportKey( newKey, (tUINT8*)blob, (DWORD)blob.Size(), key );
+}
+
+///
+/// CDTLCrypto::Create() is just a static function that instantiates a derived
+/// class for the caller.  This allows me to truly hide implementation details
+/// of the actual class from the caller (e.g. the caller doesn't -- and can't --
+/// know about stuff like OpenSSL or CryptoAPI ).
+///
+/// The caller still has to delete the created pointer returned from create,
+/// or a memory leak will exist.  A small price for abstraction, I hope.
+///
+DTLCRYPTO::CDTLCrypto* DTLCRYPTO::CDTLCrypto::Create( const tUINT8 *pbKey, const bool modeECB, const eAlgorithm algo )
+{
+   if ( !pbKey )
+   {
+      // Without a key, there is no crypto.
+      return NULL;
+   }
+
+   switch( algo )
+   {
+      case DTLCRYPTO::ALGO_3DES:
+         return new CMSCAPI3DES( pbKey, modeECB );
+      case DTLCRYPTO::ALGO_AES:
+         return new CMSCAPIAES( pbKey, modeECB );
+      default:
+         return NULL;
+   }
+}
+
+DTLCRYPTO::CDTLCrypto* DTLCRYPTO::CDTLCrypto::Create( const tUINT8 *pbKey, eAlgorithm algo )
+{
+   if ( !pbKey )
+   {
+      // Without a key, there is no crypto.
+      return NULL;
+   }
+
+   switch( algo )
+   {
+      case DTLCRYPTO::ALGO_RSA:
+         return new CMSCAPIRSA( pbKey, 1024 );
+      default:
+         return NULL;
+   }
+}
+
+/// Constructor.  Creates object, saves key, and establishes any
+/// necessary constant values.
+CMSCAPI3DES::CMSCAPI3DES( const tUINT8* pbKey, bool modeECB )
+: m_prov( 0 )
+{
+   try
+   {
+      ImportKeyData( m_key, m_prov, CALG_3DES_112, 
+         (tUINT8*)pbKey, KeyLength() );
+
+      m_blockSize = m_key.GetBlockSize();
+      m_keyLength = m_key.GetKeyLength();
+
+      // CBC is default mode, so user must specify otherwise
+      if (modeECB)
+      {
+         m_key.SetMode( CRYPT_MODE_ECB );
+      }
+      //SetCryptoIV( m_hProv, m_key );
+   }
+   catch( MSCAPI::CException& e )
+   {
+      DWORD   err    = e.Error();
+      m_blockSize = 0;
+   }
+}
+
+/// Destructor.  Since the objects the class contains deal
+/// with releasing their own resources in their own
+/// destructors, there's little to do here.
+CMSCAPI3DES::~CMSCAPI3DES()
+{
+}
+
+/// Decrypt a 3DES buffer into a plaintext buffer.  This is
+/// half of the "useful" features in the CMSCAPI3DES class.
+tINT32 CMSCAPI3DES::Decrypt(
+      tUINT8         *unencrypted,
+      const tINT32  unencryptedMaxLen,
+      const tUINT8   *encrypted,
+      const tINT32  encryptedLen,
+      ePadOptions        padding
+      )
+{
+   DWORD  length = 0;
+   tINT32 result = 0;
+
+   try
+   {
+      // Create a data object.  This mostly just contains the
+      // pointer and length into a convenient object the key
+      // will use during decryption.
+      MSCAPI::Data in( (tUINT8*)encrypted, encryptedLen );
+
+      // A word of explanation : PKCS#7 padding requires that
+      // the data be padded with 1 to block size ( 8 for 3DES )
+      // bytes at the end of data.
+      //
+      // Since the structure of data coming to and from the
+      // trusted drive explicitly notates the number of valid 
+      // bytes, the trusted drive will not pad data that is
+      // already on a block size.  This reduces space requirements
+      // without cost, hopefully allowing more data to be 
+      // put into a single ATA block of data (512 bytes).
+      //
+      bool usePadding = (PADDING_PKCS7==padding);
+
+      // Decrypt using the key, and get a Data object containing
+      // the resultant plaintext.
+      MSCAPI::Data out = m_key.Decrypt( in, usePadding );
+
+      // Validate that the buffer given is large enough to
+      // hold the plaintext data.
+      if ( unencryptedMaxLen < (tINT32)out.Count() )
+      {
+         // Oops, not enough space.
+         length = out.Count();
+         throw ERROR_MORE_DATA;
+      }
+
+      CopyMemory( unencrypted, out.Ptr(), out.Count() );
+      result = out.Count();
+   }
+   catch( MSCAPI::CException& e )
+   {
+      DWORD   err    = e.Error();
+      // For any error but ERROR_MORE_DATA, we know we have a problem,
+      // and it's something other than insufficient buffer size.
+      if ( ERROR_MORE_DATA != err )
+      {
+         result = 0;
+      }
+      else
+      {
+         result = -(tINT32)length;
+      }
+   }
+
+   return result;
+}
+
+/// Encrypt a plaintext buffer into a 3DES buffer.  This is
+/// half of the "useful" features in the CMSCAPI3DES class.
+tINT32 CMSCAPI3DES::Encrypt(
+      tUINT8         *encrypted,
+      const tINT32  encryptedMaxLen,
+      const tUINT8   *unencrypted,
+      const tINT32  unencryptedLen,
+      ePadOptions        padding
+      )
+{
+   DWORD  length = 0;
+   tINT32 result = 0;
+
+   try
+   {
+      // See comments above in CMSCAPI3DES::Decrypt, as this
+      // is just the reverse process.
+      bool usePadding = (PADDING_PKCS7 == padding);
+
+      MSCAPI::Data in( (tUINT8*)unencrypted, unencryptedLen );
+      MSCAPI::Data out = m_key.Encrypt( in, usePadding );
+
+      if ( encryptedMaxLen < (tINT32)out.Count() )
+      {
+         // Oops, not enough space.
+         length = out.Count();
+         throw ERROR_MORE_DATA;
+      }
+
+      CopyMemory( encrypted, out.Ptr(), out.Count() );
+      result = out.Count();
+   }
+   catch( MSCAPI::CException& e )
+   {
+      DWORD   err    = e.Error();
+      // For any error but ERROR_MORE_DATA, we know we have a problem,
+      // and it's something other than insufficient buffer size.
+      if ( ERROR_MORE_DATA != err )
+      {
+         result = 0;
+      }
+      else
+      {
+         result = -(tINT32)length;
+      }
+   }
+
+   return result;
+}
+
+/// Constructor.  Creates object, saves key, and establishes any
+/// necessary constant values.
+CMSCAPIAES::CMSCAPIAES( const tUINT8* pbKey, bool modeECB, const tUINT16 bitSize)
+: m_prov( 0 )
+{
+   try
+   {
+      switch (bitSize)
+      {
+         case 192:
+            ImportKeyData(m_key, m_prov, CALG_AES_192, (tUINT8*)pbKey, KeyLength());
+            break;
+         case 256:
+            ImportKeyData(m_key, m_prov, CALG_AES_256, (tUINT8*)pbKey, KeyLength());
+            break;
+         default:
+            ImportKeyData(m_key, m_prov, CALG_AES_128, (tUINT8*)pbKey, KeyLength());
+            break;
+      } // switch
+
+      m_blockSize = m_key.GetBlockSize();
+      m_keyLength = m_key.GetKeyLength();
+      m_bitSize   = bitSize;
+
+      // CBC is default mode, so user must specify otherwise
+      if (modeECB)
+      {
+         m_key.SetMode( CRYPT_MODE_ECB );
+      }
+      //SetCryptoIV( m_hProv, m_key );
+   }
+   catch( MSCAPI::CException& e )
+   {
+      DWORD   err    = e.Error();
+      m_blockSize = 0;
+   }
+}
+
+/// Destructor.  Since the objects the class contains deal
+/// with releasing their own resources in their own
+/// destructors, there's little to do here.
+CMSCAPIAES::~CMSCAPIAES()
+{
+}
+
+/// Decrypt an AES buffer into a plaintext buffer.  This is
+/// half of the "useful" features in the CMSCAPIAES class.
+tINT32 CMSCAPIAES::Decrypt(
+      tUINT8         *unencrypted,
+      const tINT32  unencryptedMaxLen,
+      const tUINT8   *encrypted,
+      const tINT32  encryptedLen,
+      ePadOptions        padding
+      )
+{
+   DWORD  length = 0;
+   tINT32 result = 0;
+
+   try
+   {
+      // Create a data object.  This mostly just contains the
+      // pointer and length into a convenient object the key
+      // will use during decryption.
+      MSCAPI::Data in( (tUINT8*)encrypted, encryptedLen );
+
+      // A word of explanation : PKCS#7 padding requires that
+      // the data be padded with 1 to block size ( 8 for 3DES )
+      // bytes at the end of data.
+      //
+      // Since the structure of data coming to and from the
+      // trusted drive explicitly notates the number of valid 
+      // bytes, the trusted drive will not pad data that is
+      // already on a block size.  This reduces space requirements
+      // without cost, hopefully allowing more data to be 
+      // put into a single ATA block of data (512 bytes).
+      //
+      bool usePadding = (PADDING_PKCS7==padding);
+
+      // Decrypt using the key, and get a Data object containing
+      // the resultant plaintext.
+      MSCAPI::Data out = m_key.Decrypt( in, usePadding );
+
+      // Validate that the buffer given is large enough to
+      // hold the plaintext data.
+      if ( unencryptedMaxLen < (tINT32)out.Count() )
+      {
+         // Oops, not enough space.
+         length = out.Count();
+         throw ERROR_MORE_DATA;
+      }
+
+      CopyMemory( unencrypted, out.Ptr(), out.Count() );
+      result = out.Count();
+   }
+   catch( MSCAPI::CException& e )
+   {
+      DWORD   err    = e.Error();
+      // For any error but ERROR_MORE_DATA, we know we have a problem,
+      // and it's something other than insufficient buffer size.
+      if ( ERROR_MORE_DATA != err )
+      {
+         result = 0;
+      }
+      else
+      {
+         result = -(tINT32)length;
+      }
+   }
+
+   return result;
+}
+
+/// Encrypt a plaintext buffer into an AES buffer.  This is
+/// half of the "useful" features in the CMSCAPIAES class.
+tINT32 CMSCAPIAES::Encrypt(
+      tUINT8         *encrypted,
+      const tINT32  encryptedMaxLen,
+      const tUINT8   *unencrypted,
+      const tINT32  unencryptedLen,
+      ePadOptions        padding
+      )
+{
+   DWORD  length = 0;
+   tINT32 result = 0;
+
+   try
+   {
+      // See comments above in CMSCAPIAES::Decrypt, as this
+      // is just the reverse process.
+      bool usePadding = (PADDING_PKCS7 == padding);
+
+      MSCAPI::Data in( (tUINT8*)unencrypted, unencryptedLen );
+      MSCAPI::Data out = m_key.Encrypt( in, usePadding );
+
+      if ( encryptedMaxLen < (tINT32)out.Count() )
+      {
+         // Oops, not enough space.
+         length = out.Count();
+         throw ERROR_MORE_DATA;
+      }
+
+      CopyMemory( encrypted, out.Ptr(), out.Count() );
+      result = out.Count();
+   }
+   catch( MSCAPI::CException& e )
+   {
+      DWORD   err    = e.Error();
+      // For any error but ERROR_MORE_DATA, we know we have a problem,
+      // and it's something other than insufficient buffer size.
+      if ( ERROR_MORE_DATA != err )
+      {
+         result = 0;
+      }
+      else
+      {
+         result = -(tINT32)length;
+      }
+   }
+
+   return result;
+}
+
+/// Constructor.  Creates object, saves key, and establishes any
+/// necessary constant values.
+CMSCAPIRSA::CMSCAPIRSA( const tUINT8* pbKey, const tUINT16 bitSize)
+: m_prov( 0 )
+{
+   try
+   {
+      switch (bitSize)
+      {
+         case 1024:
+            ImportKeyData(m_key, m_prov, CALG_RSA_KEYX, (tUINT8*)pbKey, KeyLength(), PUBLICKEYBLOB);
+            break;
+      } // switch
+
+      m_blockSize = m_key.GetBlockSize();
+      m_keyLength = m_key.GetKeyLength();
+      m_bitSize   = bitSize;
+   }
+   catch( MSCAPI::CException& e )
+   {
+      DWORD   err    = e.Error();
+      m_blockSize = 0;
+   }
+}
+
+/// Destructor.  Since the objects the class contains deal
+/// with releasing their own resources in their own
+/// destructors, there's little to do here.
+CMSCAPIRSA::~CMSCAPIRSA()
+{
+}
+
+/// Decrypt an RSA buffer into a plaintext buffer.  This is
+/// half of the "useful" features in the CMSCAPIRSA class.
+tINT32 CMSCAPIRSA::Decrypt(
+      tUINT8         *unencrypted,
+      const tINT32  unencryptedMaxLen,
+      const tUINT8   *encrypted,
+      const tINT32  encryptedLen,
+      ePadOptions        padding
+      )
+{
+   DWORD  length = 0;
+   tINT32 result = 0;
+
+   try
+   {
+      // Create a data object.  This mostly just contains the
+      // pointer and length into a convenient object the key
+      // will use during decryption.
+      MSCAPI::Data in( (tUINT8*)encrypted, encryptedLen );
+
+      // A word of explanation : PKCS#7 padding requires that
+      // the data be padded with 1 to block size ( 8 for 3DES )
+      // bytes at the end of data.
+      //
+      // Since the structure of data coming to and from the
+      // trusted drive explicitly notates the number of valid 
+      // bytes, the trusted drive will not pad data that is
+      // already on a block size.  This reduces space requirements
+      // without cost, hopefully allowing more data to be 
+      // put into a single ATA block of data (512 bytes).
+      //
+      bool usePadding = (PADDING_PKCS7==padding);
+
+      // Decrypt using the key, and get a Data object containing
+      // the resultant plaintext.
+      MSCAPI::Data out = m_key.Decrypt( in, usePadding );
+
+      // Validate that the buffer given is large enough to
+      // hold the plaintext data.
+      if ( unencryptedMaxLen < (tINT32)out.Count() )
+      {
+         // Oops, not enough space.
+         length = out.Count();
+         throw ERROR_MORE_DATA;
+      }
+
+      CopyMemory( unencrypted, out.Ptr(), out.Count() );
+      result = out.Count();
+   }
+   catch( MSCAPI::CException& e )
+   {
+      DWORD   err    = e.Error();
+      // For any error but ERROR_MORE_DATA, we know we have a problem,
+      // and it's something other than insufficient buffer size.
+      if ( ERROR_MORE_DATA != err )
+      {
+         result = 0;
+      }
+      else
+      {
+         result = -(tINT32)length;
+      }
+   }
+
+   return result;
+}
+
+/// Encrypt a plaintext buffer into an RSA buffer.  This is
+/// half of the "useful" features in the CMSCAPIRSA class.
+tINT32 CMSCAPIRSA::Encrypt(
+      tUINT8         *encrypted,
+      const tINT32  encryptedMaxLen,
+      const tUINT8   *unencrypted,
+      const tINT32  unencryptedLen,
+      ePadOptions        padding
+      )
+{
+   DWORD  length = 0;
+   tINT32 result = 0;
+
+   try
+   {
+      // See comments above in CMSCAPIAES::Decrypt, as this
+      // is just the reverse process.
+      bool usePadding = (PADDING_PKCS7 == padding);
+
+      MSCAPI::Data in( (tUINT8*)unencrypted, unencryptedLen );
+      MSCAPI::Data out = m_key.Encrypt( in, usePadding );
+
+      if ( encryptedMaxLen < (tINT32)out.Count() )
+      {
+         // Oops, not enough space.
+         length = out.Count();
+         throw ERROR_MORE_DATA;
+      }
+
+      CopyMemory( encrypted, out.Ptr(), out.Count() );
+      result = out.Count();
+   }
+   catch( MSCAPI::CException& e )
+   {
+      DWORD   err    = e.Error();
+      // For any error but ERROR_MORE_DATA, we know we have a problem,
+      // and it's something other than insufficient buffer size.
+      if ( ERROR_MORE_DATA != err )
+      {
+         result = 0;
+      }
+      else
+      {
+         result = -(tINT32)length;
+      }
+   }
+
+   return result;
+}
+
+///////////////////////////////////////////////////////////
+// CreateHash : abstract the details of creating a hash
+// value from a provided hashing key and data buffer.
+//
+Byte_Array DTLCRYPTO::CreateHash( const Byte_Array& data, const tUINT8 algo )
+{
+   Byte_Array result;
+
+   try
+   {
+      // Translate to Windows algorithm IDs
+      ALG_ID algorithmID;
+      switch (algo)
+      {
+      case ALGO_SHA1:
+         algorithmID = CALG_SHA1;
+         break;
+      case ALGO_SHA256:
+         algorithmID = CALG_SHA_256;
+         break;
+      case ALGO_SHA384:
+         algorithmID = CALG_SHA_384;
+         break;
+      case ALGO_SHA512:
+         algorithmID = CALG_SHA_512;
+         break;
+      } // switch
+
+      MSCAPI::CHash hash( MSCAPI::CContext(0), algorithmID);
+      //
+      // A note about Recast<> as it is used here.  The
+      // MSCAPI classes use a MSCAPI::Data class built
+      // on rcarray<tUINT8>, which is Windows specific.
+      //
+      // TDT uses a Byte_Array class for the same thing,
+      // which is also build on rcarray<tUINT8>, but
+      // the compiler can't figure out that these two
+      // things are, in actuality, the same piece.
+      // 
+      // After doing a little bit of template "magic", 
+      // when combined with reference counting, we cant
+      // cast on-the-fly appropriately between the two
+      // classes when we need to translate back and forth.
+      //
+      hash.AddHashData( data.Recast<tUINT8,DWORD>() );
+      result = hash.GetHashResult().Recast<tUINT8,size_t>();
+   }
+   catch( MSCAPI::CException& e )
+   {
+      DWORD   err    = e.Error();
+
+      // On error, clear any results to empty.
+      result.Release();
+   }
+
+   return result;
+}
+
+Byte_Array DTLCRYPTO::CreateHash( const Byte_Array& data, const Byte_Array& key, const tUINT8 algo)
+{
+   Byte_Array result;
+   
+   // Determine the output and block sizes
+   tUINT8 hashOutputSize = 0;
+   tUINT8 hashBlockSize  = 0;
+   tUINT8 hashAlgorithm  = 0;
+   switch (algo)
+   {
+   case ALGO_HMACSHA1:
+      hashOutputSize = SHA1_HASH_SIZE;
+      hashBlockSize  = SHA1_BLOCK_SIZE;
+      hashAlgorithm  = ALGO_SHA1;
+      break;
+   case ALGO_HMACSHA256:
+      hashOutputSize = SHA256_HASH_SIZE;
+      hashBlockSize  = SHA256_BLOCK_SIZE;
+      hashAlgorithm  = ALGO_SHA256;
+      break;
+   case ALGO_HMACSHA384:
+      hashOutputSize = SHA384_HASH_SIZE;
+      hashBlockSize  = SHA384_BLOCK_SIZE;
+      hashAlgorithm  = ALGO_SHA384;
+      break;
+   case ALGO_HMACSHA512:
+      hashOutputSize = SHA512_HASH_SIZE;
+      hashBlockSize  = SHA512_BLOCK_SIZE;
+      hashAlgorithm  = ALGO_SHA512;
+      break;
+   default:
+      // Unknown algorithm for this type of operation, just return empty bytes
+      return result;
+   } // switch
+
+   // IMPLEMENTS THE HMAC ALGORITHM
+
+   // Create the inner and outer pads
+   std::vector<tUINT8> key0(hashBlockSize, 0x00);
+   std::vector<tUINT8> outerPad(key0.size(), 0x5C);
+   std::vector<tUINT8> innerPad(key0.size(), 0x36);
+
+   // Create key0
+   if (key.Count() > hashBlockSize)
+   {
+      Byte_Array hashedKey = DTLCRYPTO::CreateHash(key, hashAlgorithm);
+      memcpy(&key0[0], hashedKey.Ptr(), hashedKey.Count());
+   }
+   else
+   {
+      memcpy(&key0[0], key.Ptr(), key.Count());
+   }
+
+   // Now XOR in the key
+   for (unsigned int i = 0; i < key0.size(); i++)
+   {
+      innerPad[i] ^= key0[i];
+      outerPad[i] ^= key0[i];
+   } // for
+
+   // Compute hash over inner message
+   Byte_Array innerMessage(innerPad.size() + data.Count());
+   memcpy(innerMessage.Ptr(), &innerPad[0], innerPad.size());
+   memcpy(innerMessage.Ptr() + innerPad.size(), data.Ptr(), data.Count());
+   Byte_Array innerDigest = CreateHash(innerMessage, hashAlgorithm);
+
+   // Now prepend the outer pad and compute hash
+   Byte_Array outerMessage(outerPad.size() + innerDigest.Count());
+   memcpy(outerMessage.Ptr(), &outerPad[0], outerPad.size());
+   memcpy(outerMessage.Ptr() + outerPad.size(), innerDigest.Ptr(), innerDigest.Count());
+   result = CreateHash(outerMessage, hashAlgorithm);
+
+   return result;
+} // CreateHash
+
+///////////////////////////////////////////////////////////
+// SAMPLE CODE : determine if the CAPI provider has been
+//               loaded on the system and appears ready
+//               for use.
+//
+// Return value: Returns ERROR_SUCCESS if no errors were
+//               detected, or a Windows error code if an
+//               error was detected.
+//
+DWORD ValidateCryptoAPISupports3DES()
+{
+   DWORD result = ERROR_SUCCESS;
+
+   try
+   {
+      MSCAPI::CContext context( 0, MS_ENHANCED_PROV );
+   }
+   catch( MSCAPI::CException& e )
+   {
+      result = e.Error();
+   }
+
+   return result;
+}
+
+DWORD ValidateCryptoAPISupportsAES()
+{
+   DWORD result = ERROR_SUCCESS;
+
+   try
+   {
+      MSCAPI::CContext context( 0, MS_ENH_RSA_AES_PROV );
+   }
+   catch( MSCAPI::CException& e )
+   {
+      result = e.Error();
+   }
+
+   return result;
+}
+
+tINT32 DTLCRYPTO::crypt3Des(tUINT8*      key,
+                 tUINT8*      encryptedData,
+                 tINT32       encryptedDataSize,
+                 tUINT8*      unencryptedData,
+                 tINT32       unencryptedDataSize,
+                 const bool   encrypt,
+                 const bool   modeECB,
+                 tUINT8*      iv,
+                 tINT32       ivSize)
+
+{
+   CMSCAPI3DES crypto(key, modeECB);
+  
+   if (iv)
+   {
+      MSCAPI::CBuffer ivBuffer(ivSize);
+      memcpy(ivBuffer, iv, ivSize);
+      crypto.SetCryptoIV(ivBuffer);
+   }
+   tINT32 result = 0;
+   if ( encrypt )
+   {
+      DTLCRYPTO::DATA_LENGTH blockSize = crypto.BlockSize();
+      if ( blockSize )
+      {
+         //
+         // If we have a valid block size, then the crypto engine
+         // was initialized properly.  Now, we want to encrypt, but
+         // we want to use padding only if the input data was not
+         // an even multiple of the block size.
+         //
+         result = crypto.Encrypt( encryptedData, encryptedDataSize,
+            unencryptedData, unencryptedDataSize, 
+            0 != (unencryptedDataSize%blockSize)
+               ? PADDING_PKCS7
+               : PADDING_PAD_TO_NEXT_BLOCK
+            );
+      }
+   }
+   else
+   {
+      result = crypto.Decrypt( unencryptedData, unencryptedDataSize,
+         encryptedData, encryptedDataSize, PADDING_PAD_TO_NEXT_BLOCK );
+   }
+   return result;
+} // crypt3Des
+
+tINT32 DTLCRYPTO::cryptAes(tUINT8*      key,
+                 tUINT8*      encryptedData,
+                 tINT32       encryptedDataSize,
+                 tUINT8*      unencryptedData,
+                 tINT32       unencryptedDataSize,
+                 const bool   encrypt,
+                 const bool   modeECB,
+                 tUINT16      bitSize,
+                 tUINT8*      iv,
+                 tINT32       ivSize)
+
+{
+   CMSCAPIAES crypto(key, modeECB, bitSize);
+  
+   MSCAPI::CBuffer ivBuffer(ivSize);
+   memcpy(ivBuffer, iv, ivSize);
+   crypto.SetCryptoIV(ivBuffer);
+   tINT32 result = 0;
+   if ( encrypt )
+   {
+      DTLCRYPTO::DATA_LENGTH blockSize = crypto.BlockSize();
+      if ( blockSize )
+      {
+         //
+         // If we have a valid block size, then the crypto engine
+         // was initialized properly.  Now, we want to encrypt, but
+         // we want to use padding only if the input data was not
+         // an even multiple of the block size.
+         //
+         result = crypto.Encrypt( encryptedData, encryptedDataSize,
+            unencryptedData, unencryptedDataSize, 
+            0 != (unencryptedDataSize%blockSize)
+               ? PADDING_PKCS7
+               : PADDING_PAD_TO_NEXT_BLOCK
+            );
+      }
+   }
+   else
+   {
+      result = crypto.Decrypt( unencryptedData, unencryptedDataSize,
+         encryptedData, encryptedDataSize, PADDING_PAD_TO_NEXT_BLOCK );
+   }
+   return result;
+} // cryptAes
+
+tINT32 DTLCRYPTO::cryptRsa( tUINT8*      key,
+                            tUINT8*      encryptedData,
+                            tINT32       encryptedDataSize,
+                            tUINT8*      unencryptedData,
+                            tINT32       unencryptedDataSize,
+                            const bool   encrypt,
+                            tUINT16      bitSize,
+                            tUINT8*      iv,
+                            tINT32       ivSize)
+{
+   CMSCAPIRSA crypto(key, bitSize);
+  
+   if ( ivSize )
+   {
+      MSCAPI::CBuffer ivBuffer(ivSize);
+      memcpy(ivBuffer, iv, ivSize);
+      crypto.SetCryptoIV(ivBuffer);
+   }
+
+   tINT32 result = 0;
+   if ( encrypt )
+   {
+      DTLCRYPTO::DATA_LENGTH blockSize = crypto.BlockSize();
+      if ( blockSize )
+      {
+         //
+         // If we have a valid block size, then the crypto engine
+         // was initialized properly.  Now, we want to encrypt, but
+         // we want to use padding only if the input data was not
+         // an even multiple of the block size.
+         //
+         result = crypto.Encrypt( encryptedData, encryptedDataSize,
+            unencryptedData, unencryptedDataSize, 
+            0 != (unencryptedDataSize%blockSize)
+               ? PADDING_PKCS7
+               : PADDING_PAD_TO_NEXT_BLOCK
+            );
+      }
+   }
+   else
+   {
+      result = crypto.Decrypt( unencryptedData, unencryptedDataSize,
+         encryptedData, encryptedDataSize, PADDING_PAD_TO_NEXT_BLOCK );
+   }
+   return result;
+}

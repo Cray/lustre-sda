@@ -1,0 +1,70 @@
+
+SRCDIR = dti
+TCGDIR = dti/TCG
+OBJDIR = ../lib/linux
+LIBDIR = ../lib/linux
+BINDIR = ../bin/linux
+PLFDIR = $(SRCDIR)/platform/linux32
+CMPDIR = $(SRCDIR)/compilers/gcc
+
+INCLIB = -Idta/ -I$(SRCDIR)/crypto/
+DEPLIB = $(LIBDIR)/dtad.a
+PREPRO = -D__TCGSILO
+
+CPPFLAG = -Wall $(INCLIB) $(PREPRO)
+
+OBJECTS = dti.o PacketManager.o TCGCoreInterface.o TCGEnterpriseSSC.o TCGEntSessions.o \
+          TCGInterface.o TCGOpalSessions.o TCGOpalSSC.o TCGSessions.o TokenProcessor.o
+
+HEADER = #$(SRCDIR)/dta.hpp \
+         $(SRCDIR)/dti.hpp
+
+tcgsi.a: $(OBJECTS)
+	ar -cvq $(LIBDIR)/tcgsi.a $(OBJECTS)
+	mv $(OBJECTS) $(OBJDIR)
+
+
+dti.o: $(HEADER) $(SRCDIR)/dti.cpp
+	g++ -c $(CPPFLAG) $(HEADER) $(SRCDIR)/dti.cpp
+
+PacketManager.o: $(HEADER) $(SRCDIR)/TCG/PacketManager.cpp
+	g++ -c $(CPPFLAG) $(HEADER) $(SRCDIR)/TCG/PacketManager.cpp
+
+TCGCoreInterface.o: $(HEADER) $(SRCDIR)/TCG/TCGCoreInterface.cpp
+	g++ -c $(CPPFLAG) $(INCLIB) $(HEADER) $(SRCDIR)/TCG/TCGCoreInterface.cpp
+
+TCGEnterpriseSSC.o: $(HEADER) $(SRCDIR)/TCG/TCGEnterpriseSSC.cpp
+	g++ -c $(CPPFLAG) $(INCLIB) $(HEADER) $(SRCDIR)/TCG/TCGEnterpriseSSC.cpp
+
+TCGEntSessions.o: $(HEADER) $(SRCDIR)/TCG/TCGEntSessions.cpp
+	g++ -c $(CPPFLAG) $(INCLIB) $(HEADER) $(SRCDIR)/TCG/TCGEntSessions.cpp
+
+TCGInterface.o: $(HEADER) $(SRCDIR)/TCG/TCGInterface.cpp
+	g++ -c $(CPPFLAG) $(INCLIB) $(HEADER) $(SRCDIR)/TCG/TCGInterface.cpp
+
+TCGOpalSessions.o: $(HEADER) $(SRCDIR)/TCG/TCGOpalSessions.cpp
+	g++ -c $(CPPFLAG) $(INCLIB) $(HEADER) $(SRCDIR)/TCG/TCGOpalSessions.cpp
+
+TCGOpalSSC.o: $(HEADER) $(SRCDIR)/TCG/TCGOpalSSC.cpp
+	g++ -c $(CPPFLAG) $(INCLIB) $(HEADER) $(SRCDIR)/TCG/TCGOpalSSC.cpp
+
+TCGSessions.o: $(HEADER) $(SRCDIR)/TCG/TCGSessions.cpp
+	g++ -c $(CPPFLAG) $(INCLIB) $(HEADER) $(SRCDIR)/TCG/TCGSessions.cpp
+
+TokenProcessor.o: $(HEADER) $(SRCDIR)/TCG/TokenProcessor.cpp
+	g++ -c $(CPPFLAG) $(INCLIB) $(HEADER) $(SRCDIR)/TCG/TokenProcessor.cpp
+
+
+.PHONY: clean
+clean:
+	rm -f $(LIBDIR)/tcgsi.a
+	rm -f $(OBJDIR)/dti.o
+	rm -f $(OBJDIR)/PacketManager.o
+	rm -f $(OBJDIR)/TCGCoreInterface.o
+	rm -f $(OBJDIR)/TCGEnterpriseSSC.o
+	rm -f $(OBJDIR)/TCGEntSessions.o
+	rm -f $(OBJDIR)/TCGInterface.o
+	rm -f $(OBJDIR)/TCGOpalSessions.o
+	rm -f $(OBJDIR)/TCGOpalSSC.o
+	rm -f $(OBJDIR)/TCGSessions.o
+	rm -f $(OBJDIR)/TokenProcessor.o
