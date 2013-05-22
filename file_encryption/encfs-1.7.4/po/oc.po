@@ -1,0 +1,826 @@
+# Occitan (post 1500) translation for encfs
+# Copyright (c) 2008 Rosetta Contributors and Canonical Ltd 2008
+# This file is distributed under the same license as the encfs package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2008.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: encfs\n"
+"Report-Msgid-Bugs-To: vgough@pobox.com\n"
+"POT-Creation-Date: 2010-11-18 00:12-0800\n"
+"PO-Revision-Date: 2008-03-25 10:34+0000\n"
+"Last-Translator: Cédric VALMARY (Tot en òc) <cvalmary@yahoo.fr>\n"
+"Language-Team: Occitan (post 1500) <oc@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=n > 1;\n"
+"X-Launchpad-Export-Date: 2010-06-17 04:44+0000\n"
+"X-Generator: Launchpad (build Unknown)\n"
+
+#: encfs/BlockFileIO.cpp:414
+#, c-format
+msgid "truncate failure: read %i bytes, partial block of %i"
+msgstr "fracàs de la troncadura : %i octets legits, blòt parcial de %i"
+
+#: encfs/BlockNameIO.cpp:50
+msgid "Block encoding, hides file name size somewhat"
+msgstr ""
+"Encodatge per blòt, dissimula un pauquet la longor dels noms de fichièr"
+
+#: encfs/FileUtils.cpp:322
+#, c-format
+msgid "The directory \"%s\" does not exist. Should it be created? (y,n) "
+msgstr "Lo repertòri \"%s\" existís pas. Deu èsser creat ? (ò/n) "
+
+#: encfs/FileUtils.cpp:331
+msgid "Unable to create directory: "
+msgstr "Impossible de crear lo repertòri : "
+
+#: encfs/FileUtils.cpp:338
+msgid "Directory not created."
+msgstr "Repertòri pas creat."
+
+#: encfs/FileUtils.cpp:360
+#, c-format
+msgid "Found config file %s, but failed to load"
+msgstr "Fichièr de configuracion %s trobat, mas son cargament a pas capitat"
+
+#: encfs/FileUtils.cpp:439
+#, c-format
+msgid ""
+"Config subversion %i found, but this version of encfs only supports up to "
+"version %i."
+msgstr ""
+"Sosversion de configuracion %i trobada, mas aquesta version d'EncFS suporta "
+"pas que las versions fins a %i."
+
+#: encfs/FileUtils.cpp:446
+msgid ""
+"This version of EncFS doesn't support filesystems created before 2004-08-13"
+msgstr ""
+"Aquesta version de EncFS pòt manipular de sistèmas de fichièrs creats abans "
+"lo 13 d'agost de 2004"
+
+#: encfs/FileUtils.cpp:646
+msgid "The following cipher algorithms are available:"
+msgstr "Los algoritmes de chiframent seguents son disponibles :"
+
+#: encfs/FileUtils.cpp:658
+#, c-format
+msgid " -- key length %i bits"
+msgstr " -- longor de la clau %i bits"
+
+#: encfs/FileUtils.cpp:665
+#, c-format
+msgid " -- Supports key lengths of %i to %i bits"
+msgstr " -- Suporta de longors de clau de %i a %i bits"
+
+#: encfs/FileUtils.cpp:674
+#, c-format
+msgid " -- block size %i bytes"
+msgstr " -- talha de blòt %i octets"
+
+#: encfs/FileUtils.cpp:681
+#, c-format
+msgid " -- Supports block sizes of %i to %i bytes"
+msgstr " -- Suporta de talhas de blòt de %i a %i octets"
+
+#: encfs/FileUtils.cpp:687 encfs/FileUtils.cpp:732
+msgid "Enter the number corresponding to your choice: "
+msgstr "Picatz lo nombre correspondent de vòstra causida : "
+
+#: encfs/FileUtils.cpp:695 encfs/FileUtils.cpp:740
+msgid "Invalid selection."
+msgstr "Seleccion invalida."
+
+#: encfs/FileUtils.cpp:706 encfs/FileUtils.cpp:749
+#, c-format
+msgid "Selected algorithm \"%s\""
+msgstr "Algoritme seleccionat \"%s\""
+
+#: encfs/FileUtils.cpp:720
+msgid "The following filename encoding algorithms are available:"
+msgstr ""
+"Los algoritmes d'encodatge de noms de fichièrs seguents son disponibles :"
+
+#: encfs/FileUtils.cpp:761 encfs/FileUtils.cpp:808
+#, c-format
+msgid "Using key size of %i bits"
+msgstr "Utilizacion d'una talha de clau de %i bits"
+
+#: encfs/FileUtils.cpp:768
+#, c-format
+msgid ""
+"Please select a key size in bits.  The cipher you have chosen\n"
+"supports sizes from %i to %i bits in increments of %i bits.\n"
+"For example: "
+msgstr ""
+"Seleccionatz una talha de clau en bits.\n"
+"Lo chiframent qu'avètz causit suporta de\n"
+"talhas de %i a %i bits per increments de %i bits.\n"
+"Per exemple : "
+
+#: encfs/FileUtils.cpp:798
+msgid "Selected key size: "
+msgstr "Talha de clau seleccionada : "
+
+#: encfs/FileUtils.cpp:820 encfs/FileUtils.cpp:847
+#, c-format
+msgid "Using filesystem block size of %i bytes"
+msgstr "Utilizacion d'una talha de blòt del sistèma de fichièr de %i octets"
+
+#: encfs/FileUtils.cpp:827
+#, c-format
+msgid ""
+"Select a block size in bytes.  The cipher you have chosen\n"
+"supports sizes from %i to %i bytes in increments of %i.\n"
+"Or just hit enter for the default (%i bytes)\n"
+msgstr ""
+"Seleccionatz una talha de blòt en octets. L'algoritme causit\n"
+"suporta de talhas de %i a %i octets per increments de %i.\n"
+"O quichatz just Entrada per la valor per defaut (%i octets)\n"
+
+#: encfs/FileUtils.cpp:834
+msgid "filesystem block size: "
+msgstr "talha de blòt del sistèma de fichièr : "
+
+#: encfs/FileUtils.cpp:857
+msgid ""
+"The default here is No.\n"
+"Any response that does not begin with 'y' will mean No: "
+msgstr ""
+
+#: encfs/FileUtils.cpp:875
+msgid ""
+"Enable block authentication code headers\n"
+"on every block in a file?  This adds about 12 bytes per block\n"
+"to the storage requirements for a file, and significantly affects\n"
+"performance but it also means [almost] any modifications or errors\n"
+"within a block will be caught and will cause a read error."
+msgstr ""
+
+#: encfs/FileUtils.cpp:887
+msgid ""
+"Add random bytes to each block header?\n"
+"This adds a performance penalty, but ensures that blocks\n"
+"have different authentication codes.  Note that you can\n"
+"have the same benefits by enabling per-file initialization\n"
+"vectors, which does not come with as great of performance\n"
+"penalty. \n"
+"Select a number of bytes, from 0 (no random bytes) to 8: "
+msgstr ""
+"Ajustar d'octets aleatòris a cada entèsta de blòt ?\n"
+"Aquò penalizarà las performàncias, mas garantirà que los blòts\n"
+"an diferents còdes d'autentificacion. Notatz que podètz obténer lo meteis "
+"benefici en activant los vectors\n"
+"d'inicializacion per fichièr, qu'aportan pas una\n"
+"degradacion de perfomància tant importanta.\n"
+"Seleccionatz un nombre d'octets, de 0 (pas d'octets\n"
+"aleatòris) a 8 : "
+
+#: encfs/FileUtils.cpp:913
+msgid ""
+"The default here is Yes.\n"
+"Any response that does not begin with 'n' will mean Yes: "
+msgstr ""
+
+#: encfs/FileUtils.cpp:931
+msgid ""
+"Enable per-file initialization vectors?\n"
+"This adds about 8 bytes per file to the storage requirements.\n"
+"It should not affect performance except possibly with applications\n"
+"which rely on block-aligned file io for performance."
+msgstr ""
+
+#: encfs/FileUtils.cpp:942
+msgid ""
+"Enable filename initialization vector chaining?\n"
+"This makes filename encoding dependent on the complete path, \n"
+"rather then encoding each path element individually."
+msgstr ""
+
+#: encfs/FileUtils.cpp:952
+msgid ""
+"Enable filename to IV header chaining?\n"
+"This makes file data encoding dependent on the complete file path.\n"
+"If a file is renamed, it will not decode sucessfully unless it\n"
+"was renamed by encfs with the proper key.\n"
+"If this option is enabled, then hard links will not be supported\n"
+"in the filesystem."
+msgstr ""
+
+#: encfs/FileUtils.cpp:965
+msgid ""
+"Enable file-hole pass-through?\n"
+"This avoids writing encrypted blocks when file holes are created."
+msgstr ""
+
+#: encfs/FileUtils.cpp:985
+msgid "Creating new encrypted volume."
+msgstr "Creacion d'un volum chifrat novèl."
+
+#: encfs/FileUtils.cpp:991
+msgid ""
+"Please choose from one of the following options:\n"
+" enter \"x\" for expert configuration mode,\n"
+" enter \"p\" for pre-configured paranoia mode,\n"
+" anything else, or an empty line will select standard mode.\n"
+"?> "
+msgstr ""
+"Causissètz al mens una de las opcions seguentas :\n"
+"picatz \"x\" pel mòde de configuracion expèrt,\n"
+"picatz \"p\" per un mòde preconfigurat paranoiac,\n"
+"qué que siá d'autre o una linha voida seleccionarà lo mòde estandard.\n"
+"?> "
+
+#: encfs/FileUtils.cpp:1027
+msgid "Paranoia configuration not supported for --reverse"
+msgstr "La configuracion paranoiaca es incompatibla amb l'opcion --reverse"
+
+#: encfs/FileUtils.cpp:1032
+msgid "Paranoia configuration selected."
+msgstr "Configuracion paranoiaca seleccionada."
+
+#: encfs/FileUtils.cpp:1051
+msgid "Standard configuration selected."
+msgstr "Configuracion estandarda seleccionada."
+
+#: encfs/FileUtils.cpp:1063 encfs/FileUtils.cpp:1094
+msgid "--reverse specified, not using unique/chained IV"
+msgstr "--reverse especificat, pas d'utilizacion d'IV unic/cadenat"
+
+#: encfs/FileUtils.cpp:1077
+msgid ""
+"Sorry, unable to locate cipher for predefined configuration...\n"
+"Falling through to Manual configuration mode."
+msgstr ""
+"O planhèm, impossible de localizar l'algoritme de\n"
+"chiframent per la configuracion predefinida...\n"
+"Passatge al mòde de configuracion manual."
+
+#: encfs/FileUtils.cpp:1083
+msgid "Manual configuration mode selected."
+msgstr "Mòde de configuracion manual seleccionat."
+
+#: encfs/FileUtils.cpp:1104
+msgid ""
+"External chained IV disabled, as both 'IV chaining'\n"
+"and 'unique IV' features are required for this option."
+msgstr ""
+"Cadenatge IV extèrn desactivat, donat que las foncionalitats\n"
+"'cadenatge IV' e 'IV unic' son totas doas requesas per\n"
+"aquesta opcion."
+
+#: encfs/FileUtils.cpp:1117
+#, c-format
+msgid "Unable to instanciate cipher %s, key size %i, block size %i"
+msgstr ""
+"Impossible d'instanciar lo modul de chiframent %s, amb una talha de clau %i, "
+"e una talha de blòt %i"
+
+#: encfs/FileUtils.cpp:1148
+msgid ""
+"Configuration finished.  The filesystem to be created has\n"
+"the following properties:"
+msgstr ""
+"Configuracion acabada. Lo sistèma de fichièrs a\n"
+"mand d'èsser creat a las caracteristicas seguentas :"
+
+#: encfs/FileUtils.cpp:1155
+msgid "-------------------------- WARNING --------------------------\n"
+msgstr "-------------------------- AVERTIMENT --------------------------\n"
+
+#: encfs/FileUtils.cpp:1157
+msgid ""
+"The external initialization-vector chaining option has been\n"
+"enabled.  This option disables the use of hard links on the\n"
+"filesystem. Without hard links, some programs may not work.\n"
+"The programs 'mutt' and 'procmail' are known to fail.  For\n"
+"more information, please see the encfs mailing list.\n"
+"If you would like to choose another configuration setting,\n"
+"please press CTRL-C now to abort and start over."
+msgstr ""
+"Lo vector d'inicializacion extèrn es estat activat.\n"
+"Aquesta opcion autoriza pas l'usatge de ligams durs dins lo sistèma de "
+"fichièrs.\n"
+"Sens ligams durs, qualques programas pòdon foncionar pas.\n"
+"Los programas «mutt» e «procmail» son coneguts per capitar pas.\n"
+"Per mai d'entresenhas, reportatz-vos a la lista de discussion d'encfs.\n"
+"Per causir una autra configuracion, quichatz CTRL-C e tornatz començar."
+
+#: encfs/FileUtils.cpp:1168
+msgid ""
+"Now you will need to enter a password for your filesystem.\n"
+"You will need to remember this password, as there is absolutely\n"
+"no recovery mechanism.  However, the password can be changed\n"
+"later using encfsctl.\n"
+"\n"
+msgstr ""
+"Ara anatz dever picar un senhal\n"
+"per vòstre sistèma de fichièrs.\n"
+"Anatz dever absolutament vos remembrar d'aqueste senhal,\n"
+"perque i a pas cap de mecanisme de secors.\n"
+"Çaquelà, lo senhal poirà èsser cambiat mai tard\n"
+"en utilizant encfsctl.\n"
+"\n"
+
+#: encfs/FileUtils.cpp:1196
+msgid "Failure generating new volume key! Please report this error."
+msgstr ""
+"Fracàs a la generacion d'una clau de volum novèla ! Mercés de senhalar "
+"aquesta error."
+
+#: encfs/FileUtils.cpp:1209
+msgid "Name coding interface not supported"
+msgstr "L'interfàcia de codatge de nom es pas suportada"
+
+#: encfs/FileUtils.cpp:1210
+msgid "The filename encoding interface requested is not available"
+msgstr "L'interfàcia d'encodatge de nom de fichièr requesa es pas disponibla"
+
+#: encfs/FileUtils.cpp:1243
+#, c-format
+msgid "Filesystem cipher: \"%s\", version %i:%i:%i"
+msgstr "Chiframent de sistèma de fichièrs \"%s\", version %i:%i:%i"
+
+#: encfs/FileUtils.cpp:1248 encfs/FileUtils.cpp:1274 encfs/FileUtils.cpp:1293
+msgid " (NOT supported)\n"
+msgstr " (NON suportat)\n"
+
+#: encfs/FileUtils.cpp:1256 encfs/FileUtils.cpp:1281
+#, c-format
+msgid " (using %i:%i:%i)\n"
+msgstr " (utilizacion de %i:%i:%i)\n"
+
+#: encfs/FileUtils.cpp:1264
+#, c-format
+msgid "Filename encoding: \"%s\", version %i:%i:%i"
+msgstr "Encodatge del nom de fichièr : \"%s\", version %i:%i:%i"
+
+#: encfs/FileUtils.cpp:1288
+#, c-format
+msgid "Key Size: %i bits"
+msgstr "Talha de clau : %i bits"
+
+#: encfs/FileUtils.cpp:1299
+#, c-format
+msgid "Using PBKDF2, with %i iterations"
+msgstr ""
+
+#: encfs/FileUtils.cpp:1301
+#, fuzzy, c-format
+msgid "Salt Size: %i bits"
+msgstr "Talha de clau : %i bits"
+
+#: encfs/FileUtils.cpp:1310
+#, c-format
+msgid "Block Size: %i bytes + %i byte MAC header"
+msgstr "Talha de blòt : %i octets + %i octets d'entèsta MAC"
+
+#: encfs/FileUtils.cpp:1318
+#, c-format
+msgid "Block Size: %i bytes, including %i byte MAC header"
+msgstr "Talha de blòt : %i octets, incluses %i octets d'entèsta MAC"
+
+#: encfs/FileUtils.cpp:1325
+#, c-format
+msgid "Block Size: %i bytes"
+msgstr "Talha de blòt : %i octets"
+
+#: encfs/FileUtils.cpp:1332
+msgid "Each file contains 8 byte header with unique IV data.\n"
+msgstr ""
+"Cada fichièr compren una entèsta de 8 octets amb de donadas IV unicas.\n"
+
+#: encfs/FileUtils.cpp:1337
+msgid "Filenames encoded using IV chaining mode.\n"
+msgstr "Nom de fichièrs chifrats en utilizant lo mòde de cadenatge IV.\n"
+
+#: encfs/FileUtils.cpp:1342
+msgid "File data IV is chained to filename IV.\n"
+msgstr ""
+"L'IV de las donadas del fichièr es cadenada a l'IV del nom de fichièr.\n"
+
+#: encfs/FileUtils.cpp:1347
+msgid "File holes passed through to ciphertext.\n"
+msgstr ""
+
+#: encfs/FileUtils.cpp:1402
+msgid "Error creating salt\n"
+msgstr ""
+
+#: encfs/FileUtils.cpp:1431
+msgid "EncFS Password: "
+msgstr "Senhal EncFS : "
+
+#: encfs/FileUtils.cpp:1437
+msgid "Zero length password not allowed\n"
+msgstr "Senhal de longor zèro pas autorizat\n"
+
+#: encfs/FileUtils.cpp:1483
+msgid "Internal error: socketpair() failed"
+msgstr "Error intèrna : socketpair() a fracassat"
+
+#: encfs/FileUtils.cpp:1491
+msgid "Internal error: fork() failed"
+msgstr "Error intèrna : fork() a fracassat"
+
+#: encfs/FileUtils.cpp:1533
+msgid "Internal error: failed to exec program"
+msgstr "Error intèrna : impossible d'executar un programa"
+
+#: encfs/FileUtils.cpp:1561
+msgid "New Encfs Password: "
+msgstr "Senhal EncFS novèl : "
+
+#: encfs/FileUtils.cpp:1564
+msgid "Verify Encfs Password: "
+msgstr "Verifcatz lo senhal EncFS : "
+
+#: encfs/FileUtils.cpp:1573
+msgid "Passwords did not match, please try again\n"
+msgstr "Los senhals correspòndon pas, ensajatz tornamai.\n"
+
+#: encfs/FileUtils.cpp:1596
+msgid "The configuration loaded is not compatible with --reverse\n"
+msgstr "La configuracion cargada es pas compatibla amb l'opcion --reverse\n"
+
+#: encfs/FileUtils.cpp:1605
+#, c-format
+msgid "Unable to find cipher %s, version %i:%i:%i"
+msgstr "Impossible de trobar lo modul de chiframent %s, version %i:%i:%i"
+
+#: encfs/FileUtils.cpp:1611
+msgid "The requested cipher interface is not available\n"
+msgstr "L'interfàcia de chiframent demandada es pas disponibla\n"
+
+#: encfs/FileUtils.cpp:1637
+msgid "Error decoding volume key, password incorrect\n"
+msgstr "Error al decodatge de la clau de volum, senhal incorrècte\n"
+
+#: encfs/FileUtils.cpp:1645
+#, c-format
+msgid "Unable to find nameio interface %s, version %i:%i:%i"
+msgstr "Impossible de trobar l'interfàcia nameio %s, version %i:%i:%i"
+
+#: encfs/FileUtils.cpp:1651
+msgid "The requested filename coding interface is not available\n"
+msgstr ""
+"L'interfàcia de codatge del nom de fichièr demandada es pas disponibla\n"
+
+#: encfs/FileUtils.cpp:1696
+msgid "Remount failed"
+msgstr "lo montatge a fracassat"
+
+#: encfs/MACFileIO.cpp:216
+#, c-format
+msgid "MAC comparison failure in block %li"
+msgstr "Fracàs de comparason MAC dins lo blòt %li"
+
+#: encfs/MACFileIO.cpp:222
+msgid "MAC comparison failure, refusing to read"
+msgstr "Fracàs de comparason MAC, refús de lectura"
+
+#: encfs/SSL_Cipher.cpp:201
+msgid "8 byte block cipher"
+msgstr "chiframent per blòcs de 8 octets"
+
+#: encfs/StreamNameIO.cpp:39
+msgid "Stream encoding, keeps filenames as short as possible"
+msgstr ""
+"Encodatge de flus, consèrva los noms de fichièrs tant corts coma possible"
+
+#: encfs/encfsctl.cpp:85
+msgid "  -- show information (Default command)"
+msgstr "  -- mostrar las entresenhas (Comanda per defaut)"
+
+#: encfs/encfsctl.cpp:88
+msgid "  -- show key"
+msgstr ""
+
+#: encfs/encfsctl.cpp:91
+msgid "  -- change password for volume"
+msgstr "  -- cambiar lo senhal pel volum"
+
+#: encfs/encfsctl.cpp:94
+msgid ""
+"  -- change password for volume, taking password from standard input.\n"
+"\tNo prompts are issued."
+msgstr ""
+"  -- cambiar lo senhal pel volum, en lo legissent sus l'entrada estandarda.\n"
+"\t Cap de convit es pas afichat."
+
+#: encfs/encfsctl.cpp:99
+msgid "  -- show undecodable filenames in the volume"
+msgstr "  -- mostrar los noms de fichièrs non decodables del volum"
+
+#: encfs/encfsctl.cpp:102
+msgid "  -- decodes the file and cats it to standard out"
+msgstr "  -- decòda un fichièr e l'aficha"
+
+#: encfs/encfsctl.cpp:105
+msgid "  -- decodes name and prints plaintext version"
+msgstr "  -- decòda lo nom e aficha la version tèxt"
+
+#: encfs/encfsctl.cpp:108
+msgid "  -- encodes a filename and print result"
+msgstr "  -- encòda un nom de fichièr e aficha lo resultat"
+
+#: encfs/encfsctl.cpp:111
+msgid "  -- decrypts a volume and writes results to path"
+msgstr "  -- deschifra un nom de fichièr e aficha lo resultat"
+
+#: encfs/encfsctl.cpp:114
+msgid "  -- print version number and exit"
+msgstr "  -- afichar la version e quitar"
+
+#: encfs/encfsctl.cpp:123 encfs/encfsctl.cpp:167
+#, c-format
+msgid "encfsctl version %s"
+msgstr "encfsctl version %s"
+
+#: encfs/encfsctl.cpp:124
+msgid "Usage:\n"
+msgstr "Utilizacion :\n"
+
+#: encfs/encfsctl.cpp:127
+#, c-format
+msgid ""
+"%s (root dir)\n"
+"  -- displays information about the filesystem, or \n"
+msgstr ""
+"%s (repertòri raiç)\n"
+"-- aficha d'entresenhas sul sistèma de fichièr, o \n"
+
+#: encfs/encfsctl.cpp:144
+#, c-format
+msgid ""
+"Example: \n"
+"%s info ~/.crypt\n"
+msgstr ""
+"Exemple :\n"
+"%s info ~/.crypt\n"
+
+#: encfs/encfsctl.cpp:152
+#, c-format
+msgid "directory %s does not exist.\n"
+msgstr "Lo repertòri %s existís pas.\n"
+
+#: encfs/encfsctl.cpp:187 encfs/encfsctl.cpp:708
+msgid "Unable to load or parse config file\n"
+msgstr "Impossible de legir o d'interpretar lo fichièr de configuracion\n"
+
+#: encfs/encfsctl.cpp:191
+msgid ""
+"A really old EncFS filesystem was found. \n"
+"It is not supported in this EncFS build.\n"
+msgstr ""
+"Un sistèma de fichièr EncFS vertadièrament ancian es estat trobat.\n"
+"Aquesta version d'EncFS la pren pas en carga.\n"
+
+#: encfs/encfsctl.cpp:196
+#, c-format
+msgid "Version 3 configuration; created by %s\n"
+msgstr "Configuracion de la version 3; creada per %s\n"
+
+#: encfs/encfsctl.cpp:201
+#, c-format
+msgid "Version 4 configuration; created by %s\n"
+msgstr "Configuracion de la version 4; creada per %s\n"
+
+#: encfs/encfsctl.cpp:206
+#, c-format
+msgid "Version 5 configuration; created by %s (revision %i)\n"
+msgstr "Configuracion de la version 5; creada per %s (revision %i)\n"
+
+#: encfs/encfsctl.cpp:212
+#, c-format
+msgid "Version 6 configuration; created by %s (revision %i)\n"
+msgstr ""
+
+#: encfs/encfsctl.cpp:250 encfs/main.cpp:331
+#, c-format
+msgid "getopt error: %i"
+msgstr "error getopt : %i"
+
+#: encfs/encfsctl.cpp:260
+#, fuzzy
+msgid "Incorrect number of arguments"
+msgstr "Nombre d'arguments incorrècte per la comanda \"%s\""
+
+#: encfs/encfsctl.cpp:272 encfs/encfsctl.cpp:293
+msgid "Unable to initialize encrypted filesystem - check path.\n"
+msgstr ""
+"Impossible d'inicializar lo sistèma de fichièr criptat - verificatz lo camin "
+"d'accès.\n"
+
+#: encfs/encfsctl.cpp:642
+#, c-format
+msgid "In directory %s: \n"
+msgstr "Dins lo repertòri %s : \n"
+
+#: encfs/encfsctl.cpp:690
+#, c-format
+msgid "Found %i invalid file."
+msgid_plural "Found %i invalid files."
+msgstr[0] "%i fichièr invalid trobat"
+msgstr[1] "%i fichièrs invalids trobats"
+
+#: encfs/encfsctl.cpp:717
+#, c-format
+msgid "Unable to find specified cipher \"%s\"\n"
+msgstr "Impossible de trobar l'algoritme de chiframent indicat \"%s\"\n"
+
+#: encfs/encfsctl.cpp:723
+msgid "Enter current Encfs password\n"
+msgstr "Picatz lo senhal actual d'Encfs\n"
+
+#: encfs/encfsctl.cpp:734
+msgid "Invalid password\n"
+msgstr "Senhal invalid\n"
+
+#: encfs/encfsctl.cpp:740
+msgid "Enter new Encfs password\n"
+msgstr "Picatz lo senhal novèl d'Encfs\n"
+
+#: encfs/encfsctl.cpp:766
+msgid "Volume Key successfully updated.\n"
+msgstr "La clau de volum es estada mesa a jorn corrèctament.\n"
+
+#: encfs/encfsctl.cpp:770
+msgid "Error saving modified config file.\n"
+msgstr ""
+"Error al moment de la salvagàrdia de las modificacions del fichièr de "
+"configuracion.\n"
+
+#: encfs/encfsctl.cpp:774
+msgid "Error creating key\n"
+msgstr ""
+
+#: encfs/encfsctl.cpp:839
+#, c-format
+msgid "invalid command: \"%s\""
+msgstr "comanda invalida : \"%s\""
+
+#: encfs/encfsctl.cpp:846
+#, c-format
+msgid "Incorrect number of arguments for command \"%s\""
+msgstr "Nombre d'arguments incorrècte per la comanda \"%s\""
+
+#: encfs/main.cpp:127
+#, c-format
+msgid "Build: encfs version %s"
+msgstr ""
+
+#: encfs/main.cpp:130
+#, c-format
+msgid "Usage: %s [options] rootDir mountPoint [-- [FUSE Mount Options]]"
+msgstr ""
+"Usatge : %s [opcions] respRaiç puntDeMontatge [-- [Opcions de montatge FUSE]]"
+
+#: encfs/main.cpp:132
+msgid ""
+"Common Options:\n"
+"  -H\t\t\tshow optional FUSE Mount Options\n"
+"  -s\t\t\tdisable multithreaded operation\n"
+"  -f\t\t\trun in foreground (don't spawn daemon).\n"
+"\t\t\tError messages will be sent to stderr\n"
+"\t\t\tinstead of syslog.\n"
+msgstr ""
+"Opcions correntas :\n"
+"-H\t\t\tmòstra las opcions de montatge opcionalas de FUSE\n"
+"-s\t\t\tdesactiva las operacions multithreadadas\n"
+"-f\t\t\ts'executa en abans plan (engendra pas de demon).\n"
+"\t\t\tLos messatges d'error seràn mandats vèrs stderr\n"
+"\t\t\tal luòc de syslog.\n"
+
+#: encfs/main.cpp:140
+msgid ""
+"  -v, --verbose\t\tverbose: output encfs debug messages\n"
+"  -i, --idle=MINUTES\tAuto unmount after period of inactivity\n"
+"  --anykey\t\tDo not verify correct key is being used\n"
+"  --forcedecode\t\tdecode data even if an error is detected\n"
+"\t\t\t(for filesystems using MAC block headers)\n"
+msgstr ""
+"  -v, --verbose\t\tverbose : aficha los messatges de debogatge de encfs\n"
+"-i, --idle=MINUTES\tAutodemontatge aprèp un periòde d'inactivitat\n"
+"--anykey\t\tVerificar pas se una clau corrècta es utilizada\n"
+"--forcedecode\t\tDecòda las donadas quitament se una error es detectada\n"
+"\t\t\t(pels sistèmas de fichièr utilizant las entèstas de blòt MAC)\n"
+
+#: encfs/main.cpp:145
+msgid ""
+"  --public\t\tact as a typical multi-user filesystem\n"
+"\t\t\t(encfs must be run as root)\n"
+msgstr ""
+"  --public\t\tagís coma un sistèma de fichièrs multiutilizaires classic\n"
+"\t\t\t(encfs deu èsser aviat en root)\n"
+
+#: encfs/main.cpp:147
+msgid "  --reverse\t\treverse encryption\n"
+msgstr "  --reverse\t\t chiframent inversat\n"
+
+#: encfs/main.cpp:150
+msgid ""
+"  --extpass=program\tUse external program for password prompt\n"
+"\n"
+"Example, to mount at ~/crypt with raw storage in ~/.crypt :\n"
+"    encfs ~/.crypt ~/crypt\n"
+"\n"
+msgstr ""
+"  --extpass=programa\tUtiliza un programa extèrn per la demanda del senhal\n"
+"\n"
+"Per exemple, per montar sus ~/crypt amb un estocatge raw dins ~/.crypt :\n"
+"encfs ~/.crypt ~/crypt\n"
+"\n"
+
+#: encfs/main.cpp:156
+msgid "For more information, see the man page encfs(1)"
+msgstr "Per mai d'entresenhas, consultatz la pagina de manual encfs(1)"
+
+#: encfs/main.cpp:164
+msgid ""
+"encfs [options] rootDir mountPoint -- [FUSE Mount Options]\n"
+"valid FUSE Mount Options follow:\n"
+msgstr ""
+"Utilizacion : %s [opcions] respRaiç puntDeMontatge -- [Opcions de montatge "
+"FUSE]\n"
+"las opcions de montatge validas de FUSE son las seguentas :\n"
+
+#: encfs/main.cpp:305
+msgid "option '--public' ignored for non-root user"
+msgstr "option '--public' ignorada per l'utilizaire non-root"
+
+#: encfs/main.cpp:317
+#, c-format
+msgid "encfs version %s"
+msgstr "encfs version %s"
+
+#: encfs/main.cpp:356
+msgid "Missing one or more arguments, aborting."
+msgstr "Manca un o maites paramètres, abandon."
+
+#: encfs/main.cpp:381
+msgid ""
+"When specifying daemon mode, you must use absolute paths (beginning with '/')"
+msgstr ""
+"Quand lo mòde demon es especificat, devètz utilizar de camins absoluts "
+"(començant per '/')"
+
+#: encfs/main.cpp:397
+msgid "The raw directory may not be a subdirectory of the mount point."
+msgstr ""
+"Lo repertòri chifrat pòt pas èsser un sosrepertòri del punt de montatge"
+
+#: encfs/main.cpp:407
+msgid "Must set password program when using mount-on-demand"
+msgstr ""
+"Cal absolutament especificar un programa de senhal per utilizar lo montatge-"
+"a-la-demanda"
+
+#: encfs/main.cpp:416
+msgid "Unable to locate root directory, aborting."
+msgstr "Impossible de localizar lo repertòri raiç, abandon."
+
+#: encfs/main.cpp:422
+msgid "Unable to locate mount point, aborting."
+msgstr "Impossible de localizar lo punt de montatge, abandon."
+
+#: encfs/main.cpp:605
+msgid ""
+"Note: requested single-threaded mode, but an idle\n"
+"timeout was specified.  The filesystem will operate\n"
+"single-threaded, but threads will still be used to\n"
+"implement idle checking."
+msgstr ""
+"Nòta : lo mòde monothread es estat requesit, mas una sosta\n"
+"d'inactivitat es estada indicada. Lo sistèma de fichièrs serà\n"
+"gerit en monothread, mentrestant, de threads seràn \n"
+"utilizats per la deteccion d'inactivitat."
+
+#: encfs/main.cpp:656
+#, c-format
+msgid ""
+"fuse failed.  Common problems:\n"
+" - fuse kernel module not installed (modprobe fuse)\n"
+" - invalid options -- see usage message\n"
+msgstr ""
+"fuse a fracassat. Problèmas corrents :\n"
+"- lo modul del nucli fuse es pas installat (modprobe fuse)\n"
+"- opcions invalidas -- vejatz lo messatge d'usatge\n"
+
+#: encfs/main.cpp:663
+#, c-format
+msgid "Internal error: Caught exception from main loop: %s"
+msgstr "Error intèrna : exceptcion dins la bocla principala : %s"
+
+#: encfs/main.cpp:667
+msgid "Internal error: Caught unexpected exception"
+msgstr "Error intèrna : excepcion inesperada"
+
+#: encfs/main.cpp:757
+#, c-format
+msgid "Unmounting filesystem %s due to inactivity"
+msgstr "Desmontatge del sistèma de fichièr %s per causa d'inactivitat"
