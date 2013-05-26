@@ -14,15 +14,23 @@ Modified encfs-1.7.4 for kerberosation and using encrytion key per file.
 
 %build
 make
-
 %define debug_package %{nil}
 
 %install
-rm -rf $RPM_BUILD_ROOT
+mkdir -p  $RPM_BUILD_ROOT/etc/
+install -m 0644 encfs.conf $RPM_BUILD_ROOT/etc/encfs.conf
+
 %make_install
+
+%post
+
+%postun
+rm -f /etc/encfs.conf
 
 %files
 /usr/
+
 %defattr(-,root,root,-)
 
 %dir
+/etc
