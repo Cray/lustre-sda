@@ -17,7 +17,7 @@
 			struct berval   *servcred;
 
 			/* get a handle to an LDAP connection */
-                	const char* ServerUrl=get_attr_value("SERVER_URL");
+                        const char* ServerUrl=get_attr_value("SERVER_URL");
 			std::cout << "ok (ServerUrl =" << ServerUrl << ")" << std::endl;
 			 
 			rc = ldap_initialize(&ld, ServerUrl);

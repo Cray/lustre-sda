@@ -1,7 +1,6 @@
 #include "lrpc_misc_server.h"
 #include "ldap_connection.h"
 #define DBG_LEVEL 5
-#define CONN_USER_DN "CN=Administrator, CN=Users,DC=fsg,DC=com"
 #include "ConfFileReader.h"
 
 #if 0
