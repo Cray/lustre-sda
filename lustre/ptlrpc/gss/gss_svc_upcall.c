@@ -902,9 +902,6 @@ cache_check:
          * non-zero. We hold an extra reference on initial rsip, but must
          * take care of following calls. */
         rc = cache_check(&rsi_cache, &rsip->h, &cache_upcall_chandle);
-	cfs_set_current_state(CFS_TASK_INTERRUPTIBLE);
-	cfs_schedule_timeout(5 * CFS_HZ);
-	rc = 0;
         switch (rc) {
         case -EAGAIN: {
                 int valid;
