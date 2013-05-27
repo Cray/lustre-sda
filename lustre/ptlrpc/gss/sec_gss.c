@@ -56,7 +56,6 @@
 #else
 #include <liblustre.h>
 #endif
-
 #include <obd.h>
 #include <obd_class.h>
 #include <obd_support.h>
@@ -71,7 +70,7 @@
 #include "gss_api.h"
 
 #include <linux/crypto.h>
-
+#include <linux/crc32.h>
 /*
  * early reply have fixed size, respectively in privacy and integrity mode.
  * so we calculate them only once.

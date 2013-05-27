@@ -237,16 +237,16 @@ int mdc_find_cbdata(struct obd_export *exp,
 
 static inline void mdc_clear_replay_flag(struct ptlrpc_request *req, int rc)
 {
-        /* Don't hold error requests for replay. */
+/* Don't hold error requests for replay. */
         if (req->rq_replay) {
-                cfs_spin_lock(&req->rq_lock);
+		cfs_spin_lock(&req->rq_lock);
                 req->rq_replay = 0;
                 cfs_spin_unlock(&req->rq_lock);
-        }
+		}
         if (rc && req->rq_transno != 0) {
                 DEBUG_REQ(D_ERROR, req, "transno returned on error rc %d", rc);
                 LBUG();
-        }
+              	}
 }
 
 /* Save a large LOV EA into the request buffer so that it is available

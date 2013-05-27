@@ -230,7 +230,7 @@ LB_LINUX_TRY_COMPILE([
 ],[
         AC_MSG_RESULT(yes)
         AC_DEFINE(HAVE_SCATTERLIST_SETPAGE, 1,
-                  [struct scatterlist has page member])
+                  [struct scatterlist has no page member])
 ],[
         AC_MSG_RESULT(NO)
 ])
@@ -626,6 +626,15 @@ LB_LINUX_TRY_COMPILE([
 ])
 ])
 
+AC_DEFUN([LIBCFS_HAVE_KEYTYPE_H],
+[LB_CHECK_FILE([$LINUX/include/linux/key-type.h], [
+	AC_DEFINE(HAVE_LINUX_KEYTYPE_H, 1,
+		[kernel has include/key-type.h])
+],[
+	AC_MSG_RESULT([no])
+])
+])
+
 #
 # LIBCFS_PROG_LINUX
 #
@@ -656,6 +665,7 @@ LIBCFS_SCATTERLIST_SETPAGE
 LIBCFS_SCATTERLIST_INITTABLE
 LIBCFS_NETWORK_NAMESPACE
 LIBCFS_FUNC_DUMP_TRACE
+LIBCFS_HAVE_KEYTYPE_H
 # 2.6.26
 LIBCFS_SEM_COUNT
 # 2.6.27
