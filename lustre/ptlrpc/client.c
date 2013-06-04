@@ -784,17 +784,57 @@ struct ptlrpc_request *ptlrpc_request_alloc_pack(struct obd_import *imp,
                                                 const struct req_format *format,
                                                 __u32 version, int opcode)
 {
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        char  *tmp;
+        u32    context_len = 0;
+        char  *context     = NULL;
+#endif
+#endif
         struct ptlrpc_request *req = ptlrpc_request_alloc(imp, format);
         int                    rc;
 
         if (req) {
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (opcode == MDS_GETATTR ||
+            opcode == MDS_GETSTATUS ||
+            opcode == MDS_DISCONNECT ||
+            opcode == MDS_QUOTACHECK ||
+            opcode == MDS_QUOTACTL ||
+            opcode == MDS_STATFS) {
+                rc = mdc_set_sec_context_size(req, &context,
+                                             &context_len);
+                if (rc) {
+                        ptlrpc_request_free(req);
+                        req = NULL;
+                        return req;
+                }
+        }
+#endif
+#endif
                 rc = ptlrpc_request_pack(req, version, opcode);
                 if (rc) {
                         ptlrpc_request_free(req);
                         req = NULL;
                 }
         }
-        return req;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if ((opcode == MDS_GETATTR ||
+             opcode == MDS_GETSTATUS ||
+             opcode == MDS_DISCONNECT ||
+             opcode == MDS_QUOTACHECK ||
+             opcode == MDS_QUOTACTL ||
+             opcode == MDS_STATFS) && context_len) {
+                tmp = req_capsule_client_get(&req->rq_pill,
+                                             &RMF_SEC_CONTEXT);
+                memcpy(tmp, context, context_len);
+                security_release_secctx(context, context_len);
+        }
+#endif
+#endif
+       return req;
 }
 EXPORT_SYMBOL(ptlrpc_request_alloc_pack);
 
@@ -965,7 +1005,7 @@ void ptlrpc_set_destroy(struct ptlrpc_request_set *set)
                 n++;
         }
 
-        LASSERTF(cfs_atomic_read(&set->set_remaining) == 0 || 
+        LASSERTF(cfs_atomic_read(&set->set_remaining) == 0 ||
                  cfs_atomic_read(&set->set_remaining) == n, "%d / %d\n",
                  cfs_atomic_read(&set->set_remaining), n);
 
@@ -1373,7 +1413,7 @@ static int after_reply(struct ptlrpc_request *req)
  * Helper function to send request \a req over the network for the first time
  * Also adjusts request phase.
  * Returns 0 on success or error code.
- */ 
+ */
 static int ptlrpc_send_new_req(struct ptlrpc_request *req)
 {
         struct obd_import     *imp;
@@ -1565,7 +1605,7 @@ int ptlrpc_check_set(const struct lu_env *env, struct ptlrpc_request_set *set)
 
                 /* ptlrpc_set_wait->l_wait_event sets lwi_allow_intr
                  * so it sets rq_intr regardless of individual rpc
-                 * timeouts. The synchronous IO waiting path sets 
+                 * timeouts. The synchronous IO waiting path sets
                  * rq_intr irrespective of whether ptlrpcd
                  * has seen a timeout.  Our policy is to only interpret
                  * interrupted rpcs after they have timed out, so we
@@ -2044,14 +2084,14 @@ int ptlrpc_set_wait(struct ptlrpc_request_set *set)
                          * We still want to block for a limited time,
                          * so we allow interrupts during the timeout.
                          */
-                        lwi = LWI_TIMEOUT_INTR_ALL(cfs_time_seconds(1), 
+                        lwi = LWI_TIMEOUT_INTR_ALL(cfs_time_seconds(1),
                                                    ptlrpc_expired_set,
                                                    ptlrpc_interrupted_set, set);
                 else
                         /*
                          * At least one request is in flight, so no
                          * interrupts are allowed. Wait until all
-                         * complete, or an in-flight req times out. 
+                         * complete, or an in-flight req times out.
                          */
                         lwi = LWI_TIMEOUT(cfs_time_seconds(timeout? timeout : 1),
                                           ptlrpc_expired_set, set);
@@ -2708,6 +2748,28 @@ int ptlrpc_replay_req(struct ptlrpc_request *req)
         RETURN(0);
 }
 EXPORT_SYMBOL(ptlrpc_replay_req);
+
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+int mdc_set_sec_context_size(struct ptlrpc_request *req, char **context,
+                             u32 *context_len)
+{
+        u32 curr_sid = 0;
+        int rc;
+        ENTRY;
+
+        curr_sid = cfs_curproc_get_sid();
+        rc = security_secid_to_secctx(curr_sid, context, context_len);
+        if (rc == 0) {
+                LASSERT(*context);
+                req_capsule_set_size(&req->rq_pill, &RMF_SEC_CONTEXT,
+                                      RCL_CLIENT, *context_len);
+        }
+        return rc;
+}
+EXPORT_SYMBOL(mdc_set_sec_context_size);
+#endif
+#endif
 
 /**
  * Aborts all in-flight request on import \a imp sending and delayed lists

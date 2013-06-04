@@ -112,16 +112,48 @@ static const struct req_msg_field *mdt_body_only[] = {
         &RMF_MDT_BODY
 };
 
+static const struct req_msg_field *mls_mdt_body_only[] = {
+        &RMF_PTLRPC_BODY,
+        &RMF_MDT_BODY,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT
+#endif
+#endif
+};
+
 static const struct req_msg_field *mdt_body_capa[] = {
         &RMF_PTLRPC_BODY,
         &RMF_MDT_BODY,
         &RMF_CAPA1
 };
 
+static const struct req_msg_field *mls_mdt_body_capa[] = {
+        &RMF_PTLRPC_BODY,
+        &RMF_MDT_BODY,
+        &RMF_CAPA1,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT
+#endif
+#endif
+};
+
 static const struct req_msg_field *quotactl_only[] = {
         &RMF_PTLRPC_BODY,
         &RMF_OBD_QUOTACTL
 };
+
+static const struct req_msg_field *mls_quotactl_only[] = {
+        &RMF_PTLRPC_BODY,
+        &RMF_OBD_QUOTACTL,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT
+#endif
+#endif
+};
+
 static const struct req_msg_field *quota_adjust_qunit_only[] = {
         &RMF_PTLRPC_BODY,
         &RMF_QUOTA_ADJUST_QUNIT
@@ -136,7 +168,28 @@ static const struct req_msg_field *mdt_close_client[] = {
         &RMF_PTLRPC_BODY,
         &RMF_MDT_EPOCH,
         &RMF_REC_REINT,
+        &RMF_CAPA1,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT
+#endif
+#endif
+};
+
+static const struct req_msg_field *mds_done_writing_client[] = {
+        &RMF_PTLRPC_BODY,
+        &RMF_MDT_EPOCH,
+        &RMF_REC_REINT,
         &RMF_CAPA1
+};
+
+static const struct req_msg_field *sec_context_only[] = {
+        &RMF_PTLRPC_BODY,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT
+#endif
+#endif
 };
 
 static const struct req_msg_field *obd_statfs_server[] = {
@@ -170,6 +223,11 @@ static const struct req_msg_field *mds_getattr_name_client[] = {
         &RMF_PTLRPC_BODY,
         &RMF_MDT_BODY,
         &RMF_CAPA1,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT,
+#endif
+#endif
         &RMF_NAME
 };
 
@@ -182,7 +240,12 @@ static const struct req_msg_field *mds_reint_create_client[] = {
         &RMF_PTLRPC_BODY,
         &RMF_REC_REINT,
         &RMF_CAPA1,
-        &RMF_NAME
+        &RMF_NAME,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT
+#endif
+#endif
 };
 
 static const struct req_msg_field *mds_reint_create_slave_client[] = {
@@ -190,6 +253,11 @@ static const struct req_msg_field *mds_reint_create_slave_client[] = {
         &RMF_REC_REINT,
         &RMF_CAPA1,
         &RMF_NAME,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT,
+#endif
+#endif
         &RMF_EADATA,
         &RMF_DLM_REQ
 };
@@ -199,6 +267,11 @@ static const struct req_msg_field *mds_reint_create_rmt_acl_client[] = {
         &RMF_REC_REINT,
         &RMF_CAPA1,
         &RMF_NAME,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT,
+#endif
+#endif
         &RMF_EADATA,
         &RMF_DLM_REQ
 };
@@ -208,6 +281,11 @@ static const struct req_msg_field *mds_reint_create_sym_client[] = {
         &RMF_REC_REINT,
         &RMF_CAPA1,
         &RMF_NAME,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT,
+#endif
+#endif
         &RMF_SYMTGT,
         &RMF_DLM_REQ
 };
@@ -234,6 +312,11 @@ static const struct req_msg_field *mds_reint_unlink_client[] = {
         &RMF_PTLRPC_BODY,
         &RMF_REC_REINT,
         &RMF_CAPA1,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT,
+#endif
+#endif
         &RMF_NAME,
         &RMF_DLM_REQ
 };
@@ -243,6 +326,11 @@ static const struct req_msg_field *mds_reint_link_client[] = {
         &RMF_REC_REINT,
         &RMF_CAPA1,
         &RMF_CAPA2,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT,
+#endif
+#endif
         &RMF_NAME,
         &RMF_DLM_REQ
 };
@@ -252,6 +340,11 @@ static const struct req_msg_field *mds_reint_rename_client[] = {
         &RMF_REC_REINT,
         &RMF_CAPA1,
         &RMF_CAPA2,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT,
+#endif
+#endif
         &RMF_NAME,
         &RMF_SYMTGT,
         &RMF_DLM_REQ
@@ -271,6 +364,11 @@ static const struct req_msg_field *mds_reint_setattr_client[] = {
         &RMF_REC_REINT,
         &RMF_CAPA1,
         &RMF_MDT_EPOCH,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT,
+#endif
+#endif
         &RMF_EADATA,
         &RMF_LOGCOOKIES,
         &RMF_DLM_REQ
@@ -280,6 +378,11 @@ static const struct req_msg_field *mds_reint_setxattr_client[] = {
         &RMF_PTLRPC_BODY,
         &RMF_REC_REINT,
         &RMF_CAPA1,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT,
+#endif
+#endif
         &RMF_NAME,
         &RMF_EADATA
 };
@@ -290,6 +393,19 @@ static const struct req_msg_field *obd_connect_client[] = {
         &RMF_CLUUID,
         &RMF_CONN,
         &RMF_CONNECT_DATA
+};
+
+static const struct req_msg_field *mds_connect_client[] = {
+        &RMF_PTLRPC_BODY,
+        &RMF_TGTUUID,
+        &RMF_CLUUID,
+        &RMF_CONN,
+        &RMF_CONNECT_DATA,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT
+#endif
+#endif
 };
 
 static const struct req_msg_field *obd_connect_server[] = {
@@ -407,6 +523,11 @@ static const struct req_msg_field *ldlm_intent_open_client[] = {
         &RMF_REC_REINT,    /* coincides with mds_reint_open_client[] */
         &RMF_CAPA1,
         &RMF_CAPA2,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT,
+#endif
+#endif
         &RMF_NAME,
         &RMF_EADATA
 };
@@ -417,6 +538,11 @@ static const struct req_msg_field *ldlm_intent_unlink_client[] = {
         &RMF_LDLM_INTENT,
         &RMF_REC_REINT,    /* coincides with mds_reint_unlink_client[] */
         &RMF_CAPA1,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT,
+#endif
+#endif
         &RMF_NAME
 };
 
@@ -424,6 +550,11 @@ static const struct req_msg_field *mds_getxattr_client[] = {
         &RMF_PTLRPC_BODY,
         &RMF_MDT_BODY,
         &RMF_CAPA1,
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        &RMF_SEC_CONTEXT,
+#endif
+#endif
         &RMF_NAME,
         &RMF_EADATA
 };
@@ -911,6 +1042,14 @@ struct req_msg_field RMF_CAPA2 =
                     lustre_swab_lustre_capa, NULL);
 EXPORT_SYMBOL(RMF_CAPA2);
 
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+struct req_msg_field RMF_SEC_CONTEXT = DEFINE_MSGF("security context", 0, -1,
+                                                    NULL, NULL);
+EXPORT_SYMBOL(RMF_SEC_CONTEXT);
+#endif
+#endif
+
 /*
  * OST request field.
  */
@@ -1023,7 +1162,7 @@ struct req_format RQF_LOG_CANCEL =
 EXPORT_SYMBOL(RQF_LOG_CANCEL);
 
 struct req_format RQF_MDS_QUOTACHECK =
-        DEFINE_REQ_FMT0("MDS_QUOTACHECK", quotactl_only, empty);
+        DEFINE_REQ_FMT0("MDS_QUOTACHECK", mls_quotactl_only, empty);
 EXPORT_SYMBOL(RQF_MDS_QUOTACHECK);
 
 struct req_format RQF_OST_QUOTACHECK =
@@ -1031,7 +1170,7 @@ struct req_format RQF_OST_QUOTACHECK =
 EXPORT_SYMBOL(RQF_OST_QUOTACHECK);
 
 struct req_format RQF_MDS_QUOTACTL =
-        DEFINE_REQ_FMT0("MDS_QUOTACTL", quotactl_only, quotactl_only);
+        DEFINE_REQ_FMT0("MDS_QUOTACTL", mls_quotactl_only, quotactl_only);
 EXPORT_SYMBOL(RQF_MDS_QUOTACTL);
 
 struct req_format RQF_OST_QUOTACTL =
@@ -1052,19 +1191,19 @@ struct req_format RQF_MDS_QUOTA_DQACQ =
 EXPORT_SYMBOL(RQF_MDS_QUOTA_DQACQ);
 
 struct req_format RQF_MDS_GETSTATUS =
-        DEFINE_REQ_FMT0("MDS_GETSTATUS", mdt_body_only, mdt_body_capa);
+        DEFINE_REQ_FMT0("MDS_GETSTATUS", mls_mdt_body_only, mdt_body_capa);
 EXPORT_SYMBOL(RQF_MDS_GETSTATUS);
 
 struct req_format RQF_MDS_STATFS =
-        DEFINE_REQ_FMT0("MDS_STATFS", empty, obd_statfs_server);
+        DEFINE_REQ_FMT0("MDS_STATFS", sec_context_only, obd_statfs_server);
 EXPORT_SYMBOL(RQF_MDS_STATFS);
 
 struct req_format RQF_MDS_SYNC =
-        DEFINE_REQ_FMT0("MDS_SYNC", mdt_body_capa, mdt_body_only);
+        DEFINE_REQ_FMT0("MDS_SYNC", mls_mdt_body_capa, mdt_body_only);
 EXPORT_SYMBOL(RQF_MDS_SYNC);
 
 struct req_format RQF_MDS_GETATTR =
-        DEFINE_REQ_FMT0("MDS_GETATTR", mdt_body_capa, mds_getattr_server);
+        DEFINE_REQ_FMT0("MDS_GETATTR", mls_mdt_body_capa, mds_getattr_server);
 EXPORT_SYMBOL(RQF_MDS_GETATTR);
 
 struct req_format RQF_MDS_GETXATTR =
@@ -1133,11 +1272,11 @@ EXPORT_SYMBOL(RQF_MDS_REINT_SETXATTR);
 
 struct req_format RQF_MDS_CONNECT =
         DEFINE_REQ_FMT0("MDS_CONNECT",
-                        obd_connect_client, obd_connect_server);
+                        mds_connect_client, obd_connect_server);
 EXPORT_SYMBOL(RQF_MDS_CONNECT);
 
 struct req_format RQF_MDS_DISCONNECT =
-        DEFINE_REQ_FMT0("MDS_DISCONNECT", empty, empty);
+        DEFINE_REQ_FMT0("MDS_DISCONNECT", sec_context_only, empty);
 EXPORT_SYMBOL(RQF_MDS_DISCONNECT);
 
 struct req_format RQF_MDS_GET_INFO =
@@ -1222,12 +1361,12 @@ EXPORT_SYMBOL(RQF_MDS_UNPIN);
 
 struct req_format RQF_MDS_DONE_WRITING =
         DEFINE_REQ_FMT0("MDS_DONE_WRITING",
-                        mdt_close_client, mdt_body_only);
+                        mds_done_writing_client, mdt_body_only);
 EXPORT_SYMBOL(RQF_MDS_DONE_WRITING);
 
 struct req_format RQF_MDS_READPAGE =
         DEFINE_REQ_FMT0("MDS_READPAGE",
-                        mdt_body_capa, mdt_body_only);
+                        mls_mdt_body_capa, mdt_body_only);
 EXPORT_SYMBOL(RQF_MDS_READPAGE);
 
 /* This is for split */

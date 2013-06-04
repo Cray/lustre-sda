@@ -1563,7 +1563,14 @@ static int mdt_reint_internal(struct mdt_thread_info *info,
                 CERROR("Can't unpack reint, rc %d\n", rc);
                 RETURN(err_serious(rc));
         }
-
+#ifdef CONFIG_SECURITY_SELINUX
+                if (op == REINT_CREATE ||
+                    op == REINT_OPEN) {
+                        rc = mdt_save_client_sid(info, op);
+                        if (rc)
+                                RETURN(err_serious(rc));
+                }
+#endif
         /* for replay (no_create) lmm is not needed, client has it already */
         if (req_capsule_has_field(pill, &RMF_MDT_MD, RCL_SERVER))
                 req_capsule_set_size(pill, &RMF_MDT_MD, RCL_SERVER,
@@ -1641,7 +1648,7 @@ static long mdt_reint_opcode(struct mdt_thread_info *info,
 static int mdt_reint(struct mdt_thread_info *info)
 {
         long opc;
-        int  rc;
+        int  rc = 0;
 
         static const struct req_format *reint_fmts[REINT_MAX] = {
                 [REINT_SETATTR]  = &RQF_MDS_REINT_SETATTR,
@@ -1657,11 +1664,21 @@ static int mdt_reint(struct mdt_thread_info *info)
 
         opc = mdt_reint_opcode(info, reint_fmts);
         if (opc >= 0) {
-                /*
+#ifdef CONFIG_SECURITY_SELINUX
+                if (opc == REINT_SETATTR ||
+                    opc == REINT_LINK ||
+                    opc == REINT_UNLINK ||
+                    opc == REINT_RENAME ||
+                    opc == REINT_SETXATTR) {
+                        rc = mdt_save_client_sid(info, opc);
+                }
+#endif
+               /*
                  * No lock possible here from client to pass it to reint code
                  * path.
                  */
-                rc = mdt_reint_internal(info, NULL, opc);
+                if (rc == 0)
+                        rc = mdt_reint_internal(info, NULL, opc);
         } else {
                 rc = opc;
         }
@@ -2551,7 +2568,10 @@ static int mdt_req_handle(struct mdt_thread_info *info,
 {
         int   rc, serious = 0;
         __u32 flags;
-
+#ifdef CONFIG_SECURITY_SELINUX
+        __u32 opc;
+        u32   is_sync_pill_replaced = 0;
+#endif
         ENTRY;
 
         LASSERT(h->mh_act != NULL);
@@ -2580,6 +2600,32 @@ static int mdt_req_handle(struct mdt_thread_info *info,
                 req_capsule_set(info->mti_pill, h->mh_fmt);
                 rc = mdt_unpack_req_pack_rep(info, flags);
         }
+
+#ifdef CONFIG_SECURITY_SELINUX
+        if (rc == 0) {
+                opc = lustre_msg_get_opc(req->rq_reqmsg);
+                if (opc == MDS_SYNC && info->mti_pill->rc_fmt == NULL) {
+                        req_capsule_set(info->mti_pill, &RQF_MDS_SYNC);
+                        is_sync_pill_replaced = 1;
+                }
+                if (opc == MDS_GETXATTR ||
+                    opc == MDS_GETATTR ||
+                    opc == MDS_CLOSE ||
+                    opc == MDS_SYNC ||
+                    opc == MDS_GETSTATUS ||
+                    opc == MDS_CONNECT ||
+                    opc == MDS_DISCONNECT ||
+                    opc == MDS_STATFS ||
+                    opc == MDS_READPAGE ||
+                    opc == MDS_QUOTACHECK ||
+                    opc == MDS_QUOTACTL ||
+                    opc == MDS_GETATTR_NAME) {
+                        rc = mdt_save_client_sid(info, opc);
+                }
+                if (is_sync_pill_replaced)
+                        info->mti_pill->rc_fmt = NULL;
+        }
+#endif
 
         if (rc == 0 && flags & MUTABOR &&
             req->rq_export->exp_connect_data.ocd_connect_flags & OBD_CONNECT_RDONLY)
@@ -3102,11 +3148,11 @@ enum mdt_it_code {
 static int mdt_intent_getattr(enum mdt_it_code opcode,
                               struct mdt_thread_info *info,
                               struct ldlm_lock **,
-			      __u64);
+                               __u64);
 static int mdt_intent_reint(enum mdt_it_code opcode,
                             struct mdt_thread_info *info,
                             struct ldlm_lock **,
-			    __u64);
+                            __u64);
 
 static struct mdt_it_flavor {
         const struct req_format *it_fmt;
@@ -3114,7 +3160,7 @@ static struct mdt_it_flavor {
         int                    (*it_act)(enum mdt_it_code ,
                                          struct mdt_thread_info *,
                                          struct ldlm_lock **,
-					 __u64);
+                                         __u64);
         long                     it_reint;
 } mdt_it_flavor[] = {
         [MDT_IT_OPEN]     = {

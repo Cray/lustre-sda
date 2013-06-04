@@ -210,6 +210,13 @@ int mdc_getattr(struct obd_export *exp, struct md_op_data *op_data,
 {
         struct ptlrpc_request *req;
         int                    rc;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        char  *tmp;
+        u32    context_len     = 0;
+        char  *context         = NULL;
+#endif
+#endif
         ENTRY;
 
         *request = NULL;
@@ -218,7 +225,15 @@ int mdc_getattr(struct obd_export *exp, struct md_op_data *op_data,
                 RETURN(-ENOMEM);
 
         mdc_set_capa_size(req, &RMF_CAPA1, op_data->op_capa1);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
+#endif
+#endif
         rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_GETATTR);
         if (rc) {
                 ptlrpc_request_free(req);
@@ -235,6 +250,15 @@ int mdc_getattr(struct obd_export *exp, struct md_op_data *op_data,
                 req_capsule_set_size(&req->rq_pill, &RMF_ACL, RCL_SERVER,
                                      sizeof(struct mdt_remote_perm));
         }
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                memcpy(tmp, context, context_len);
+                security_release_secctx(context, context_len);
+        }
+#endif
+#endif
         ptlrpc_request_set_replen(req);
 
         rc = mdc_getattr_common(exp, req);
@@ -250,6 +274,14 @@ int mdc_getattr_name(struct obd_export *exp, struct md_op_data *op_data,
 {
         struct ptlrpc_request *req;
         int                    rc;
+
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        char  *tmp;
+        u32    context_len     = 0;
+        char  *context         = NULL;
+#endif
+#endif
         ENTRY;
 
         *request = NULL;
@@ -261,6 +293,16 @@ int mdc_getattr_name(struct obd_export *exp, struct md_op_data *op_data,
         mdc_set_capa_size(req, &RMF_CAPA1, op_data->op_capa1);
         req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
                              op_data->op_namelen + 1);
+
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
+#endif
+#endif
 
         rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_GETATTR_NAME);
         if (rc) {
@@ -278,11 +320,18 @@ int mdc_getattr_name(struct obd_export *exp, struct md_op_data *op_data,
                                 op_data->op_namelen);
                 memcpy(name, op_data->op_name, op_data->op_namelen);
         }
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                memcpy(tmp, context, context_len);
+                security_release_secctx(context, context_len);
+        }
+#endif
+#endif
         req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER,
                              op_data->op_mode);
         ptlrpc_request_set_replen(req);
-
         rc = mdc_getattr_common(exp, req);
         if (rc)
                 ptlrpc_req_finished(req);
@@ -330,6 +379,12 @@ static int mdc_xattr_common(struct obd_export *exp,const struct req_format *fmt,
         int   xattr_namelen = 0;
         char *tmp;
         int   rc;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        u32     context_len = 0;
+        char   *context     = NULL;
+#endif
+#endif
         ENTRY;
 
         *request = NULL;
@@ -349,6 +404,15 @@ static int mdc_xattr_common(struct obd_export *exp,const struct req_format *fmt,
                                      input_size);
         }
 
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
+#endif
+#endif
         rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, opcode);
         if (rc) {
                 ptlrpc_request_free(req);
@@ -390,6 +454,16 @@ static int mdc_xattr_common(struct obd_export *exp,const struct req_format *fmt,
                 tmp = req_capsule_client_get(&req->rq_pill, &RMF_EADATA);
                 memcpy(tmp, input, input_size);
         }
+
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                memcpy(tmp, context, context_len);
+                security_release_secctx(context, context_len);
+        }
+#endif
+#endif
 
         if (req_capsule_has_field(&req->rq_pill, &RMF_EADATA, RCL_SERVER))
                 req_capsule_set_size(&req->rq_pill, &RMF_EADATA,
@@ -808,6 +882,13 @@ int mdc_close(struct obd_export *exp, struct md_op_data *op_data,
         struct obd_device     *obd = class_exp2obd(exp);
         struct ptlrpc_request *req;
         int                    rc;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        char  *tmp;
+        u32    context_len     = 0;
+        char  *context         = NULL;
+#endif
+#endif
         ENTRY;
 
         *request = NULL;
@@ -816,7 +897,15 @@ int mdc_close(struct obd_export *exp, struct md_op_data *op_data,
                 RETURN(-ENOMEM);
 
         mdc_set_capa_size(req, &RMF_CAPA1, op_data->op_capa1);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
+#endif
+#endif
         rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_CLOSE);
         if (rc) {
                 ptlrpc_request_free(req);
@@ -848,7 +937,15 @@ int mdc_close(struct obd_export *exp, struct md_op_data *op_data,
         }
 
         mdc_close_pack(req, op_data);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                 tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                 memcpy(tmp, context, context_len);
+                 security_release_secctx(context, context_len);
+        }
+#endif
+#endif
         req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER,
                              obd->u.cli.cl_max_mds_easize);
         req_capsule_set_size(&req->rq_pill, &RMF_LOGCOOKIES, RCL_SERVER,
@@ -1028,6 +1125,13 @@ int mdc_readpage(struct obd_export *exp, const struct lu_fid *fid,
         int                      resends = 0;
         struct l_wait_info       lwi;
         int                      rc;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        char  *tmp;
+        u32    context_len     = 0;
+        char  *context         = NULL;
+#endif
+#endif
         ENTRY;
 
         *request = NULL;
@@ -1039,7 +1143,15 @@ restart_bulk:
                 RETURN(-ENOMEM);
 
         mdc_set_capa_size(req, &RMF_CAPA1, oc);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
+#endif
+#endif
         rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_READPAGE);
         if (rc) {
                 ptlrpc_request_free(req);
@@ -1061,7 +1173,15 @@ restart_bulk:
                 ptlrpc_prep_bulk_page(desc, pages[i], 0, CFS_PAGE_SIZE);
 
         mdc_readdir_pack(req, offset, CFS_PAGE_SIZE * npages, fid, oc);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                 tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                 memcpy(tmp, context, context_len);
+                 security_release_secctx(context, context_len);
+        }
+#endif
+#endif
         ptlrpc_request_set_replen(req);
         rc = ptlrpc_queue_wait(req);
         if (rc) {
@@ -1903,6 +2023,13 @@ int mdc_sync(struct obd_export *exp, const struct lu_fid *fid,
 {
         struct ptlrpc_request *req;
         int                    rc;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        char  *tmp;
+        u32    context_len     = 0;
+        char  *context         = NULL;
+#endif
+#endif
         ENTRY;
 
         *request = NULL;
@@ -1911,7 +2038,15 @@ int mdc_sync(struct obd_export *exp, const struct lu_fid *fid,
                 RETURN(-ENOMEM);
 
         mdc_set_capa_size(req, &RMF_CAPA1, oc);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
+#endif
+#endif
         rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_SYNC);
         if (rc) {
                 ptlrpc_request_free(req);
@@ -1919,7 +2054,15 @@ int mdc_sync(struct obd_export *exp, const struct lu_fid *fid,
         }
 
         mdc_pack_body(req, fid, oc, 0, 0, -1, 0);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                 tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                 memcpy(tmp, context, context_len);
+                 security_release_secctx(context, context_len);
+        }
+#endif
+#endif
         ptlrpc_request_set_replen(req);
 
         rc = ptlrpc_queue_wait(req);
@@ -2263,7 +2406,14 @@ int mdc_get_remote_perm(struct obd_export *exp, const struct lu_fid *fid,
 {
         struct ptlrpc_request  *req;
         int                    rc;
-        ENTRY;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        char  *tmp;
+        u32    context_len     = 0;
+        char  *context         = NULL;
+#endif
+#endif
+       ENTRY;
 
         LASSERT(client_is_remote(exp));
 
@@ -2273,7 +2423,15 @@ int mdc_get_remote_perm(struct obd_export *exp, const struct lu_fid *fid,
                 RETURN(-ENOMEM);
 
         mdc_set_capa_size(req, &RMF_CAPA1, oc);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
+#endif
+#endif
         rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_GETATTR);
         if (rc) {
                 ptlrpc_request_free(req);
@@ -2281,6 +2439,15 @@ int mdc_get_remote_perm(struct obd_export *exp, const struct lu_fid *fid,
         }
 
         mdc_pack_body(req, fid, oc, OBD_MD_FLRMTPERM, 0, suppgid, 0);
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                 tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                 memcpy(tmp, context, context_len);
+                 security_release_secctx(context, context_len);
+        }
+#endif
+#endif
 
         req_capsule_set_size(&req->rq_pill, &RMF_ACL, RCL_SERVER,
                              sizeof(struct mdt_remote_perm));

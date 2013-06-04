@@ -606,6 +606,14 @@ int ptlrpc_connect_import(struct obd_import *imp)
                          (char *)&imp->imp_connect_data };
         struct ptlrpc_connect_async_args *aa;
         int rc;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        char  *tmp;
+        u32    context_len     = 0;
+        char  *context         = NULL;
+#endif
+#endif
+
         ENTRY;
 
         cfs_spin_lock(&imp->imp_lock);
@@ -661,14 +669,35 @@ int ptlrpc_connect_import(struct obd_import *imp)
         request = ptlrpc_request_alloc(imp, &RQF_MDS_CONNECT);
         if (request == NULL)
                 GOTO(out, rc = -ENOMEM);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (imp->imp_connect_op == MDS_CONNECT) {
+                rc = mdc_set_sec_context_size(request, &context, &context_len);
+                if (rc) {
+                        ptlrpc_request_free(request);
+                        GOTO(out, rc);
+                }
+        }
+#endif
+#endif
         rc = ptlrpc_request_bufs_pack(request, LUSTRE_OBD_VERSION,
                                       imp->imp_connect_op, bufs, NULL);
         if (rc) {
                 ptlrpc_request_free(request);
                 GOTO(out, rc);
         }
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (imp->imp_connect_op == MDS_CONNECT) {
+                if (context_len) {
+                        tmp = req_capsule_client_get(&request->rq_pill,
+                                                     &RMF_SEC_CONTEXT);
+                        memcpy(tmp, context, context_len);
+                        security_release_secctx(context, context_len);
+                }
+        }
+#endif
+#endif
         /* Report the rpc service time to the server so that it knows how long
          * to wait for clients to join recovery */
         lustre_msg_set_service_time(request->rq_reqmsg,

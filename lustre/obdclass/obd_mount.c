@@ -63,6 +63,10 @@
 #include <linux/smp_lock.h>
 #endif
 
+#ifdef HAVE_SELINUX_IS_ENABLED
+#include <linux/selinux.h>
+#endif
+
 static int (*client_fill_super)(struct super_block *sb,
                                 struct vfsmount *mnt) = NULL;
 static void (*kill_super_cb)(struct super_block *sb) = NULL;
@@ -1738,6 +1742,38 @@ static struct super_operations server_ops =
         .statfs         = server_statfs,
 };
 
+/*
+ * Xattr support for Lustre servers
+ */
+static ssize_t lustre_getxattr(struct dentry *dentry, const char *name,
+                                                void *buffer, size_t size)
+{
+        if (!selinux_is_enabled())
+                return -EOPNOTSUPP;
+        return -ENODATA;
+}
+
+static int lustre_setxattr(struct dentry *dentry, const char *name,
+                                const void *value, size_t size, int flags)
+{
+        return -EOPNOTSUPP;
+}
+
+static ssize_t lustre_listxattr(struct dentry *d_entry, char *name,
+                                                        size_t size)
+{
+        return -EOPNOTSUPP;
+}
+
+/*
+ * Adding xattr support for lustre servers
+ */
+const struct inode_operations lustre_dir_inode_operations = {
+        .setxattr       = lustre_setxattr,
+        .getxattr       = lustre_getxattr,
+        .listxattr      = lustre_listxattr,
+};
+
 #define log2(n) cfs_ffz(~(n))
 #define LUSTRE_SUPER_MAGIC 0x0BD00BD1
 
@@ -1766,6 +1802,7 @@ static int server_fill_super_common(struct super_block *sb)
         /* apparently we need to be a directory for the mount to finish */
         root->i_mode = S_IFDIR;
 
+	root->i_op = &lustre_dir_inode_operations;
         sb->s_root = d_alloc_root(root);
         if (!sb->s_root) {
                 CERROR("Can't make root dentry\n");

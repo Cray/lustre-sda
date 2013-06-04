@@ -73,6 +73,11 @@ char  *cfs_curproc_comm(void);
 
 /* check if task is running in compat mode.*/
 int cfs_curproc_is_32bit(void);
+#ifdef CONFIG_SECURITY_SELINUX
+u32 cfs_curproc_get_sid(void);
+void cfs_curproc_set_sid(u32 sid);
+int cfs_ctx_to_sid(char *context, u32 *sid);
+#endif
 #endif
 
 typedef __u32 cfs_cap_t;

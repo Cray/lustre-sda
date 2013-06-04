@@ -120,6 +120,13 @@ int mdc_setattr(struct obd_export *exp, struct md_op_data *op_data,
         struct obd_device *obd = exp->exp_obd;
         int count = 0, rc;
         __u64 bits;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        u32    context_len = 0;
+        char  *tmp;
+        char  *context     = NULL;
+#endif
+#endif
         ENTRY;
 
         LASSERT(op_data != NULL);
@@ -145,7 +152,15 @@ int mdc_setattr(struct obd_export *exp, struct md_op_data *op_data,
         req_capsule_set_size(&req->rq_pill, &RMF_EADATA, RCL_CLIENT, ealen);
         req_capsule_set_size(&req->rq_pill, &RMF_LOGCOOKIES, RCL_CLIENT,
                              ea2len);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
+#endif
+#endif
         rc = mdc_prep_elc_req(exp, req, &cancels, count);
         if (rc) {
                 ptlrpc_request_free(req);
@@ -160,7 +175,15 @@ int mdc_setattr(struct obd_export *exp, struct md_op_data *op_data,
                        LTIME_S(op_data->op_attr.ia_mtime),
                        LTIME_S(op_data->op_attr.ia_ctime));
         mdc_setattr_pack(req, op_data, ea, ealen, ea2, ea2len);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                memcpy(tmp, context, context_len);
+                security_release_secctx(context, context_len);
+        }
+#endif
+#endif
         ptlrpc_request_set_replen(req);
         if (mod && (op_data->op_flags & MF_EPOCH_OPEN) &&
             req->rq_import->imp_replayable)
@@ -223,6 +246,14 @@ int mdc_create(struct obd_export *exp, struct md_op_data *op_data,
         struct ptlrpc_request *req;
         int level, rc;
         int count = 0;
+
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        char *tmp;
+        u32   context_len     = 0;
+        char *context         = NULL;
+#endif
+#endif
         CFS_LIST_HEAD(cancels);
         ENTRY;
 
@@ -257,6 +288,15 @@ int mdc_create(struct obd_export *exp, struct md_op_data *op_data,
         req_capsule_set_size(&req->rq_pill, &RMF_EADATA, RCL_CLIENT,
                              data && datalen ? datalen : 0);
 
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
+#endif
+#endif
         rc = mdc_prep_elc_req(exp, req, &cancels, count);
         if (rc) {
                 ptlrpc_request_free(req);
@@ -270,6 +310,15 @@ int mdc_create(struct obd_export *exp, struct md_op_data *op_data,
         mdc_create_pack(req, op_data, data, datalen, mode, uid,
                         gid, cap_effective, rdev);
 
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                memcpy(tmp, context, context_len);
+                security_release_secctx(context, context_len);
+        }
+#endif
+#endif
         ptlrpc_request_set_replen(req);
 
         level = LUSTRE_IMP_FULL;
@@ -293,7 +342,6 @@ int mdc_create(struct obd_export *exp, struct md_op_data *op_data,
                                 rc = -EPROTO;
                 }
         }
-
         *request = req;
         RETURN(rc);
 }
@@ -305,6 +353,13 @@ int mdc_unlink(struct obd_export *exp, struct md_op_data *op_data,
         struct obd_device *obd = class_exp2obd(exp);
         struct ptlrpc_request *req = *request;
         int count = 0, rc;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        u32    context_len = 0;
+        char  *tmp;
+        char  *context     = NULL;
+#endif
+#endif
         ENTRY;
 
         LASSERT(req == NULL);
@@ -330,7 +385,15 @@ int mdc_unlink(struct obd_export *exp, struct md_op_data *op_data,
         mdc_set_capa_size(req, &RMF_CAPA1, op_data->op_capa1);
         req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
                              op_data->op_namelen + 1);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
+#endif
+#endif
         rc = mdc_prep_elc_req(exp, req, &cancels, count);
         if (rc) {
                 ptlrpc_request_free(req);
@@ -338,7 +401,15 @@ int mdc_unlink(struct obd_export *exp, struct md_op_data *op_data,
         }
 
         mdc_unlink_pack(req, op_data);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                memcpy(tmp, context, context_len);
+                security_release_secctx(context, context_len);
+        }
+#endif
+#endif
         req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER,
                              obd->u.cli.cl_max_mds_easize);
         req_capsule_set_size(&req->rq_pill, &RMF_LOGCOOKIES, RCL_SERVER,
@@ -360,6 +431,13 @@ int mdc_link(struct obd_export *exp, struct md_op_data *op_data,
         struct obd_device *obd = exp->exp_obd;
         struct ptlrpc_request *req;
         int count = 0, rc;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        u32    context_len = 0;
+        char  *tmp;
+        char  *context     = NULL;
+#endif
+#endif
         ENTRY;
 
         if ((op_data->op_flags & MF_MDC_CANCEL_FID2) &&
@@ -382,7 +460,15 @@ int mdc_link(struct obd_export *exp, struct md_op_data *op_data,
         mdc_set_capa_size(req, &RMF_CAPA2, op_data->op_capa2);
         req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
                              op_data->op_namelen + 1);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
+#endif
+#endif
         rc = mdc_prep_elc_req(exp, req, &cancels, count);
         if (rc) {
                 ptlrpc_request_free(req);
@@ -390,6 +476,15 @@ int mdc_link(struct obd_export *exp, struct md_op_data *op_data,
         }
 
         mdc_link_pack(req, op_data);
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                memcpy(tmp, context, context_len);
+                security_release_secctx(context, context_len);
+        }
+#endif
+#endif
         ptlrpc_request_set_replen(req);
 
         rc = mdc_reint(req, obd->u.cli.cl_rpc_lock, LUSTRE_IMP_FULL);
@@ -408,6 +503,13 @@ int mdc_rename(struct obd_export *exp, struct md_op_data *op_data,
         struct obd_device *obd = exp->exp_obd;
         struct ptlrpc_request *req;
         int count = 0, rc;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        u32    context_len = 0;
+        char  *tmp;
+        char  *context     = NULL;
+#endif
+#endif
         ENTRY;
 
         if ((op_data->op_flags & MF_MDC_CANCEL_FID1) &&
@@ -442,7 +544,15 @@ int mdc_rename(struct obd_export *exp, struct md_op_data *op_data,
         mdc_set_capa_size(req, &RMF_CAPA2, op_data->op_capa2);
         req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT, oldlen + 1);
         req_capsule_set_size(&req->rq_pill, &RMF_SYMTGT, RCL_CLIENT, newlen+1);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
+#endif
+#endif
         rc = mdc_prep_elc_req(exp, req, &cancels, count);
         if (rc) {
                 ptlrpc_request_free(req);
@@ -453,7 +563,15 @@ int mdc_rename(struct obd_export *exp, struct md_op_data *op_data,
                 ldlm_cli_cancel_list(&cancels, count, req, 0);
 
         mdc_rename_pack(req, op_data, old, oldlen, new, newlen);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                memcpy(tmp, context, context_len);
+                security_release_secctx(context, context_len);
+        }
+#endif
+#endif
         req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER,
                              obd->u.cli.cl_max_mds_easize);
         req_capsule_set_size(&req->rq_pill, &RMF_LOGCOOKIES, RCL_SERVER,

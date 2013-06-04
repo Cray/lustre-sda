@@ -55,6 +55,10 @@
 #include <stdarg.h>
 #include <mntent.h>
 
+#ifdef HAVE_SELINUX
+#include <selinux/selinux.h>
+#endif
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/mount.h>
@@ -1069,6 +1073,23 @@ static int __l_mkdir(char * filepnm, int mode , struct mkfs_opts *mop)
         return 0;
 }
 
+/*
+ * Concatenate context of the temporary mount point iff selinux is enabled
+ */
+#ifdef HAVE_SELINUX
+void append_context_for_mount(char *mntpt, struct mkfs_opts *mop)
+{
+        security_context_t fcontext;
+
+        if (getfilecon(mntpt, &fcontext) > 0)
+                sprintf(mop->mo_ldd.ldd_mount_opts,",context=%s",fcontext);
+        else
+                /* Continuing with default behaviour */
+                fprintf(stderr, "%s: Get file context failed : %s\n",
+                        progname, strerror(errno));
+}
+#endif
+
 /* Write the server config files */
 int write_local_files(struct mkfs_opts *mop)
 {
@@ -1089,6 +1110,14 @@ int write_local_files(struct mkfs_opts *mop)
         dev = mop->mo_device;
         if (mop->mo_flags & MO_IS_LOOP)
                 dev = mop->mo_loopdev;
+
+        /*
+         * Append file context to mount options if SELinux is enabled
+         */
+#ifdef HAVE_SELINUX
+        if (is_selinux_enabled() > 0)
+                append_context_for_mount(mntpt, mop);
+#endif
 
         ret = mount(dev, mntpt, MT_STR(&mop->mo_ldd), 0,
                     mop->mo_ldd.ldd_mount_opts);

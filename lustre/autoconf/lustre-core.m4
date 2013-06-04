@@ -1372,7 +1372,7 @@ LB_LINUX_TRY_COMPILE([
 ],[
         AC_MSG_RESULT(no)
 ])
-])  
+])
 
 # 2.6.32 removes blk_queue_max_sectors and add blk_queue_max_hw_sectors
 # check blk_queue_max_sectors and use it until disappear.
@@ -2285,6 +2285,20 @@ AC_CHECK_LIB([z],
              [AC_MSG_WARN([No zlib package found, unable to use adler32 checksum])]
 )
 AC_SUBST(ZLIB)
+
+SELINUX=""
+AC_CHECK_LIB([selinux],
+        [is_selinux_enabled],
+        [AC_CHECK_HEADERS([selinux/selinux.h],
+                        [SELINUX="-lselinux"
+                        AC_DEFINE([HAVE_SELINUX], 1,
+                                [support for selinux ])],
+                        [AC_MSG_WARN([No selinux-devel package found,
+                                unable to build selinux enabled tools])])],
+        [AC_MSG_WARN([No selinux package found, unable to build
+                selinux enabled tools])]
+)
+AC_SUBST(SELINUX)
 
 LDAP=""
 AC_CHECK_LIB([ldap],

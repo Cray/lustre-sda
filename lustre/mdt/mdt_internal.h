@@ -558,6 +558,10 @@ void mdt_object_unlock_put(struct mdt_thread_info *,
                            int decref);
 
 int mdt_close_unpack(struct mdt_thread_info *info);
+#ifdef CONFIG_SECURITY_SELINUX
+int mdt_save_client_sid(struct mdt_thread_info *info,
+                             __u32 opc);
+#endif
 int mdt_reint_unpack(struct mdt_thread_info *info, __u32 op);
 int mdt_reint_rec(struct mdt_thread_info *, struct mdt_lock_handle *);
 void mdt_pack_attr2body(struct mdt_thread_info *info, struct mdt_body *b,

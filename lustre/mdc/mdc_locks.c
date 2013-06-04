@@ -289,6 +289,13 @@ static struct ptlrpc_request *mdc_intent_open_pack(struct obd_export *exp,
         int                    count = 0;
         int                    mode;
         int                    rc;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        u32    context_len = 0;
+        char  *tmp;
+        char  *context     = NULL;
+#endif
+#endif
         ENTRY;
 
         it->it_create_mode = (it->it_create_mode & ~S_IFMT) | S_IFREG;
@@ -335,7 +342,15 @@ static struct ptlrpc_request *mdc_intent_open_pack(struct obd_export *exp,
                              op_data->op_namelen + 1);
         req_capsule_set_size(&req->rq_pill, &RMF_EADATA, RCL_CLIENT,
                              max(lmmsize, obddev->u.cli.cl_default_mds_easize));
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                return NULL;
+        }
+#endif
+#endif
         rc = ldlm_prep_enqueue_req(exp, req, &cancels, count);
         if (rc) {
                 ptlrpc_request_free(req);
@@ -353,7 +368,15 @@ static struct ptlrpc_request *mdc_intent_open_pack(struct obd_export *exp,
         /* pack the intended request */
         mdc_open_pack(req, op_data, it->it_create_mode, 0, it->it_flags, lmm,
                       lmmsize);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                memcpy(tmp, context, context_len);
+                security_release_secctx(context, context_len);
+        }
+#endif
+#endif
         /* for remote client, fetch remote perm for current user */
         if (client_is_remote(exp))
                 req_capsule_set_size(&req->rq_pill, &RMF_ACL, RCL_SERVER,
@@ -370,6 +393,13 @@ static struct ptlrpc_request *mdc_intent_unlink_pack(struct obd_export *exp,
         struct obd_device     *obddev = class_exp2obd(exp);
         struct ldlm_intent    *lit;
         int                    rc;
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        u32    context_len = 0;
+        char  *tmp;
+        char  *context     = NULL;
+#endif
+#endif
         ENTRY;
 
         req = ptlrpc_request_alloc(class_exp2cliimp(exp),
@@ -380,7 +410,15 @@ static struct ptlrpc_request *mdc_intent_unlink_pack(struct obd_export *exp,
         mdc_set_capa_size(req, &RMF_CAPA1, op_data->op_capa1);
         req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
                              op_data->op_namelen + 1);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        rc = mdc_set_sec_context_size(req, &context, &context_len);
+        if (rc) {
+                ptlrpc_request_free(req);
+                RETURN(ERR_PTR(rc));
+        }
+#endif
+#endif
         rc = ldlm_prep_enqueue_req(exp, req, NULL, 0);
         if (rc) {
                 ptlrpc_request_free(req);
@@ -393,7 +431,15 @@ static struct ptlrpc_request *mdc_intent_unlink_pack(struct obd_export *exp,
 
         /* pack the intended request */
         mdc_unlink_pack(req, op_data);
-
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+        if (context_len) {
+                tmp = req_capsule_client_get(&req->rq_pill, &RMF_SEC_CONTEXT);
+                memcpy(tmp, context, context_len);
+                security_release_secctx(context, context_len);
+        }
+#endif
+#endif
         req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER,
                              obddev->u.cli.cl_max_mds_easize);
         req_capsule_set_size(&req->rq_pill, &RMF_ACL, RCL_SERVER,

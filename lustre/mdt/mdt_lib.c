@@ -1369,6 +1369,23 @@ static int mdt_setxattr_unpack(struct mdt_thread_info *info)
         RETURN(0);
 }
 
+#ifdef CONFIG_SECURITY_SELINUX
+int mdt_save_client_sid(struct mdt_thread_info *info, __u32 opc)
+{
+        char   *context              = NULL;
+        u32     cur_client_proc_sid;
+        int     rc;
+        struct  lu_ucred *uc         = mdt_ucred(info);
+        ENTRY;
+
+        context = req_capsule_client_get(info->mti_pill, &RMF_SEC_CONTEXT);
+        rc = cfs_ctx_to_sid(context, &cur_client_proc_sid);
+        if (rc == 0) {
+                uc->uc_sid = cur_client_proc_sid;
+        }
+        return rc;
+}
+#endif
 
 typedef int (*reint_unpacker)(struct mdt_thread_info *info);
 

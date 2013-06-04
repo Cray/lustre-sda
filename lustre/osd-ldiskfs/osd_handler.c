@@ -228,27 +228,36 @@ osd_push_ctxt(const struct lu_env *env, struct osd_ctxt *save)
         struct lu_ucred    *uc = lu_ucred_check(env);
         struct cred        *tc;
 
-        if (uc == NULL) {
+        if (uc != NULL) {
+                save->oc_uid = current_fsuid();
+                save->oc_gid = current_fsgid();
+                save->oc_cap = current_cap();
+                if ((tc = prepare_creds())) {
+                        tc->fsuid         = uc->uc_fsuid;
+                        tc->fsgid         = uc->uc_fsgid;
+                        commit_creds(tc);
+                }
+                /* XXX not suboptimal */
+                cfs_curproc_cap_unpack(uc->uc_cap);
+        } else {
                 CWARN("ucred is not initialized\n");
-                return;
+                uc = lu_ucred(env);
         }
-
-        save->oc_uid = current_fsuid();
-        save->oc_gid = current_fsgid();
-        save->oc_cap = current_cap();
-        if ((tc = prepare_creds())) {
-                tc->fsuid         = uc->uc_fsuid;
-                tc->fsgid         = uc->uc_fsgid;
-                commit_creds(tc);
-        }
-        /* XXX not suboptimal */
-        cfs_curproc_cap_unpack(uc->uc_cap);
+#ifdef CONFIG_SECURITY_SELINUX
+        save->oc_sid = cfs_curproc_get_sid();
+        cfs_curproc_set_sid(uc->uc_sid);
+#endif
+        return;
 }
 
 static inline void
 osd_pop_ctxt(const struct lu_env *env, struct osd_ctxt *save)
 {
         struct cred *tc;
+
+#ifdef CONFIG_SECURITY_SELINUX
+        cfs_curproc_set_sid(save->oc_sid);
+#endif
 
         if (lu_ucred_check(env) == NULL)
                 return;
@@ -2773,7 +2782,7 @@ static int osd_ldiskfs_writelink(struct inode *inode, char *buffer, int buflen)
 	/* LU-2634: clear the extent format for fast symlink */
 	ldiskfs_clear_inode_flag(inode, LDISKFS_INODE_EXTENTS);
 
-        memcpy((char*)&LDISKFS_I(inode)->i_data, (char *)buffer,
+	memcpy((char*)&LDISKFS_I(inode)->i_data, (char *)buffer,
                buflen);
 	/* link's buffer contains '\0' to make fsck happy (LU-1540) */
 	buflen--;

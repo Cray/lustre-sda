@@ -90,6 +90,9 @@ struct inode;
 struct osd_ctxt {
         __u32 oc_uid;
         __u32 oc_gid;
+#ifdef CONFIG_SECURITY_SELINUX
+        __u32 oc_sid;
+#endif
         cfs_kernel_cap_t oc_cap;
 };
 #endif

@@ -45,6 +45,6 @@ libcfs-all-objs := debug.o fail.o nidstrings.o lwt.o module.o tracefile.o watchd
 
 libcfs-objs := $(libcfs-linux-objs) $(libcfs-all-objs) $(libcfs-pclmul-obj)
 
-EXTRA_PRE_CFLAGS := -I@LUSTRE@/../libcfs/libcfs
-
+EXTRA_PRE_CFLAGS := -I@LUSTRE@/../libcfs/libcfs -I@LINUX@/security/selinux/include
+EXTRA_PRE_CFLAGS += -I@LINUX@/security/selinux
 @INCLUDE_RULES@

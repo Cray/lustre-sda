@@ -1298,6 +1298,9 @@ struct lu_ucred {
 	__u32               uc_o_fsgid;
 	__u32               uc_uid;
 	__u32               uc_gid;
+#ifdef CONFIG_SECURITY_SELINUX
+	__u32               uc_sid;
+#endif
 	__u32               uc_fsuid;
 	__u32               uc_fsgid;
 	__u32               uc_suppgids[2];

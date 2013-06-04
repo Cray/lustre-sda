@@ -1387,6 +1387,12 @@ struct ptlrpc_connection *ptlrpc_uuid_to_connection(struct obd_uuid *uuid);
 
 int ptlrpc_queue_wait(struct ptlrpc_request *req);
 int ptlrpc_replay_req(struct ptlrpc_request *req);
+#ifdef __KERNEL__
+#ifdef CONFIG_SECURITY_SELINUX
+int mdc_set_sec_context_size(struct ptlrpc_request *req, char **context,
+                             u32 *context_len);
+#endif
+#endif
 int ptlrpc_unregister_reply(struct ptlrpc_request *req, int async);
 void ptlrpc_restart_req(struct ptlrpc_request *req);
 void ptlrpc_abort_inflight(struct obd_import *imp);

@@ -48,6 +48,10 @@
 
 #include <libcfs/libcfs.h>
 
+#ifdef CONFIG_SECURITY_SELINUX
+#include <objsec.h>
+#endif
+
 /*
  * Implementation of cfs_curproc API (see portals/include/libcfs/curproc.h)
  * for Linux kernel.
@@ -213,6 +217,27 @@ int cfs_curproc_is_32bit(void)
 #endif
 }
 
+#ifdef CONFIG_SECURITY_SELINUX
+u32 cfs_curproc_get_sid(void)
+{
+        const struct task_security_struct *tsec = current_security();
+        return tsec->sid;
+}
+
+void cfs_curproc_set_sid(u32 sid)
+{
+        struct task_security_struct *tsec = current_security();
+        tsec->sid = sid;
+}
+int cfs_ctx_to_sid(char *context, u32 *sid)
+{
+        int rc;
+
+        rc = security_secctx_to_secid(context, strlen(context), sid);
+        return rc;
+}
+#endif
+
 EXPORT_SYMBOL(cfs_curproc_uid);
 EXPORT_SYMBOL(cfs_curproc_pid);
 EXPORT_SYMBOL(cfs_curproc_euid);
@@ -232,6 +257,11 @@ EXPORT_SYMBOL(cfs_curproc_cap_pack);
 EXPORT_SYMBOL(cfs_curproc_cap_unpack);
 EXPORT_SYMBOL(cfs_capable);
 EXPORT_SYMBOL(cfs_curproc_is_32bit);
+#ifdef CONFIG_SECURITY_SELINUX
+EXPORT_SYMBOL(cfs_curproc_get_sid);
+EXPORT_SYMBOL(cfs_curproc_set_sid);
+EXPORT_SYMBOL(cfs_ctx_to_sid);
+#endif
 
 /*
  * Local variables:
