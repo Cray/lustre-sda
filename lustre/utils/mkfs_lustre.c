@@ -1095,6 +1095,7 @@ int write_local_files(struct mkfs_opts *mop)
 {
         char mntpt[] = "/tmp/mntXXXXXX";
         char filepnm[128];
+	char mnt_opts_copy[4096];
         char *dev;
         FILE *filep;
         int ret = 0;
@@ -1106,6 +1107,9 @@ int write_local_files(struct mkfs_opts *mop)
                         progname, mntpt, strerror(errno));
                 return errno;
         }
+
+	/* Take backup of original mount options before temporary mount */
+	strcpy(mnt_opts_copy,mop->mo_ldd.ldd_mount_opts);
 
         dev = mop->mo_device;
         if (mop->mo_flags & MO_IS_LOOP)
@@ -1131,6 +1135,9 @@ int write_local_files(struct mkfs_opts *mop)
                 }
                 goto out_rmdir;
         }
+
+	/* Restore the original mount options after temporary mount */
+	strcpy(mop->mo_ldd.ldd_mount_opts, mnt_opts_copy);
 
         /* Set up initial directories */
         sprintf(filepnm, "%s/%s", mntpt, MOUNT_CONFIGS_DIR);
