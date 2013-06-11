@@ -63,6 +63,10 @@
 /* simple_mkdir() */
 #include <lvfs.h>
 
+#ifdef CONFIG_SECURITY_SELINUX
+#include <linux/security.h>
+#endif
+
 /*
  * struct OBD_{ALLOC,FREE}*()
  * OBD_FAIL_CHECK
@@ -1416,12 +1420,32 @@ static int osd_attr_get(const struct lu_env *env,
                         struct lustre_capa *capa)
 {
         struct osd_object *obj = osd_dt_obj(dt);
+#ifdef CONFIG_SECURITY_SELINUX
+        struct inode           *inode        = obj->oo_inode;
+        struct osd_thread_info *info         = osd_oti_get(env);
+        struct dentry          *child_dentry = &info->oti_child_dentry;
+        struct osd_device      *dev          = osd_obj2dev(obj);
+        struct osd_ctxt        *save         = &osd_oti_get(env)->oti_ctxt;
+	int    retval;
+#endif
 
         LASSERT(dt_object_exists(dt));
         LINVRNT(osd_invariant(obj));
 
         if (osd_object_auth(env, dt, capa, CAPA_OPC_META_READ))
                 return -EACCES;
+#ifdef CONFIG_SECURITY_SELINUX
+	if(dev->od_mount->lmi_mnt)
+	{
+		if(child_dentry->d_name.name)
+		{
+			child_dentry->d_inode = inode;
+                	osd_push_ctxt(env, save);
+			retval = security_inode_getattr(dev->od_mount->lmi_mnt, child_dentry);
+                	osd_pop_ctxt(env, save);
+		}
+	}
+#endif
 
         cfs_spin_lock(&obj->oo_guard);
         osd_inode_getattr(env, obj->oo_inode, attr);
