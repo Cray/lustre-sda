@@ -2843,7 +2843,7 @@ static void gss_init_at_reply_offset(void)
         gss_at_reply_off_priv = lustre_msg_size_v2(3, buflens);
 }
 
-int __init sptlrpc_gss_init(void)
+int sptlrpc_gss_init(void)
 {
         int rc;
 
@@ -2896,7 +2896,7 @@ out_lproc:
         return rc;
 }
 
-static void __exit sptlrpc_gss_exit(void)
+static void sptlrpc_gss_exit(void)
 {
         gss_exit_keyring();
 #ifdef HAVE_GSS_PIPEFS

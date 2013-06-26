@@ -425,8 +425,8 @@ int gss_cli_ctx_fini_common(struct ptlrpc_sec *sec,
 void gss_cli_ctx_flags2str(unsigned long flags, char *buf, int bufsize);
 
 /* gss_keyring.c */
-int  __init gss_init_keyring(void);
-void __exit gss_exit_keyring(void);
+int  gss_init_keyring(void);
+void gss_exit_keyring(void);
 
 /* gss_pipefs.c */
 int  __init gss_init_pipefs(void);
@@ -463,8 +463,8 @@ __u32 g_verify_token_header(rawobj_t *mech, int *body_size,
 int gss_do_ctx_init_rpc(char *buffer, unsigned long count);
 int gss_do_ctx_fini_rpc(struct gss_cli_ctx *gctx);
 
-int  __init gss_init_cli_upcall(void);
-void __exit gss_exit_cli_upcall(void);
+int  gss_init_cli_upcall(void);
+void gss_exit_cli_upcall(void);
 
 /* gss_svc_upcall.c */
 __u64 gss_get_next_ctx_index(void);
@@ -486,19 +486,19 @@ struct gss_svc_ctx *gss_svc_upcall_get_ctx(struct ptlrpc_request *req,
 void gss_svc_upcall_put_ctx(struct gss_svc_ctx *ctx);
 void gss_svc_upcall_destroy_ctx(struct gss_svc_ctx *ctx);
 
-int  __init gss_init_svc_upcall(void);
-void __exit gss_exit_svc_upcall(void);
+int gss_init_svc_upcall(void);
+void gss_exit_svc_upcall(void);
 
 /* lproc_gss.c */
 void gss_stat_oos_record_cli(int behind);
 void gss_stat_oos_record_svc(int phase, int replay);
 
-int  __init gss_init_lproc(void);
-void __exit gss_exit_lproc(void);
+int gss_init_lproc(void);
+void gss_exit_lproc(void);
 
 /* gss_krb5_mech.c */
-int __init init_kerberos_module(void);
-void __exit cleanup_kerberos_module(void);
+int init_kerberos_module(void);
+void cleanup_kerberos_module(void);
 
 
 /* debug */

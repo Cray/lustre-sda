@@ -1816,7 +1816,7 @@ static struct gss_api_mech gss_kerberos_mech = {
         .gm_sfs         = gss_kerberos_sfs,
 };
 
-int __init init_kerberos_module(void)
+int init_kerberos_module(void)
 {
         int status;
 
@@ -1828,7 +1828,7 @@ int __init init_kerberos_module(void)
         return status;
 }
 
-void __exit cleanup_kerberos_module(void)
+void cleanup_kerberos_module(void)
 {
         lgss_mech_unregister(&gss_kerberos_mech);
 }

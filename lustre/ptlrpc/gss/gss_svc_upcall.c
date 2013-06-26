@@ -1060,7 +1060,7 @@ void gss_svc_upcall_destroy_ctx(struct gss_svc_ctx *ctx)
         rsc->h.expiry_time = 1;
 }
 
-int __init gss_init_svc_upcall(void)
+int gss_init_svc_upcall(void)
 {
         int     i;
 
@@ -1097,7 +1097,7 @@ int __init gss_init_svc_upcall(void)
         return 0;
 }
 
-void __exit gss_exit_svc_upcall(void)
+void gss_exit_svc_upcall(void)
 {
         cache_purge(&rsi_cache);
         cache_unregister(&rsi_cache);
