@@ -1,0 +1,21 @@
+--- linux-2.6.32-220.7.1.el6.orig/./fs/dcache.c	2012-02-10 11:42:56.000000000 -0800
++++ linux-2.6.32-220.7.1.el6/./fs/dcache.c	2013-06-27 02:32:41.317892325 -0700
+@@ -1953,6 +1953,8 @@ char *__d_path(const struct path *path, 
+ 
+ 		if (dentry == root->dentry && vfsmnt == root->mnt)
+ 			break;
++		if (dentry->d_parent == NULL)
++                        break;
+ 		if (dentry == vfsmnt->mnt_root || IS_ROOT(dentry)) {
+ 			/* Global root? */
+ 			if (vfsmnt->mnt_parent == vfsmnt) {
+--- linux-2.6.32-220.7.1.el6.orig/./security/security.c	2012-02-10 11:42:22.000000000 -0800
++++ linux-2.6.32-220.7.1.el6/./security/security.c	2013-06-27 02:25:43.071838827 -0700
+@@ -554,6 +554,7 @@ int security_inode_getattr(struct vfsmou
+ 		return 0;
+ 	return security_ops->inode_getattr(mnt, dentry);
+ }
++EXPORT_SYMBOL_GPL(security_inode_getattr);
+ 
+ void security_inode_delete(struct inode *inode)
+ {
