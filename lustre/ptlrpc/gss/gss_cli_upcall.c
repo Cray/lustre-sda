@@ -439,11 +439,11 @@ out:
         RETURN(rc);
 }
 
-int gss_init_cli_upcall(void)
+int __init gss_init_cli_upcall(void)
 {
         return 0;
 }
 
-void gss_exit_cli_upcall(void)
+void __exit gss_exit_cli_upcall(void)
 {
 }
