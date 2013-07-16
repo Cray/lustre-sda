@@ -925,6 +925,24 @@ cache_check:
                 CWARN("waited %ds timeout, drop\n", GSS_SVC_UPCALL_TIMEOUT);
                 break;
         }
+	/* FIXME XXX @santosh.kulkarni@xyratex.com this is not the correct way to handle ETIMEDOUT I suppose.
+         * we need to redo the rsi_lookup get a new cache item and do a cache_check
+         * But rsc_lookup down the line fails and authentication fails */
+        case -ETIMEDOUT: {
+                int citem_valid;
+
+                read_lock(&rsi_cache.hash_lock);
+                citem_valid = cfs_test_bit(CACHE_VALID, &rsip->h.flags);
+                /*XXX We induce a sleep.And do a cache_check.
+                 * rsc_lookup succeeds!*/
+                if (citem_valid == 0)
+                        cfs_set_current_state(CFS_TASK_INTERRUPTIBLE);
+                read_unlock(&rsi_cache.hash_lock);
+
+                if (citem_valid == 0)
+                cfs_schedule_timeout(CFS_HZ);
+                        goto cache_check;
+        }
         case -ENOENT:
                 CWARN("cache_check return ENOENT, drop\n");
                 break;
