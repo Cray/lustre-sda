@@ -1,0 +1,11 @@
+
+module tunefs 1.0;
+
+require {
+	type sysadm_t;
+	type fs_t;
+	class filesystem relabelfrom;
+}
+
+#============= sysadm_t ==============
+allow sysadm_t fs_t:filesystem relabelfrom;

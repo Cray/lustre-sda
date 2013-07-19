@@ -1,0 +1,32 @@
+
+module lctl 1.0;
+
+require {
+	type sysadm_t;
+	type tmp_t;
+	type root_t;
+	type insmod_t;
+	type device_t;
+	class process { siginh rlimitinh noatsecure };
+	class blk_file { write read create unlink open };
+	class dir search;
+	class chr_file { read write create open };
+}
+
+#============= insmod_t ==============
+#!!!! This avc is a constraint violation.  You will need to add an attribute to either the source or target type to make it work.
+#Contraint rule: 
+allow insmod_t device_t:dir search;
+
+#============= sysadm_t ==============
+allow sysadm_t device_t:blk_file create;
+#!!!! The source type 'sysadm_t' can write to a 'chr_file' of the following type:
+# user_tmp_t
+
+allow sysadm_t device_t:chr_file { read write create open };
+allow sysadm_t insmod_t:process { siginh noatsecure rlimitinh };
+allow sysadm_t root_t:blk_file create;
+#!!!! The source type 'sysadm_t' can write to a 'blk_file' of the following type:
+# user_tmp_t
+
+allow sysadm_t tmp_t:blk_file { read write create unlink open };

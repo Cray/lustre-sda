@@ -1,0 +1,204 @@
+
+module lustre_selinux 1.0;
+
+require {
+	type user_tmp_t;
+	type unlabeled_t;
+	type mount_t;
+	type fsadm_t;
+	type sysfs_t;
+	type sysadm_t;
+	type udev_t;
+	type fixed_disk_device_t;
+	type insmod_t;
+	type lvm_t;
+	class process { siginh noatsecure rlimitinh };
+	class tcp_socket create;
+	class file { rename write read create unlink open };
+	class filesystem { relabelfrom relabelto mount unmount };
+	class blk_file { read write ioctl open };
+	class dir { write remove_name create add_name mounton };
+}
+
+#============= insmod_t ==============
+# Logs for following rule:
+# allow insmod_t self:tcp_socket create;
+# Begin Logs:-
+# ----
+# time->Fri Apr 26 02:48:57 2013
+# type=SYSCALL msg=audit(1366969737.333:373): arch=c000003e syscall=175 success=no exit=-5 a0=7f83f49cb010 a1=151d289 a2=f6be70 a3=7fffb8079990 items=0 ppid=30# 21 pid=3022 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm="modprobe" exe="/sbin/modprobe" subj=syste# m_u:system_r:insmod_t:s15:c0.c1023 key=(null)
+# type=AVC msg=audit(1366969737.333:373): avc:  denied  { create } for  pid=3022 comm="modprobe" scontext=system_u:system_r:insmod_t:s15:c0.c1023 tcontext=syst# em_u:system_r:insmod_t:s15:c0.c1023 tclass=tcp_socket
+# End logs
+
+# Allow process with type "insmod_t" to create tcp_socket of same type i.e. "insmod_t"
+allow insmod_t self:tcp_socket create;
+
+#============= mount_t ==============
+# Logs for the following rule:
+# allow mount_t sysfs_t:file write;
+# Begin Logs:-
+# ----
+# time->Thu Apr 25 04:51:49 2013
+# type=SYSCALL msg=audit(1366890709.631:607): arch=c000003e syscall=2 success=yes exit=4 a0=7fffa4ffe9c0 a1=241 a2=1b6 a3=0 items=0 ppid=2950 pid=4031 auid=0 u# id=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=1 comm="mount.lustre" exe="/sbin/mount.lustre" subj=root:sysadm_r:mount_t:s0-s15:c0.c1023# key=(null)
+# type=AVC msg=audit(1366890709.631:607): avc:  denied  { write } for  pid=4031 comm="mount.lustre" name="max_sectors_kb" dev=sysfs ino=8890 scontext=root:sysa# dm_r:mount_t:s0-s15:c0.c1023 tcontext=system_u:object_r:sysfs_t:s0 tclass=file
+# ----
+# End logs
+
+# Allow process with type mount_t write access on a file of type sysfs_t
+allow mount_t sysfs_t:file write;
+
+# Logs for the following rule:
+# allow mount_t unlabeled_t:file { read open };
+# Begin Logs:-
+# ----
+# time->Thu Apr 25 04:51:49 2013
+# type=SYSCALL msg=audit(1366890709.631:608): arch=c000003e syscall=165 success=yes exit=0 a0=81f010 a1=7fffa5002b30 a2=405e34 a3=1000000 items=0 ppid=2950 pid# = 4031 auid=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=1 comm="mount.lustre" exe="/sbin/mount.lustre" subj=root:sysadm_r:mount_t:# s0-s15:c0.c1023 key=(null)
+# type=AVC msg=audit(1366890709.631:608): avc:  denied  { open } for  pid=4031 comm="mount.lustre" name="mountdata" dev=dm-0 ino=131074 scontext=root:sysadm_r:# mount_t:s0-s15:c0.c1023 tcontext=system_u:object_r:unlabeled_t:s15:c0.c1023 tclass=file
+# type=AVC msg=audit(1366890709.631:608): avc:  denied  { read } for  pid=4031 comm="mount.lustre" name="mountdata" dev=dm-0 ino=131074 scontext=root:sysadm_r:# mount_t:s0-s15:c0.c1023 tcontext=system_u:object_r:unlabeled_t:s15:c0.c1023 tclass=file
+# ----
+# End logs
+
+# Allow a process of type "mount_t" to open, read a file with type unlabeled_t
+allow mount_t unlabeled_t:file { read open };
+
+# Logs for the following rule 
+# allow mount_t user_tmp_t:dir { write remove_name create add_name };
+# Begin Logs:-
+# type=AVC msg=audit(1368085542.051:106): avc:  denied  { create } for  pid=3724 comm="mount.lustre" name="NIDTBL_VERSIONS" scontext=root:sysadm_r:mount_t:s0-s15:c0.c1023 tcontext=root:object_r:user_tmp_t:s0 tclass=dir
+# type=AVC msg=audit(1368085542.051:106): avc:  denied  { add_name } for  pid=3724 comm="mount.lustre" name="NIDTBL_VERSIONS" scontext=root:sysadm_r:mount_t:s0-s15:c0.c1023 tcontext=root:object_r:user_tmp_t:s0 tclass=dir
+# type=AVC msg=audit(1368085542.051:106): avc:  denied  { write } for  pid=3724 comm="mount.lustre" name="/" dev=dm-0 ino=2 scontext=root:sysadm_r:mount_t:s0-s15:c0.c1023 tcontext=root:object_r:user_tmp_t:s0 tclass=dir
+# type=AVC msg=audit(1368088091.696:309): avc:  denied  { remove_name } for  pid=3554 comm="mount.lustre" name="xyratex-MDT0000T" dev=dm-1 ino=1572871 scontext=root:sysadm_r:mount_t:s0-s15:c0.c1023 tcontext=root:object_r:user_tmp_t:s0 tclass=dir
+# ---
+# Eng Logs
+
+# Allow a process of type user_tmp_t to write, remove_name, add_name, create objects in a directory of type "user_tmp_t" 
+allow mount_t user_tmp_t:dir { write remove_name create add_name };
+
+# Logs for the following rule:
+# allow mount_t user_tmp_t:file { read write open rename create unlink };
+# Begin Logs:-
+# ----
+# time->Thu Apr 25 05:31:50 2013
+# type=SYSCALL msg=audit(1366893110.467:412): arch=c000003e syscall=165 success=yes exit=0 a0=1fa2010 a1=7fff2ca0c1c0 a2=405e34 a3=1000000 items=0 ppid=2923 pi# d=3136 auid=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=1 comm="mount.lustre" exe="/sbin/mount.lustre" subj=root:sysadm_r:mount_t:# s0-s15:c0.c1023 key=(null)
+# type=AVC msg=audit(1366893110.467:412): avc:  denied  { rename } for  pid=3136 comm="mount.lustre" name="xyratex-MDT0000T" dev=dm-1 ino=2097159 scontext=root# :sysadm_r:mount_t:s0-s15:c0.c1023 tcontext=system_u:object_r:user_tmp_t:s0 tclass=file
+# type=AVC msg=audit(1366893110.467:412): avc:  denied  { unlink } for  pid=3136 comm="mount.lustre" name="xyratex-MDT0000T" dev=dm-1 ino=2097159 scontext=root# :sysadm_r:mount_t:s0-s15:c0.c1023 tcontext=system_u:object_r:user_tmp_t:s0 tclass=file
+# type=AVC msg=audit(1366893110.467:412): avc:  denied  { read write open } for  pid=3136 comm="mount.lustre" name="xyratex-MDT0000T" dev=dm-1 ino=2097159 scon# text=root:sysadm_r:mount_t:s0-s15:c0.c1023 tcontext=system_u:object_r:user_tmp_t:s0 tclass=file
+# type=AVC msg=audit(1366893110.467:412): avc:  denied  { create } for  pid=3136 comm="mount.lustre" name="xyratex-MDT0000T" scontext=root:sysadm_r:mount_t:s0-# s15:c0.c1023 tcontext=root:object_r:user_tmp_t:s0 tclass=file
+# ----
+# End logs
+
+# Allow a process with context mount_t to read, write, open, rename, create, unlink a file of type "user_tmp_t"
+allow mount_t user_tmp_t:file { rename write read create unlink open };
+
+#============= sysadm_t ==============
+#!!!! This avc is allowed in the current policy
+# Begin Logs:
+# ----
+# time->Wed Apr 24 23:47:30 2013
+# type=SYSCALL msg=audit(1366872450.163:411): arch=c000003e syscall=16 success=yes exit=0 a0=4 a1=1268 a2=7fff6543f0ec a3=fffffffffffff909 items=0 ppid=2863 pi# d=2864 auid=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=1 comm="mke2fs" exe="/sbin/mke2fs" subj=root:sysadm_r:sysadm_t:s0-s15:c0.c# 1023 key=(null)
+# type=AVC msg=audit(1366872450.163:411): avc:  denied  { ioctl } for  pid=2864 comm="mke2fs" path="/dev/dm-0" dev=devtmpfs ino=9710 scontext=root:sysadm_r:sys# adm_t:s0-s15:c0.c1023 tcontext=system_u:object_r:fixed_disk_device_t:s15:c0.c1023 tclass=blk_file
+# ---
+# time->Wed Apr 24 23:47:30 2013
+# type=SYSCALL msg=audit(1366872450.169:412): arch=c000003e syscall=2 success=yes exit=4 a0=11177e0 a1=82 a2=53474d2f657274 a3=1 items=0 ppid=2863 pid=2864 aui
+# d=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=1 comm="mke2fs" exe="/sbin/mke2fs" subj=root:sysadm_r:sysadm_t:s0-s15:c0.c1023 key=(# null)
+# type=AVC msg=audit(1366872450.169:412): avc:  denied  { write } for  pid=2864 comm="mke2fs" name="dm-0" dev=devtmpfs ino=9710 scontext=root:sysadm_r:sysadm_t# :s0-s15:c0.c1023 tcontext=system_u:object_r:fixed_disk_device_t:s15:c0.c1023 tclass=blk_file
+# ----
+# time->Wed Apr 24 23:47:30 2013
+# type=SYSCALL msg=audit(1366872450.121:410): arch=c000003e syscall=2 success=yes exit=4 a0=7fffa03e6fe0 a1=0 a2=3da338aed8 a3=3 items=0 ppid=2764 pid=2858 aui# d=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=1 comm="mkfs.lustre" exe="/usr/sbin/mkfs.lustre" subj=root:sysadm_r:sysadm_t:s0-s15:# c0.c1023 key=(null)
+# type=AVC msg=audit(1366872450.121:410): avc:  denied  { open } for  pid=2858 comm="mkfs.lustre" name="dm-0" dev=devtmpfs ino=9710 scontext=root:sysadm_r:sysa# dm_t:s0-s15:c0.c1023 tcontext=system_u:object_r:fixed_disk_device_t:s15:c0.c1023 tclass=blk_file
+# type=AVC msg=audit(1366872450.121:410): avc:  denied  { read } for  pid=2858 comm="mkfs.lustre" name="dm-0" dev=devtmpfs ino=9710 scontext=root:sysadm_r:sysa# dm_t:s0-s15:c0.c1023 tcontext=system_u:object_r:fixed_disk_device_t:s15:c0.c1023 tclass=blk_file
+# ---
+# End Logs
+
+# Allow process with type "sysadm_t" read, write, open, ioctl permissions on a object of type "fixed_disk_device" belonging to the class "blk_file"
+allow sysadm_t fixed_disk_device_t:blk_file { read write ioctl open };
+
+# Logs for the following rule:
+# allow sysadm_t mount_t:process { siginh noatsecure rlimitinh };
+# Begin Logs:-
+# time->Thu Apr 25 04:51:49 2013
+# type=SYSCALL msg=audit(1366890709.619:606): arch=c000003e syscall=59 success=yes exit=0 a0=1b53140 a1=1b5ff90 a2=1b3b800 a3=20 items=0 ppid=2950 pid=4031 aui# d=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=1 comm="mount.lustre" exe="/sbin/mount.lustre" subj=root:sysadm_r:mount_t:s0-s15:c0.# c1023 key=(null)
+# type=AVC msg=audit(1366890709.619:606): avc:  denied  { noatsecure } for  pid=4031 comm="mount.lustre" scontext=root:sysadm_r:sysadm_t:s0-s15:c0.c1023 tconte# xt=root:sysadm_r:mount_t:s0-s15:c0.c1023 tclass=process
+# type=AVC msg=audit(1366890709.619:606): avc:  denied  { siginh } for  pid=4031 comm="mount.lustre" scontext=root:sysadm_r:sysadm_t:s0-s15:c0.c1023 tcontext=r# oot:sysadm_r:mount_t:s0-s15:c0.c1023 tclass=process
+# type=AVC msg=audit(1366890709.619:606): avc:  denied  { rlimitinh } for  pid=4031 comm="mount.lustre" scontext=root:sysadm_r:sysadm_t:s0-s15:c0.c1023 tcontex# t=root:sysadm_r:mount_t:s0-s15:c0.c1023 tclass=process
+
+# Allow a process with type sysadm_t to have following permissions on execve(2) for a process with type mount_t.
+# siginh     : Inherit the signal state
+# noatsecure : diaable secure mode environment cleansing. Allow process to disable secure mode fezature of glibc on execve(2).
+# rlimitinh  : Inherit process resource limits.
+allow sysadm_t mount_t:process { siginh noatsecure rlimitinh };
+
+# Logs for following rule:-
+# allow sysadm_t unlabeled_t:filesystem relabelfrom;
+# Begin Logs:
+# type=AVC msg=audit(1366872450.231:413): avc:  denied  { relabelfrom } for  pid=2858 comm="mkfs.lustre" scontext=root:sysadm_r:sysadm_t:s0-s15:c0.c1023 tconte# xt=system_u:object_r:unlabeled_t:s15:c0.c1023 tclass=filesystem
+# End Logs
+
+# Allow process of type "sysadm_t", relabelfrom permission on filesystem of type "unlabeled_t"
+allow sysadm_t unlabeled_t:filesystem relabelfrom;
+
+# Logs for the following rune
+# allow sysadm_t user_tmp_t:dir mounton;
+#type=AVC msg=audit(1368084591.950:63): avc:  denied  { mounton } for  pid=2987 comm="mkfs.lustre" path="/tmp/mntbuYMNW" dev=tmpfs ino=18330 scontext=root:sysadm_r:sysadm_t:s0-s15:c0.c1023 tcontext=root:object_r:user_tmp_t:s0 tclass=dir
+
+# Allow a process with type sysadm_t to mount a filesystem on a directory of type user_tmp_t
+allow sysadm_t user_tmp_t:dir mounton;
+
+# Logs for following rule:-
+# allow sysadm_t user_tmp_t:filesystem { relabelfrom relabelto mount };
+# Begin Logs: 
+# ----
+# time->Wed Apr 24 23:47:30 2013
+# type=SYSCALL msg=audit(1366872450.231:413): arch=c000003e syscall=165 success=yes exit=0 a0=7fffa03e6fe0 a1=7fffa03e3f90 a2=408999 a3=0 items=0 ppid=2764 pid# =2858 auid=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=1 comm="mkfs.lustre" exe="/usr/sbin/mkfs.lustre" subj=root:sysadm_r:sysadm_# t:s0-s15:c0.c1023 key=(null)
+# type=AVC msg=audit(1366872450.231:413): avc:  denied  { mount } for  pid=2858 comm="mkfs.lustre" name="/" dev=dm-0 ino=2 scontext=root:sysadm_r:sysadm_t:s0-s# 15:c0.c1023 tcontext=root:object_r:user_tmp_t:s0 tclass=filesystem
+# type=AVC msg=audit(1366872450.231:413): avc:  denied  { relabelfrom } for  pid=2858 comm="mkfs.lustre" scontext=root:sysadm_r:sysadm_t:s0-s15:c0.c1023 tconte# xt=root:object_r:user_tmp_t:s0 tclass=filesystem
+# type=AVC msg=audit(1366872450.231:413): avc:  denied  { relabelto } for  pid=2858 comm="mkfs.lustre" scontext=root:sysadm_r:sysadm_t:s0-s15:c0.c1023 tcontext# =root:object_r:user_tmp_t:s0 tclass=filesystem
+# ----
+# ----
+#time->Wed Apr 24 23:47:30 2013
+#type=SYSCALL msg=audit(1366872450.256:416): arch=c000003e syscall=166 success=yes exit=0 a0=7fffa03e3f90 a1=0 a2=1fb50 a3=ffffffff items=0 ppid=2764 pid=2858 #auid=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=1 comm="mkfs.lustre" exe="/usr/sbin/mkfs.lustre" subj=root:sysadm_r:sysadm_t:s0-s1#5:c0.c1023 key=(null)
+#type=AVC msg=audit(1366872450.256:416): avc:  denied  { unmount } for  pid=2858 comm="mkfs.lustre" scontext=root:sysadm_r:sysadm_t:s0-s15:c0.c1023 tcontext=ro#ot:object_r:user_tmp_t:s0 tclass=filesystem
+# ---
+# End Logs
+
+# Give a process of type "sysadm_t" relablefrom, relabelto, mount, umount permissions on a filesystem of type "user_tmp_t"
+allow sysadm_t user_tmp_t:filesystem { relabelfrom relabelto mount unmount };
+
+#============= udev_t ==============
+
+
+# Logs for the following rule:
+# allow udev_t fsadm_t:process { siginh noatsecure rlimitinh };
+# Begin Logs:-
+# ---
+# time->Wed Apr 24 23:47:30 2013
+# type=SYSCALL msg=audit(1366872450.251:415): arch=c000003e syscall=59 success=yes exit=0 a0=7fffa8e56570 a1=7fffa8e54cc0 a2=7f75f0b4fda0 a3=7f75efd25a70 items# =0 ppid=960 pid=2868 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm="blkid" exe="/sbin/blkid" subj=sy# stem_u:system_r:fsadm_t:s0-s15:c0.c1023 key=(null)
+# type=AVC msg=audit(1366872450.251:415): avc:  denied  { noatsecure } for  pid=2868 comm="blkid" scontext=system_u:system_r:udev_t:s0-s15:c0.c1023 tcontext=sy# stem_u:system_r:fsadm_t:s0-s15:c0.c1023 tclass=process
+# type=AVC msg=audit(1366872450.251:415): avc:  denied  { siginh } for  pid=2868 comm="blkid" scontext=system_u:system_r:udev_t:s0-s15:c0.c1023 tcontext=system# _u:system_r:fsadm_t:s0-s15:c0.c1023 tclass=process
+# type=AVC msg=audit(1366872450.251:415): avc:  denied  { rlimitinh } for  pid=2868 comm="blkid" scontext=system_u:system_r:udev_t:s0-s15:c0.c1023 tcontext=sys# tem_u:system_r:fsadm_t:s0-s15:c0.c1023 tclass=process
+# ----
+# End logs
+
+# Allow a process with type udev_t to issue execve(2) of a process with type fsadm_t with the below permissions.
+# siginh     : Inherit the signal state
+# noatsecure : diaable secure mode environment cleansing. Allow process to disable secure mode fezature of glibc on execve(2).
+# rlimitinh  : Inherit process resource limits.
+allow udev_t fsadm_t:process { siginh noatsecure rlimitinh };
+
+# Logs for the following rule
+# allow udev_t lvm_t:process { siginh noatsecure rlimitinh };
+# Begin Logs:-
+# ----
+# time->Wed Apr 24 23:47:30 2013
+# type=SYSCALL msg=audit(1366872450.231:414): arch=c000003e syscall=59 success=yes exit=0 a0=7fffa8e56570 a1=7fffa8e54cc0 a2=7f75f0b4fda0 a3=7f75efd25a70 items# =0 ppid=960 pid=2865 auid=4294967295 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=(none) ses=4294967295 comm="dmsetup" exe="/sbin/dmsetup" sub# j=system_u:system_r:lvm_t:s0-s15:c0.c1023 key=(null)
+# type=AVC msg=audit(1366872450.231:414): avc:  denied  { noatsecure } for  pid=2865 comm="dmsetup" scontext=system_u:system_r:udev_t:s0-s15:c0.c1023 tcontext=# system_u:system_r:lvm_t:s0-s15:c0.c1023 tclass=process
+# type=AVC msg=audit(1366872450.231:414): avc:  denied  { siginh } for  pid=2865 comm="dmsetup" scontext=system_u:system_r:udev_t:s0-s15:c0.c1023 tcontext=syst# em_u:system_r:lvm_t:s0-s15:c0.c1023 tclass=process
+# type=AVC msg=audit(1366872450.231:414): avc:  denied  { rlimitinh } for  pid=2865 comm="dmsetup" scontext=system_u:system_r:udev_t:s0-s15:c0.c1023 tcontext=s# ystem_u:system_r:lvm_t:s0-s15:c0.c1023 tclass=process
+# ----
+# End logs
+
+# Allow a process with type udev_t to issue execve(2) of a process with type lvm_t with the below permissions.
+# siginh     : Inherit the signal state
+# noatsecure : diaable secure mode environment cleansing. Allow process to disable secure mode fezature of glibc on execve(2).
+# rlimitinh  : Inherit process resource limits.
+allow udev_t lvm_t:process { siginh noatsecure rlimitinh };

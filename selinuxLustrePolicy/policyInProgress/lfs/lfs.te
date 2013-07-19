@@ -1,0 +1,20 @@
+
+module lfs 1.0;
+
+require {
+	type sysadm_t;
+	type file_t;
+	class dir write;
+	attribute mcswriteall;
+	attribute file_type;
+	attribute files_unconfined_type;
+	attribute lockfile;
+	attribute mountpoint;
+	attribute pidfile;
+	attribute configfile;
+	attribute mlsfilewrite;
+}
+
+#============= sysadm_t ==============
+typeattribute sysadm_t mlsfilewrite;
+allow sysadm_t file_t:dir write;
