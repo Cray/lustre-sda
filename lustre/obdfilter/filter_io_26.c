@@ -473,8 +473,9 @@ int filter_do_bio(struct obd_export *exp, struct inode *inode,
 
 /* Must be called with i_mutex taken for writes; this will drop it */
 int filter_direct_io(int rw, struct dentry *dchild, struct filter_iobuf *iobuf,
-                     struct obd_export *exp, struct iattr *attr,
-                     struct obd_trans_info *oti, void **wait_handle)
+		     struct obd_export *exp, struct iattr *attr,
+		     struct obd_trans_info *oti, void **wait_handle,
+		     const char *seclabel)
 {
         struct obd_device *obd = exp->exp_obd;
         struct inode *inode = dchild->d_inode;
@@ -520,6 +521,12 @@ int filter_direct_io(int rw, struct dentry *dchild, struct filter_iobuf *iobuf,
                                 attr->ia_valid |= ATTR_SIZE;
                         rc = fsfilt_setattr(obd, dchild,
                                             oti->oti_handle, attr, 0);
+
+			if (seclabel != NULL)
+				rc = fsfilt_setxattr(obd, dchild,
+						   oti->oti_handle,
+						   XATTR_NAME_SECURITY_SELINUX,
+						   seclabel, strlen(seclabel));
                 }
 
 		mutex_unlock(&inode->i_mutex);
@@ -591,7 +598,7 @@ int filter_commitrw_write(struct obd_export *exp, struct obdo *oa,
                           int objcount, struct obd_ioobj *obj,
                           struct niobuf_remote *nb, int niocount,
                           struct niobuf_local *res, struct obd_trans_info *oti,
-                          int rc)
+                          const char *seclabel, int rc)
 {
         struct niobuf_local *lnb;
         struct filter_iobuf *iobuf = NULL;
@@ -756,7 +763,8 @@ retry:
 
         /* filter_direct_io drops i_mutex */
         rc = filter_direct_io(OBD_BRW_WRITE, res->dentry, iobuf, exp, &iattr,
-                              oti, sync_journal_commit ? &wait_handle : NULL);
+                              oti, sync_journal_commit ? &wait_handle : NULL,
+                              seclabel);
         if (rc == -ENOSPC && retries++ < 3) {
                 CDEBUG(D_INODE, "retry after force commit, retries:%d\n",
                        retries);

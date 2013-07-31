@@ -86,6 +86,8 @@ typedef __u32 cfs_cap_t;
 #define CFS_CAP_SYS_ADMIN              21
 #define CFS_CAP_SYS_BOOT               23
 #define CFS_CAP_SYS_RESOURCE           24
+#define CFS_CAP_SETFCAP                31
+#define CFS_CAP_MAC_ADMIN              33
 
 #define CFS_CAP_FS_MASK ((1 << CFS_CAP_CHOWN) |                 \
                          (1 << CFS_CAP_DAC_OVERRIDE) |          \
@@ -95,7 +97,9 @@ typedef __u32 cfs_cap_t;
                          (1 << CFS_CAP_LINUX_IMMUTABLE) |       \
                          (1 << CFS_CAP_SYS_ADMIN) |             \
                          (1 << CFS_CAP_SYS_BOOT) |              \
-                         (1 << CFS_CAP_SYS_RESOURCE))
+                         (1 << CFS_CAP_SYS_RESOURCE) |          \
+                         (1 << CFS_CAP_SETFCAP))
+/* XXX: CFS_CAP_MAC_ADMIN should be added when supported */
 
 void cfs_cap_raise(cfs_cap_t cap);
 void cfs_cap_lower(cfs_cap_t cap);

@@ -50,6 +50,7 @@
 #include <lustre_fid.h>
 #include <lprocfs_status.h>
 #include "mdc_internal.h"
+#include "mdc_security.h"
 
 struct mdc_getattr_args {
         struct obd_export           *ga_exp;
@@ -263,14 +264,16 @@ static inline void mdc_clear_replay_flag(struct ptlrpc_request *req, int rc)
 static void mdc_realloc_openmsg(struct ptlrpc_request *req,
                                 struct mdt_body *body)
 {
-        int     rc;
+        int     rc, off;
 
-        /* FIXME: remove this explicit offset. */
-        rc = sptlrpc_cli_enlarge_reqbuf(req, DLM_INTENT_REC_OFF + 4,
-                                        body->eadatasize);
+	/* XXX: rename the function */
+	off = req_capsule_has_field(&req->rq_pill, &RMF_EADATA, RCL_CLIENT);
+	off--;
+
+        rc = sptlrpc_cli_enlarge_reqbuf(req, off, body->eadatasize);
         if (rc) {
                 CERROR("Can't enlarge segment %d size to %d\n",
-                       DLM_INTENT_REC_OFF + 4, body->eadatasize);
+                       off, body->eadatasize);
                 body->valid &= ~OBD_MD_FLEASIZE;
                 body->eadatasize = 0;
         }
@@ -319,7 +322,7 @@ static struct ptlrpc_request *mdc_intent_open_pack(struct obd_export *exp,
                                          MDS_INODELOCK_UPDATE);
 
         req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_LDLM_INTENT_OPEN);
+                                   mdc_select_rq_format(exp, RQF_LDLM_INTENT_OPEN));
         if (req == NULL) {
                 ldlm_lock_list_put(&cancels, l_bl_ast, count);
                 RETURN(ERR_PTR(-ENOMEM));
@@ -351,6 +354,18 @@ static struct ptlrpc_request *mdc_intent_open_pack(struct obd_export *exp,
         lit->opc = (__u64)it->it_op;
 
         /* pack the intended request */
+	rc = mdc_req_pack_security(req);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		RETURN(ERR_PTR(rc));
+	}
+
+	rc = mdc_req_pack_cr_security(req);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		RETURN(ERR_PTR(rc));
+	}
+
         mdc_open_pack(req, op_data, it->it_create_mode, 0, it->it_flags, lmm,
                       lmmsize);
 
@@ -373,7 +388,7 @@ static struct ptlrpc_request *mdc_intent_unlink_pack(struct obd_export *exp,
         ENTRY;
 
         req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_LDLM_INTENT_UNLINK);
+                                   mdc_select_rq_format(exp, RQF_LDLM_INTENT_UNLINK));
         if (req == NULL)
                 RETURN(ERR_PTR(-ENOMEM));
 
@@ -392,6 +407,11 @@ static struct ptlrpc_request *mdc_intent_unlink_pack(struct obd_export *exp,
         lit->opc = (__u64)it->it_op;
 
         /* pack the intended request */
+	rc = mdc_req_pack_security(req);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		RETURN(ERR_PTR(rc));
+	}
         mdc_unlink_pack(req, op_data);
 
         req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER,
@@ -418,7 +438,7 @@ static struct ptlrpc_request *mdc_intent_getattr_pack(struct obd_export *exp,
         ENTRY;
 
         req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_LDLM_INTENT_GETATTR);
+                                   mdc_select_rq_format(exp, RQF_LDLM_INTENT_GETATTR));
         if (req == NULL)
                 RETURN(ERR_PTR(-ENOMEM));
 
@@ -437,6 +457,11 @@ static struct ptlrpc_request *mdc_intent_getattr_pack(struct obd_export *exp,
         lit->opc = (__u64)it->it_op;
 
         /* pack the intended request */
+	rc = mdc_req_pack_security(req);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		RETURN(ERR_PTR(rc));
+	}
         mdc_getattr_pack(req, valid, it->it_flags, op_data,
                          obddev->u.cli.cl_max_mds_easize);
 

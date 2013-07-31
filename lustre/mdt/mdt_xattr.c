@@ -132,6 +132,9 @@ int mdt_getxattr(struct mdt_thread_info *info)
         if (rc)
                 RETURN(err_serious(rc));
 
+	uc->uc_confined_op = UC_CONFINED_GETXATTR;
+	mdt_unpack_security(uc, info->mti_pill);
+
         next = mdt_object_child(info->mti_object);
 
         if (info->mti_body->valid & OBD_MD_FLRMTRGETFACL) {
@@ -208,6 +211,12 @@ int mdt_getxattr(struct mdt_thread_info *info)
         EXIT;
 out:
         if (rc >= 0) {
+		struct mdt_selustre *sel;
+
+		LASSERT(req_capsule_has_field(info->mti_pill, &RMF_SELUSTRE, RCL_SERVER));
+		sel = req_capsule_server_get(info->mti_pill, &RMF_SELUSTRE);
+		sel->sid = uc->uc_sid;
+		strcpy(sel->seclabel, uc->uc_seclabel);
                 mdt_counter_incr(req->rq_export, LPROC_MDT_GETXATTR);
                 repbody->eadatasize = rc;
                 rc = 0;
@@ -335,7 +344,8 @@ int mdt_reint_setxattr(struct mdt_thread_info *info,
          * not change the access permissions of this inode, nor any
          * other existing inodes. It is setting the ACLs inherited
          * by new directories/files at create time. */
-        if (!strcmp(xattr_name, XATTR_NAME_ACL_ACCESS))
+	if (!strcmp(xattr_name, XATTR_NAME_ACL_ACCESS) ||
+	    !strcmp(xattr_name, XATTR_NAME_SECURITY_SELINUX))
                 lockpart |= MDS_INODELOCK_LOOKUP;
 
         lh = &info->mti_lh[MDT_LH_PARENT];
@@ -396,6 +406,13 @@ int mdt_reint_setxattr(struct mdt_thread_info *info,
                         rc = mo_xattr_set(env, child, buf, xattr_name, flags);
                         /* update ctime after xattr changed */
                         if (rc == 0) {
+				if (!strcmp(xattr_name,
+					    XATTR_NAME_SECURITY_SELINUX) &&
+				    S_ISREG(lu_object_attr(&obj->mot_obj.mo_lu))) {
+					ma->ma_valid |= MA_SECURITY;
+					memcpy(ma->ma_seclabel, xattr,
+					       xattr_len);
+				}
                                 ma->ma_attr_flags |= MDS_PERM_BYPASS;
                                 mo_attr_set(env, child, ma);
                         }
@@ -419,6 +436,7 @@ out_unlock:
         mdt_object_unlock_put(info, obj, lh, rc);
         if (unlikely(new_xattr != NULL))
                 lustre_posix_acl_xattr_free(new_xattr, xattr_len);
+
 out:
 	mdt_exit_ucred(info);
 	return rc;

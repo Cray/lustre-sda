@@ -276,8 +276,14 @@ int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
 
                 if (inode->i_sb->s_root &&
                     inode != inode->i_sb->s_root->d_inode &&
-                    (bits & MDS_INODELOCK_LOOKUP))
+                    (bits & MDS_INODELOCK_LOOKUP)) {
+			/* As we are also wanting to get rid of the cached
+			 * i_security, we need to prevent the case that this
+			 * inode stays in hash and later gets reused
+			 * with some outdated security context. */
+			cfs_invalidate_inode_sid(inode);
                         ll_unhash_aliases(inode);
+                }
                 iput(inode);
                 break;
         }
@@ -347,10 +353,6 @@ static void ll_d_add(struct dentry *de, struct inode *inode)
         if (inode)
                 list_add(&de->d_alias, &inode->i_dentry);
         de->d_inode = inode;
-        /* d_instantiate() replacement code should initialize security
-         * context. */
-        security_d_instantiate(de, inode);
-
         /* d_rehash */
         if (!d_unhashed(de)) {
                 spin_unlock(&dcache_lock);
@@ -441,6 +443,11 @@ static struct dentry *ll_find_alias(struct inode *inode, struct dentry *de)
 
         spin_unlock(&dcache_lock);
         cfs_spin_unlock(&ll_lookup_lock);
+
+        /* d_instantiate() replacement code should initialize security
+         * context. */
+	/* security_d_instantiate() should be called outside atomic areas */
+	security_d_instantiate(de, inode);
 
         return de;
 }
@@ -632,7 +639,12 @@ struct lookup_intent *ll_convert_intent(struct open_intent *oit,
                 it->it_create_mode = (oit->create_mode & S_IALLUGO) | S_IFREG;
                 it->it_flags = oit->flags;
         } else {
-                it->it_op = IT_GETATTR;
+		/* it->it_op = IT_GETATTR;*/
+		/* XXX: SDA: On the server-side we need to distinguish between
+		 *	insecure lookups and secure getattrs, so we need
+		 *	IT_LOOKUP here.
+		 */
+		it->it_op = IT_LOOKUP;
         }
 
         return it;

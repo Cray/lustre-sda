@@ -176,6 +176,8 @@ struct mdt_device {
         struct lprocfs_stats      *mdt_stats;
         int                        mdt_sec_level;
         struct rename_stats        mdt_rename_stats;
+	__u32			   mdt_sid;
+	__u32			   mdt_defsid;
 };
 
 #define MDT_SERVICE_WATCHDOG_FACTOR     (2)
@@ -901,5 +903,7 @@ static inline struct obd_device *mdt2obd_dev(const struct mdt_device *mdt)
 {
         return mdt->mdt_md_dev.md_lu_dev.ld_obd;
 }
+
+void mdt_unpack_security(struct lu_ucred *ucred, struct req_capsule *pill);
 #endif /* __KERNEL__ */
 #endif /* _MDT_H */

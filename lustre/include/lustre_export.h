@@ -301,6 +301,13 @@ static inline int exp_expired(struct obd_export *exp, cfs_duration_t age)
                                cfs_time_current_sec());
 }
 
+static inline int exp_connect_selustre(struct obd_export *exp)
+{
+	LASSERT(exp != NULL);
+	return !!(exp->exp_connect_data.ocd_connect_flags &
+		  OBD_CONNECT_SELUSTRE);
+}
+
 static inline int exp_connect_cancelset(struct obd_export *exp)
 {
         LASSERT(exp != NULL);

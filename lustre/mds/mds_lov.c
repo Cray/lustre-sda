@@ -717,7 +717,8 @@ int mds_lov_connect(struct obd_device *obd, char * lov_name)
                                   OBD_CONNECT_OSS_CAPA  | OBD_CONNECT_FULL20  |
                                   OBD_CONNECT_CHANGE_QS | OBD_CONNECT_AT      |
                                   OBD_CONNECT_MDS | OBD_CONNECT_SKIP_ORPHAN   |
-                                  OBD_CONNECT_SOM | OBD_CONNECT_MAX_EASIZE;
+                                  OBD_CONNECT_SOM | OBD_CONNECT_MAX_EASIZE    |
+                                  OBD_CONNECT_SELUSTRE;
 #ifdef HAVE_LRU_RESIZE_SUPPORT
         data->ocd_connect_flags |= OBD_CONNECT_LRU_RESIZE;
 #endif

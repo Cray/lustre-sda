@@ -191,7 +191,7 @@ static int echo_getattr(struct obd_export *exp, struct obd_info *oinfo)
 }
 
 static int echo_setattr(struct obd_export *exp, struct obd_info *oinfo,
-                        struct obd_trans_info *oti)
+                        const char *seclabel, struct obd_trans_info *oti)
 {
         struct obd_device *obd = class_exp2obd(exp);
 
@@ -463,7 +463,8 @@ preprw_cleanup:
 int echo_commitrw(int cmd, struct obd_export *export, struct obdo *oa,
                   int objcount, struct obd_ioobj *obj,
                   struct niobuf_remote *rb, int niocount,
-                  struct niobuf_local *res, struct obd_trans_info *oti, int rc)
+                  struct niobuf_local *res, struct obd_trans_info *oti,
+                  const char *seclabel, int rc)
 {
         struct obd_device *obd;
         int pgs = 0;

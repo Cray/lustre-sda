@@ -460,7 +460,7 @@ static int filter_preprw_read(int cmd, struct obd_export *exp, struct obdo *oa,
         fsfilt_check_slow(obd, now, "start_page_read");
 
         rc = filter_direct_io(OBD_BRW_READ, dentry, iobuf,
-                              exp, NULL, NULL, NULL);
+                              exp, NULL, NULL, NULL, NULL);
         if (rc)
                 GOTO(cleanup, rc);
 
@@ -869,7 +869,7 @@ retry:
 
         /* don't unlock pages to prevent any access */
         rc = filter_direct_io(OBD_BRW_READ, dentry, iobuf, exp,
-                              NULL, NULL, NULL);
+                              NULL, NULL, NULL, NULL);
 
         fsfilt_check_slow(obd, now, "start_page_write");
 
@@ -1015,11 +1015,11 @@ int filter_commitrw(int cmd, struct obd_export *exp, struct obdo *oa,
                     int objcount, struct obd_ioobj *obj,
                     struct niobuf_remote *nb, int npages,
                     struct niobuf_local *res, struct obd_trans_info *oti,
-                    int rc)
+                    const char *seclabel, int rc)
 {
         if (cmd == OBD_BRW_WRITE)
                 return filter_commitrw_write(exp, oa, objcount, obj,
-                                             nb, npages, res, oti, rc);
+                                             nb, npages, res, oti, seclabel, rc);
         if (cmd == OBD_BRW_READ)
                 return filter_commitrw_read(exp, oa, objcount, obj,
                                             nb, npages, res, oti, rc);

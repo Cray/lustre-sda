@@ -1889,6 +1889,13 @@ void lustre_swab_mgs_config_body(struct mgs_config_body *body)
 }
 EXPORT_SYMBOL(lustre_swab_mgs_config_body);
 
+void lustre_swab_mdt_selustre(struct mdt_selustre *sel)
+{
+	__swab32s(&sel->sid);
+	__swab32s(&sel->csid);
+}
+EXPORT_SYMBOL(lustre_swab_mdt_selustre);
+
 void lustre_swab_mgs_config_res(struct mgs_config_res *body)
 {
         __swab64s(&body->mcr_offset);

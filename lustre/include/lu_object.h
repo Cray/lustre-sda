@@ -1288,6 +1288,22 @@ void lu_env_fini  (struct lu_env *env);
 int  lu_env_refill(struct lu_env *env);
 int  lu_env_refill_by_tags(struct lu_env *env, __u32 ctags, __u32 stags);
 
+enum {
+	UC_UNCONFINED = 0,
+	UC_CONFINED_PERMISSION,
+	UC_CONFINED_GETATTR,
+	UC_CONFINED_SETATTR,
+	UC_CONFINED_GETXATTR,
+	UC_CONFINED_SETXATTR,
+	UC_CONFINED_READLINK,
+	UC_CONFINED_OPEN,
+	UC_CONFINED_READDIR,
+	UC_CONFINED_FLOCK,
+	UC_CONFINED_CREATE,
+	UC_CONFINED_LINK,
+	UC_CONFINED_UNLINK,
+	UC_CONFINED_RENAME
+};
 /** @} lu_context */
 
 struct lu_ucred {
@@ -1305,6 +1321,16 @@ struct lu_ucred {
 	__u32               uc_umask;
 	cfs_group_info_t   *uc_ginfo;
 	struct md_identity *uc_identity;
+#ifdef __KERNEL__
+	__u32		    uc_sid;
+	__u32		    uc_csid; /* creation sid */
+	__u8		    uc_seclabel[CFS_SID_MAX_LEN];
+	__u8		    uc_cseclabel[CFS_SID_MAX_LEN];
+	__u32		    uc_sbsid;
+	__u32		    uc_defsid;
+	/* The client operation that is the object of the policy */
+	int		    uc_confined_op;
+#endif
 };
 struct lu_ucred *lu_ucred(const struct lu_env *env);
 struct lu_ucred *lu_ucred_check(const struct lu_env *env);

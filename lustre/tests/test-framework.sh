@@ -401,6 +401,7 @@ load_modules_local() {
         load_module mdt/mdt
         load_module lvfs/fsfilt_$FSTYPE
         load_module cmm/cmm
+	load_module security/sec
         load_module osd-ldiskfs/osd_ldiskfs
         load_module ost/ost
         load_module obdfilter/obdfilter

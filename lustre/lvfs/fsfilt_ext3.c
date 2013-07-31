@@ -650,6 +650,20 @@ static int fsfilt_ext3_setattr(struct dentry *dentry, void *handle,
         RETURN(rc);
 }
 
+static int fsfilt_ext3_setxattr(struct dentry *dentry, void *handle,
+				const char *name, const char *value, int size)
+{
+	struct inode *inode = dentry->d_inode;
+	int rc;
+	ENTRY;
+
+	rc = inode->i_op->setxattr(dentry, name, value, size, 0);
+	if (rc == 0)
+		cfs_security_post_setxattr(dentry, name, value, size, 0);
+
+	RETURN(rc);
+}
+
 static int fsfilt_ext3_iocontrol(struct inode *inode, struct file *file,
                                  unsigned int cmd, unsigned long arg)
 {
@@ -2306,6 +2320,7 @@ static struct fsfilt_operations fsfilt_ext3_ops = {
         .fs_commit_async        = fsfilt_ext3_commit_async,
         .fs_commit_wait         = fsfilt_ext3_commit_wait,
         .fs_setattr             = fsfilt_ext3_setattr,
+	.fs_setxattr            = fsfilt_ext3_setxattr,
         .fs_iocontrol           = fsfilt_ext3_iocontrol,
         .fs_set_md              = fsfilt_ext3_set_md,
         .fs_get_md              = fsfilt_ext3_get_md,

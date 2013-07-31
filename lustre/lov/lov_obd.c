@@ -1366,7 +1366,7 @@ out:
 }
 
 static int lov_setattr(struct obd_export *exp, struct obd_info *oinfo,
-                       struct obd_trans_info *oti)
+                       const char *seclabel, struct obd_trans_info *oti)
 {
         struct lov_request_set *set;
         struct lov_obd *lov;
@@ -1388,7 +1388,8 @@ static int lov_setattr(struct obd_export *exp, struct obd_info *oinfo,
                                             OBD_MD_FLFLAGS | OBD_MD_FLSIZE |
                                             OBD_MD_FLGROUP | OBD_MD_FLUID |
                                             OBD_MD_FLGID | OBD_MD_FLFID |
-                                            OBD_MD_FLGENER)));
+					    OBD_MD_FLGENER |
+					    OBD_MD_FLSECURITY)));
         lov = &exp->exp_obd->u.lov;
         rc = lov_prep_setattr_set(exp, oinfo, oti, &set);
         if (rc)
@@ -1398,7 +1399,7 @@ static int lov_setattr(struct obd_export *exp, struct obd_info *oinfo,
                 req = cfs_list_entry(pos, struct lov_request, rq_link);
 
                 rc = obd_setattr(lov->lov_tgts[req->rq_idx]->ltd_exp,
-                                 &req->rq_oi, NULL);
+                                 &req->rq_oi, seclabel, NULL);
                 err = lov_update_setattr_set(set, req, rc);
                 if (err) {
                         CERROR("error: setattr objid "LPX64" subobj "

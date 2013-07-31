@@ -726,8 +726,10 @@ static int mdt_getattr(struct mdt_thread_info *info)
 {
         struct mdt_object       *obj = info->mti_object;
         struct req_capsule      *pill = info->mti_pill;
+	struct lu_ucred         *uc  = mdt_ucred(info);
         struct mdt_body         *reqbody;
         struct mdt_body         *repbody;
+	struct mdt_selustre	*sel;
         mode_t                   mode;
         int rc, rc2;
         ENTRY;
@@ -770,6 +772,9 @@ static int mdt_getattr(struct mdt_thread_info *info)
         if (unlikely(rc))
                 GOTO(out_shrink, rc);
 
+	uc->uc_confined_op = UC_CONFINED_GETATTR;
+	mdt_unpack_security(uc, pill);
+
         info->mti_spec.sp_ck_split = !!(reqbody->valid & OBD_MD_FLCKSPLIT);
         info->mti_cross_ref = !!(reqbody->valid & OBD_MD_FLCROSSREF);
 
@@ -779,6 +784,12 @@ static int mdt_getattr(struct mdt_thread_info *info)
          */
         mdt_set_capainfo(info, 1, &reqbody->fid1, BYPASS_CAPA);
         rc = mdt_getattr_internal(info, obj, 0);
+
+	sel = req_capsule_client_get(pill, &RMF_SELUSTRE);
+	LASSERT(sel);
+	sel->sid = uc->uc_sid;
+	strcpy(sel->seclabel, uc->uc_seclabel);
+
         if (reqbody->valid & OBD_MD_FLRMTPERM)
                 mdt_exit_ucred(info);
         EXIT;
@@ -1483,6 +1494,7 @@ static int mdt_readpage(struct mdt_thread_info *info)
         struct lu_rdpg    *rdpg = &info->mti_u.rdpg.mti_rdpg;
         struct mdt_body   *reqbody;
         struct mdt_body   *repbody;
+	struct lu_ucred   *uc = lu_ucred(info->mti_env);
         int                rc;
         int                i;
         ENTRY;
@@ -1494,6 +1506,9 @@ static int mdt_readpage(struct mdt_thread_info *info)
         repbody = req_capsule_server_get(info->mti_pill, &RMF_MDT_BODY);
         if (reqbody == NULL || repbody == NULL)
                 RETURN(err_serious(-EFAULT));
+
+	uc->uc_confined_op = UC_CONFINED_READDIR;
+	mdt_unpack_security(uc, info->mti_pill);
 
         /*
          * prepare @rdpg before calling lower layers and transfer itself. Here
@@ -1586,6 +1601,13 @@ static int mdt_reint_internal(struct mdt_thread_info *info,
                 repbody->aclsize = 0;
         }
 
+        if (req_capsule_has_field(pill, &RMF_SELUSTRE, RCL_SERVER)) {
+		struct mdt_selustre *sel;
+		sel = req_capsule_server_get(pill, &RMF_SELUSTRE);
+		sel->sid = mdt_ucred(info)->uc_sid;
+		strcpy(sel->seclabel, mdt_ucred(info)->uc_seclabel);
+        }
+
         OBD_FAIL_TIMEOUT(OBD_FAIL_MDS_REINT_DELAY, 10);
 
         /* for replay no cookkie / lmm need, because client have this already */
@@ -1644,13 +1666,13 @@ static int mdt_reint(struct mdt_thread_info *info)
         int  rc;
 
         static const struct req_format *reint_fmts[REINT_MAX] = {
-                [REINT_SETATTR]  = &RQF_MDS_REINT_SETATTR,
-                [REINT_CREATE]   = &RQF_MDS_REINT_CREATE,
-                [REINT_LINK]     = &RQF_MDS_REINT_LINK,
-                [REINT_UNLINK]   = &RQF_MDS_REINT_UNLINK,
-                [REINT_RENAME]   = &RQF_MDS_REINT_RENAME,
-                [REINT_OPEN]     = &RQF_MDS_REINT_OPEN,
-                [REINT_SETXATTR] = &RQF_MDS_REINT_SETXATTR
+                [REINT_SETATTR]  = &RQF_MDS_REINT_SETATTR_SE,
+                [REINT_CREATE]   = &RQF_MDS_REINT_CREATE_SE,
+                [REINT_LINK]     = &RQF_MDS_REINT_LINK_SE,
+                [REINT_UNLINK]   = &RQF_MDS_REINT_UNLINK_SE,
+                [REINT_RENAME]   = &RQF_MDS_REINT_RENAME_SE,
+//                [REINT_OPEN]     = &RQF_MDS_REINT_OPEN_SE,
+                [REINT_SETXATTR] = &RQF_MDS_REINT_SETXATTR_SE
         };
 
         ENTRY;
@@ -3118,26 +3140,26 @@ static struct mdt_it_flavor {
         long                     it_reint;
 } mdt_it_flavor[] = {
         [MDT_IT_OPEN]     = {
-                .it_fmt   = &RQF_LDLM_INTENT,
+                .it_fmt   = &RQF_LDLM_INTENT_SE,
                 /*.it_flags = HABEO_REFERO,*/
                 .it_flags = 0,
                 .it_act   = mdt_intent_reint,
                 .it_reint = REINT_OPEN
         },
         [MDT_IT_OCREAT]   = {
-                .it_fmt   = &RQF_LDLM_INTENT,
+                .it_fmt   = &RQF_LDLM_INTENT_SE,
                 .it_flags = MUTABOR,
                 .it_act   = mdt_intent_reint,
                 .it_reint = REINT_OPEN
         },
         [MDT_IT_CREATE]   = {
-                .it_fmt   = &RQF_LDLM_INTENT,
+                .it_fmt   = &RQF_LDLM_INTENT_SE,
                 .it_flags = MUTABOR,
                 .it_act   = mdt_intent_reint,
                 .it_reint = REINT_CREATE
         },
         [MDT_IT_GETATTR]  = {
-                .it_fmt   = &RQF_LDLM_INTENT_GETATTR,
+                .it_fmt   = &RQF_LDLM_INTENT_GETATTR_SE,
                 .it_flags = HABEO_REFERO,
                 .it_act   = mdt_intent_getattr
         },
@@ -3147,12 +3169,12 @@ static struct mdt_it_flavor {
                 .it_act   = NULL
         },
         [MDT_IT_LOOKUP]   = {
-                .it_fmt   = &RQF_LDLM_INTENT_GETATTR,
+                .it_fmt   = &RQF_LDLM_INTENT_GETATTR_SE,
                 .it_flags = HABEO_REFERO,
                 .it_act   = mdt_intent_getattr
         },
         [MDT_IT_UNLINK]   = {
-                .it_fmt   = &RQF_LDLM_INTENT_UNLINK,
+                .it_fmt   = &RQF_LDLM_INTENT_UNLINK_SE,
                 .it_flags = MUTABOR,
                 .it_act   = NULL,
                 .it_reint = REINT_UNLINK
@@ -3337,9 +3359,11 @@ static int mdt_intent_getattr(enum mdt_it_code opcode,
         switch (opcode) {
         case MDT_IT_LOOKUP:
                 child_bits = MDS_INODELOCK_LOOKUP;
+		mdt_ucred(info)->uc_confined_op = UC_UNCONFINED;
                 break;
         case MDT_IT_GETATTR:
                 child_bits = MDS_INODELOCK_LOOKUP | MDS_INODELOCK_UPDATE;
+		mdt_ucred(info)->uc_confined_op = UC_CONFINED_GETATTR;
                 break;
         default:
                 CERROR("Unhandled till now");
@@ -3391,7 +3415,7 @@ static int mdt_intent_reint(enum mdt_it_code opcode,
 
         static const struct req_format *intent_fmts[REINT_MAX] = {
                 [REINT_CREATE]  = &RQF_LDLM_INTENT_CREATE,
-                [REINT_OPEN]    = &RQF_LDLM_INTENT_OPEN
+                [REINT_OPEN]    = &RQF_LDLM_INTENT_OPEN_SE
         };
 
         ENTRY;
@@ -3562,7 +3586,7 @@ static int mdt_intent_policy(struct ldlm_namespace *ns,
         LASSERT(pill->rc_req == req);
 
         if (req->rq_reqmsg->lm_bufcount > DLM_INTENT_IT_OFF) {
-                req_capsule_extend(pill, &RQF_LDLM_INTENT);
+                req_capsule_extend(pill, &RQF_LDLM_INTENT_SE);
                 it = req_capsule_client_get(pill, &RMF_LDLM_INTENT);
                 if (it != NULL) {
                         rc = mdt_intent_opc(it->opc, info, lockp, flags);
@@ -4289,7 +4313,11 @@ static int mdt_stack_init(struct lu_env *env,
         }
         d = tmp;
         md = lu2md_dev(d);
-
+	tmp = mdt_layer_setup(env, LUSTRE_SEC_NAME, d, cfg);
+	if (IS_ERR(tmp)) {
+		GOTO(out, rc = PTR_ERR(tmp));
+	}
+	d = tmp;
         tmp = mdt_layer_setup(env, LUSTRE_CMM_NAME, d, cfg);
         if (IS_ERR(tmp)) {
                 GOTO(out, rc = PTR_ERR(tmp));
@@ -4491,6 +4519,8 @@ static int mdt_init0(const struct lu_env *env, struct mdt_device *m,
         int                        node_id;
         mntopt_t                   mntopts;
         __u32                      flags = 0;
+	struct dt_device *dt;
+	struct dt_device_param param;
         ENTRY;
 
         md_device_init(&m->mdt_md_dev, ldt);
@@ -4536,7 +4566,7 @@ static int mdt_init0(const struct lu_env *env, struct mdt_device *m,
                 obd->u.obt.obt_magic = OBT_MAGIC;
         }
 
-        cfs_rwlock_init(&m->mdt_sptlrpc_lock);
+	cfs_rwlock_init(&m->mdt_sptlrpc_lock);
         sptlrpc_rule_set_init(&m->mdt_sptlrpc_rset);
 
         cfs_spin_lock_init(&m->mdt_ioepoch_lock);
@@ -4719,6 +4749,10 @@ static int mdt_init0(const struct lu_env *env, struct mdt_device *m,
          * value appropriately. */
         if (ldlm_timeout == LDLM_TIMEOUT_DEFAULT)
                 ldlm_timeout = MDS_LDLM_TIMEOUT_DEFAULT;
+	dt = m->mdt_bottom;
+	dt->dd_ops->dt_conf_get(env, dt, &param);
+	m->mdt_sid = param.ddp_sid;
+	m->mdt_defsid = param.ddp_defsid;
 
         RETURN(0);
 
@@ -5023,6 +5057,12 @@ static int mdt_connect_internal(struct obd_export *exp,
                       "it\n", mdt->mdt_md_dev.md_lu_dev.ld_obd->obd_name);
                 return -EBADE;
         }
+
+	if (!(exp->exp_connect_data.ocd_connect_flags & OBD_CONNECT_SELUSTRE)) {
+		CWARN("%s: Refusing non-SELinux client connection\n",
+		      mdt->mdt_md_dev.md_lu_dev.ld_obd->obd_name);
+		return -EBADE;
+	}
 
         return 0;
 }
@@ -5957,11 +5997,12 @@ DEF_MDT_HNDL  (0,                         SET_INFO,     mdt_set_info,
                                                              &RQF_OBD_SET_INFO),
 DEF_MDT_HNDL_F(0,                         GET_INFO,     mdt_get_info),
 DEF_MDT_HNDL_F(0           |HABEO_REFERO, GETSTATUS,    mdt_getstatus),
-DEF_MDT_HNDL_F(HABEO_CORPUS,              GETATTR,      mdt_getattr),
-DEF_MDT_HNDL_F(HABEO_CORPUS|HABEO_REFERO, GETATTR_NAME, mdt_getattr_name),
-DEF_MDT_HNDL_F(HABEO_CORPUS,              GETXATTR,     mdt_getxattr),
+DEF_MDT_HNDL  (HABEO_CORPUS,              GETATTR,      mdt_getattr,
+							    &RQF_MDS_GETATTR_SE),
+DEF_MDT_HNDL  (HABEO_CORPUS|HABEO_REFERO, GETATTR_NAME, mdt_getattr_name, &RQF_MDS_GETATTR_NAME_SE),
+DEF_MDT_HNDL  (HABEO_CORPUS,              GETXATTR,     mdt_getxattr, &RQF_MDS_GETXATTR_SE),
 DEF_MDT_HNDL_F(0           |HABEO_REFERO, STATFS,       mdt_statfs),
-DEF_MDT_HNDL_F(0           |MUTABOR,      REINT,        mdt_reint),
+DEF_MDT_HNDL  (0           |MUTABOR,      REINT,        mdt_reint, &RQF_MDS_REINT_SE),
 DEF_MDT_HNDL_F(HABEO_CORPUS,              CLOSE,        mdt_close),
 DEF_MDT_HNDL_F(HABEO_CORPUS,              DONE_WRITING, mdt_done_writing),
 DEF_MDT_HNDL_F(0           |HABEO_REFERO, PIN,          mdt_pin),
@@ -6052,7 +6093,7 @@ static struct mdt_opc_slice mdt_regular_handlers[] = {
 
 static struct mdt_handler mdt_readpage_ops[] = {
         DEF_MDT_HNDL_F(0,                         CONNECT,  mdt_connect),
-        DEF_MDT_HNDL_F(HABEO_CORPUS|HABEO_REFERO, READPAGE, mdt_readpage),
+        DEF_MDT_HNDL  (HABEO_CORPUS|HABEO_REFERO, READPAGE, mdt_readpage, &RQF_MDS_READPAGE_SE),
 #ifdef HAVE_SPLIT_SUPPORT
         DEF_MDT_HNDL_F(HABEO_CORPUS|HABEO_REFERO, WRITEPAGE, mdt_writepage),
 #endif

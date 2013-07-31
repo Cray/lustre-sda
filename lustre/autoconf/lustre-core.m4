@@ -1477,6 +1477,29 @@ LB_LINUX_TRY_COMPILE([
 ])
 ])
 
+AC_DEFUN([LC_SELINUX],
+[AC_MSG_CHECKING([if selinux is available])
+	LB_LINUX_CONFIG_IM([SECURITY_SELINUX],
+	[EXTRA_SELINUX_KCFLAGS="-I$LINUX/security/selinux \
+	 -I$LINUX/security/selinux/include"
+	 AC_DEFINE(HAVE_KERNEL_SELINUX, 1, [selinux is available in kernel])
+],
+[EXTRA_SELINUX_KCFLAGS=""])
+AC_SUBST(EXTRA_SELINUX_KCFLAGS)
+])
+
+AC_DEFUN([LC_CONFIG_INSECURE_CLIENT],
+[AC_MSG_CHECKING([whether to enable insecure client support])
+AC_ARG_ENABLE([insecure-client],
+	AC_HELP_STRING([--disable-insecure-client],
+			[disable insecure client support]),
+	[enable_insecure_client='no'],[enable_insecure_client='yes'])
+AC_MSG_RESULT([$enable_insecure_client])
+if test x$enable_insecure_client != xno ; then
+  AC_DEFINE(ENABLE_INSECURE_CLIENT, 1, Insecure client)
+fi
+])
+
 #
 # LC_D_OBTAIN_ALIAS
 # starting from 2.6.28 kernel replaces d_alloc_anon() with
@@ -1888,6 +1911,8 @@ AC_DEFUN([LC_PROG_LINUX],
          LC_SET_CPUS_ALLOWED
          LC_CACHE_UPCALL
          LC_SELINUX_IS_ENABLED
+	 LC_SELINUX
+	 LC_CONFIG_INSECURE_CLIENT
 	 LC_VFS_INODE_NEWSIZE_OK
 
          # 2.6.35, 3.0.0
@@ -2457,6 +2482,8 @@ lustre/quota/Makefile
 lustre/quota/autoMakefile
 lustre/scripts/Makefile
 lustre/scripts/lustre
+lustre/security/Makefile
+lustre/security/autoMakefile
 lustre/tests/Makefile
 lustre/tests/mpi/Makefile
 lustre/utils/Makefile
