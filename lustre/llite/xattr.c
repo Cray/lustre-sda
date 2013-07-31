@@ -135,7 +135,7 @@ int ll_setxattr_common(struct inode *inode, const char *name,
 
         /* LU-549:  Disable security.selinux when selinux is disabled */
         if (xattr_type == XATTR_SECURITY_T && !selinux_is_enabled() &&
-            strcmp(name, "security.selinux") == 0)
+            strcmp(name, XATTR_NAME_SECURITY_SELINUX) == 0)
                 RETURN(-EOPNOTSUPP);
 
 #ifdef CONFIG_FS_POSIX_ACL
@@ -309,7 +309,7 @@ int ll_getxattr_common(struct inode *inode, const char *name,
 
         /* LU-549:  Disable security.selinux when selinux is disabled */
         if (xattr_type == XATTR_SECURITY_T && !selinux_is_enabled() &&
-            strcmp(name, "security.selinux") == 0)
+            strcmp(name, XATTR_NAME_SECURITY_SELINUX) == 0)
                 RETURN(-EOPNOTSUPP);
 
 #ifdef CONFIG_FS_POSIX_ACL

@@ -944,8 +944,18 @@ static void osd_conf_get(const struct lu_env *env,
                 param->ddp_max_ea_size = LDISKFS_XATTR_MAX_LARGE_EA_SIZE;
         else
 #endif
-                param->ddp_max_ea_size = sb->s_blocksize;
+        param->ddp_max_ea_size = sb->s_blocksize;
 
+	if (sb->s_security) {
+		/* fscontext= */ /* defcontext= */
+		cfs_get_sb_security(sb, &param->ddp_sid, &param->ddp_defsid);
+		LCONSOLE_INFO("Initialized security fssid: %u, defsid %u\n",
+			      param->ddp_sid, param->ddp_defsid);
+	} else {
+		param->ddp_sid = 0;
+		param->ddp_defsid = 0;
+		CERROR("security is not initialized!\n");
+	}
 }
 
 /**
@@ -1878,6 +1888,10 @@ static int osd_inode_xattr_set(const struct lu_env *env,
         dentry->d_inode = inode;
         rc = inode->i_op->setxattr(dentry, name, buf->lb_buf,
                                    buf->lb_len, fs_flags);
+	if (rc == 0)
+		security_inode_post_setxattr(dentry, name, buf->lb_buf,
+					     buf->lb_len, fs_flags);
+
         return rc;
 }
 
@@ -4442,7 +4456,6 @@ static struct lu_device *osd_device_fini(const struct lu_env *env,
 {
         int rc;
         ENTRY;
-
         shrink_dcache_sb(osd_sb(osd_dev(d)));
         osd_sync(env, lu2dt_dev(d));
 

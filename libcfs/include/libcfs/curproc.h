@@ -86,6 +86,8 @@ typedef __u32 cfs_cap_t;
 #define CFS_CAP_SYS_ADMIN              21
 #define CFS_CAP_SYS_BOOT               23
 #define CFS_CAP_SYS_RESOURCE           24
+#define CFS_CAP_SETFCAP                31
+#define CFS_CAP_MAC_ADMIN              33
 
 #define CFS_CAP_FS_MASK ((1 << CFS_CAP_CHOWN) |                 \
                          (1 << CFS_CAP_DAC_OVERRIDE) |          \

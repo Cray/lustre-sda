@@ -57,6 +57,7 @@
 #include <lprocfs_status.h>
 #include <lustre_param.h>
 #include "mdc_internal.h"
+#include "mdc_security.h"
 #include <lustre/lustre_idl.h>
 
 #define REQUEST_MINOR 244
@@ -377,6 +378,8 @@ static int mdc_xattr_common(struct obd_export *exp,const struct req_format *fmt,
                 rec->sx_size   = output_size;
                 rec->sx_flags  = flags;
 
+		mdc_req_pack_security(req, &rec->sx_sid, rec->sx_seclabel);
+
                 mdc_pack_capa(req, &RMF_CAPA1, oc);
         } else {
                 mdc_pack_body(req, fid, oc, valid, output_size, suppgid, flags);
@@ -405,10 +408,12 @@ static int mdc_xattr_common(struct obd_export *exp,const struct req_format *fmt,
         if (opcode == MDS_REINT)
                 mdc_put_rpc_lock(exp->exp_obd->u.cli.cl_rpc_lock, NULL);
 
-        if (rc)
+        if (rc) {
                 ptlrpc_req_finished(req);
-        else
+        } else {
                 *request = req;
+		mdc_req_unpack_security(req);
+        }
         RETURN(rc);
 }
 
@@ -2090,12 +2095,18 @@ static int mdc_setup(struct obd_device *obd, struct lustre_cfg *cfg)
         int rc;
         ENTRY;
 
+#ifdef __KERNEL__
+	rc = cfs_sid_cache_init(&cli->cl_sid_cache);
+	if (rc != 0)
+		RETURN(rc);
+#endif
+        ptlrpcd_addref();
+
         OBD_ALLOC(cli->cl_rpc_lock, sizeof (*cli->cl_rpc_lock));
         if (!cli->cl_rpc_lock)
-                RETURN(-ENOMEM);
+                GOTO(err_release_cache, rc = -ENOMEM);
         mdc_init_rpc_lock(cli->cl_rpc_lock);
 
-        ptlrpcd_addref();
 
         OBD_ALLOC(cli->cl_close_lock, sizeof (*cli->cl_close_lock));
         if (!cli->cl_close_lock)
@@ -2119,13 +2130,15 @@ static int mdc_setup(struct obd_device *obd, struct lustre_cfg *cfg)
                 mdc_cleanup(obd);
                 CERROR("failed to setup llogging subsystems\n");
         }
-
         RETURN(rc);
-
 err_close_lock:
         OBD_FREE(cli->cl_close_lock, sizeof (*cli->cl_close_lock));
 err_rpc_lock:
         OBD_FREE(cli->cl_rpc_lock, sizeof (*cli->cl_rpc_lock));
+err_release_cache:
+#ifdef __KERNEL__
+	cfs_sid_cache_fini(cli->cl_sid_cache);
+#endif
         ptlrpcd_decref();
         RETURN(rc);
 }
@@ -2184,7 +2197,9 @@ static int mdc_cleanup(struct obd_device *obd)
 
         OBD_FREE(cli->cl_rpc_lock, sizeof (*cli->cl_rpc_lock));
         OBD_FREE(cli->cl_close_lock, sizeof (*cli->cl_close_lock));
-
+#ifdef __KERNEL__
+	cfs_sid_cache_fini(cli->cl_sid_cache);
+#endif
         ptlrpcd_decref();
 
         return client_obd_cleanup(obd);

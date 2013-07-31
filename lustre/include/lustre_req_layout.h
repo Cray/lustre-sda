@@ -243,6 +243,7 @@ extern struct req_msg_field RMF_GETINFO_KEY;
  */
 extern struct req_msg_field RMF_CONN;
 extern struct req_msg_field RMF_CONNECT_DATA;
+extern struct req_msg_field RMF_CONNECT_SELINUX;
 extern struct req_msg_field RMF_DLM_REQ;
 extern struct req_msg_field RMF_DLM_REP;
 extern struct req_msg_field RMF_DLM_LVB;

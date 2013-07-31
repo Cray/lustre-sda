@@ -726,6 +726,7 @@ static int mdt_getattr(struct mdt_thread_info *info)
 {
         struct mdt_object       *obj = info->mti_object;
         struct req_capsule      *pill = info->mti_pill;
+	struct lu_ucred         *uc  = mdt_ucred(info);
         struct mdt_body         *reqbody;
         struct mdt_body         *repbody;
         mode_t                   mode;
@@ -770,6 +771,8 @@ static int mdt_getattr(struct mdt_thread_info *info)
         if (unlikely(rc))
                 GOTO(out_shrink, rc);
 
+	mdt_unpack_security(uc, reqbody->seclabel, reqbody->sid);
+
         info->mti_spec.sp_ck_split = !!(reqbody->valid & OBD_MD_FLCKSPLIT);
         info->mti_cross_ref = !!(reqbody->valid & OBD_MD_FLCROSSREF);
 
@@ -779,6 +782,8 @@ static int mdt_getattr(struct mdt_thread_info *info)
          */
         mdt_set_capainfo(info, 1, &reqbody->fid1, BYPASS_CAPA);
         rc = mdt_getattr_internal(info, obj, 0);
+	repbody->sid = uc->uc_sid;
+	strcpy(repbody->seclabel, uc->uc_seclabel);
         if (reqbody->valid & OBD_MD_FLRMTPERM)
                 mdt_exit_ucred(info);
         EXIT;
@@ -1483,6 +1488,7 @@ static int mdt_readpage(struct mdt_thread_info *info)
         struct lu_rdpg    *rdpg = &info->mti_u.rdpg.mti_rdpg;
         struct mdt_body   *reqbody;
         struct mdt_body   *repbody;
+	struct lu_ucred   *uc = lu_ucred(info->mti_env);
         int                rc;
         int                i;
         ENTRY;
@@ -1494,6 +1500,8 @@ static int mdt_readpage(struct mdt_thread_info *info)
         repbody = req_capsule_server_get(info->mti_pill, &RMF_MDT_BODY);
         if (reqbody == NULL || repbody == NULL)
                 RETURN(err_serious(-EFAULT));
+
+	mdt_unpack_security(uc, reqbody->seclabel, reqbody->sid);
 
         /*
          * prepare @rdpg before calling lower layers and transfer itself. Here
@@ -1584,6 +1592,8 @@ static int mdt_reint_internal(struct mdt_thread_info *info,
                 LASSERT(repbody);
                 repbody->eadatasize = 0;
                 repbody->aclsize = 0;
+		repbody->sid = mdt_ucred(info)->uc_sid;
+		strcpy(repbody->seclabel, mdt_ucred(info)->uc_seclabel);
         }
 
         OBD_FAIL_TIMEOUT(OBD_FAIL_MDS_REINT_DELAY, 10);
@@ -1701,6 +1711,7 @@ static int mdt_object_sync(struct mdt_thread_info *info)
 
 static int mdt_sync(struct mdt_thread_info *info)
 {
+	struct lu_ucred *uc = lu_ucred(info->mti_env);
         struct ptlrpc_request *req = mdt_info_req(info);
         struct req_capsule *pill = info->mti_pill;
         struct mdt_body *body;
@@ -1716,6 +1727,8 @@ static int mdt_sync(struct mdt_thread_info *info)
 
         if (OBD_FAIL_CHECK(OBD_FAIL_MDS_SYNC_PACK))
                 RETURN(err_serious(-ENOMEM));
+
+	mdt_unpack_security(uc, body->seclabel, body->sid);
 
         if (fid_seq(&body->fid1) == 0) {
                 /* sync the whole device */
@@ -4289,7 +4302,11 @@ static int mdt_stack_init(struct lu_env *env,
         }
         d = tmp;
         md = lu2md_dev(d);
-
+	tmp = mdt_layer_setup(env, LUSTRE_SEC_NAME, d, cfg);
+	if (IS_ERR(tmp)) {
+		GOTO(out, rc = PTR_ERR(tmp));
+	}
+	d = tmp;
         tmp = mdt_layer_setup(env, LUSTRE_CMM_NAME, d, cfg);
         if (IS_ERR(tmp)) {
                 GOTO(out, rc = PTR_ERR(tmp));
@@ -4491,6 +4508,8 @@ static int mdt_init0(const struct lu_env *env, struct mdt_device *m,
         int                        node_id;
         mntopt_t                   mntopts;
         __u32                      flags = 0;
+	struct dt_device *dt;
+	struct dt_device_param param;
         ENTRY;
 
         md_device_init(&m->mdt_md_dev, ldt);
@@ -4536,7 +4555,9 @@ static int mdt_init0(const struct lu_env *env, struct mdt_device *m,
                 obd->u.obt.obt_magic = OBT_MAGIC;
         }
 
-        cfs_rwlock_init(&m->mdt_sptlrpc_lock);
+	//sbsec = lmi->lmi_sb->s_security;
+
+	cfs_rwlock_init(&m->mdt_sptlrpc_lock);
         sptlrpc_rule_set_init(&m->mdt_sptlrpc_rset);
 
         cfs_spin_lock_init(&m->mdt_ioepoch_lock);
@@ -4719,6 +4740,10 @@ static int mdt_init0(const struct lu_env *env, struct mdt_device *m,
          * value appropriately. */
         if (ldlm_timeout == LDLM_TIMEOUT_DEFAULT)
                 ldlm_timeout = MDS_LDLM_TIMEOUT_DEFAULT;
+	dt = m->mdt_bottom;
+	dt->dd_ops->dt_conf_get(env, dt, &param);
+	m->mdt_sid = param.ddp_sid;
+	m->mdt_defsid = param.ddp_defsid;
 
         RETURN(0);
 

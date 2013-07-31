@@ -2002,6 +2002,7 @@ void lustre_swab_mdt_rec_reint (struct mdt_rec_reint *rr)
         /* rr_fsuid_h is unused */
         __swab32s (&rr->rr_fsgid);
         /* rr_fsgid_h is unused */
+        __swab32s (&rr->rr_sid);
         __swab32s (&rr->rr_suppgid1);
         /* rr_suppgid1_h is unused */
         __swab32s (&rr->rr_suppgid2);

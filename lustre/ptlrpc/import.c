@@ -606,6 +606,7 @@ int ptlrpc_connect_import(struct obd_import *imp)
                          (char *)&imp->imp_connect_data };
         struct ptlrpc_connect_async_args *aa;
         int rc;
+	char *semagic;
         ENTRY;
 
         cfs_spin_lock(&imp->imp_lock);
@@ -668,6 +669,10 @@ int ptlrpc_connect_import(struct obd_import *imp)
                 ptlrpc_request_free(request);
                 GOTO(out, rc);
         }
+
+	semagic = req_capsule_client_get(&request->rq_pill, &RMF_CONNECT_SELINUX);
+	LASSERT(semagic != NULL);
+	memcpy(semagic, "selinux", sizeof("selinux"));
 
         /* Report the rpc service time to the server so that it knows how long
          * to wait for clients to join recovery */
@@ -767,6 +772,7 @@ static int ptlrpc_connect_interpret(const struct lu_env *env,
         int msg_flags;
 	struct obd_connect_data *ocd;
 	struct obd_export *exp;
+	char *semagic;
 	int ret;
         ENTRY;
 
@@ -798,6 +804,13 @@ static int ptlrpc_connect_interpret(const struct lu_env *env,
 
 	if (ocd == NULL) {
 		CERROR("Wrong connect data from server\n");
+		rc = -EPROTO;
+		GOTO(out, rc);
+	}
+
+	semagic = req_capsule_server_get(&request->rq_pill, &RMF_CONNECT_SELINUX);
+	if (semagic == NULL || memcmp(semagic, "selinux", sizeof("selinux"))) {
+		CERROR("Non-SELINUX server\n");
 		rc = -EPROTO;
 		GOTO(out, rc);
 	}

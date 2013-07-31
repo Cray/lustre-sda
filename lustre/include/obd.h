@@ -494,6 +494,9 @@ struct client_obd {
         struct lu_client_seq    *cl_seq;
 
         cfs_atomic_t             cl_resends; /* resend count */
+#ifdef __KERNEL__
+	cfs_sid_cache_t	*cl_sid_cache;
+#endif
 };
 #define obd2cli_tgt(obd) ((char *)(obd)->u.cli.cl_target_uuid.uuid)
 
@@ -780,6 +783,7 @@ struct niobuf_local {
 #define LUSTRE_FLD_NAME         "fld"
 #define LUSTRE_SEQ_NAME         "seq"
 
+#define LUSTRE_SEC_NAME		"sec"
 #define LUSTRE_CMM_NAME         "cmm"
 #define LUSTRE_MDD_NAME         "mdd"
 #define LUSTRE_OSD_NAME         "osd-ldiskfs"

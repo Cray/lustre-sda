@@ -289,12 +289,14 @@ static const struct req_msg_field *obd_connect_client[] = {
         &RMF_TGTUUID,
         &RMF_CLUUID,
         &RMF_CONN,
-        &RMF_CONNECT_DATA
+        &RMF_CONNECT_DATA,
+	&RMF_CONNECT_SELINUX
 };
 
 static const struct req_msg_field *obd_connect_server[] = {
         &RMF_PTLRPC_BODY,
-        &RMF_CONNECT_DATA
+        &RMF_CONNECT_DATA,
+	&RMF_CONNECT_SELINUX
 };
 
 static const struct req_msg_field *obd_set_info_client[] = {
@@ -846,6 +848,10 @@ struct req_msg_field RMF_CONNECT_DATA =
 #endif
                     lustre_swab_connect, NULL);
 EXPORT_SYMBOL(RMF_CONNECT_DATA);
+
+struct req_msg_field RMF_CONNECT_SELINUX =
+	DEFINE_MSGF("selinux", 0, sizeof("selinux"), NULL, NULL);
+EXPORT_SYMBOL(RMF_CONNECT_SELINUX);
 
 struct req_msg_field RMF_DLM_REQ =
         DEFINE_MSGF("dlm_req", RMF_F_NO_SIZE_CHECK /* ldlm_request_bufsize */,

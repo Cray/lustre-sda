@@ -418,7 +418,7 @@ libcfs_sock_create (struct socket **sockp, int *fatal,
         /* All errors are fatal except bind failure if the port is in use */
         *fatal = 1;
 
-        rc = sock_create (PF_INET, SOCK_STREAM, 0, &sock);
+        rc = sock_create_kern (PF_INET, SOCK_STREAM, 0, &sock);
         *sockp = sock;
         if (rc != 0) {
                 CERROR ("Can't create socket: %d\n", rc);

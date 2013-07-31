@@ -40,6 +40,7 @@
 #include <lustre_net.h>
 #include <lustre/lustre_idl.h>
 #include "mdc_internal.h"
+#include "mdc_security.h"
 
 #ifndef __KERNEL__
 /* some liblustre hackings here */
@@ -108,6 +109,8 @@ void mdc_pack_body(struct ptlrpc_request *req,
                 b->valid |= OBD_MD_FLID;
                 mdc_pack_capa(req, &RMF_CAPA1, oc);
         }
+
+	mdc_req_pack_security(req, &b->sid, b->seclabel);
 }
 
 void mdc_readdir_pack(struct ptlrpc_request *req, __u64 pgoff,
@@ -123,6 +126,8 @@ void mdc_readdir_pack(struct ptlrpc_request *req, __u64 pgoff,
         b->mode = LUDA_FID | LUDA_TYPE;
 
         mdc_pack_capa(req, &RMF_CAPA1, oc);
+
+	mdc_req_pack_security(req, &b->sid, b->seclabel);
 }
 
 /* packing of MDS records */
@@ -135,7 +140,6 @@ void mdc_create_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 
         CLASSERT(sizeof(struct mdt_rec_reint) == sizeof(struct mdt_rec_create));
         rec = req_capsule_client_get(&req->rq_pill, &RMF_REC_REINT);
-
 
         rec->cr_opcode   = REINT_CREATE;
         rec->cr_fsuid    = uid;
@@ -150,6 +154,9 @@ void mdc_create_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
         rec->cr_suppgid2 = op_data->op_suppgids[1];
         set_mrc_cr_flags(rec, op_data->op_flags & MF_SOM_LOCAL_FLAGS);
         rec->cr_bias     = op_data->op_bias;
+
+	mdc_req_pack_security(req, &rec->cr_sid, rec->cr_seclabel);
+	mdc_req_pack_cr_security(req, &rec->cr_csid, rec->cr_cseclabel);
 
         mdc_pack_capa(req, &RMF_CAPA1, op_data->op_capa1);
 
@@ -209,6 +216,9 @@ void mdc_open_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
         rec->cr_opcode   = REINT_OPEN;
         rec->cr_fsuid   = cfs_curproc_fsuid();
         rec->cr_fsgid   = cfs_curproc_fsgid();
+
+	mdc_req_pack_security(req, &rec->cr_sid, rec->cr_seclabel);
+
         rec->cr_cap      = cfs_curproc_cap_pack();
         if (op_data != NULL) {
                 rec->cr_fid1 = op_data->op_fid1;
@@ -284,12 +294,16 @@ static inline __u64 attr_pack(unsigned int ia_valid) {
         return sa_valid;
 }
 
-static void mdc_setattr_pack_rec(struct mdt_rec_setattr *rec,
+static void mdc_setattr_pack_rec(struct ptlrpc_request *req,
+				 struct mdt_rec_setattr *rec,
                                  struct md_op_data *op_data)
 {
         rec->sa_opcode  = REINT_SETATTR;
         rec->sa_fsuid   = cfs_curproc_fsuid();
         rec->sa_fsgid   = cfs_curproc_fsgid();
+
+	mdc_req_pack_security(req, &rec->sa_sid, rec->sa_seclabel);
+
         rec->sa_cap     = cfs_curproc_cap_pack();
         rec->sa_suppgid = -1;
 
@@ -328,7 +342,7 @@ void mdc_setattr_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 
         CLASSERT(sizeof(struct mdt_rec_reint) ==sizeof(struct mdt_rec_setattr));
         rec = req_capsule_client_get(&req->rq_pill, &RMF_REC_REINT);
-        mdc_setattr_pack_rec(rec, op_data);
+        mdc_setattr_pack_rec(req, rec, op_data);
 
         mdc_pack_capa(req, &RMF_CAPA1, op_data->op_capa1);
 
@@ -369,6 +383,9 @@ void mdc_unlink_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
         rec->ul_opcode  = REINT_UNLINK;
         rec->ul_fsuid   = op_data->op_fsuid;
         rec->ul_fsgid   = op_data->op_fsgid;
+
+	mdc_req_pack_security(req, &rec->ul_sid, rec->ul_seclabel);
+
         rec->ul_cap     = op_data->op_cap;
         rec->ul_mode    = op_data->op_mode;
         rec->ul_suppgid1= op_data->op_suppgids[0];
@@ -397,6 +414,9 @@ void mdc_link_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
         rec->lk_opcode   = REINT_LINK;
         rec->lk_fsuid    = op_data->op_fsuid;//current->fsuid;
         rec->lk_fsgid    = op_data->op_fsgid;//current->fsgid;
+
+	mdc_req_pack_security(req, &rec->lk_sid, rec->lk_seclabel);
+
         rec->lk_cap      = op_data->op_cap;//current->cap_effective;
         rec->lk_suppgid1 = op_data->op_suppgids[0];
         rec->lk_suppgid2 = op_data->op_suppgids[1];
@@ -425,6 +445,9 @@ void mdc_rename_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
         rec->rn_opcode   = REINT_RENAME;
         rec->rn_fsuid    = op_data->op_fsuid;
         rec->rn_fsgid    = op_data->op_fsgid;
+
+	mdc_req_pack_security(req, &rec->rn_sid, rec->rn_seclabel);
+
         rec->rn_cap      = op_data->op_cap;
         rec->rn_suppgid1 = op_data->op_suppgids[0];
         rec->rn_suppgid2 = op_data->op_suppgids[1];
@@ -472,6 +495,8 @@ void mdc_getattr_pack(struct ptlrpc_request *req, __u64 valid, int flags,
                 LOGL0(op_data->op_name, op_data->op_namelen, tmp);
 
         }
+
+	mdc_req_pack_security(req, &b->sid, b->seclabel);
 }
 
 void mdc_close_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
@@ -482,7 +507,7 @@ void mdc_close_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
         epoch = req_capsule_client_get(&req->rq_pill, &RMF_MDT_EPOCH);
         rec = req_capsule_client_get(&req->rq_pill, &RMF_REC_REINT);
 
-        mdc_setattr_pack_rec(rec, op_data);
+        mdc_setattr_pack_rec(req, rec, op_data);
         mdc_pack_capa(req, &RMF_CAPA1, op_data->op_capa1);
         mdc_ioepoch_pack(epoch, op_data);
 }

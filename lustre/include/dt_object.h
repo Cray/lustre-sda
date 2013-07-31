@@ -83,6 +83,8 @@ struct dt_device_param {
         unsigned           ddp_block_shift;
         mntopt_t           ddp_mntopts;
         unsigned           ddp_max_ea_size;
+	__u32		   ddp_sid;
+	__u32		   ddp_defsid;
 };
 
 /**

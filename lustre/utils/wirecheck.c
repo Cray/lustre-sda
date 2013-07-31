@@ -589,6 +589,7 @@ check_mdt_rec_setattr(void)
         CHECK_MEMBER(mdt_rec_setattr, sa_fsuid_h);
         CHECK_MEMBER(mdt_rec_setattr, sa_fsgid);
         CHECK_MEMBER(mdt_rec_setattr, sa_fsgid_h);
+	CHECK_MEMBER(mdt_rec_setattr, sa_sid);
         CHECK_MEMBER(mdt_rec_setattr, sa_suppgid);
         CHECK_MEMBER(mdt_rec_setattr, sa_suppgid_h);
         CHECK_MEMBER(mdt_rec_setattr, sa_padding_1);
@@ -621,6 +622,8 @@ check_mdt_rec_create(void)
         CHECK_MEMBER(mdt_rec_create, cr_fsuid_h);
         CHECK_MEMBER(mdt_rec_create, cr_fsgid);
         CHECK_MEMBER(mdt_rec_create, cr_fsgid_h);
+	CHECK_MEMBER(mdt_rec_create, cr_sid);
+	CHECK_MEMBER(mdt_rec_create, cr_csid);
         CHECK_MEMBER(mdt_rec_create, cr_suppgid1);
         CHECK_MEMBER(mdt_rec_create, cr_suppgid1_h);
         CHECK_MEMBER(mdt_rec_create, cr_suppgid2);
@@ -651,6 +654,7 @@ check_mdt_rec_link(void)
         CHECK_MEMBER(mdt_rec_link, lk_fsuid_h);
         CHECK_MEMBER(mdt_rec_link, lk_fsgid);
         CHECK_MEMBER(mdt_rec_link, lk_fsgid_h);
+	CHECK_MEMBER(mdt_rec_link, lk_sid);
         CHECK_MEMBER(mdt_rec_link, lk_suppgid1);
         CHECK_MEMBER(mdt_rec_link, lk_suppgid1_h);
         CHECK_MEMBER(mdt_rec_link, lk_suppgid2);
@@ -681,6 +685,7 @@ check_mdt_rec_unlink(void)
         CHECK_MEMBER(mdt_rec_unlink, ul_fsuid_h);
         CHECK_MEMBER(mdt_rec_unlink, ul_fsgid);
         CHECK_MEMBER(mdt_rec_unlink, ul_fsgid_h);
+	CHECK_MEMBER(mdt_rec_unlink, ul_sid);
         CHECK_MEMBER(mdt_rec_unlink, ul_suppgid1);
         CHECK_MEMBER(mdt_rec_unlink, ul_suppgid1_h);
         CHECK_MEMBER(mdt_rec_unlink, ul_suppgid2);
@@ -711,6 +716,7 @@ check_mdt_rec_rename(void)
         CHECK_MEMBER(mdt_rec_rename, rn_fsuid_h);
         CHECK_MEMBER(mdt_rec_rename, rn_fsgid);
         CHECK_MEMBER(mdt_rec_rename, rn_fsgid_h);
+	CHECK_MEMBER(mdt_rec_rename, rn_sid);
         CHECK_MEMBER(mdt_rec_rename, rn_suppgid1);
         CHECK_MEMBER(mdt_rec_rename, rn_suppgid1_h);
         CHECK_MEMBER(mdt_rec_rename, rn_suppgid2);

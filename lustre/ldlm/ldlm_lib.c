@@ -754,7 +754,7 @@ int target_handle_connect(struct ptlrpc_request *req)
         struct obd_uuid tgtuuid;
         struct obd_uuid cluuid;
         struct obd_uuid remote_uuid;
-        char *str;
+        char *str, *semagic;
         int rc = 0;
         char *target_start;
         int target_len;
@@ -842,6 +842,14 @@ int target_handle_connect(struct ptlrpc_request *req)
                 GOTO(out, rc = -EPROTO);
 
         conn = *tmp;
+
+	semagic = req_capsule_client_get(&req->rq_pill, &RMF_CONNECT_SELINUX);
+	if (semagic == NULL || memcmp(semagic, "selinux", sizeof("selinux"))) {
+		LCONSOLE_WARN("%s: Refusing non-SELinux client connection "
+			      "from %s\n", target->obd_name,
+			      libcfs_nid2str(req->rq_peer.nid));
+		GOTO(out, rc = -EPROTO);
+	}
 
         size = req_capsule_get_size(&req->rq_pill, &RMF_CONNECT_DATA,
                                     RCL_CLIENT);
@@ -1097,6 +1105,10 @@ dont_check_exports:
 
         LASSERT(target->u.obt.obt_magic == OBT_MAGIC);
         data->ocd_instance = target->u.obt.obt_instance;
+
+	semagic = req_capsule_server_get(&req->rq_pill, &RMF_CONNECT_SELINUX);
+	if (semagic)
+		memcpy(semagic, "selinux", sizeof("selinux"));
 
         /* Return only the parts of obd_connect_data that we understand, so the
          * client knows that we don't understand the rest. */
