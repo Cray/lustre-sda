@@ -122,8 +122,29 @@ static int mdt_root_squash(struct mdt_thread_info *info, lnet_nid_t peernid)
 	RETURN(0);
 }
 
+void mdt_unpack_security(struct lu_ucred *ucred, char *seclabel, __u32 sid)
+{
+	if (seclabel[0]) {
+		cfs_string_to_sid(&ucred->uc_sid, seclabel, strlen(seclabel));
+		strcpy(ucred->uc_seclabel, seclabel);
+	} else {
+		ucred->uc_sid = sid;
+	}
+}
+
+void mdt_unpack_cr_security(struct lu_ucred *ucred, char *cseclabel, __u32 csid)
+{
+	if (cseclabel[0]) {
+		cfs_string_to_sid(&ucred->uc_csid, cseclabel,
+				  strlen(cseclabel));
+		strcpy(ucred->uc_cseclabel, cseclabel);
+	} else {
+		ucred->uc_csid = csid;
+	}
+}
+
 static int new_init_ucred(struct mdt_thread_info *info, ucred_init_type_t type,
-                          void *buf)
+                          struct mdt_body *body)
 {
         struct ptlrpc_request   *req = mdt_info_req(info);
         struct mdt_device       *mdt = info->mti_mdt;
@@ -151,8 +172,6 @@ static int new_init_ucred(struct mdt_thread_info *info, ucred_init_type_t type,
         ucred->uc_o_fsgid = pud->pud_fsgid;
 
         if (type == BODY_INIT) {
-                struct mdt_body *body = (struct mdt_body *)buf;
-
                 ucred->uc_suppgids[0] = body->suppgid;
                 ucred->uc_suppgids[1] = -1;
         }
@@ -271,6 +290,10 @@ static int new_init_ucred(struct mdt_thread_info *info, ucred_init_type_t type,
 	ucred->uc_gid   = pud->pud_gid;
 	ucred->uc_fsuid = pud->pud_fsuid;
 	ucred->uc_fsgid = pud->pud_fsgid;
+	ucred->uc_sbsid = mdt->mdt_sid;
+	ucred->uc_defsid = mdt->mdt_defsid;
+
+	mdt_unpack_security(ucred, body->seclabel, body->sid);
 
 	/* process root_squash here. */
 	mdt_root_squash(info, peernid);
@@ -422,6 +445,11 @@ static int old_init_ucred(struct mdt_thread_info *info,
         uc->uc_o_gid = uc->uc_gid = body->gid;
         uc->uc_o_fsuid = uc->uc_fsuid = body->fsuid;
         uc->uc_o_fsgid = uc->uc_fsgid = body->fsgid;
+	uc->uc_sbsid   = mdt->mdt_sid;
+	uc->uc_defsid  = mdt->mdt_defsid;
+
+	mdt_unpack_security(uc, body->seclabel, body->sid);
+
         uc->uc_suppgids[0] = body->suppgid;
         uc->uc_suppgids[1] = -1;
         uc->uc_ginfo = NULL;
@@ -834,6 +862,12 @@ static int mdt_setattr_unpack_rec(struct mdt_thread_info *info)
         /* This prior initialization is needed for old_init_ucred_reint() */
         uc->uc_fsuid = rec->sa_fsuid;
         uc->uc_fsgid = rec->sa_fsgid;
+
+	mdt_unpack_security(uc, rec->sa_seclabel, rec->sa_sid);
+
+	uc->uc_sbsid = info->mti_mdt->mdt_sid;
+	uc->uc_defsid = info->mti_mdt->mdt_defsid;
+
         uc->uc_cap   = rec->sa_cap;
         uc->uc_suppgids[0] = rec->sa_suppgid;
         uc->uc_suppgids[1] = -1;
@@ -954,6 +988,13 @@ static int mdt_create_unpack(struct mdt_thread_info *info)
         /* This prior initialization is needed for old_init_ucred_reint() */
         uc->uc_fsuid = rec->cr_fsuid;
         uc->uc_fsgid = rec->cr_fsgid;
+
+	mdt_unpack_security(uc, rec->cr_seclabel, rec->cr_sid);
+	mdt_unpack_cr_security(uc, rec->cr_cseclabel, rec->cr_csid);
+
+	uc->uc_sbsid = info->mti_mdt->mdt_sid;
+	uc->uc_defsid = info->mti_mdt->mdt_defsid;
+
         uc->uc_cap   = rec->cr_cap;
         uc->uc_suppgids[0] = rec->cr_suppgid1;
         uc->uc_suppgids[1] = -1;
@@ -1061,6 +1102,12 @@ static int mdt_link_unpack(struct mdt_thread_info *info)
         /* This prior initialization is needed for old_init_ucred_reint() */
         uc->uc_fsuid = rec->lk_fsuid;
         uc->uc_fsgid = rec->lk_fsgid;
+
+	mdt_unpack_security(uc, rec->lk_seclabel, rec->lk_sid);
+
+	uc->uc_sbsid = info->mti_mdt->mdt_sid;
+	uc->uc_defsid = info->mti_mdt->mdt_defsid;
+
         uc->uc_cap   = rec->lk_cap;
         uc->uc_suppgids[0] = rec->lk_suppgid1;
         uc->uc_suppgids[1] = rec->lk_suppgid2;
@@ -1112,6 +1159,12 @@ static int mdt_unlink_unpack(struct mdt_thread_info *info)
         /* This prior initialization is needed for old_init_ucred_reint() */
         uc->uc_fsuid = rec->ul_fsuid;
         uc->uc_fsgid = rec->ul_fsgid;
+
+	mdt_unpack_security(uc, rec->ul_seclabel, rec->ul_sid);
+
+	uc->uc_sbsid = info->mti_mdt->mdt_sid;
+	uc->uc_defsid = info->mti_mdt->mdt_defsid;
+
         uc->uc_cap   = rec->ul_cap;
         uc->uc_suppgids[0] = rec->ul_suppgid1;
         uc->uc_suppgids[1] = -1;
@@ -1172,6 +1225,12 @@ static int mdt_rename_unpack(struct mdt_thread_info *info)
         /* This prior initialization is needed for old_init_ucred_reint() */
         uc->uc_fsuid = rec->rn_fsuid;
         uc->uc_fsgid = rec->rn_fsgid;
+
+	mdt_unpack_security(uc, rec->rn_seclabel, rec->rn_sid);
+
+	uc->uc_sbsid = info->mti_mdt->mdt_sid;
+	uc->uc_defsid = info->mti_mdt->mdt_defsid;
+
         uc->uc_cap   = rec->rn_cap;
         uc->uc_suppgids[0] = rec->rn_suppgid1;
         uc->uc_suppgids[1] = rec->rn_suppgid2;
@@ -1235,6 +1294,12 @@ static int mdt_open_unpack(struct mdt_thread_info *info)
         /* This prior initialization is needed for old_init_ucred_reint() */
         uc->uc_fsuid = rec->cr_fsuid;
         uc->uc_fsgid = rec->cr_fsgid;
+
+	mdt_unpack_security(uc, rec->cr_seclabel, rec->cr_sid);
+
+	uc->uc_sbsid = info->mti_mdt->mdt_sid;
+	uc->uc_defsid = info->mti_mdt->mdt_defsid;
+
         uc->uc_cap   = rec->cr_cap;
         uc->uc_suppgids[0] = rec->cr_suppgid1;
         uc->uc_suppgids[1] = rec->cr_suppgid2;
@@ -1316,7 +1381,6 @@ static int mdt_setxattr_unpack(struct mdt_thread_info *info)
         struct mdt_rec_setxattr   *rec;
         ENTRY;
 
-
         CLASSERT(sizeof(struct mdt_rec_setxattr) ==
                          sizeof(struct mdt_rec_reint));
 
@@ -1327,6 +1391,12 @@ static int mdt_setxattr_unpack(struct mdt_thread_info *info)
         /* This prior initialization is needed for old_init_ucred_reint() */
         uc->uc_fsuid  = rec->sx_fsuid;
         uc->uc_fsgid  = rec->sx_fsgid;
+
+	mdt_unpack_security(uc, rec->sx_seclabel, rec->sx_sid);
+
+	uc->uc_sbsid = info->mti_mdt->mdt_sid;
+	uc->uc_defsid = info->mti_mdt->mdt_defsid;
+
         uc->uc_cap    = rec->sx_cap;
         uc->uc_suppgids[0] = rec->sx_suppgid1;
         uc->uc_suppgids[1] = -1;

@@ -1,0 +1,45 @@
+module lustre_selinux 1.0;
+
+require {
+	type mount_t;
+        type file_t;
+	type sysadm_t;
+	type fixed_disk_device_t;
+	type user_tmp_t;
+	type fs_t;
+	type insmod_t;
+	type sysfs_t; #max_sectors_kb
+	type kernel_t;
+	class dir { add_name create mounton remove_name };
+	class blk_file { open read write ioctl };
+	class filesystem { mount };
+	class file { create unlink rename write};
+	class tcp_socket {create};
+	class process {setsched};
+	}
+
+	# so that MGS/MDS can create its dirs
+	allow mount_t file_t:dir { add_name create remove_name };
+
+	#for mount
+	allow mount_t file_t:file {write};
+	allow mount_t sysfs_t:file {write};
+	allow mount_t kernel_t:process setsched;
+	allow sysadm_t kernel_t:process setsched;
+
+	# so that OST can create its dirs
+	allow mount_t file_t:file { create unlink rename };
+
+	# so that mkfs can work with block devices
+	allow sysadm_t fixed_disk_device_t:blk_file { open read write ioctl };
+
+	# for mkfs
+	allow sysadm_t user_tmp_t:dir { mounton };
+
+	#for mkfs
+	allow sysadm_t fs_t:filesystem { mount };
+
+	#for modprobe
+	allow insmod_t insmod_t:tcp_socket {create};
+
+

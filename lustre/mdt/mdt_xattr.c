@@ -132,6 +132,8 @@ int mdt_getxattr(struct mdt_thread_info *info)
         if (rc)
                 RETURN(err_serious(rc));
 
+	mdt_unpack_security(uc, reqbody->seclabel, reqbody->sid);
+
         next = mdt_object_child(info->mti_object);
 
         if (info->mti_body->valid & OBD_MD_FLRMTRGETFACL) {
@@ -208,6 +210,8 @@ int mdt_getxattr(struct mdt_thread_info *info)
         EXIT;
 out:
         if (rc >= 0) {
+		repbody->sid = uc->uc_sid;
+		strcpy(repbody->seclabel, uc->uc_seclabel);
                 mdt_counter_incr(req->rq_export, LPROC_MDT_GETXATTR);
                 repbody->eadatasize = rc;
                 rc = 0;

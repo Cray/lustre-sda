@@ -1374,17 +1374,18 @@ struct lov_mds_md_v1 {            /* LOV EA mds/wire data (little-endian) */
 #define MAX_MD_SIZE (sizeof(struct lov_mds_md) + 4 * sizeof(struct lov_ost_data))
 #define MIN_MD_SIZE (sizeof(struct lov_mds_md) + 1 * sizeof(struct lov_ost_data))
 
-#define XATTR_NAME_ACL_ACCESS   "system.posix_acl_access"
-#define XATTR_NAME_ACL_DEFAULT  "system.posix_acl_default"
-#define XATTR_USER_PREFIX       "user."
-#define XATTR_TRUSTED_PREFIX    "trusted."
-#define XATTR_SECURITY_PREFIX   "security."
-#define XATTR_LUSTRE_PREFIX     "lustre."
+#define XATTR_NAME_ACL_ACCESS		"system.posix_acl_access"
+#define XATTR_NAME_ACL_DEFAULT		"system.posix_acl_default"
+#define XATTR_NAME_SECURITY_SELINUX	"security.selinux"
+#define XATTR_USER_PREFIX		"user."
+#define XATTR_TRUSTED_PREFIX		"trusted."
+#define XATTR_SECURITY_PREFIX		"security."
+#define XATTR_LUSTRE_PREFIX		"lustre."
 
-#define XATTR_NAME_LOV          "trusted.lov"
-#define XATTR_NAME_LMA          "trusted.lma"
-#define XATTR_NAME_LMV          "trusted.lmv"
-#define XATTR_NAME_LINK         "trusted.link"
+#define XATTR_NAME_LOV			"trusted.lov"
+#define XATTR_NAME_LMA			"trusted.lma"
+#define XATTR_NAME_LMV			"trusted.lmv"
+#define XATTR_NAME_LINK			"trusted.link"
 
 
 struct lov_mds_md_v3 {            /* LOV EA mds/wire data (little-endian) */
@@ -1751,6 +1752,10 @@ struct mdt_body {
         __u64          ino;    /* for 1.6 compatibility */
         __u32          fsuid;
         __u32          fsgid;
+        __u32          sid;
+        __u8           seclabel[128];
+        __u32          csid;
+        __u8           cseclabel[128];
         __u32          capability;
         __u32          mode;
         __u32          uid;
@@ -1895,6 +1900,10 @@ struct mdt_rec_setattr {
         __u32           sa_fsuid_h;
         __u32           sa_fsgid;
         __u32           sa_fsgid_h;
+	__u32           sa_sid;
+	__u8            sa_seclabel[128];
+	__u32           sa_padding_6;
+	__u8            sa_padding_7[128];
         __u32           sa_suppgid;
         __u32           sa_suppgid_h;
         __u32           sa_padding_1;
@@ -2023,6 +2032,10 @@ struct mdt_rec_create {
         __u32           cr_fsuid_h;
         __u32           cr_fsgid;
         __u32           cr_fsgid_h;
+	__u32           cr_sid;
+	__u8            cr_seclabel[128];
+	__u32           cr_csid;
+	__u8            cr_cseclabel[128];
         __u32           cr_suppgid1;
         __u32           cr_suppgid1_h;
         __u32           cr_suppgid2;
@@ -2064,6 +2077,10 @@ struct mdt_rec_link {
         __u32           lk_fsuid_h;
         __u32           lk_fsgid;
         __u32           lk_fsgid_h;
+	__u32           lk_sid;
+	__u8            lk_seclabel[128];
+	__u32           lk_padding_10;
+	__u8            lk_padding_11[128];
         __u32           lk_suppgid1;
         __u32           lk_suppgid1_h;
         __u32           lk_suppgid2;
@@ -2091,6 +2108,10 @@ struct mdt_rec_unlink {
         __u32           ul_fsuid_h;
         __u32           ul_fsgid;
         __u32           ul_fsgid_h;
+	__u32           ul_sid;
+	__u8            ul_seclabel[128];
+	__u32           ul_padding_10;
+	__u8            ul_padding_11[128];
         __u32           ul_suppgid1;
         __u32           ul_suppgid1_h;
         __u32           ul_suppgid2;
@@ -2118,6 +2139,10 @@ struct mdt_rec_rename {
         __u32           rn_fsuid_h;
         __u32           rn_fsgid;
         __u32           rn_fsgid_h;
+	__u32           rn_sid;
+	__u8            rn_seclabel[128];
+	__u32           rn_padding_9;
+	__u8            rn_padding_10[128];
         __u32           rn_suppgid1;
         __u32           rn_suppgid1_h;
         __u32           rn_suppgid2;
@@ -2145,6 +2170,10 @@ struct mdt_rec_setxattr {
         __u32           sx_fsuid_h;
         __u32           sx_fsgid;
         __u32           sx_fsgid_h;
+	__u32           sx_sid;
+	__u8            sx_seclabel[128];
+	__u32           sx_padding_12;
+	__u8            sx_padding_13[128];
         __u32           sx_suppgid1;
         __u32           sx_suppgid1_h;
         __u32           sx_suppgid2;
@@ -2181,6 +2210,10 @@ struct mdt_rec_reint {
         __u32           rr_fsuid_h;
         __u32           rr_fsgid;
         __u32           rr_fsgid_h;
+	__u32           rr_sid;
+	__u8            rr_seclabel[128];
+	__u32           rr_csid;
+	__u8            rr_cseclabel[128];
         __u32           rr_suppgid1;
         __u32           rr_suppgid1_h;
         __u32           rr_suppgid2;

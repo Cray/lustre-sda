@@ -1459,7 +1459,10 @@ int mdt_reint_open(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
                         if (rc != 0)
                                 result = rc;
                         GOTO(out_child, result);
-                }
+		} else if (result != 0) {
+			CERROR("attr_get failed with %d\n", result);
+			GOTO(out_child, result);
+		}
         }
 
         LASSERT(!lustre_handle_is_used(&lhc->mlh_reg_lh));

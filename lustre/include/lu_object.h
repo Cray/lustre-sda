@@ -1300,6 +1300,12 @@ struct lu_ucred {
 	__u32               uc_gid;
 	__u32               uc_fsuid;
 	__u32               uc_fsgid;
+	__u32               uc_sid;
+	__u8                uc_seclabel[128];
+	__u32               uc_csid; /* creation sid */
+	__u8                uc_cseclabel[128];
+	__u32		    uc_sbsid;
+	__u32		    uc_defsid;
 	__u32               uc_suppgids[2];
 	cfs_cap_t           uc_cap;
 	__u32               uc_umask;

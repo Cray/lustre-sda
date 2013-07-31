@@ -43,6 +43,7 @@
 
 #include <obd_class.h>
 #include "mdc_internal.h"
+#include "mdc_security.h"
 #include <lustre_fid.h>
 
 /* mdc_setattr does its own semaphore handling */
@@ -207,6 +208,10 @@ int mdc_setattr(struct obd_export *exp, struct md_op_data *op_data,
                 rc = 0;
         }
         *request = req;
+
+	if (rc == 0)
+		mdc_req_unpack_security(req);
+
         if (rc && req->rq_commit_cb) {
                 /* Put an extra reference on \var mod on error case. */
                 obd_mod_put(*mod);
@@ -294,6 +299,9 @@ int mdc_create(struct obd_export *exp, struct md_op_data *op_data,
                 }
         }
 
+	if (rc == 0)
+		mdc_req_unpack_security(req);
+
         *request = req;
         RETURN(rc);
 }
@@ -350,6 +358,10 @@ int mdc_unlink(struct obd_export *exp, struct md_op_data *op_data,
         rc = mdc_reint(req, obd->u.cli.cl_rpc_lock, LUSTRE_IMP_FULL);
         if (rc == -ERESTARTSYS)
                 rc = 0;
+
+	if (rc == 0)
+		mdc_req_unpack_security(req);
+
         RETURN(rc);
 }
 
@@ -396,6 +408,9 @@ int mdc_link(struct obd_export *exp, struct md_op_data *op_data,
         *request = req;
         if (rc == -ERESTARTSYS)
                 rc = 0;
+
+	if (rc == 0)
+		mdc_req_unpack_security(req);
 
         RETURN(rc);
 }
@@ -464,6 +479,9 @@ int mdc_rename(struct obd_export *exp, struct md_op_data *op_data,
         *request = req;
         if (rc == -ERESTARTSYS)
                 rc = 0;
+
+	if (rc == 0)
+		mdc_req_unpack_security(req);
 
         RETURN(rc);
 }
