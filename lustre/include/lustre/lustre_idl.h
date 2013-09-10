@@ -1456,7 +1456,8 @@ struct lov_mds_md_v3 {            /* LOV EA mds/wire data (little-endian) */
 #define OBD_MD_FLRMTRSETFACL    (0x0004000000000000ULL) /* lfs rsetfacl case */
 #define OBD_MD_FLRMTRGETFACL    (0x0008000000000000ULL) /* lfs rgetfacl case */
 
-#define OBD_MD_FLDATAVERSION (0x0010000000000000ULL) /* iversion sum */
+#define OBD_MD_FLDATAVERSION    (0x0010000000000000ULL) /* iversion sum */
+#define OBD_MD_FLSECURITY       (0x0020000000000000ULL) /* has security */
 
 #define OBD_MD_FLGETATTR (OBD_MD_FLID    | OBD_MD_FLATIME | OBD_MD_FLMTIME | \
                           OBD_MD_FLCTIME | OBD_MD_FLSIZE  | OBD_MD_FLBLKSZ | \
@@ -2858,6 +2859,7 @@ struct obdo {
         obd_time                o_ctime;
         obd_blocks              o_blocks;       /* brw: cli sent cached bytes */
         obd_size                o_grant;
+	__u8			o_seclabel[128];
 
         /* 32-bit fields start here: keep an even number of them via padding */
         obd_blksize             o_blksize;      /* optimal IO blocksize */

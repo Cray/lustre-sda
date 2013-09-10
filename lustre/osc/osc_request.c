@@ -2390,7 +2390,7 @@ static struct ptlrpc_request *osc_build_req(const struct lu_env *env,
          * the OST will not use BRW timestamps.  Sadly, there is no obvious
          * way to do this in a single call.  bug 10150 */
         cl_req_attr_set(env, clerq, &crattr,
-                        OBD_MD_FLMTIME|OBD_MD_FLCTIME|OBD_MD_FLATIME);
+                        OBD_MD_FLMTIME|OBD_MD_FLCTIME|OBD_MD_FLATIME|OBD_MD_FLSECURITY);
 
         CLASSERT(sizeof(*aa) <= sizeof(req->rq_async_args));
         aa = ptlrpc_req_async_args(req);

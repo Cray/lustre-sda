@@ -460,7 +460,7 @@ static int filter_preprw_read(int cmd, struct obd_export *exp, struct obdo *oa,
         fsfilt_check_slow(obd, now, "start_page_read");
 
         rc = filter_direct_io(OBD_BRW_READ, dentry, iobuf,
-                              exp, NULL, NULL, NULL);
+                              exp, NULL, NULL, NULL, NULL);
         if (rc)
                 GOTO(cleanup, rc);
 
@@ -869,7 +869,7 @@ retry:
 
         /* don't unlock pages to prevent any access */
         rc = filter_direct_io(OBD_BRW_READ, dentry, iobuf, exp,
-                              NULL, NULL, NULL);
+                              NULL, NULL, NULL, NULL);
 
         fsfilt_check_slow(obd, now, "start_page_write");
 

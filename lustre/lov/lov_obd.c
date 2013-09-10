@@ -1388,7 +1388,7 @@ static int lov_setattr(struct obd_export *exp, struct obd_info *oinfo,
                                             OBD_MD_FLFLAGS | OBD_MD_FLSIZE |
                                             OBD_MD_FLGROUP | OBD_MD_FLUID |
                                             OBD_MD_FLGID | OBD_MD_FLFID |
-                                            OBD_MD_FLGENER)));
+                                            OBD_MD_FLGENER | OBD_MD_FLSECURITY)));
         lov = &exp->exp_obd->u.lov;
         rc = lov_prep_setattr_set(exp, oinfo, oti, &set);
         if (rc)

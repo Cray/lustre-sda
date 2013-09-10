@@ -81,6 +81,9 @@ struct fsfilt_operations {
         int     (* fs_commit_wait)(struct inode *inode, void *handle);
         int     (* fs_setattr)(struct dentry *dentry, void *handle,
                                struct iattr *iattr, int do_trunc);
+        int     (* fs_setxattr)(struct dentry *dentry, void *handle,
+                                char *name, char *val, int len);
+
         int     (* fs_iocontrol)(struct inode *inode, struct file *file,
                                  unsigned int cmd, unsigned long arg);
         int     (* fs_set_md)(struct inode *inode, void *handle, void *md,
@@ -329,6 +332,16 @@ static inline int fsfilt_setattr(struct obd_device *obd, struct dentry *dentry,
         rc = obd->obd_fsops->fs_setattr(dentry, handle, iattr, do_trunc);
         fsfilt_check_slow(obd, now, "setattr");
         return rc;
+}
+
+static inline int fsfilt_setxattr(struct obd_device *obd, struct dentry *dentry,
+				  void *handle, char *name, char *val, int len)
+{
+	unsigned long now = jiffies;
+	int rc;
+	rc = obd->obd_fsops->fs_setxattr(dentry, handle, name, val, len);
+	fsfilt_check_slow(obd, now, "setxattr");
+	return rc;
 }
 
 static inline int fsfilt_iocontrol(struct obd_device *obd, struct dentry *dentry,

@@ -3337,6 +3337,12 @@ int filter_setattr_internal(struct obd_export *exp, struct dentry *dentry,
         if (ia_valid & (ATTR_SIZE | ATTR_UID | ATTR_GID))
                 ll_vfs_dq_init(inode);
 
+	if (oa->o_valid & OBD_MD_FLSECURITY) {
+		rc = fsfilt_setxattr(exp->exp_obd, dentry, handle,
+				     XATTR_NAME_SECURITY_SELINUX,
+				     oa->o_seclabel, strlen(oa->o_seclabel));
+	}
+
         if (oa->o_valid & OBD_MD_FLFLAGS) {
                 rc = fsfilt_iocontrol(exp->exp_obd, dentry,
                                       FSFILT_IOC_SETFLAGS, (long)&oa->o_flags);

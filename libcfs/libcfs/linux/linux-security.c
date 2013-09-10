@@ -280,6 +280,7 @@ int cfs_sid_to_string(__u32 sid, char *str)
 	return rc;
 }
 
+
 /*
  * Convert security context string into SID
  * @sid - the SID pointer
@@ -325,6 +326,26 @@ int cfs_string_to_sid_default(__u32 *sid, __u32 def_sid, char *str, int len)
 		/* printk("converted %.*s to SID %d\n", len, str, *sid); */
 	} else {
 		printk("unable to convert %.*s to SID, rc=%d\n", len, str, rc);
+	}
+
+	return rc;
+}
+
+int cfs_security_from_inode(struct inode *inode, char *seclabel)
+{
+	struct inode_security_struct *isec = inode->i_security;
+	char *scontext;
+	u32 scontext_len;
+	int rc;
+
+	if (!selinux_is_enabled())
+		return -EOPNOTSUPP;
+
+	rc = security_sid_to_context_force(isec->sid, &scontext, &scontext_len);
+	if (rc == 0) {
+		memcpy(seclabel, scontext, scontext_len);
+		seclabel[scontext_len] = 0;
+		kfree(scontext);
 	}
 
 	return rc;
@@ -1020,6 +1041,7 @@ EXPORT_SYMBOL(cfs_set_current_sid);
 EXPORT_SYMBOL(cfs_sid_to_string);
 EXPORT_SYMBOL(cfs_string_to_sid);
 EXPORT_SYMBOL(cfs_string_to_sid_default);
+EXPORT_SYMBOL(cfs_security_from_inode);
 EXPORT_SYMBOL(cfs_lsid_to_rsid);
 EXPORT_SYMBOL(cfs_sid_cache_init);
 EXPORT_SYMBOL(cfs_sid_cache_fini);

@@ -41,6 +41,8 @@ int cfs_set_current_sid(__u32 sid);
 int cfs_sid_to_string(__u32 sid, char *str);
 int cfs_string_to_sid(__u32 *sid, char *str, int len);
 int cfs_string_to_sid_default(__u32 *sid, __u32 def_sid, char *str, int len);
+int cfs_security_from_inode(struct inode *inode, char *seclabel);
+
 int cfs_lsid_to_rsid(__u32 lsid, __u32 *rsid, cfs_sid_cache_t cache);
 int cfs_sid_cache_init(cfs_sid_cache_t **cache);
 void cfs_sid_cache_fini(cfs_sid_cache_t *cache);

@@ -339,7 +339,8 @@ int mdt_reint_setxattr(struct mdt_thread_info *info,
          * not change the access permissions of this inode, nor any
          * other existing inodes. It is setting the ACLs inherited
          * by new directories/files at create time. */
-        if (!strcmp(xattr_name, XATTR_NAME_ACL_ACCESS))
+	if (!strcmp(xattr_name, XATTR_NAME_ACL_ACCESS) ||
+	    !strcmp(xattr_name, XATTR_NAME_SECURITY_SELINUX))
                 lockpart |= MDS_INODELOCK_LOOKUP;
 
         lh = &info->mti_lh[MDT_LH_PARENT];
@@ -400,6 +401,10 @@ int mdt_reint_setxattr(struct mdt_thread_info *info,
                         rc = mo_xattr_set(env, child, buf, xattr_name, flags);
                         /* update ctime after xattr changed */
                         if (rc == 0) {
+				if (!strcmp(xattr_name, XATTR_NAME_SECURITY_SELINUX)) {
+					ma->ma_valid |= MA_SECURITY;
+					memcpy(ma->ma_seclabel, xattr, xattr_len);
+				}
                                 ma->ma_attr_flags |= MDS_PERM_BYPASS;
                                 mo_attr_set(env, child, ma);
                         }
@@ -423,6 +428,7 @@ out_unlock:
         mdt_object_unlock_put(info, obj, lh, rc);
         if (unlikely(new_xattr != NULL))
                 lustre_posix_acl_xattr_free(new_xattr, xattr_len);
+
 out:
 	mdt_exit_ucred(info);
 	return rc;

@@ -1564,8 +1564,8 @@ int mdd_attr_set(const struct lu_env *env, struct md_object *obj,
 
         /*TODO: add lock here*/
         /* start a log jounal handle if needed */
-        if (S_ISREG(mdd_object_type(mdd_obj)) &&
-            ma->ma_attr.la_valid & (LA_UID | LA_GID)) {
+        if ((S_ISREG(mdd_object_type(mdd_obj)) &&
+            ma->ma_attr.la_valid & (LA_UID | LA_GID)) || ma->ma_valid & MA_SECURITY) {
                 lmm_size = mdd_lov_mdsize(env, mdd);
                 lmm = mdd_max_lmm_get(env, mdd);
                 if (lmm == NULL)
@@ -1675,6 +1675,36 @@ no_trans:
                 rc = mdd_lov_setattr_async(env, mdd_obj, lmm, lmm_size,
                                            logcookies);
         }
+
+	if (rc == 0 && (ma->ma_valid & MA_SECURITY)) {
+		struct obd_export *lov_exp = mds->mds_lov_exp;
+		struct obd_info oinfo = { { { 0 } } };
+
+		OBDO_ALLOC(oinfo.oi_oa);
+		if (!oinfo.oi_oa) {
+			rc = -ENOMEM;
+			goto skip;
+		}
+
+		oinfo.oi_oa->o_id = fid_ver_oid(mdd_object_fid(mdd_obj));
+		oinfo.oi_oa->o_seq = fid_seq(mdd_object_fid(mdd_obj));
+		memcpy(oinfo.oi_oa->o_seclabel, ma->ma_seclabel, 128);
+		oinfo.oi_oa->o_valid = OBD_MD_FLID | OBD_MD_FLGROUP | OBD_MD_FLSECURITY;
+
+		rc = obd_unpackmd(mds->mds_lov_exp, &oinfo.oi_md, lmm, lmm_size);
+		if (rc < 0) {
+			CERROR("Error unpack md\n");
+			goto skip;
+		}
+
+		rc = obd_setattr(lov_exp, &oinfo,  NULL);
+skip:
+		if (oinfo.oi_oa)
+			OBDO_FREE(oinfo.oi_oa);
+		if (oinfo.oi_md)
+			obd_free_memmd(mds->mds_lov_exp, &oinfo.oi_md);
+	}
+
 #ifdef HAVE_QUOTA_SUPPORT
         if (quota_opc) {
                 lquota_pending_commit(mds_quota_interface_ref, obd, qnids,

@@ -474,7 +474,7 @@ int filter_do_bio(struct obd_export *exp, struct inode *inode,
 /* Must be called with i_mutex taken for writes; this will drop it */
 int filter_direct_io(int rw, struct dentry *dchild, struct filter_iobuf *iobuf,
                      struct obd_export *exp, struct iattr *attr,
-                     struct obd_trans_info *oti, void **wait_handle)
+                     struct obd_trans_info *oti, void **wait_handle, char *seclabel)
 {
         struct obd_device *obd = exp->exp_obd;
         struct inode *inode = dchild->d_inode;
@@ -520,6 +520,12 @@ int filter_direct_io(int rw, struct dentry *dchild, struct filter_iobuf *iobuf,
                                 attr->ia_valid |= ATTR_SIZE;
                         rc = fsfilt_setattr(obd, dchild,
                                             oti->oti_handle, attr, 0);
+
+			if (seclabel != NULL) {
+				rc = fsfilt_setxattr(obd, dchild, oti->oti_handle,
+						     XATTR_NAME_SECURITY_SELINUX,
+						     seclabel, strlen(seclabel));
+			}
                 }
 
 		mutex_unlock(&inode->i_mutex);
@@ -756,7 +762,8 @@ retry:
 
         /* filter_direct_io drops i_mutex */
         rc = filter_direct_io(OBD_BRW_WRITE, res->dentry, iobuf, exp, &iattr,
-                              oti, sync_journal_commit ? &wait_handle : NULL);
+                              oti, sync_journal_commit ? &wait_handle : NULL,
+                              (oa->o_valid & OBD_MD_FLSECURITY) ? oa->o_seclabel : NULL);
         if (rc == -ENOSPC && retries++ < 3) {
                 CDEBUG(D_INODE, "retry after force commit, retries:%d\n",
                        retries);

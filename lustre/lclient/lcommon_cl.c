@@ -975,7 +975,7 @@ void ccc_req_attr_set(const struct lu_env *env,
 {
         struct inode *inode;
         struct obdo  *oa;
-        obd_flag      valid_flags;
+	obd_valid     valid_flags;
 
 	oa = attr->cra_oa;
 	inode = ccc_object_inode(obj);
@@ -992,7 +992,7 @@ void ccc_req_attr_set(const struct lu_env *env,
                         oa->o_valid |= OBD_MD_FLEPOCH;
                         oa->o_ioepoch = cl_i2info(inode)->lli_ioepoch;
                         valid_flags |= OBD_MD_FLMTIME|OBD_MD_FLCTIME|
-                                OBD_MD_FLUID|OBD_MD_FLGID;
+                                OBD_MD_FLUID|OBD_MD_FLGID|OBD_MD_FLSECURITY;
                 }
         }
         obdo_from_inode(oa, inode, valid_flags & flags);
