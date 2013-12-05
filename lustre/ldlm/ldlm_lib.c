@@ -770,7 +770,7 @@ int target_handle_connect(struct ptlrpc_request *req)
         struct obd_uuid tgtuuid;
         struct obd_uuid cluuid;
         struct obd_uuid remote_uuid;
-        char *str;
+	char *str;
         int rc = 0;
         char *target_start;
         int target_len;

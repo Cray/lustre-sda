@@ -802,7 +802,8 @@ out:
 }
 
 int ofd_setattr(const struct lu_env *env, struct obd_export *exp,
-		struct obd_info *oinfo, struct obd_trans_info *oti)
+		struct obd_info *oinfo, const char *seclabel,
+		struct obd_trans_info *oti)
 {
 	struct ofd_thread_info	*info;
 	struct ofd_device	*ofd = ofd_exp(exp);
@@ -860,6 +861,10 @@ int ofd_setattr(const struct lu_env *env, struct obd_export *exp,
 	if (oa->o_valid & OBD_MD_FLFID) {
 		ff = &info->fti_mds_fid;
 		ofd_prepare_fidea(ff, oa);
+	}
+
+	if (oa->o_valid & OBD_MD_FLSECURITY) {
+		strcpy(info->fti_attr.la_seclabel, seclabel);
 	}
 
 	/* setting objects attributes (including owner/group) */

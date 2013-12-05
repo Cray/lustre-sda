@@ -1629,6 +1629,7 @@ static inline void d_lustre_revalidate(struct dentry *dentry)
 	LASSERT(ll_d2d(dentry) != NULL);
 	ll_d2d(dentry)->lld_invalid = 0;
 	spin_unlock(&dentry->d_lock);
+	security_d_instantiate(dentry, dentry->d_inode);
 }
 
 #if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2, 7, 50, 0)

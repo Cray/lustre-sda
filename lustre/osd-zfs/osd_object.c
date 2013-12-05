@@ -1050,6 +1050,7 @@ static int osd_attr_set(const struct lu_env *env, struct dt_object *dt,
 	rc = osd_object_sa_bulk_update(obj, bulk, cnt, oh);
 
 	OBD_FREE(bulk, sizeof(sa_bulk_attr_t) * 10);
+
 	RETURN(rc);
 }
 

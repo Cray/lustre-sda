@@ -976,8 +976,10 @@ int mdt_getattr(struct tgt_session_info *tsi)
 	struct mdt_thread_info	*info = tsi2mdt_info(tsi);
         struct mdt_object       *obj = info->mti_object;
         struct req_capsule      *pill = info->mti_pill;
+	struct lu_ucred         *uc  = mdt_ucred(info);
         struct mdt_body         *reqbody;
         struct mdt_body         *repbody;
+	struct mdt_selustre	*sel;
         mode_t                   mode;
         int rc, rc2;
         ENTRY;
@@ -1028,6 +1030,12 @@ int mdt_getattr(struct tgt_session_info *tsi)
          */
         mdt_set_capainfo(info, 1, &reqbody->fid1, BYPASS_CAPA);
         rc = mdt_getattr_internal(info, obj, 0);
+
+	sel = req_capsule_client_get(pill, &RMF_SELUSTRE);
+	LASSERT(sel);
+	sel->sid = uc->uc_sid;
+	strcpy(sel->seclabel, uc->uc_seclabel);
+
         if (reqbody->valid & OBD_MD_FLRMTPERM)
                 mdt_exit_ucred(info);
         EXIT;
@@ -1615,6 +1623,7 @@ int mdt_set_info(struct tgt_session_info *tsi)
 int mdt_readpage(struct tgt_session_info *tsi)
 {
 	struct mdt_thread_info	*info = mdt_th_info(tsi->tsi_env);
+	struct lu_ucred		*uc  = mdt_ucred(info);
 	struct mdt_object	*object = mdt_obj(tsi->tsi_corpus);
 	struct lu_rdpg		*rdpg = &info->mti_u.rdpg.mti_rdpg;
 	const struct mdt_body	*reqbody = tsi->tsi_mdt_body;
@@ -1630,6 +1639,8 @@ int mdt_readpage(struct tgt_session_info *tsi)
 	repbody = req_capsule_server_get(tsi->tsi_pill, &RMF_MDT_BODY);
 	if (repbody == NULL || reqbody == NULL)
                 RETURN(err_serious(-EFAULT));
+
+	mdt_unpack_security(uc, tsi->tsi_pill);
 
         /*
          * prepare @rdpg before calling lower layers and transfer itself. Here
@@ -1720,6 +1731,13 @@ static int mdt_reint_internal(struct mdt_thread_info *info,
                 repbody->aclsize = 0;
         }
 
+        if (req_capsule_has_field(pill, &RMF_SELUSTRE, RCL_SERVER)) {
+		struct mdt_selustre *sel;
+		sel = req_capsule_server_get(pill, &RMF_SELUSTRE);
+		sel->sid = mdt_ucred(info)->uc_sid;
+		strcpy(sel->seclabel, mdt_ucred(info)->uc_seclabel);
+        }
+
         OBD_FAIL_TIMEOUT(OBD_FAIL_MDS_REINT_DELAY, 10);
 
         /* for replay no cookkie / lmm need, because client have this already */
@@ -1782,14 +1800,14 @@ int mdt_reint(struct tgt_session_info *tsi)
 	long opc;
 	int  rc;
 	static const struct req_format *reint_fmts[REINT_MAX] = {
-		[REINT_SETATTR]  = &RQF_MDS_REINT_SETATTR,
-		[REINT_CREATE]   = &RQF_MDS_REINT_CREATE,
-		[REINT_LINK]     = &RQF_MDS_REINT_LINK,
-		[REINT_UNLINK]   = &RQF_MDS_REINT_UNLINK,
-		[REINT_RENAME]   = &RQF_MDS_REINT_RENAME,
-		[REINT_OPEN]     = &RQF_MDS_REINT_OPEN,
-		[REINT_SETXATTR] = &RQF_MDS_REINT_SETXATTR,
-		[REINT_RMENTRY]  = &RQF_MDS_REINT_UNLINK
+		[REINT_SETATTR]  = &RQF_MDS_REINT_SETATTR_SE,
+		[REINT_CREATE]   = &RQF_MDS_REINT_CREATE_SE,
+		[REINT_LINK]     = &RQF_MDS_REINT_LINK_SE,
+		[REINT_UNLINK]   = &RQF_MDS_REINT_UNLINK_SE,
+		[REINT_RENAME]   = &RQF_MDS_REINT_RENAME_SE,
+//		[REINT_OPEN]     = &RQF_MDS_REINT_OPEN_SE,
+		[REINT_SETXATTR] = &RQF_MDS_REINT_SETXATTR_SE,
+		[REINT_RMENTRY]  = &RQF_MDS_REINT_UNLINK_SE
 	};
 
 	ENTRY;
@@ -1843,14 +1861,19 @@ static int mdt_object_sync(struct mdt_thread_info *info)
 int mdt_sync(struct tgt_session_info *tsi)
 {
 	struct ptlrpc_request	*req = tgt_ses_req(tsi);
+//	struct mdt_thread_info	*info = mdt_th_info(tsi->tsi_env);
 	struct req_capsule	*pill = tsi->tsi_pill;
-	struct mdt_body		*body;
+	struct mdt_body		*body = req_capsule_server_get(pill,
+							      &RMF_MDT_BODY);
+//	struct lu_ucred		*uc = lu_ucred(info->mti_env);
 	int			 rc;
 
 	ENTRY;
 
 	if (OBD_FAIL_CHECK(OBD_FAIL_MDS_SYNC_PACK))
 		RETURN(err_serious(-ENOMEM));
+
+//	mdt_unpack_security(uc, pill);
 
 	if (fid_seq(&tsi->tsi_mdt_body->fid1) == 0) {
 		rc = mdt_device_sync(tsi->tsi_env, mdt_exp2dev(tsi->tsi_exp));
@@ -1868,8 +1891,6 @@ int mdt_sync(struct tgt_session_info *tsi)
 			rc = mdt_attr_get_complex(info, info->mti_object,
 						  &info->mti_attr);
 			if (rc == 0) {
-				body = req_capsule_server_get(pill,
-							      &RMF_MDT_BODY);
 				fid = mdt_object_fid(info->mti_object);
 				mdt_pack_attr2body(info, body, la, fid);
 			}
@@ -2774,14 +2795,14 @@ static struct mdt_it_flavor {
         long                     it_reint;
 } mdt_it_flavor[] = {
         [MDT_IT_OPEN]     = {
-                .it_fmt   = &RQF_LDLM_INTENT,
+                .it_fmt   = &RQF_LDLM_INTENT_SE,
                 /*.it_flags = HABEO_REFERO,*/
                 .it_flags = 0,
                 .it_act   = mdt_intent_reint,
                 .it_reint = REINT_OPEN
         },
         [MDT_IT_OCREAT]   = {
-                .it_fmt   = &RQF_LDLM_INTENT,
+                .it_fmt   = &RQF_LDLM_INTENT_SE,
 		/*
 		 * OCREAT is not a MUTABOR request as if the file
 		 * already exists.
@@ -2794,13 +2815,13 @@ static struct mdt_it_flavor {
                 .it_reint = REINT_OPEN
         },
         [MDT_IT_CREATE]   = {
-                .it_fmt   = &RQF_LDLM_INTENT,
+                .it_fmt   = &RQF_LDLM_INTENT_SE,
                 .it_flags = MUTABOR,
                 .it_act   = mdt_intent_reint,
                 .it_reint = REINT_CREATE
         },
         [MDT_IT_GETATTR]  = {
-                .it_fmt   = &RQF_LDLM_INTENT_GETATTR,
+                .it_fmt   = &RQF_LDLM_INTENT_GETATTR_SE,
                 .it_flags = HABEO_REFERO,
                 .it_act   = mdt_intent_getattr
         },
@@ -2810,12 +2831,12 @@ static struct mdt_it_flavor {
                 .it_act   = NULL
         },
         [MDT_IT_LOOKUP]   = {
-                .it_fmt   = &RQF_LDLM_INTENT_GETATTR,
+                .it_fmt   = &RQF_LDLM_INTENT_GETATTR_SE,
                 .it_flags = HABEO_REFERO,
                 .it_act   = mdt_intent_getattr
         },
         [MDT_IT_UNLINK]   = {
-                .it_fmt   = &RQF_LDLM_INTENT_UNLINK,
+                .it_fmt   = &RQF_LDLM_INTENT_UNLINK_SE,
                 .it_flags = MUTABOR,
                 .it_act   = NULL,
                 .it_reint = REINT_UNLINK
@@ -3157,7 +3178,7 @@ static int mdt_intent_reint(enum mdt_it_code opcode,
 
         static const struct req_format *intent_fmts[REINT_MAX] = {
                 [REINT_CREATE]  = &RQF_LDLM_INTENT_CREATE,
-                [REINT_OPEN]    = &RQF_LDLM_INTENT_OPEN
+                [REINT_OPEN]    = &RQF_LDLM_INTENT_OPEN_SE
         };
 
         ENTRY;
@@ -3650,15 +3671,64 @@ out:
 	RETURN(rc);
 }
 
+static int mdt_layer_init(char *name, char *type_name,
+			  char *uuid, char *b3, char *dev,
+			  struct lustre_cfg_bufs *bufs)
+{
+	struct lustre_cfg *lcfg;
+	int rc;
+	struct obd_device      *obd;
+
+	ENTRY;
+
+	lustre_cfg_bufs_reset(bufs, name);
+	lustre_cfg_bufs_set_string(bufs, 1, type_name);
+	lustre_cfg_bufs_set_string(bufs, 2, uuid);
+	lustre_cfg_bufs_set_string(bufs, 3, b3);
+
+	lcfg = lustre_cfg_new(LCFG_ATTACH, bufs);
+	if (!lcfg)
+		RETURN(-ENOMEM);
+
+	rc = class_attach(lcfg);
+	if (rc)
+		GOTO(lcfg_cleanup, rc);
+
+	obd = class_name2obd(name);
+	if (!obd) {
+		CERROR("Can not find obd %s (%s in config)\n",
+		       MDD_OBD_NAME, lustre_cfg_string(lcfg, 0));
+		GOTO(class_detach, rc = -EINVAL);
+	}
+
+	lustre_cfg_free(lcfg);
+
+	lustre_cfg_bufs_reset(bufs, name);
+	lustre_cfg_bufs_set_string(bufs, 1, uuid);
+	lustre_cfg_bufs_set_string(bufs, 2, dev);
+	lustre_cfg_bufs_set_string(bufs, 3, b3);
+
+	lcfg = lustre_cfg_new(LCFG_SETUP, bufs);
+
+	rc = class_setup(obd, lcfg);
+
+	GOTO(class_detach, rc);
+class_detach:
+	if (rc)
+		class_detach(obd, lcfg);
+lcfg_cleanup:
+	lustre_cfg_free(lcfg);
+
+	return rc;
+}
+
 static int mdt_stack_init(const struct lu_env *env, struct mdt_device *mdt,
 			  struct lustre_cfg *cfg)
 {
 	char		       *dev = lustre_cfg_string(cfg, 0);
 	int			rc, name_size, uuid_size;
-	char		       *name, *uuid, *p;
+	char		       *name, *name2, *uuid, *p;
 	struct lustre_cfg_bufs *bufs;
-	struct lustre_cfg      *lcfg;
-	struct obd_device      *obd;
 	struct lustre_profile  *lprof;
 	struct lu_site	       *site;
         ENTRY;
@@ -3694,7 +3764,8 @@ static int mdt_stack_init(const struct lu_env *env, struct mdt_device *mdt,
 
 	OBD_ALLOC(name, name_size);
 	OBD_ALLOC(uuid, uuid_size);
-	if (name == NULL || uuid == NULL)
+	OBD_ALLOC(name2, name_size);
+	if (name == NULL || name2 == NULL || uuid == NULL)
 		GOTO(cleanup_mem, rc = -ENOMEM);
 
 	OBD_ALLOC_PTR(bufs);
@@ -3716,43 +3787,22 @@ static int mdt_stack_init(const struct lu_env *env, struct mdt_device *mdt,
 		GOTO(free_bufs, rc = -EINVAL);
 	}
 
-	lustre_cfg_bufs_reset(bufs, name);
-	lustre_cfg_bufs_set_string(bufs, 1, LUSTRE_MDD_NAME);
-	lustre_cfg_bufs_set_string(bufs, 2, uuid);
-	lustre_cfg_bufs_set_string(bufs, 3, lprof->lp_dt);
+	rc = mdt_layer_init(name, LUSTRE_MDD_NAME, uuid,
+			    lprof->lp_dt, dev, bufs);
+	if (rc != 0)
+		GOTO(free_bufs, rc);
 
-	lcfg = lustre_cfg_new(LCFG_ATTACH, bufs);
-	if (!lcfg)
-		GOTO(free_bufs, rc = -ENOMEM);
+	strcpy(name2, name);
+	memcpy(p, "-SEC", 4);
+	snprintf(uuid, MAX_OBD_NAME, "%s_UUID", name);
+	rc = mdt_layer_init(name, LUSTRE_SEC_NAME, uuid, name2, dev, bufs);
+	if (rc != 0)
+		GOTO(class_detach_mdd, rc);
 
-	rc = class_attach(lcfg);
-	if (rc)
-		GOTO(lcfg_cleanup, rc);
-
-	obd = class_name2obd(name);
-	if (!obd) {
-		CERROR("Can not find obd %s (%s in config)\n",
-		       MDD_OBD_NAME, lustre_cfg_string(cfg, 0));
-		GOTO(class_detach, rc = -EINVAL);
-	}
-
-	lustre_cfg_free(lcfg);
-
-	lustre_cfg_bufs_reset(bufs, name);
-	lustre_cfg_bufs_set_string(bufs, 1, uuid);
-	lustre_cfg_bufs_set_string(bufs, 2, dev);
-	lustre_cfg_bufs_set_string(bufs, 3, lprof->lp_dt);
-
-	lcfg = lustre_cfg_new(LCFG_SETUP, bufs);
-
-	rc = class_setup(obd, lcfg);
-	if (rc)
-		GOTO(class_detach, rc);
-
-	/* connect to MDD we just setup */
+	/* connect to SEC we just setup */
 	rc = mdt_connect_to_next(env, mdt, name, &mdt->mdt_child_exp);
 	if (rc)
-		GOTO(class_detach, rc);
+		GOTO(class_detach_sec, rc);
 
 	site = mdt->mdt_child_exp->exp_obd->obd_lu_dev->ld_site;
 	LASSERT(site);
@@ -3766,7 +3816,7 @@ static int mdt_stack_init(const struct lu_env *env, struct mdt_device *mdt,
 	snprintf(name, MAX_OBD_NAME, "%s-osd", dev);
 	rc = mdt_connect_to_next(env, mdt, name, &mdt->mdt_bottom_exp);
 	if (rc)
-		GOTO(class_detach, rc);
+		GOTO(class_detach_sec, rc);
 	mdt->mdt_bottom =
 		lu2dt_dev(mdt->mdt_bottom_exp->exp_obd->obd_lu_dev);
 
@@ -3778,14 +3828,23 @@ static int mdt_stack_init(const struct lu_env *env, struct mdt_device *mdt,
 	lu_dev_add_linkage(site, &mdt->mdt_lu_dev);
 
 	EXIT;
-class_detach:
-	if (rc)
-		class_detach(obd, lcfg);
-lcfg_cleanup:
-	lustre_cfg_free(lcfg);
+class_detach_sec:
+	if (rc != 0) {
+		struct obd_device *obd = class_name2obd(name);
+		if (obd != NULL)
+			class_detach(obd, NULL);
+	}
+class_detach_mdd:
+	if (rc != 0) {
+		struct obd_device *obd = class_name2obd(name2);
+		if (obd != NULL)
+			class_detach(obd, NULL);
+	}
 free_bufs:
 	OBD_FREE_PTR(bufs);
 cleanup_mem:
+	if (name2)
+		OBD_FREE(name2, name_size);
 	if (name)
 		OBD_FREE(name, name_size);
 	if (uuid)
@@ -3967,16 +4026,25 @@ TGT_RPC_HANDLER(MDS_FIRST_OPC,
 		&RQF_OBD_SET_INFO, LUSTRE_MDS_VERSION),
 TGT_MDT_HDL(0,				MDS_GET_INFO,	mdt_get_info),
 TGT_MDT_HDL(0		| HABEO_REFERO,	MDS_GETSTATUS,	mdt_getstatus),
-TGT_MDT_HDL(HABEO_CORPUS,		MDS_GETATTR,	mdt_getattr),
-TGT_MDT_HDL(HABEO_CORPUS| HABEO_REFERO,	MDS_GETATTR_NAME,
-							mdt_getattr_name),
-TGT_MDT_HDL(HABEO_CORPUS,		MDS_GETXATTR,	mdt_tgt_getxattr),
+TGT_RPC_HANDLER(MDS_FIRST_OPC,
+		HABEO_CORPUS,		MDS_GETATTR,	mdt_getattr,
+		&RQF_MDS_GETATTR_SE, LUSTRE_OBD_VERSION),
+TGT_RPC_HANDLER(MDS_FIRST_OPC,
+		HABEO_CORPUS| HABEO_REFERO,	MDS_GETATTR_NAME,	mdt_getattr_name,
+		&RQF_MDS_GETATTR_NAME_SE, LUSTRE_OBD_VERSION),
+TGT_RPC_HANDLER(MDS_FIRST_OPC,
+		HABEO_CORPUS,		MDS_GETXATTR,	mdt_tgt_getxattr,
+		&RQF_MDS_GETXATTR_SE, LUSTRE_OBD_VERSION),
 TGT_MDT_HDL(0		| HABEO_REFERO,	MDS_STATFS,	mdt_statfs),
-TGT_MDT_HDL(0		| MUTABOR,	MDS_REINT,	mdt_reint),
+TGT_RPC_HANDLER(MDS_FIRST_OPC,
+		0		| MUTABOR,	MDS_REINT,	mdt_reint,
+		&RQF_MDS_REINT_SE, LUSTRE_OBD_VERSION),
 TGT_MDT_HDL(HABEO_CORPUS,		MDS_CLOSE,	mdt_close),
 TGT_MDT_HDL(HABEO_CORPUS,		MDS_DONE_WRITING,
 							mdt_done_writing),
-TGT_MDT_HDL(HABEO_CORPUS| HABEO_REFERO,	MDS_READPAGE,	mdt_readpage),
+TGT_RPC_HANDLER(MDS_FIRST_OPC,
+		HABEO_CORPUS| HABEO_REFERO,	MDS_READPAGE,	mdt_readpage,
+		&RQF_MDS_READPAGE_SE, LUSTRE_MDS_VERSION),
 TGT_MDT_HDL(HABEO_CORPUS| HABEO_REFERO,	MDS_SYNC,	mdt_sync),
 TGT_MDT_HDL(HABEO_CORPUS| HABEO_REFERO,	MDS_IS_SUBDIR,	mdt_is_subdir),
 TGT_MDT_HDL(0,				MDS_QUOTACTL,	mdt_quotactl),
@@ -4143,6 +4211,9 @@ static int mdt_init0(const struct lu_env *env, struct mdt_device *m,
         int                        rc;
 	long                       node_id;
         mntopt_t                   mntopts;
+	struct dt_device *dt;
+	struct dt_device_param param;
+
         ENTRY;
 
 	lu_device_init(&m->mdt_lu_dev, ldt);
@@ -4348,6 +4419,10 @@ static int mdt_init0(const struct lu_env *env, struct mdt_device *m,
          * value appropriately. */
         if (ldlm_timeout == LDLM_TIMEOUT_DEFAULT)
                 ldlm_timeout = MDS_LDLM_TIMEOUT_DEFAULT;
+	dt = m->mdt_bottom;
+	dt->dd_ops->dt_conf_get(env, dt, &param);
+	m->mdt_sid = param.ddp_sid;
+	m->mdt_defsid = param.ddp_defsid;
 
         RETURN(0);
 err_procfs:
@@ -4722,6 +4797,12 @@ static int mdt_connect_internal(struct obd_export *exp,
 					 OBD_CONNECT_SOM))) {
 		CWARN("%s: MDS has SOM enabled, but client does not support "
 		      "it\n", mdt_obd_name(mdt));
+		return -EBADE;
+	}
+
+	if (!(data->ocd_connect_flags & OBD_CONNECT_SELUSTRE)) {
+		CWARN("%s: Refusing non-SELinux client connection\n",
+		      mdt_obd_name(mdt));
 		return -EBADE;
 	}
 

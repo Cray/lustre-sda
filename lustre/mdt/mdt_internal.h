@@ -234,6 +234,9 @@ struct mdt_device {
 	struct lu_device	  *mdt_qmt_dev;
 
 	struct coordinator	   mdt_coordinator;
+
+	__u32			   mdt_sid;
+	__u32			   mdt_defsid;
 };
 
 #define MDT_SERVICE_WATCHDOG_FACTOR	(2)
@@ -1119,6 +1122,8 @@ static inline char *mdt_obd_name(struct mdt_device *mdt)
 
 int mds_mod_init(void);
 void mds_mod_exit(void);
+
+void mdt_unpack_security(struct lu_ucred *ucred, struct req_capsule *pill);
 
 #endif /* __KERNEL__ */
 #endif /* _MDT_H */

@@ -614,11 +614,17 @@ static inline int __osd_xattr_set(struct osd_thread_info *info,
 				  const void *buf, int buflen, int fl)
 {
 	struct dentry *dentry = &info->oti_child_dentry;
+	int rc;
 
 	ll_vfs_dq_init(inode);
 	dentry->d_inode = inode;
 	dentry->d_sb = inode->i_sb;
-	return inode->i_op->setxattr(dentry, name, buf, buflen, fl);
+	rc = inode->i_op->setxattr(dentry, name, buf, buflen, fl);
+	if (rc == 0)
+		cfs_security_post_setxattr(dentry, name, buf,
+					   buflen, fl);
+
+	return rc;
 }
 
 #ifdef LPROCFS

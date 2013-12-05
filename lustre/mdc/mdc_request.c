@@ -54,6 +54,7 @@
 #include <lustre_log.h>
 
 #include "mdc_internal.h"
+#include "mdc_security.h"
 
 #define REQUEST_MINOR 244
 
@@ -232,7 +233,8 @@ int mdc_getattr(struct obd_export *exp, struct md_op_data *op_data,
 		RETURN(0);
 	}
         *request = NULL;
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp), &RQF_MDS_GETATTR);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   mdc_select_rq_format(exp, RQF_MDS_GETATTR));
         if (req == NULL)
                 RETURN(-ENOMEM);
 
@@ -272,8 +274,9 @@ int mdc_getattr_name(struct obd_export *exp, struct md_op_data *op_data,
         ENTRY;
 
         *request = NULL;
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_MDS_GETATTR_NAME);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   mdc_select_rq_format(exp,
+							RQF_MDS_GETATTR_NAME));
         if (req == NULL)
                 RETURN(-ENOMEM);
 
@@ -396,6 +399,12 @@ static int mdc_xattr_common(struct obd_export *exp,const struct req_format *fmt,
 		}
 	}
 
+	rc = mdc_req_pack_security(req);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
         if (opcode == MDS_REINT) {
                 struct mdt_rec_setxattr *rec;
 
@@ -442,10 +451,12 @@ static int mdc_xattr_common(struct obd_export *exp,const struct req_format *fmt,
         if (opcode == MDS_REINT)
                 mdc_put_rpc_lock(exp->exp_obd->u.cli.cl_rpc_lock, NULL);
 
-        if (rc)
-                ptlrpc_req_finished(req);
-        else
-                *request = req;
+	if (rc) {
+		ptlrpc_req_finished(req);
+	} else {
+		*request = req;
+		mdc_req_unpack_security(req);
+	}
         RETURN(rc);
 }
 
@@ -454,7 +465,7 @@ int mdc_setxattr(struct obd_export *exp, const struct lu_fid *fid,
                  const char *input, int input_size, int output_size,
                  int flags, __u32 suppgid, struct ptlrpc_request **request)
 {
-        return mdc_xattr_common(exp, &RQF_MDS_REINT_SETXATTR,
+        return mdc_xattr_common(exp, mdc_select_rq_format(exp, RQF_MDS_REINT_SETXATTR),
                                 fid, oc, MDS_REINT, valid, xattr_name,
                                 input, input_size, output_size, flags,
                                 suppgid, request);
@@ -465,7 +476,7 @@ int mdc_getxattr(struct obd_export *exp, const struct lu_fid *fid,
                  const char *input, int input_size, int output_size,
                  int flags, struct ptlrpc_request **request)
 {
-        return mdc_xattr_common(exp, &RQF_MDS_GETXATTR,
+        return mdc_xattr_common(exp, mdc_select_rq_format(exp, RQF_MDS_GETXATTR),
                                 fid, oc, MDS_GETXATTR, valid, xattr_name,
                                 input, input_size, output_size, flags,
                                 -1, request);
@@ -898,6 +909,14 @@ int mdc_close(struct obd_export *exp, struct md_op_data *op_data,
                 RETURN(rc);
         }
 
+	/* XXX: do we really need security in close? can we recover? */
+	rc = mdc_req_pack_security(req);
+	if (rc) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
+
         /* To avoid a livelock (bug 7034), we need to send CLOSE RPCs to a
          * portal whose threads are not taking any DLM locks and are therefore
          * always progressing */
@@ -999,6 +1018,13 @@ int mdc_done_writing(struct obd_export *exp, struct md_op_data *op_data,
                 RETURN(rc);
         }
 
+	/* XXX: do we really need security in close? can we recover? */
+	rc = mdc_req_pack_security(req);
+	if (rc) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
         if (mod != NULL) {
                 LASSERTF(mod->mod_open_req != NULL &&
                          mod->mod_open_req->rq_type != LI_POISON,
@@ -1071,6 +1097,12 @@ int mdc_sendpage(struct obd_export *exp, const struct lu_fid *fid,
                 RETURN(rc);
         }
 
+	rc = mdc_req_pack_security(req);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
         req->rq_request_portal = MDS_READPAGE_PORTAL;
         ptlrpc_at_set_req_timeout(req);
 
@@ -1111,7 +1143,8 @@ int mdc_readpage(struct obd_export *exp, struct md_op_data *op_data,
 	init_waitqueue_head(&waitq);
 
 restart_bulk:
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp), &RQF_MDS_READPAGE);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   mdc_select_rq_format(exp, RQF_MDS_READPAGE));
         if (req == NULL)
                 RETURN(-ENOMEM);
 
@@ -1122,6 +1155,12 @@ restart_bulk:
                 ptlrpc_request_free(req);
                 RETURN(rc);
         }
+
+	rc = mdc_req_pack_security(req);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
 
         req->rq_request_portal = MDS_READPAGE_PORTAL;
         ptlrpc_at_set_req_timeout(req);
@@ -2488,6 +2527,12 @@ static int mdc_setup(struct obd_device *obd, struct lustre_cfg *cfg)
 	if (rc < 0)
 		GOTO(err_rpc_lock, rc);
 
+#ifdef __KERNEL__
+	rc = cfs_sid_cache_init(&cli->cl_sid_cache);
+	if (rc != 0)
+		GOTO(err_cache_fini, rc = -ENOMEM);
+#endif
+
         OBD_ALLOC(cli->cl_close_lock, sizeof (*cli->cl_close_lock));
         if (!cli->cl_close_lock)
                 GOTO(err_ptlrpcd_decref, rc = -ENOMEM);
@@ -2516,6 +2561,10 @@ static int mdc_setup(struct obd_device *obd, struct lustre_cfg *cfg)
 
 err_close_lock:
         OBD_FREE(cli->cl_close_lock, sizeof (*cli->cl_close_lock));
+#ifdef __KERNEL__
+err_cache_fini:
+	cfs_sid_cache_fini(cli->cl_sid_cache);
+#endif
 err_ptlrpcd_decref:
         ptlrpcd_decref();
 err_rpc_lock:
@@ -2578,7 +2627,9 @@ static int mdc_cleanup(struct obd_device *obd)
 
         OBD_FREE(cli->cl_rpc_lock, sizeof (*cli->cl_rpc_lock));
         OBD_FREE(cli->cl_close_lock, sizeof (*cli->cl_close_lock));
-
+#ifdef __KERNEL__
+	cfs_sid_cache_fini(cli->cl_sid_cache);
+#endif
         ptlrpcd_decref();
 
         return client_obd_cleanup(obd);
@@ -2651,7 +2702,8 @@ int mdc_get_remote_perm(struct obd_export *exp, const struct lu_fid *fid,
         LASSERT(client_is_remote(exp));
 
         *request = NULL;
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp), &RQF_MDS_GETATTR);
+        req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   mdc_select_rq_format(exp, RQF_MDS_GETATTR));
         if (req == NULL)
                 RETURN(-ENOMEM);
 
@@ -2713,8 +2765,9 @@ static int mdc_renew_capa(struct obd_export *exp, struct obd_capa *oc,
         struct mdc_renew_capa_args *ra;
         ENTRY;
 
-        req = ptlrpc_request_alloc_pack(class_exp2cliimp(exp), &RQF_MDS_GETATTR,
-                                        LUSTRE_MDS_VERSION, MDS_GETATTR);
+	req = ptlrpc_request_alloc_pack(class_exp2cliimp(exp),
+					mdc_select_rq_format(exp, RQF_MDS_GETATTR),
+					LUSTRE_MDS_VERSION, MDS_GETATTR);
         if (req == NULL)
                 RETURN(-ENOMEM);
 

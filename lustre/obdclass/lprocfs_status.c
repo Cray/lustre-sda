@@ -953,6 +953,7 @@ static const char *obd_connect_names[] = {
 	"flock_deadlock",
 	"disp_stripe",
 	"unknown",
+	"selustre",
 	NULL
 };
 

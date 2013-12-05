@@ -1038,6 +1038,11 @@ static int ofd_setattr_hdl(struct tgt_session_info *tsi)
 		ofd_prepare_fidea(ff, &body->oa);
 	}
 
+	if (body->oa.o_valid & OBD_MD_FLSECURITY) {
+		char *seclabel = req_capsule_server_get(tsi->tsi_pill, &RMF_SELUSTRE);
+		strcpy(fti->fti_attr.la_seclabel, seclabel);
+	}
+
 	/* setting objects attributes (including owner/group) */
 	rc = ofd_attr_set(tsi->tsi_env, fo, &fti->fti_attr, ff);
 	if (rc != 0)
@@ -1560,8 +1565,9 @@ TGT_RPC_HANDLER(OST_FIRST_OPC,
 		&RQF_OBD_SET_INFO, LUSTRE_OST_VERSION),
 TGT_OST_HDL(0,				OST_GET_INFO,	ofd_get_info_hdl),
 TGT_OST_HDL(HABEO_CORPUS| HABEO_REFERO,	OST_GETATTR,	ofd_getattr_hdl),
-TGT_OST_HDL(HABEO_CORPUS| HABEO_REFERO | MUTABOR,
-					OST_SETATTR,	ofd_setattr_hdl),
+TGT_RPC_HANDLER(OST_FIRST_OPC,
+		HABEO_CORPUS| HABEO_REFERO | MUTABOR,	OST_SETATTR,	ofd_setattr_hdl,
+		&RQF_OST_SETATTR_SE, LUSTRE_OST_VERSION),
 TGT_OST_HDL(0		| HABEO_REFERO | MUTABOR,
 					OST_CREATE,	ofd_create_hdl),
 TGT_OST_HDL(0		| HABEO_REFERO | MUTABOR,

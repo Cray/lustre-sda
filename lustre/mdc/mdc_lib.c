@@ -42,6 +42,7 @@
 #include <lustre_net.h>
 #include <lustre/lustre_idl.h>
 #include "mdc_internal.h"
+#include "mdc_security.h"
 
 #ifndef __KERNEL__
 /* some liblustre hackings here */
@@ -125,6 +126,8 @@ void mdc_pack_body(struct ptlrpc_request *req,
                 b->valid |= OBD_MD_FLID;
                 mdc_pack_capa(req, &RMF_CAPA1, oc);
         }
+
+	mdc_req_pack_security(req);
 }
 
 void mdc_readdir_pack(struct ptlrpc_request *req, __u64 pgoff,
@@ -311,7 +314,8 @@ static inline __u64 attr_pack(unsigned int ia_valid) {
         return sa_valid;
 }
 
-static void mdc_setattr_pack_rec(struct mdt_rec_setattr *rec,
+static void mdc_setattr_pack_rec(struct ptlrpc_request *req,
+				 struct mdt_rec_setattr *rec,
 				 struct md_op_data *op_data)
 {
 	rec->sa_opcode  = REINT_SETATTR;
@@ -357,7 +361,7 @@ void mdc_setattr_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 
         CLASSERT(sizeof(struct mdt_rec_reint) ==sizeof(struct mdt_rec_setattr));
         rec = req_capsule_client_get(&req->rq_pill, &RMF_REC_REINT);
-        mdc_setattr_pack_rec(rec, op_data);
+	mdc_setattr_pack_rec(req, rec, op_data);
 
         mdc_pack_capa(req, &RMF_CAPA1, op_data->op_capa1);
 
@@ -399,6 +403,7 @@ void mdc_unlink_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
 					REINT_RMENTRY : REINT_UNLINK;
         rec->ul_fsuid   = op_data->op_fsuid;
         rec->ul_fsgid   = op_data->op_fsgid;
+
         rec->ul_cap     = op_data->op_cap;
         rec->ul_mode    = op_data->op_mode;
         rec->ul_suppgid1= op_data->op_suppgids[0];
@@ -427,6 +432,7 @@ void mdc_link_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
         rec->lk_opcode   = REINT_LINK;
         rec->lk_fsuid    = op_data->op_fsuid;//current->fsuid;
         rec->lk_fsgid    = op_data->op_fsgid;//current->fsgid;
+
         rec->lk_cap      = op_data->op_cap;//current->cap_effective;
         rec->lk_suppgid1 = op_data->op_suppgids[0];
         rec->lk_suppgid2 = op_data->op_suppgids[1];
@@ -455,6 +461,7 @@ void mdc_rename_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
         rec->rn_opcode   = REINT_RENAME;
         rec->rn_fsuid    = op_data->op_fsuid;
         rec->rn_fsgid    = op_data->op_fsgid;
+
         rec->rn_cap      = op_data->op_cap;
         rec->rn_suppgid1 = op_data->op_suppgids[0];
         rec->rn_suppgid2 = op_data->op_suppgids[1];
@@ -534,7 +541,7 @@ void mdc_close_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
         epoch = req_capsule_client_get(&req->rq_pill, &RMF_MDT_EPOCH);
         rec = req_capsule_client_get(&req->rq_pill, &RMF_REC_REINT);
 
-        mdc_setattr_pack_rec(rec, op_data);
+	mdc_setattr_pack_rec(req, rec, op_data);
         mdc_pack_capa(req, &RMF_CAPA1, op_data->op_capa1);
         mdc_ioepoch_pack(epoch, op_data);
 	mdc_hsm_release_pack(req, op_data);

@@ -45,6 +45,7 @@
 
 #include <obd_class.h>
 #include "mdc_internal.h"
+#include "mdc_security.h"
 #include <lustre_fid.h>
 
 /* mdc_setattr does its own semaphore handling */
@@ -127,8 +128,9 @@ int mdc_setattr(struct obd_export *exp, struct md_op_data *op_data,
 	    !OBD_FAIL_CHECK(OBD_FAIL_LDLM_BL_CALLBACK_NET))
 		count = mdc_resource_get_unused(exp, &op_data->op_fid1,
 						&cancels, LCK_EX, bits);
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_MDS_REINT_SETATTR);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   mdc_select_rq_format(exp,
+							RQF_MDS_REINT_SETATTR));
         if (req == NULL) {
                 ldlm_lock_list_put(&cancels, l_bl_ast, count);
                 RETURN(-ENOMEM);
@@ -143,6 +145,12 @@ int mdc_setattr(struct obd_export *exp, struct md_op_data *op_data,
 
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
+	rc = mdc_req_pack_security(req);
+	if (rc < 0) {
 		ptlrpc_request_free(req);
 		RETURN(rc);
 	}
@@ -203,6 +211,10 @@ int mdc_setattr(struct obd_export *exp, struct md_op_data *op_data,
                 rc = 0;
         }
         *request = req;
+
+	if (rc == 0)
+		mdc_req_unpack_security(req);
+
         if (rc && req->rq_commit_cb) {
                 /* Put an extra reference on \var mod on error case. */
                 obd_mod_put(*mod);
@@ -245,12 +257,14 @@ rebuild:
                                                 &cancels, LCK_EX,
                                                 MDS_INODELOCK_UPDATE);
 
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_MDS_REINT_CREATE_RMT_ACL);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   mdc_select_rq_format(exp,
+							RQF_MDS_REINT_CREATE_RMT_ACL));
         if (req == NULL) {
                 ldlm_lock_list_put(&cancels, l_bl_ast, count);
                 RETURN(-ENOMEM);
         }
+
         mdc_set_capa_size(req, &RMF_CAPA1, op_data->op_capa1);
         req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
                              op_data->op_namelen + 1);
@@ -259,6 +273,18 @@ rebuild:
 
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
+	rc = mdc_req_pack_security(req);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
+	rc = mdc_req_pack_cr_security(req);
+	if (rc < 0) {
 		ptlrpc_request_free(req);
 		RETURN(rc);
 	}
@@ -319,6 +345,9 @@ rebuild:
                 }
         }
 
+	if (rc == 0)
+		mdc_req_unpack_security(req);
+
         *request = req;
         RETURN(rc);
 }
@@ -346,18 +375,26 @@ int mdc_unlink(struct obd_export *exp, struct md_op_data *op_data,
 		count += mdc_resource_get_unused(exp, &op_data->op_fid3,
 						 &cancels, LCK_EX,
 						 MDS_INODELOCK_FULL);
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_MDS_REINT_UNLINK);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   mdc_select_rq_format(exp,
+							RQF_MDS_REINT_UNLINK));
         if (req == NULL) {
                 ldlm_lock_list_put(&cancels, l_bl_ast, count);
                 RETURN(-ENOMEM);
         }
+
         mdc_set_capa_size(req, &RMF_CAPA1, op_data->op_capa1);
         req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
                              op_data->op_namelen + 1);
 
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
+	rc = mdc_req_pack_security(req);
+	if (rc < 0) {
 		ptlrpc_request_free(req);
 		RETURN(rc);
 	}
@@ -375,6 +412,10 @@ int mdc_unlink(struct obd_export *exp, struct md_op_data *op_data,
         rc = mdc_reint(req, obd->u.cli.cl_rpc_lock, LUSTRE_IMP_FULL);
         if (rc == -ERESTARTSYS)
                 rc = 0;
+
+	if (rc == 0)
+		mdc_req_unpack_security(req);
+
         RETURN(rc);
 }
 
@@ -398,7 +439,9 @@ int mdc_link(struct obd_export *exp, struct md_op_data *op_data,
                                                  &cancels, LCK_EX,
                                                  MDS_INODELOCK_UPDATE);
 
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp), &RQF_MDS_REINT_LINK);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   mdc_select_rq_format(exp,
+							RQF_MDS_REINT_LINK));
         if (req == NULL) {
                 ldlm_lock_list_put(&cancels, l_bl_ast, count);
                 RETURN(-ENOMEM);
@@ -414,6 +457,12 @@ int mdc_link(struct obd_export *exp, struct md_op_data *op_data,
 		RETURN(rc);
 	}
 
+	rc = mdc_req_pack_security(req);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
         mdc_link_pack(req, op_data);
         ptlrpc_request_set_replen(req);
 
@@ -421,6 +470,9 @@ int mdc_link(struct obd_export *exp, struct md_op_data *op_data,
         *request = req;
         if (rc == -ERESTARTSYS)
                 rc = 0;
+
+	if (rc == 0)
+		mdc_req_unpack_security(req);
 
         RETURN(rc);
 }
@@ -456,8 +508,9 @@ int mdc_rename(struct obd_export *exp, struct md_op_data *op_data,
                                                  &cancels, LCK_EX,
                                                  MDS_INODELOCK_FULL);
 
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_MDS_REINT_RENAME);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   mdc_select_rq_format(exp,
+							RQF_MDS_REINT_RENAME));
         if (req == NULL) {
                 ldlm_lock_list_put(&cancels, l_bl_ast, count);
                 RETURN(-ENOMEM);
@@ -470,6 +523,12 @@ int mdc_rename(struct obd_export *exp, struct md_op_data *op_data,
 
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
+	rc = mdc_req_pack_security(req);
+	if (rc < 0) {
 		ptlrpc_request_free(req);
 		RETURN(rc);
 	}
@@ -489,6 +548,9 @@ int mdc_rename(struct obd_export *exp, struct md_op_data *op_data,
         *request = req;
         if (rc == -ERESTARTSYS)
                 rc = 0;
+
+	if (rc == 0)
+		mdc_req_unpack_security(req);
 
         RETURN(rc);
 }

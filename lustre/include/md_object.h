@@ -81,7 +81,8 @@ enum ma_valid {
         MA_LAY_GEN   = (1 << 7),
         MA_HSM       = (1 << 8),
         MA_SOM       = (1 << 9),
-        MA_PFID      = (1 << 10)
+	MA_PFID      = (1 << 10),
+	MA_SECURITY  = (1 << 11)
 };
 
 typedef enum {
@@ -146,6 +147,9 @@ struct md_attr {
         int                     ma_acl_size;
         int                     ma_cookie_size;
         __u16                   ma_layout_gen;
+#ifdef __KERNEL__
+	char			ma_seclabel[CFS_SID_MAX_LEN];
+#endif
 };
 
 /** Additional parameters for create */
@@ -838,6 +842,23 @@ enum {
 	UCRED_NEW	= 2,
 };
 
+enum {
+	UC_UNCONFINED = 0,
+	UC_CONFINED_PERMISSION,
+	UC_CONFINED_GETATTR,
+	UC_CONFINED_SETATTR,
+	UC_CONFINED_GETXATTR,
+	UC_CONFINED_SETXATTR,
+	UC_CONFINED_READLINK,
+	UC_CONFINED_OPEN,
+	UC_CONFINED_READDIR,
+	UC_CONFINED_FLOCK,
+	UC_CONFINED_CREATE,
+	UC_CONFINED_LINK,
+	UC_CONFINED_UNLINK,
+	UC_CONFINED_RENAME
+};
+
 struct lu_ucred {
 	__u32               uc_valid;
 	__u32               uc_o_uid;
@@ -853,6 +874,16 @@ struct lu_ucred {
 	__u32               uc_umask;
 	struct group_info   *uc_ginfo;
 	struct md_identity *uc_identity;
+#ifdef __KERNEL__
+	__u32		    uc_sid;
+	__u32		    uc_csid; /* creation sid */
+	__u8		    uc_seclabel[CFS_SID_MAX_LEN];
+	__u8		    uc_cseclabel[CFS_SID_MAX_LEN];
+	__u32		    uc_sbsid;
+	__u32		    uc_defsid;
+	/* The client operation that is the object of the policy */
+	int		    uc_confined_op;
+#endif
 };
 
 struct lu_ucred *lu_ucred(const struct lu_env *env);

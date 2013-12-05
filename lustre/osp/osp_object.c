@@ -105,6 +105,9 @@ static int osp_declare_attr_set(const struct lu_env *env, struct dt_object *dt,
 		RETURN(0);
 	}
 
+	if (attr->la_valid & LA_SECURITY)
+		rc = osp_security_change(env, dt, attr);
+
 	if (!(attr->la_valid & (LA_UID | LA_GID)))
 		RETURN(0);
 

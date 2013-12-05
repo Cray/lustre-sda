@@ -53,6 +53,8 @@
 #include <lustre_disk.h>
 #include <lustre_param.h>
 
+#include <linux/selinux.h>
+
 static int (*client_fill_super)(struct super_block *sb,
 				struct vfsmount *mnt);
 

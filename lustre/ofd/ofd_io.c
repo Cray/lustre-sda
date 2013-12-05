@@ -508,7 +508,7 @@ int ofd_commitrw(const struct lu_env *env, int cmd, struct obd_export *exp,
 		 struct obdo *oa, int objcount, struct obd_ioobj *obj,
 		 struct niobuf_remote *rnb, int npages,
 		 struct niobuf_local *lnb, struct obd_trans_info *oti,
-		 int old_rc)
+		 const char *seclabel, int old_rc)
 {
 	struct ofd_thread_info	*info = ofd_info(env);
 	struct ofd_mod_data	*fmd;
@@ -541,6 +541,10 @@ int ofd_commitrw(const struct lu_env *env, int cmd, struct obd_export *exp,
 		if (oa->o_valid & OBD_MD_FLFID) {
 			ff = &info->fti_mds_fid;
 			ofd_prepare_fidea(ff, oa);
+		}
+
+		if (oa->o_valid & OBD_MD_FLSECURITY) {
+			strcpy(info->fti_attr.la_seclabel, seclabel);
 		}
 
 		rc = ofd_commitrw_write(env, ofd, &info->fti_fid,

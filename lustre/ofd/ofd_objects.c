@@ -400,6 +400,17 @@ int ofd_attr_set(const struct lu_env *env, struct ofd_object *fo,
 	if (rc)
 		GOTO(stop, rc);
 
+	if (la->la_valid & LA_SECURITY) {
+		info->fti_buf.lb_buf = la->la_seclabel;
+		info->fti_buf.lb_len = strlen(la->la_seclabel) + 1;
+		rc = dt_declare_xattr_set(env, ofd_object_child(fo),
+					  &info->fti_buf,
+					  XATTR_NAME_SECURITY_SELINUX, 0,
+					  th);
+		if (rc)
+			GOTO(stop, rc);
+	}
+
 	if (ff_needed) {
 		info->fti_buf.lb_buf = ff;
 		info->fti_buf.lb_len = sizeof(*ff);

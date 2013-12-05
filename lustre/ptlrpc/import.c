@@ -612,7 +612,8 @@ int ptlrpc_connect_import(struct obd_import *imp)
                          obd2cli_tgt(imp->imp_obd),
                          obd->obd_uuid.uuid,
                          (char *)&imp->imp_dlm_handle,
-                         (char *)&imp->imp_connect_data };
+                         (char *)&imp->imp_connect_data,
+                         "selinux" };
         struct ptlrpc_connect_async_args *aa;
         int rc;
         ENTRY;

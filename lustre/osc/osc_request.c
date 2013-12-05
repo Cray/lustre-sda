@@ -306,16 +306,19 @@ static int osc_getattr(const struct lu_env *env, struct obd_export *exp,
 }
 
 static int osc_setattr(const struct lu_env *env, struct obd_export *exp,
-                       struct obd_info *oinfo, struct obd_trans_info *oti)
+                       struct obd_info *oinfo, const char *seclabel,
+                       struct obd_trans_info *oti)
 {
         struct ptlrpc_request *req;
         struct ost_body       *body;
         int                    rc;
+	char			*label;
         ENTRY;
 
         LASSERT(oinfo->oi_oa->o_valid & OBD_MD_FLGROUP);
 
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp), &RQF_OST_SETATTR);
+        req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   osc_select_rq_format(exp, RQF_OST_SETATTR));
         if (req == NULL)
                 RETURN(-ENOMEM);
 
@@ -327,6 +330,10 @@ static int osc_setattr(const struct lu_env *env, struct obd_export *exp,
         }
 
         osc_pack_req_body(req, oinfo);
+	if (seclabel != NULL && req_capsule_has_field(&req->rq_pill, &RMF_SELUSTRE, RCL_CLIENT)) {
+		label = req_capsule_client_get(&req->rq_pill, &RMF_SELUSTRE);
+		strcpy(label, seclabel);
+	}
 
         ptlrpc_request_set_replen(req);
 
@@ -378,7 +385,8 @@ int osc_setattr_async_base(struct obd_export *exp, struct obd_info *oinfo,
         int                      rc;
         ENTRY;
 
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp), &RQF_OST_SETATTR);
+        req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   osc_select_rq_format(exp, RQF_OST_SETATTR));
         if (req == NULL)
                 RETURN(-ENOMEM);
 
@@ -1251,7 +1259,7 @@ static int osc_brw_prep_request(int cmd, struct client_obd *cli,struct obdo *oa,
                                 struct brw_page **pga,
                                 struct ptlrpc_request **reqp,
                                 struct obd_capa *ocapa, int reserve,
-                                int resend)
+                                int resend, char *seclabel)
 {
         struct ptlrpc_request   *req;
         struct ptlrpc_bulk_desc *desc;
@@ -1262,6 +1270,7 @@ static int osc_brw_prep_request(int cmd, struct client_obd *cli,struct obdo *oa,
         struct osc_brw_async_args *aa;
         struct req_capsule      *pill;
         struct brw_page *pg_prev;
+        char *label;
 
         ENTRY;
         if (OBD_FAIL_CHECK(OBD_FAIL_OSC_BRW_PREP_REQ))
@@ -1273,7 +1282,7 @@ static int osc_brw_prep_request(int cmd, struct client_obd *cli,struct obdo *oa,
                 opc = OST_WRITE;
                 req = ptlrpc_request_alloc_pool(cli->cl_import,
                                                 cli->cl_import->imp_rq_pool,
-                                                &RQF_OST_BRW_WRITE);
+                                                osc_select_rq_format(cli->cl_import->imp_obd->obd_self_export, RQF_OST_BRW_WRITE));
         } else {
                 opc = OST_READ;
                 req = ptlrpc_request_alloc(cli->cl_import, &RQF_OST_BRW_READ);
@@ -1317,6 +1326,19 @@ static int osc_brw_prep_request(int cmd, struct client_obd *cli,struct obdo *oa,
         ioobj = req_capsule_client_get(pill, &RMF_OBD_IOOBJ);
         niobuf = req_capsule_client_get(pill, &RMF_NIOBUF_REMOTE);
         LASSERT(body != NULL && ioobj != NULL && niobuf != NULL);
+
+	if (oa->o_valid & OBD_MD_FLSECURITY && opc == OST_WRITE &&
+	    seclabel != NULL &&
+	    req_capsule_has_field(pill, &RMF_SELUSTRE, RCL_CLIENT)) {
+		/* XXX: It looks like OSC generates attr updates
+		 *      in the read path as well, but they are
+		 *      not really applied on the OST side.
+		 */
+		label = req_capsule_client_get(pill, &RMF_SELUSTRE);
+		strcpy(label, seclabel);
+	} else {
+		oa->o_valid &= ~OBD_MD_FLSECURITY;
+	}
 
 	lustre_set_wire_obdo(&req->rq_import->imp_connect_data, &body->oa, oa);
 
@@ -1674,7 +1696,7 @@ static int osc_brw_internal(int cmd, struct obd_export *exp, struct obdo *oa,
 
 restart_bulk:
         rc = osc_brw_prep_request(cmd, &exp->exp_obd->u.cli, oa, lsm,
-                                  page_count, pga, &req, ocapa, 0, resends);
+                                  page_count, pga, &req, ocapa, 0, resends, NULL);
         if (rc != 0)
                 return (rc);
 
@@ -1732,17 +1754,21 @@ static int osc_brw_redo_request(struct ptlrpc_request *request,
         struct ptlrpc_request *new_req;
         struct osc_brw_async_args *new_aa;
         struct osc_async_page *oap;
+	char	*seclabel = NULL;
         ENTRY;
 
 	DEBUG_REQ(rc == -EINPROGRESS ? D_RPCTRACE : D_ERROR, request,
 		  "redo for recoverable error %d", rc);
+
+	if (aa->aa_oa->o_valid & OBD_MD_FLSECURITY)
+		seclabel = req_capsule_client_get(&request->rq_pill, &RMF_SELUSTRE);
 
         rc = osc_brw_prep_request(lustre_msg_get_opc(request->rq_reqmsg) ==
                                         OST_WRITE ? OBD_BRW_WRITE :OBD_BRW_READ,
                                   aa->aa_cli, aa->aa_oa,
                                   NULL /* lsm unused by osc currently */,
                                   aa->aa_page_count, aa->aa_ppga,
-                                  &new_req, aa->aa_ocapa, 0, 1);
+                                  &new_req, aa->aa_ocapa, 0, 1, seclabel);
         if (rc)
                 RETURN(rc);
 
@@ -2193,7 +2219,12 @@ int osc_build_rpc(const struct lu_env *env, struct client_obd *cli,
 
 	sort_brw_pages(pga, page_count);
 	rc = osc_brw_prep_request(cmd, cli, oa, NULL, page_count,
-			pga, &req, crattr->cra_capa, 1, 0);
+			pga, &req, crattr->cra_capa, 1, 0,
+#ifdef __KERNEL__
+			crattr->cra_seclabel);
+#else
+			NULL);
+#endif
 	if (rc != 0) {
 		CERROR("prep_req failed: %d\n", rc);
 		GOTO(out, rc);
@@ -2211,7 +2242,8 @@ int osc_build_rpc(const struct lu_env *env, struct client_obd *cli,
 	 * the OST will not use BRW timestamps.  Sadly, there is no obvious
 	 * way to do this in a single call.  bug 10150 */
 	cl_req_attr_set(env, clerq, crattr,
-			OBD_MD_FLMTIME|OBD_MD_FLCTIME|OBD_MD_FLATIME);
+			OBD_MD_FLMTIME|OBD_MD_FLCTIME|OBD_MD_FLATIME|
+			OBD_MD_FLSECURITY);
 
 	lustre_msg_set_jobid(req->rq_reqmsg, crattr->cra_jobid);
 

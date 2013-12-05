@@ -1610,7 +1610,7 @@ out_commitrw:
 	/* Must commit after prep above in all cases */
 	rc = obd_commitrw(tsi->tsi_env, OBD_BRW_READ, exp,
 			  &repbody->oa, 1, ioo, remote_nb, npages, local_nb,
-			  NULL, rc);
+			  NULL, NULL, rc);
 	if (rc == 0)
 		tgt_drop_id(exp, &repbody->oa);
 out_lock:
@@ -1714,6 +1714,7 @@ int tgt_brw_write(struct tgt_session_info *tsi)
 	cksum_type_t		 cksum_type = OBD_CKSUM_CRC32;
 	bool			 no_reply = false, mmap;
 	struct tgt_thread_big_cache *tbc = req->rq_svc_thread->t_data;
+	char *seclabel;
 
 	ENTRY;
 
@@ -1809,6 +1810,8 @@ int tgt_brw_write(struct tgt_session_info *tsi)
 		body->oa.o_valid &= ~OBD_MD_FLGRANT;
 	}
 
+	seclabel = req_capsule_client_get(&req->rq_pill, &RMF_SELUSTRE);
+
 	repbody = req_capsule_server_get(&req->rq_pill, &RMF_OST_BODY);
 	if (repbody == NULL)
 		GOTO(out_lock, rc = -ENOMEM);
@@ -1872,7 +1875,7 @@ skip_transfer:
 	/* Must commit after prep above in all cases */
 	rc = obd_commitrw(tsi->tsi_env, OBD_BRW_WRITE, exp, &repbody->oa,
 			  objcount, ioo, remote_nb, npages, local_nb, NULL,
-			  rc);
+			  seclabel, rc);
 	if (rc == -ENOTCONN)
 		/* quota acquire process has been given up because
 		 * either the client has been evicted or the client

@@ -89,6 +89,9 @@ struct dt_device_param {
         /* per-fragment grant overhead to be used by client for grant
          * calculation */
         int                ddp_grant_frag;
+
+	__u32		   ddp_sid;
+	__u32		   ddp_defsid;
 };
 
 /**

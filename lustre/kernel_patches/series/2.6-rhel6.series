@@ -6,3 +6,4 @@ export-2.6.32-vanilla.patch
 bh_lru_size_config.patch
 quota-replace-dqptr-sem.patch
 quota-avoid-dqget-calls.patch
+selinux-2.6.32-rhel6.patch

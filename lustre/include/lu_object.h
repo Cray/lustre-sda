@@ -427,6 +427,9 @@ struct lu_attr {
         __u32          la_blksize;
         /** real device */
         __u32          la_rdev;
+#ifdef __KERNEL__
+	__u8		la_seclabel[CFS_SID_MAX_LEN];
+#endif
         /**
          * valid bits
          *
@@ -452,6 +455,7 @@ enum la_valid {
         LA_BLKSIZE = 1 << 12,
         LA_KILL_SUID = 1 << 13,
         LA_KILL_SGID = 1 << 14,
+	LA_SECURITY  = 1 << 15,
 };
 
 /**
@@ -1131,7 +1135,6 @@ struct lu_context_key {
         {                                                         \
                 type *value;                                      \
                                                                   \
-		CLASSERT(PAGE_CACHE_SIZE >= sizeof (*value));       \
                                                                   \
                 OBD_ALLOC_PTR(value);                             \
                 if (value == NULL)                                \

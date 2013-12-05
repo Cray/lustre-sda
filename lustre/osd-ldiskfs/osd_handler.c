@@ -1177,8 +1177,18 @@ static void osd_conf_get(const struct lu_env *env,
                 param->ddp_max_ea_size = LDISKFS_XATTR_MAX_LARGE_EA_SIZE;
         else
 #endif
-                param->ddp_max_ea_size = sb->s_blocksize;
+	param->ddp_max_ea_size = sb->s_blocksize;
 
+	if (sb->s_security) {
+		/* fscontext= */ /* defcontext= */
+		cfs_get_sb_security(sb, &param->ddp_sid, &param->ddp_defsid);
+		LCONSOLE_INFO("Initialized security fssid: %u, defsid %u\n",
+			      param->ddp_sid, param->ddp_defsid);
+	} else {
+		param->ddp_sid = 0;
+		param->ddp_defsid = 0;
+		CERROR("security is not initialized!\n");
+	}
 }
 
 /*
@@ -1768,6 +1778,10 @@ static int osd_quota_transfer(struct inode *inode, const struct lu_attr *attr)
 	return 0;
 }
 
+static int osd_xattr_set(const struct lu_env *env, struct dt_object *dt,
+                         const struct lu_buf *buf, const char *name, int fl,
+                         struct thandle *handle, struct lustre_capa *capa);
+
 static int osd_attr_set(const struct lu_env *env,
                         struct dt_object *dt,
                         const struct lu_attr *attr,
@@ -1822,6 +1836,15 @@ static int osd_attr_set(const struct lu_env *env,
 	spin_lock(&obj->oo_guard);
 	rc = osd_inode_setattr(env, inode, attr);
 	spin_unlock(&obj->oo_guard);
+
+	if (attr->la_valid & LA_SECURITY) {
+		struct lu_buf buf;
+		int lrc;
+		buf.lb_buf = (void *)attr->la_seclabel;
+		buf.lb_len = strlen(attr->la_seclabel) + 1;
+		lrc = osd_xattr_set(env, dt, &buf, XATTR_NAME_SECURITY_SELINUX,
+				    0, handle, capa);
+	}
 
         if (!rc)
 		ll_dirty_inode(inode, I_DIRTY_DATASYNC);

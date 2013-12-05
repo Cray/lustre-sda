@@ -5,7 +5,7 @@ libcfs-linux-objs += linux-prim.o linux-mem.o linux-cpu.o
 libcfs-linux-objs += linux-fs.o linux-sync.o linux-tcpip.o
 libcfs-linux-objs += linux-proc.o linux-curproc.o
 libcfs-linux-objs += linux-utils.o linux-module.o
-libcfs-linux-objs += linux-crypto.o linux-crypto-adler.o
+libcfs-linux-objs += linux-crypto.o linux-crypto-adler.o linux-security.o
 @HAVE_CRC32_TRUE@libcfs-linux-objs += linux-crypto-crc32.o
 @HAVE_PCLMULQDQ_TRUE@@NEED_PCLMULQDQ_CRC32_TRUE@libcfs-linux-objs += linux-crypto-crc32pclmul.o crc32-pclmul_asm.o
 @HAVE_PCLMULQDQ_TRUE@@NEED_PCLMULQDQ_CRC32C_TRUE@libcfs-linux-objs += linux-crypto-crc32c-pclmul.o crc32c-pcl-intel-asm_64.o
@@ -21,6 +21,6 @@ libcfs-all-objs := debug.o fail.o nidstrings.o module.o tracefile.o \
 
 libcfs-objs := $(libcfs-linux-objs) $(libcfs-all-objs)
 
-EXTRA_PRE_CFLAGS := -I@LUSTRE@/../libcfs/libcfs
+EXTRA_PRE_CFLAGS := -I@LUSTRE@/../libcfs/libcfs @EXTRA_SELINUX_KCFLAGS@
 
 @INCLUDE_RULES@

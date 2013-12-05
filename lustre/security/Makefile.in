@@ -1,0 +1,5 @@
+MODULES := sec
+sec-objs := sec_device.o sec_object.o 
+@SPLIT_TRUE@sec-objs += sec_split.o 
+
+@INCLUDE_RULES@

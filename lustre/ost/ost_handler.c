@@ -457,7 +457,7 @@ static int ost_io_hpreq_handler(struct ptlrpc_request *req)
                                                 &RQF_OST_BRW_READ);
                         else
                                 req_capsule_set(&req->rq_pill,
-                                                &RQF_OST_BRW_WRITE);
+                                                &RQF_OST_BRW_WRITE_SE);
 
                         body = req_capsule_client_get(&req->rq_pill,
                                                       &RMF_OST_BODY);

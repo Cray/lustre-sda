@@ -294,8 +294,15 @@ int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
 
 		if (inode->i_sb->s_root &&
 		    inode != inode->i_sb->s_root->d_inode &&
-		    (bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM)))
+		    (bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM))) {
+			/* As we are also wanting to get rid of cached
+			 * i_security, we need to prevent the case that this
+			 * inode stays in hash and later gets reused
+			 * with some outdated security context. */
+			cfs_invalidate_inode_sid(inode);
+
 			ll_invalidate_aliases(inode);
+		}
                 iput(inode);
                 break;
         }
@@ -710,7 +717,12 @@ struct lookup_intent *ll_convert_intent(struct open_intent *oit,
 		it->it_create_mode = (oit->create_mode & S_IALLUGO) | S_IFREG;
 		it->it_flags = ll_namei_to_lookup_intent_flag(oit->flags);
 	} else {
-		it->it_op = IT_GETATTR;
+		/* it->it_op = IT_GETATTR;*/
+		/* XXX: SDA: On the server-side we need to distinguish between
+		 *	insecure lookups and secure getattrs, so we need
+		 *	IT_LOOKUP here.
+		 */
+		it->it_op = IT_LOOKUP;
 	}
 
 	return it;

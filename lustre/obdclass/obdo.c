@@ -60,12 +60,12 @@ EXPORT_SYMBOL(obdo_set_parent_fid);
 
 /* WARNING: the file systems must take care not to tinker with
    attributes they don't manage (such as blocks). */
-void obdo_from_inode(struct obdo *dst, struct inode *src, obd_flag valid)
+void obdo_from_inode(struct obdo *dst, struct inode *src, obd_valid valid)
 {
-        obd_flag newvalid = 0;
+	obd_valid newvalid = 0;
 
         if (valid & (OBD_MD_FLCTIME | OBD_MD_FLMTIME))
-                CDEBUG(D_INODE, "valid %x, new time %lu/%lu\n",
+		CDEBUG(D_INODE, "valid "LPX64", new time %lu/%lu\n",
                        valid, LTIME_S(src->i_mtime),
                        LTIME_S(src->i_ctime));
 

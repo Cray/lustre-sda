@@ -444,6 +444,9 @@ struct client_obd {
 	void			*cl_lru_work;
 	/* hash tables for osc_quota_info */
 	cfs_hash_t		*cl_quota_hash[MAXQUOTAS];
+#ifdef __KERNEL__
+	cfs_sid_cache_t		*cl_sid_cache;
+#endif
 };
 #define obd2cli_tgt(obd) ((char *)(obd)->u.cli.cl_target_uuid.uuid)
 
@@ -633,6 +636,7 @@ struct niobuf_local {
 
 #define LUSTRE_FLD_NAME         "fld"
 #define LUSTRE_SEQ_NAME         "seq"
+#define LUSTRE_SEC_NAME		"sec"
 
 #define LUSTRE_MDD_NAME         "mdd"
 #define LUSTRE_OSD_LDISKFS_NAME	"osd-ldiskfs"
@@ -1220,7 +1224,8 @@ struct obd_ops {
                          struct obd_trans_info *oti, struct obd_export *md_exp,
                          void *capa);
         int (*o_setattr)(const struct lu_env *, struct obd_export *exp,
-                         struct obd_info *oinfo, struct obd_trans_info *oti);
+                         struct obd_info *oinfo, const char *seclabel,
+                         struct obd_trans_info *oti);
         int (*o_setattr_async)(struct obd_export *exp, struct obd_info *oinfo,
                                struct obd_trans_info *oti,
                                struct ptlrpc_request_set *rqset);
@@ -1260,7 +1265,8 @@ struct obd_ops {
                           int objcount, struct obd_ioobj *obj,
                           struct niobuf_remote *remote, int pages,
                           struct niobuf_local *local,
-                          struct obd_trans_info *oti, int rc);
+                          struct obd_trans_info *oti, const char *seclabel,
+                          int rc);
         int (*o_enqueue)(struct obd_export *, struct obd_info *oinfo,
                          struct ldlm_enqueue_info *einfo,
                          struct ptlrpc_request_set *rqset);
@@ -1543,7 +1549,7 @@ static inline struct md_open_data *obd_mod_alloc(void)
 	}                                                         \
 })
 
-void obdo_from_inode(struct obdo *dst, struct inode *src, obd_flag valid);
+void obdo_from_inode(struct obdo *dst, struct inode *src, obd_valid valid);
 void obdo_set_parent_fid(struct obdo *dst, const struct lu_fid *parent);
 
 /* return 1 if client should be resend request */

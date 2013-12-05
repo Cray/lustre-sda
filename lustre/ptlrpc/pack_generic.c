@@ -1963,6 +1963,13 @@ void lustre_swab_mgs_config_res(struct mgs_config_res *body)
 }
 EXPORT_SYMBOL(lustre_swab_mgs_config_res);
 
+void lustre_swab_mdt_selustre(struct mdt_selustre *sel)
+{
+	__swab32s(&sel->sid);
+	__swab32s(&sel->csid);
+}
+EXPORT_SYMBOL(lustre_swab_mdt_selustre);
+
 static void lustre_swab_obd_dqinfo (struct obd_dqinfo *i)
 {
         __swab64s (&i->dqi_bgrace);

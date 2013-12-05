@@ -56,6 +56,7 @@
 #include <libcfs/linux/linux-tcpip.h>
 #include <libcfs/linux/linux-bitops.h>
 #include <libcfs/linux/kp30.h>
+#include <libcfs/linux/linux-security.h>
 
 #ifdef HAVE_ASM_TYPES_H
 #include <asm/types.h>
