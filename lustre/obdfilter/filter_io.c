@@ -1010,11 +1010,11 @@ int filter_commitrw(int cmd, struct obd_export *exp, struct obdo *oa,
                     int objcount, struct obd_ioobj *obj,
                     struct niobuf_remote *nb, int npages,
                     struct niobuf_local *res, struct obd_trans_info *oti,
-                    int rc)
+                    const char *seclabel, int rc)
 {
         if (cmd == OBD_BRW_WRITE)
                 return filter_commitrw_write(exp, oa, objcount, obj,
-                                             nb, npages, res, oti, rc);
+                                             nb, npages, res, oti, seclabel, rc);
         if (cmd == OBD_BRW_READ)
                 return filter_commitrw_read(exp, oa, objcount, obj,
                                             nb, npages, res, oti, rc);

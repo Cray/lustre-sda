@@ -803,7 +803,8 @@ int ll_process_config(struct lustre_cfg *lcfg);
 struct md_op_data *ll_prep_md_op_data(struct md_op_data *op_data,
                                       struct inode *i1, struct inode *i2,
                                       const char *name, int namelen,
-                                      int mode, __u32 opc, void *data);
+                                      int mode, __u32 opc, void *data,
+                                      const char *slabel, int sllen);
 void ll_finish_md_op_data(struct md_op_data *op_data);
 int ll_get_obd_name(struct inode *inode, unsigned int cmd, unsigned long arg);
 
@@ -1169,7 +1170,8 @@ void et_fini(struct eacl_table *et);
 /* statahead.c */
 
 #define LL_SA_RPC_MIN   2
-#define LL_SA_RPC_DEF   32
+/* XXX: MRP-1802 */
+#define LL_SA_RPC_DEF   0
 #define LL_SA_RPC_MAX   8192
 
 /* per inode struct, for dir only */
@@ -1439,5 +1441,15 @@ struct if_quotactl_18 {
 #else
 #warning "remove old LL_IOC_QUOTACTL_18 compatibility code"
 #endif /* LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2,7,50,0) */
+
+struct ll_inode_security_struct {
+	struct inode *inode;	/* back pointer to inode object */
+	struct list_head list;	/* list of inode_security_struct */
+	u32 task_sid;		/* SID of creating task */
+	u32 sid;		/* SID of this object */
+	u16 sclass;		/* security class of this object */
+	unsigned char initialized;	/* initialization flag */
+	struct mutex lock;
+};
 
 #endif /* LLITE_INTERNAL_H */

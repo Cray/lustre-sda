@@ -1129,6 +1129,8 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
 #define OBD_CONNECT_LIGHTWEIGHT 0x1000000000000ULL/* lightweight connection */
 #define OBD_CONNECT_SHORTIO   0x2000000000000ULL  /* short io */
 
+#define OBD_CONNECT_SELUSTRE  0x40000000000000ULL
+
 /* XXX README XXX:
  * Please DO NOT add flag values here before first ensuring that this same
  * flag value is not in use on some other branch.  Please clear any such
@@ -1165,7 +1167,7 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
                                 OBD_CONNECT_FID | LRU_RESIZE_CONNECT_FLAG | \
                                 OBD_CONNECT_VBR | OBD_CONNECT_LOV_V3 | \
                                 OBD_CONNECT_SOM | OBD_CONNECT_FULL20 | \
-                                OBD_CONNECT_64BITHASH)
+                                OBD_CONNECT_64BITHASH | OBD_CONNECT_SELUSTRE)
 #define OST_CONNECT_SUPPORTED  (OBD_CONNECT_SRVLOCK | OBD_CONNECT_GRANT | \
                                 OBD_CONNECT_REQPORTAL | OBD_CONNECT_VERSION | \
                                 OBD_CONNECT_TRUNCLOCK | OBD_CONNECT_INDEX | \
@@ -1178,7 +1180,7 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
                                 OBD_CONNECT_MDS | OBD_CONNECT_SKIP_ORPHAN | \
                                 OBD_CONNECT_GRANT_SHRINK | OBD_CONNECT_FULL20 | \
                                 OBD_CONNECT_64BITHASH | OBD_CONNECT_MAXBYTES | \
-                                OBD_CONNECT_MAX_EASIZE)
+                                OBD_CONNECT_MAX_EASIZE | OBD_CONNECT_SELUSTRE)
 #define ECHO_CONNECT_SUPPORTED (0)
 #define MGS_CONNECT_SUPPORTED  (OBD_CONNECT_VERSION | OBD_CONNECT_AT | \
 				OBD_CONNECT_FULL20 | OBD_CONNECT_IMP_RECOV | \
@@ -1374,8 +1376,9 @@ struct lov_mds_md_v1 {            /* LOV EA mds/wire data (little-endian) */
 #define MAX_MD_SIZE (sizeof(struct lov_mds_md) + 4 * sizeof(struct lov_ost_data))
 #define MIN_MD_SIZE (sizeof(struct lov_mds_md) + 1 * sizeof(struct lov_ost_data))
 
-#define XATTR_NAME_ACL_ACCESS   "system.posix_acl_access"
-#define XATTR_NAME_ACL_DEFAULT  "system.posix_acl_default"
+#define XATTR_NAME_ACL_ACCESS		"system.posix_acl_access"
+#define XATTR_NAME_ACL_DEFAULT		"system.posix_acl_default"
+#define XATTR_NAME_SECURITY_SELINUX	"security.selinux"
 #define XATTR_USER_PREFIX       "user."
 #define XATTR_TRUSTED_PREFIX    "trusted."
 #define XATTR_SECURITY_PREFIX   "security."
@@ -1455,7 +1458,8 @@ struct lov_mds_md_v3 {            /* LOV EA mds/wire data (little-endian) */
 #define OBD_MD_FLRMTRSETFACL    (0x0004000000000000ULL) /* lfs rsetfacl case */
 #define OBD_MD_FLRMTRGETFACL    (0x0008000000000000ULL) /* lfs rgetfacl case */
 
-#define OBD_MD_FLDATAVERSION (0x0010000000000000ULL) /* iversion sum */
+#define OBD_MD_FLDATAVERSION    (0x0010000000000000ULL) /* iversion sum */
+#define OBD_MD_FLSECURITY       (0x0040000000000000ULL) /* has security */
 
 #define OBD_MD_FLGETATTR (OBD_MD_FLID    | OBD_MD_FLATIME | OBD_MD_FLMTIME | \
                           OBD_MD_FLCTIME | OBD_MD_FLSIZE  | OBD_MD_FLBLKSZ | \
@@ -3108,6 +3112,7 @@ struct getinfo_fid2path {
 
 void lustre_swab_fid2path (struct getinfo_fid2path *gf);
 
+#define CFS_SID_MAX_LEN 128
 
 #endif
 /** @} lustreidl */

@@ -858,16 +858,16 @@ static inline int obd_getattr_async(struct obd_export *exp,
 }
 
 static inline int obd_setattr(struct obd_export *exp, struct obd_info *oinfo,
-                              struct obd_trans_info *oti)
+			      const char *seclabel, struct obd_trans_info *oti)
 {
-        int rc;
-        ENTRY;
+	int rc;
+	ENTRY;
 
-        EXP_CHECK_DT_OP(exp, setattr);
-        EXP_COUNTER_INCREMENT(exp, setattr);
+	EXP_CHECK_DT_OP(exp, setattr);
+	EXP_COUNTER_INCREMENT(exp, setattr);
 
-        rc = OBP(exp->exp_obd, setattr)(exp, oinfo, oti);
-        RETURN(rc);
+	rc = OBP(exp->exp_obd, setattr)(exp, oinfo, seclabel, oti);
+	RETURN(rc);
 }
 
 /* This performs all the requests set init/wait/destroy actions. */
@@ -1407,7 +1407,8 @@ static inline int obd_commitrw(int cmd, struct obd_export *exp, struct obdo *oa,
                                int objcount, struct obd_ioobj *obj,
                                struct niobuf_remote *rnb, int pages,
                                struct niobuf_local *local,
-                               struct obd_trans_info *oti, int rc)
+                               struct obd_trans_info *oti, const char *seclabel,
+                               int rc)
 {
         ENTRY;
 
@@ -1415,7 +1416,7 @@ static inline int obd_commitrw(int cmd, struct obd_export *exp, struct obdo *oa,
         EXP_COUNTER_INCREMENT(exp, commitrw);
 
         rc = OBP(exp->exp_obd, commitrw)(cmd, exp, oa, objcount, obj,
-                                         rnb, pages, local, oti, rc);
+                                         rnb, pages, local, oti, seclabel, rc);
         RETURN(rc);
 }
 

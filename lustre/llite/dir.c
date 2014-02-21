@@ -380,7 +380,7 @@ struct page *ll_get_dir_page(struct file *filp, struct inode *dir, __u64 hash,
                 struct md_op_data *op_data;
 
                 op_data = ll_prep_md_op_data(NULL, dir, NULL, NULL, 0, 0,
-                                             LUSTRE_OPC_ANY, NULL);
+                                             LUSTRE_OPC_ANY, NULL, NULL, 0);
                 if (IS_ERR(op_data))
                         return (void *)op_data;
 
@@ -723,7 +723,7 @@ int ll_dir_setstripe(struct inode *inode, struct lov_user_md *lump,
         }
 
         op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
-                                     LUSTRE_OPC_ANY, NULL);
+                                     LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -791,7 +791,7 @@ int ll_dir_getstripe(struct inode *inode, struct lov_mds_md **lmmp,
 
         op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL,
                                      0, lmmsize, LUSTRE_OPC_ANY,
-                                     NULL);
+                                     NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -856,7 +856,7 @@ int ll_get_mdt_idx(struct inode *inode)
         ENTRY;
 
         op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0,
-                                     0, LUSTRE_OPC_ANY, NULL);
+                                     0, LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -1086,7 +1086,7 @@ static long ll_dir_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                 }
 
                 op_data = ll_prep_md_op_data(NULL, inode, NULL, filename, namelen,
-                                             0, LUSTRE_OPC_ANY, NULL);
+                                             0, LUSTRE_OPC_ANY, NULL, NULL, 0);
                 if (IS_ERR(op_data))
                         GOTO(out_free, rc = PTR_ERR(op_data));
 

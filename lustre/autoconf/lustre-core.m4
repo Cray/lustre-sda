@@ -92,9 +92,7 @@ AC_DEFUN([LC_LUSTRE_VERSION_H],
 	touch "$LUSTRE/include/linux/lustre_version.h"
 	if test x$enable_server = xyes ; then
         	AC_MSG_WARN([Unpatched kernel detected.])
-        	AC_MSG_WARN([Lustre servers cannot be built with an unpatched kernel;])
-        	AC_MSG_WARN([disabling server build])
-		enable_server='no'
+        	AC_MSG_WARN([Lustre servers will lack some features without the patches;])
 	fi
 ])
 ])
@@ -118,8 +116,8 @@ LB_LINUX_TRY_COMPILE([
         AC_MSG_RESULT([yes])
         AC_DEFINE(HAVE_DEV_SET_RDONLY, 1, [kernel has new dev_set_rdonly])
 ],[
-        AC_MSG_ERROR([no, Linux kernel source needs to be patches by lustre
-kernel patches from Lustre version 1.4.3 or above.])
+        AC_MSG_WARN([Linux kernel source needs to be patched with lustre
+kernel patches from Lustre version 1.4.3 or above to get rdonly functionality.])
 ])
 ])
 
@@ -1772,6 +1770,15 @@ LB_LINUX_TRY_COMPILE([
 ])
 ])
 
+AC_DEFUN([LC_SECURITY_INODE_UNLINK],
+[LB_CHECK_SYMBOL_EXPORT([security_inode_unlink],
+[security/security.c],[
+AC_DEFINE(HAVE_SECURITY_INODE_UNLINK, 1,
+            [security_inode_unlink is exported by the kernel])
+],[
+])
+])
+
 #
 # LC_PROG_LINUX
 #
@@ -1924,6 +1931,7 @@ AC_DEFUN([LC_PROG_LINUX],
              LC_STACK_SIZE
              LC_QUOTA64
              LC_QUOTA_CONFIG
+	     LC_SECURITY_INODE_UNLINK
          fi
 ])
 

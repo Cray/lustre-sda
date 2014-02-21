@@ -2494,7 +2494,7 @@ static int echo_client_prep_commit(struct obd_export *exp, int rw,
                                                              rnb[i].len);
                 }
 
-                ret = obd_commitrw(rw, exp, oa, 1,&ioo,rnb,npages,lnb,oti,ret);
+                ret = obd_commitrw(rw, exp, oa, 1,&ioo,rnb,npages,lnb,oti,NULL,ret);
                 if (ret != 0)
                         GOTO(out, ret);
 
@@ -2757,7 +2757,7 @@ echo_client_iocontrol(unsigned int cmd, struct obd_export *exp,
                         oinfo.oi_oa = oa;
                         oinfo.oi_md = eco->eo_lsm;
 
-                        rc = obd_setattr(ec->ec_exp, &oinfo, NULL);
+                        rc = obd_setattr(ec->ec_exp, &oinfo, NULL, NULL);
                         echo_put_object(eco);
                 }
                 GOTO(out, rc);
@@ -2872,9 +2872,9 @@ static int echo_client_setup(const struct lu_env *env,
                 return -ENOMEM;
         }
 
-        ocd->ocd_connect_flags = OBD_CONNECT_VERSION | OBD_CONNECT_REQPORTAL |
-                                 OBD_CONNECT_GRANT | OBD_CONNECT_FULL20 |
-                                 OBD_CONNECT_64BITHASH;
+	ocd->ocd_connect_flags = OBD_CONNECT_VERSION | OBD_CONNECT_REQPORTAL |
+				 OBD_CONNECT_GRANT | OBD_CONNECT_FULL20 |
+				 OBD_CONNECT_64BITHASH | OBD_CONNECT_SELUSTRE;
         ocd->ocd_version = LUSTRE_VERSION_CODE;
         ocd->ocd_group = FID_SEQ_ECHO;
 

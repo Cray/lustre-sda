@@ -236,7 +236,7 @@ static int filter_recov_log_setattr_cb(struct llog_ctxt *ctxt,
         oinfo.oi_oa->o_lcookie = *cookie;
         oid = oinfo.oi_oa->o_id;
 
-        rc = filter_setattr(exp, &oinfo, NULL);
+        rc = filter_setattr(exp, &oinfo, NULL, NULL);
         OBDO_FREE(oinfo.oi_oa);
 
         if (rc == -ENOENT) {

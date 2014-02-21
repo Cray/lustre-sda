@@ -246,7 +246,7 @@ int mdc_create(struct obd_export *exp, struct md_op_data *op_data,
                                                 MDS_INODELOCK_UPDATE);
 
         req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_MDS_REINT_CREATE_RMT_ACL);
+                                   &RQF_MDS_REINT_CREATE_RMT_ACL_SE);
         if (req == NULL) {
                 ldlm_lock_list_put(&cancels, l_bl_ast, count);
                 RETURN(-ENOMEM);
@@ -256,6 +256,8 @@ int mdc_create(struct obd_export *exp, struct md_op_data *op_data,
                              op_data->op_namelen + 1);
         req_capsule_set_size(&req->rq_pill, &RMF_EADATA, RCL_CLIENT,
                              data && datalen ? datalen : 0);
+	req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+			     op_data->op_sllen);
 
         rc = mdc_prep_elc_req(exp, req, &cancels, count);
         if (rc) {

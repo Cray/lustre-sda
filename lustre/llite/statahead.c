@@ -574,7 +574,7 @@ static int sa_args_init(struct inode *dir, struct dentry *dentry,
 
         op_data = ll_prep_md_op_data(&minfo->mi_data, dir, dentry->d_inode,
                                      dentry->d_name.name, dentry->d_name.len,
-                                     0, LUSTRE_OPC_ANY, NULL);
+                                     0, LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data)) {
                 OBD_FREE_PTR(einfo);
                 OBD_FREE_PTR(minfo);

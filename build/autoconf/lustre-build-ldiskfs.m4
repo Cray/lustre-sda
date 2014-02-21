@@ -214,6 +214,7 @@ case $LINUXRELEASE in
 	;;
 esac
 LB_LDISKFS_JBD2_JOURNAL_CALLBACK_SET
+LB_LDISKFS_LRU_ADD_DRAIN_SET
 
 AC_DEFINE(CONFIG_LDISKFS_FS_XATTR, 1,
 	[enable extended attributes for ldiskfs])
@@ -246,6 +247,14 @@ AC_DEFUN([LB_LDISKFS_JBD2_JOURNAL_CALLBACK_SET],
 		[fs/jbd/journal.c],
 		[AC_DEFINE(HAVE_JOURNAL_CALLBACK_SET, 1,
 			[kernel exports journal_callback_set])])])
+])
+
+AC_DEFUN([LB_LDISKFS_LRU_ADD_DRAIN_SET],
+[
+	LB_CHECK_SYMBOL_EXPORT([lru_add_drain],
+	[mm/swap.c],
+	[AC_DEFINE(HAVE_LRU_ADD_DRAIN_SET, 1,
+		[kernel exports lru_add_drain])],[])
 ])
 
 #

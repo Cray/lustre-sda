@@ -1383,7 +1383,6 @@ static int mdd_create(const struct lu_env *env,
                 }
         }
 #endif
-
         rc = mdd_object_initialize(env, mdo2fid(mdd_pobj), lname,
                                    son, ma, handle, spec);
         mdd_write_unlock(env, son);
@@ -1404,6 +1403,14 @@ static int mdd_create(const struct lu_env *env,
                 GOTO(cleanup, rc);
 
         inserted = 1;
+
+	if (attr->la_valid & LA_SLABEL) {
+		struct lu_buf buf;
+		buf.lb_buf = attr->la_slabel;
+		buf.lb_len = attr->la_sllen;
+		rc = mdd_xattr_set_txn(env, son, &buf,
+				       XATTR_NAME_SECURITY_SELINUX, 0, handle);
+	}
 
         /* No need mdd_lsm_sanity_check here */
         rc = mdd_lov_set_md(env, mdd_pobj, son, lmm, lmm_size, handle, 0);

@@ -335,7 +335,11 @@ int mdt_reint_setxattr(struct mdt_thread_info *info,
          * not change the access permissions of this inode, nor any
          * other existing inodes. It is setting the ACLs inherited
          * by new directories/files at create time. */
-        if (!strcmp(xattr_name, XATTR_NAME_ACL_ACCESS))
+	/* SELinux security label cache should be invalidated on
+	 * "security.selinux" changes.
+	 */
+	if (!strcmp(xattr_name, XATTR_NAME_ACL_ACCESS) ||
+	    !strcmp(xattr_name, XATTR_NAME_SECURITY_SELINUX))
                 lockpart |= MDS_INODELOCK_LOOKUP;
 
         lh = &info->mti_lh[MDT_LH_PARENT];
@@ -396,6 +400,13 @@ int mdt_reint_setxattr(struct mdt_thread_info *info,
                         rc = mo_xattr_set(env, child, buf, xattr_name, flags);
                         /* update ctime after xattr changed */
                         if (rc == 0) {
+				if (!strcmp(xattr_name,
+					    XATTR_NAME_SECURITY_SELINUX) &&
+				    S_ISREG(lu_object_attr(&obj->mot_obj.mo_lu))) {
+					ma->ma_valid |= MA_SECURITY;
+					memcpy(ma->ma_seclabel, xattr,
+					       xattr_len);
+				}
                                 ma->ma_attr_flags |= MDS_PERM_BYPASS;
                                 mo_attr_set(env, child, ma);
                         }

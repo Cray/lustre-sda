@@ -110,7 +110,8 @@ enum ma_valid {
 /* (Layout lock will used #7 here) */
         MA_HSM       = (1 << 8),
         MA_SOM       = (1 << 9),
-        MA_PFID      = (1 << 10)
+	MA_PFID      = (1 << 10),
+	MA_SECURITY  = (1 << 11)
 };
 
 typedef enum {
@@ -163,6 +164,9 @@ struct md_attr {
         struct md_som_data     *ma_som;
         struct lu_fid           ma_pfid;
         int                     ma_big_lmm_used:1;
+#ifdef __KERNEL__
+	char			ma_seclabel[CFS_SID_MAX_LEN];
+#endif
 };
 
 /** Additional parameters for create */

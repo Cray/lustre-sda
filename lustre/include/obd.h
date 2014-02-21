@@ -1242,6 +1242,9 @@ struct md_op_data {
 
         /* Operation type */
         __u32                   op_opc;
+
+	const char		*op_slabel;
+	int			op_sllen;
 };
 
 struct md_enqueue_info;
@@ -1344,8 +1347,8 @@ struct obd_ops {
         int (*o_destroy)(struct obd_export *exp, struct obdo *oa,
                          struct lov_stripe_md *ea, struct obd_trans_info *oti,
                          struct obd_export *md_exp, void *capa);
-        int (*o_setattr)(struct obd_export *exp, struct obd_info *oinfo,
-                         struct obd_trans_info *oti);
+	int (*o_setattr)(struct obd_export *exp, struct obd_info *oinfo,
+			 const char *seclabel, struct obd_trans_info *oti);
         int (*o_setattr_async)(struct obd_export *exp, struct obd_info *oinfo,
                                struct obd_trans_info *oti,
                                struct ptlrpc_request_set *rqset);
@@ -1380,11 +1383,12 @@ struct obd_ops {
                         struct niobuf_local *local,
                         struct obd_trans_info *oti,
                         struct lustre_capa *capa);
-        int (*o_commitrw)(int cmd, struct obd_export *exp, struct obdo *oa,
-                          int objcount, struct obd_ioobj *obj,
-                          struct niobuf_remote *remote, int pages,
-                          struct niobuf_local *local,
-                          struct obd_trans_info *oti, int rc);
+	int (*o_commitrw)(int cmd, struct obd_export *exp, struct obdo *oa,
+			  int objcount, struct obd_ioobj *obj,
+			  struct niobuf_remote *remote, int pages,
+			  struct niobuf_local *local,
+			  struct obd_trans_info *oti, const char *seclabel,
+			  int rc);
         int (*o_enqueue)(struct obd_export *, struct obd_info *oinfo,
                          struct ldlm_enqueue_info *einfo,
                          struct ptlrpc_request_set *rqset);

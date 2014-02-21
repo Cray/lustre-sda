@@ -64,7 +64,7 @@ Index: linux-stage/fs/ext4/mballoc.c
 		}
 	}
  
-+
++#ifdef HAVE_CLEAR_RDONLY_ON_PUT
 +	if (dev_check_rdonly(sb->s_bdev) && printk_ratelimit()) {
 +		struct block_device *bdev = sb->s_bdev;
 +
@@ -81,7 +81,7 @@ Index: linux-stage/fs/ext4/mballoc.c
 +			(unsigned long long)ar->pright,
 +			ar->len, ar->flags);
 +	}
-+
++#endif
 	ac = kmem_cache_alloc(ext4_ac_cachep, GFP_NOFS);
 	if (!ac) {
 		ar->len = 0;
@@ -111,10 +111,11 @@ Index: linux-stage/fs/ext4/mballoc.c
  		} else {
  			block = ext4_grp_offs_to_block(sb, &ac->ac_b_ex);
  			ar->len = ac->ac_b_ex.fe_len;
-@@ -5025,6 +5075,16 @@
+@@ -5025,6 +5075,17 @@
  		goto error_return;
  	}
  
++#ifdef HAVE_CLEAR_RDONLY_ON_PUT
 +	if (dev_check_rdonly(sb->s_bdev) && printk_ratelimit()) {
 +		struct block_device *bdev = sb->s_bdev;
 +
@@ -124,7 +125,7 @@ Index: linux-stage/fs/ext4/mballoc.c
 +			bdev->bd_dev, inode->i_ino, (unsigned long)block,
 +			count, metadata);
 +	}
-+
++#endif
  	ext4_debug("freeing block %llu\n", block);
  	trace_mark(ext4_free_blocks,
  		   "dev %s block %llu count %lu metadata %d ino %lu",
