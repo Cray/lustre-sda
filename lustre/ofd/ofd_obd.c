@@ -802,7 +802,8 @@ out:
 }
 
 int ofd_setattr(const struct lu_env *env, struct obd_export *exp,
-		struct obd_info *oinfo, struct obd_trans_info *oti)
+		struct obd_info *oinfo, const char *seclabel,
+		struct obd_trans_info *oti)
 {
 	struct ofd_thread_info	*info;
 	struct ofd_device	*ofd = ofd_exp(exp);

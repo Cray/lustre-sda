@@ -299,7 +299,7 @@ static struct dentry *ll_get_parent(struct dentry *dchild)
 
 	op_data = ll_prep_md_op_data(NULL, dir, NULL, dotdot,
 				     strlen(dotdot), lmmsize,
-                                     LUSTRE_OPC_ANY, NULL);
+				     LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN((void *)op_data);
 

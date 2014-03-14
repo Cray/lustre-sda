@@ -81,7 +81,8 @@ enum ma_valid {
         MA_LAY_GEN   = (1 << 7),
         MA_HSM       = (1 << 8),
         MA_SOM       = (1 << 9),
-        MA_PFID      = (1 << 10)
+	MA_PFID      = (1 << 10),
+	MA_SECURITY  = (1 << 11)
 };
 
 typedef enum {

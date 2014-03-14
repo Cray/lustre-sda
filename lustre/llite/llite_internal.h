@@ -905,9 +905,10 @@ int ll_obd_statfs(struct inode *inode, void *arg);
 int ll_get_max_mdsize(struct ll_sb_info *sbi, int *max_mdsize);
 int ll_process_config(struct lustre_cfg *lcfg);
 struct md_op_data *ll_prep_md_op_data(struct md_op_data *op_data,
-                                      struct inode *i1, struct inode *i2,
-                                      const char *name, int namelen,
-                                      int mode, __u32 opc, void *data);
+				      struct inode *i1, struct inode *i2,
+				      const char *name, int namelen,
+				      int mode, __u32 opc, void *data,
+				      const char *slabel, int sllen);
 void ll_finish_md_op_data(struct md_op_data *op_data);
 int ll_get_obd_name(struct inode *inode, unsigned int cmd, unsigned long arg);
 char *ll_get_fsname(struct super_block *sb, char *buf, int buflen);
@@ -1261,7 +1262,8 @@ void et_fini(struct eacl_table *et);
 /* statahead.c */
 
 #define LL_SA_RPC_MIN           2
-#define LL_SA_RPC_DEF           32
+/* XXX: MRP-1802 */
+#define LL_SA_RPC_DEF           0
 #define LL_SA_RPC_MAX           8192
 
 #define LL_SA_CACHE_BIT         5

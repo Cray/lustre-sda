@@ -893,8 +893,8 @@ static inline int obd_getattr_async(struct obd_export *exp,
 }
 
 static inline int obd_setattr(const struct lu_env *env, struct obd_export *exp,
-                              struct obd_info *oinfo,
-                              struct obd_trans_info *oti)
+			      struct obd_info *oinfo, const char *seclabel,
+			      struct obd_trans_info *oti)
 {
         int rc;
         ENTRY;
@@ -902,7 +902,7 @@ static inline int obd_setattr(const struct lu_env *env, struct obd_export *exp,
         EXP_CHECK_DT_OP(exp, setattr);
         EXP_COUNTER_INCREMENT(exp, setattr);
 
-        rc = OBP(exp->exp_obd, setattr)(env, exp, oinfo, oti);
+	rc = OBP(exp->exp_obd, setattr)(env, exp, oinfo, seclabel, oti);
         RETURN(rc);
 }
 
