@@ -549,6 +549,9 @@ struct mdt_thread_info {
 	char			   mti_xattr_buf[128];
 	struct thandle_exec_args   mti_handle;
 	struct ldlm_enqueue_info   mti_einfo;
+#ifdef __KERNEL__
+	char			ma_seclabel[CFS_SID_MAX_LEN];
+#endif
 };
 
 /* ptlrpc request handler for MDT. All handlers are

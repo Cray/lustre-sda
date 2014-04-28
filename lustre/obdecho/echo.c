@@ -199,7 +199,8 @@ static int echo_getattr(const struct lu_env *env, struct obd_export *exp,
 }
 
 static int echo_setattr(const struct lu_env *env, struct obd_export *exp,
-                        struct obd_info *oinfo, struct obd_trans_info *oti)
+                        struct obd_info *oinfo, const char *seclabel,
+                        struct obd_trans_info *oti)
 {
         struct obd_device *obd = class_exp2obd(exp);
 

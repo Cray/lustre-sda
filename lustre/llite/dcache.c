@@ -470,9 +470,9 @@ int ll_revalidate_it(struct dentry *de, int lookup_flags,
         }
 
 do_lock:
-        op_data = ll_prep_md_op_data(NULL, parent, de->d_inode,
-                                     de->d_name.name, de->d_name.len,
-                                     0, LUSTRE_OPC_ANY, NULL);
+	op_data = ll_prep_md_op_data(NULL, parent, de->d_inode,
+				     de->d_name.name, de->d_name.len,
+				     0, LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -588,10 +588,11 @@ do_lookup:
         }
 
         /* Do real lookup here. */
-        op_data = ll_prep_md_op_data(NULL, parent, NULL, de->d_name.name,
-                                     de->d_name.len, 0, (it->it_op & IT_CREAT ?
-                                                         LUSTRE_OPC_CREATE :
-                                                         LUSTRE_OPC_ANY), NULL);
+	op_data = ll_prep_md_op_data(NULL, parent, NULL, de->d_name.name,
+				     de->d_name.len, 0, (it->it_op & IT_CREAT ?
+							 LUSTRE_OPC_CREATE :
+							 LUSTRE_OPC_ANY), NULL,
+							 NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 

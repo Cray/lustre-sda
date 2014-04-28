@@ -204,4 +204,8 @@ int osc_quotactl(struct obd_device *unused, struct obd_export *exp,
 int osc_quotacheck(struct obd_device *unused, struct obd_export *exp,
                    struct obd_quotactl *oqctl);
 int osc_quota_poll_check(struct obd_export *exp, struct if_quotacheck *qchk);
+
+#define osc_select_rq_format(exp,basefmt) (exp_connect_selustre(exp) ?\
+					  &(basefmt ## _SE) : &(basefmt))
+
 #endif /* OSC_INTERNAL_H */

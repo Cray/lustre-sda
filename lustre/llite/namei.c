@@ -130,6 +130,37 @@ static int ll_set_inode(struct inode *inode, void *opaque)
         return 0;
 }
 
+struct inode_security_struct {
+	struct inode *inode;	/* back pointer to inode object */
+	struct list_head list;	/* list of inode_security_struct */
+	u32 task_sid;		/* SID of creating task */
+	u32 sid;		/* SID of this object */
+	u16 sclass;		/* security class of this object */
+	unsigned char initialized;	/* initialization flag */
+	struct mutex lock;
+};
+
+/**
+ * \brief Mark \a inode as not having a SELinux label attached
+ * \param inode The inode to invalidate
+ */
+static void ll_invalidate_inode_sid(struct inode *inode)
+{
+	struct inode_security_struct *isec;
+
+	if (!selinux_is_enabled())
+		return;
+
+	isec = inode->i_security;
+
+	/* This flag is not really checked each time SELinux refers
+	 * to inode SID. Rather, it is checked when a dentry is
+	 * instantiated for a possible skip of inode security
+	 * initialization. Do not expect from the following code
+	 * what it does NOT do.
+	 */
+	isec->initialized = 0;
+}
 
 /*
  * Get an inode by inode number (already instantiated by the intent lookup).
@@ -299,8 +330,10 @@ int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
 
 		if ((bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM)) &&
 		    inode->i_sb->s_root != NULL &&
-		    inode != inode->i_sb->s_root->d_inode)
+		    inode != inode->i_sb->s_root->d_inode) {
+			ll_invalidate_inode_sid(inode);
 			ll_invalidate_aliases(inode);
+		}
 
 		iput(inode);
 		break;
@@ -507,6 +540,46 @@ int ll_lookup_it_finish(struct ptlrpc_request *request,
         RETURN(0);
 }
 
+static int ll_init_security(struct inode *parent, void **value,
+			    size_t *len, umode_t mode)
+{
+	struct inode *inode;
+	struct inode_security_struct *isec;
+	char *attr_name = NULL;
+	int rc;
+
+	OBD_ALLOC_PTR(inode);
+	OBD_ALLOC_PTR(isec);
+
+	if (inode == NULL || isec == NULL) {
+		rc = -ENOMEM;
+		goto out;
+	}
+
+	/* XXX: We don't have inode at this point, but s_i_i_s() wants one */
+	inode->i_sb = parent->i_sb;
+	inode->i_mode = mode;
+	inode->i_security = isec;
+	rc = security_inode_init_security(inode, parent, &attr_name,
+					  value, len);
+
+	if (rc == 0) {
+		LASSERT(!strcmp(attr_name, "selinux"));
+		kfree(attr_name);
+	} else {
+		CERROR("cannot determine new object security d_ino=%ld\n",
+		       parent->i_ino);
+	}
+
+out:
+	if (inode != NULL)
+		OBD_FREE_PTR(inode);
+	if (isec != NULL)
+		OBD_FREE_PTR(isec);
+
+	return rc;
+}
+
 static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
                                    struct lookup_intent *it, int lookup_flags)
 {
@@ -517,6 +590,8 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
         struct it_cb_data icbd;
         __u32 opc;
         int rc;
+	void *value = NULL;
+	size_t len = 0;
         ENTRY;
 
         if (dentry->d_name.len > ll_i2sbi(parent)->ll_namelen)
@@ -543,16 +618,23 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
         icbd.icbd_childp = &dentry;
         icbd.icbd_parent = parent;
 
-	if (it->it_op & IT_CREAT)
+	if (it->it_op & IT_CREAT) {
 		opc = LUSTRE_OPC_CREATE;
-	else
-		opc = LUSTRE_OPC_ANY;
 
-        op_data = ll_prep_md_op_data(NULL, parent, NULL, dentry->d_name.name,
-                                     dentry->d_name.len, lookup_flags, opc,
-                                     NULL);
-        if (IS_ERR(op_data))
-                RETURN((void *)op_data);
+		rc = ll_init_security(parent, &value, &len, it->it_create_mode);
+		if (rc < 0)
+			RETURN(ERR_PTR(rc));
+	} else {
+		opc = LUSTRE_OPC_ANY;
+	}
+
+	op_data = ll_prep_md_op_data(NULL, parent, NULL, dentry->d_name.name,
+				     dentry->d_name.len, lookup_flags, opc,
+				     NULL, value, len);
+	if (IS_ERR(op_data)) {
+		kfree(value);
+		RETURN((void *)op_data);
+	}
 
         /* enforce umask if acl disabled or MDS doesn't support umask */
         if (!IS_POSIXACL(parent) || !exp_connect_umask(ll_i2mdexp(parent)))
@@ -582,6 +664,9 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
         else
                 GOTO(out, retval = dentry);
  out:
+	if (value != NULL)
+		kfree(value);
+
         if (req)
                 ptlrpc_req_finished(req);
         if (it->it_op == IT_GETATTR && (retval == NULL || retval == dentry))
@@ -896,13 +981,19 @@ static int ll_new_node(struct inode *dir, struct qstr *name,
         struct ll_sb_info *sbi = ll_i2sbi(dir);
         int tgt_len = 0;
         int err;
-
+	size_t len = 0;
+	void *value = NULL;
         ENTRY;
+
         if (unlikely(tgt != NULL))
                 tgt_len = strlen(tgt) + 1;
 
-        op_data = ll_prep_md_op_data(NULL, dir, NULL, name->name,
-                                     name->len, 0, opc, NULL);
+	err = ll_init_security(dir, &value, &len, mode);
+	if (err < 0)
+		GOTO(err_exit, err);
+
+	op_data = ll_prep_md_op_data(NULL, dir, NULL, name->name,
+				     name->len, 0, opc, NULL, value, len);
         if (IS_ERR(op_data))
                 GOTO(err_exit, err = PTR_ERR(op_data));
 
@@ -924,6 +1015,9 @@ static int ll_new_node(struct inode *dir, struct qstr *name,
         }
         EXIT;
 err_exit:
+	if (value != NULL)
+		kfree(value);
+
         ptlrpc_req_finished(request);
 
         return err;
@@ -1065,8 +1159,8 @@ static int ll_link_generic(struct inode *src,  struct inode *dir,
                src->i_ino, src->i_generation, src, dir->i_ino,
                dir->i_generation, dir, name->len, name->name);
 
-        op_data = ll_prep_md_op_data(NULL, src, dir, name->name, name->len,
-                                     0, LUSTRE_OPC_ANY, NULL);
+	op_data = ll_prep_md_op_data(NULL, src, dir, name->name, name->len,
+				     0, LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -1118,8 +1212,8 @@ static int ll_rmdir_generic(struct inode *dir, struct dentry *dparent,
         if (unlikely(ll_d_mountpoint(dparent, dchild, name)))
                 RETURN(-EBUSY);
 
-        op_data = ll_prep_md_op_data(NULL, dir, NULL, name->name, name->len,
-                                     S_IFDIR, LUSTRE_OPC_ANY, NULL);
+	op_data = ll_prep_md_op_data(NULL, dir, NULL, name->name, name->len,
+				     S_IFDIR, LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -1151,7 +1245,7 @@ int ll_rmdir_entry(struct inode *dir, char *name, int namelen)
 	       namelen, name, dir->i_ino, dir->i_generation, dir);
 
 	op_data = ll_prep_md_op_data(NULL, dir, NULL, name, strlen(name),
-				     S_IFDIR, LUSTRE_OPC_ANY, NULL);
+				     S_IFDIR, LUSTRE_OPC_ANY, NULL, NULL, 0);
 	if (IS_ERR(op_data))
 		RETURN(PTR_ERR(op_data));
 	op_data->op_cli_flags |= CLI_RM_ENTRY;
@@ -1263,8 +1357,9 @@ static int ll_unlink_generic(struct inode *dir, struct dentry *dparent,
         if (unlikely(ll_d_mountpoint(dparent, dchild, name)))
                 RETURN(-EBUSY);
 
-        op_data = ll_prep_md_op_data(NULL, dir, NULL, name->name,
-                                     name->len, 0, LUSTRE_OPC_ANY, NULL);
+	op_data = ll_prep_md_op_data(NULL, dir, NULL, name->name,
+				     name->len, 0, LUSTRE_OPC_ANY,
+				     NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -1305,8 +1400,8 @@ static int ll_rename_generic(struct inode *src, struct dentry *src_dparent,
             ll_d_mountpoint(tgt_dparent, tgt_dchild, tgt_name)))
                 RETURN(-EBUSY);
 
-        op_data = ll_prep_md_op_data(NULL, src, tgt, NULL, 0, 0,
-                                     LUSTRE_OPC_ANY, NULL);
+	op_data = ll_prep_md_op_data(NULL, src, tgt, NULL, 0, 0,
+				     LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 

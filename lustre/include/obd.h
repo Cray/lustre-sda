@@ -1121,6 +1121,9 @@ struct md_op_data {
 	/* File object data version for HSM release, on client */
 	__u64			op_data_version;
 	struct lustre_handle	op_lease_handle;
+
+	const char		*op_slabel;
+	int			op_sllen;
 };
 
 enum op_cli_flags {
@@ -1217,8 +1220,9 @@ struct obd_ops {
                          struct obdo *oa, struct lov_stripe_md *ea,
                          struct obd_trans_info *oti, struct obd_export *md_exp,
                          void *capa);
-        int (*o_setattr)(const struct lu_env *, struct obd_export *exp,
-                         struct obd_info *oinfo, struct obd_trans_info *oti);
+	int (*o_setattr)(const struct lu_env *, struct obd_export *exp,
+			 struct obd_info *oinfo, const char *seclabel,
+			 struct obd_trans_info *oti);
         int (*o_setattr_async)(struct obd_export *exp, struct obd_info *oinfo,
                                struct obd_trans_info *oti,
                                struct ptlrpc_request_set *rqset);

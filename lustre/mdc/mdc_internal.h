@@ -178,4 +178,7 @@ static inline int mdc_prep_elc_req(struct obd_export *exp,
 				 count);
 }
 
+#define mdc_select_rq_format(exp,basefmt) (exp_connect_selustre(exp) ?\
+                                          &(basefmt ## _SE) : &(basefmt))
+
 #endif

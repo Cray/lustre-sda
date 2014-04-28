@@ -336,7 +336,7 @@ static int ll_xattr_find_get_lock(struct inode *inode,
 
 	/* Enqueue if the lock isn't cached locally. */
 	op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
-				     LUSTRE_OPC_ANY, NULL);
+				     LUSTRE_OPC_ANY, NULL, NULL, 0);
 	if (IS_ERR(op_data)) {
 		mutex_unlock(&lli->lli_xattrs_enq_lock);
 		RETURN(PTR_ERR(op_data));
