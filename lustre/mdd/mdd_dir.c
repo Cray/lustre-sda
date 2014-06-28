@@ -2150,6 +2150,14 @@ static int mdd_create(const struct lu_env *env, struct md_object *pobj,
 
 	inserted = 1;
 
+	if (attr->la_valid & LA_SECURITY) {
+		struct lu_buf buf;
+		buf.lb_buf = attr->la_seclabel;
+		buf.lb_len = attr->la_sllen;
+		rc = mdo_xattr_set(env, son, &buf,
+				   XATTR_NAME_SECURITY_SELINUX, 0, handle, BYPASS_CAPA);
+	}
+
         if (S_ISLNK(attr->la_mode)) {
 		struct lu_ucred  *uc = lu_ucred_assert(env);
                 struct dt_object *dt = mdd_object_child(son);

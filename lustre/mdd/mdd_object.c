@@ -1057,7 +1057,7 @@ static int mdd_xattr_set(const struct lu_env *env, struct md_object *obj,
 	struct mdd_object	*mdd_obj = md2mdd_obj(obj);
 	struct mdd_device	*mdd = mdo2mdd(obj);
 	struct thandle		*handle;
-	int			 rc;
+	int			rc;
         ENTRY;
 
 	rc = mdd_xattr_sanity_check(env, mdd_obj);
@@ -1076,6 +1076,13 @@ static int mdd_xattr_set(const struct lu_env *env, struct md_object *obj,
 	rc = mdd_declare_xattr_set(env, mdd, mdd_obj, buf, name, fl, handle);
 	if (rc)
 		GOTO(stop, rc);
+
+	if (!strcmp(name, XATTR_NAME_SECURITY_SELINUX)) {
+		struct lu_attr attr = { 0 };
+		attr.la_valid = LA_SECURITY;
+		strncpy(attr.la_seclabel, buf->lb_buf, buf->lb_len);
+		rc = mdd_declare_attr_set(env, mdd, mdd_obj, &attr, handle);
+	}
 
 	rc = mdd_trans_start(env, mdd, handle);
 	if (rc)
@@ -1108,6 +1115,14 @@ static int mdd_xattr_set(const struct lu_env *env, struct md_object *obj,
 			sizeof(POSIX_ACL_XATTR_DEFAULT) - 1) == 0)
 		rc = mdd_changelog_data_store(env, mdd, CL_XATTR, 0, mdd_obj,
 					      handle);
+
+	if (!strcmp(name, XATTR_NAME_SECURITY_SELINUX)) {
+		struct lu_attr attr = { 0 };
+		attr.la_valid = LA_SECURITY;
+		strncpy(attr.la_seclabel, buf->lb_buf, buf->lb_len);
+		rc = mdo_attr_set(env, mdd_obj, &attr, handle,
+				  mdd_object_capa(env, mdd_obj));
+	}
 
 stop:
 	mdd_trans_stop(env, mdd, rc, handle);

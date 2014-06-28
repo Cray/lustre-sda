@@ -428,7 +428,7 @@ struct lu_attr {
         /** real device */
         __u32          la_rdev;
 	/** security label */
-	char		*la_slabel;
+	char		*la_seclabel;
 	__u32		la_sllen;
         /**
          * valid bits
@@ -455,7 +455,7 @@ enum la_valid {
         LA_BLKSIZE = 1 << 12,
         LA_KILL_SUID = 1 << 13,
         LA_KILL_SGID = 1 << 14,
-	LA_SLABEL = 1 << 15,
+	LA_SECURITY = 1 << 15,
 };
 
 /**

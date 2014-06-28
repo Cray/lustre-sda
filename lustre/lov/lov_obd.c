@@ -1276,7 +1276,7 @@ out:
 }
 
 static int lov_setattr(const struct lu_env *env, struct obd_export *exp,
-                       struct obd_info *oinfo, const char *seclabel,
+                       struct obd_info *oinfo, char *seclabel,
                        struct obd_trans_info *oti)
 {
         struct lov_request_set *set;

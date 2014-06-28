@@ -2652,7 +2652,7 @@ static int echo_client_prep_commit(const struct lu_env *env,
 		}
 
 		ret = obd_commitrw(env, rw, exp, oa, 1, &ioo,
-				   rnb, npages, lnb, oti, ret);
+				   rnb, npages, lnb, oti, NULL, ret);
                 if (ret != 0)
                         GOTO(out, ret);
 

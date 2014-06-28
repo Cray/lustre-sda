@@ -306,7 +306,7 @@ static int osc_getattr(const struct lu_env *env, struct obd_export *exp,
 }
 
 static int osc_setattr(const struct lu_env *env, struct obd_export *exp,
-                       struct obd_info *oinfo, const char *seclabel,
+                       struct obd_info *oinfo, char *seclabel,
                        struct obd_trans_info *oti)
 {
         struct ptlrpc_request *req;

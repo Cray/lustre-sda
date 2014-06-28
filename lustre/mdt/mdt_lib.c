@@ -1019,8 +1019,14 @@ static int mdt_create_unpack(struct mdt_thread_info *info)
                 if (tgt == NULL)
                         RETURN(-EFAULT);
         } else {
-                req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_RMT_ACL);
+                req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_RMT_ACL_SE);
         }
+
+	if (req_capsule_has_field(pill, &RMF_SELINUX, RCL_CLIENT)) {
+		attr->la_valid |= LA_SECURITY;
+		attr->la_seclabel = req_capsule_client_get(pill, &RMF_SELINUX);
+		attr->la_sllen = req_capsule_get_size(pill, &RMF_SELINUX, RCL_CLIENT);
+	}
 
         rc = mdt_dlmreq_unpack(info);
         RETURN(rc);
@@ -1303,6 +1309,12 @@ static int mdt_open_unpack(struct mdt_thread_info *info)
                 if (rr->rr_eadatalen == 0 &&
                     !(info->mti_spec.sp_cr_flags & MDS_OPEN_DELAY_CREATE))
 			rr->rr_eadatalen = MIN_MD_SIZE;
+	}
+
+	if (req_capsule_has_field(pill, &RMF_SELINUX, RCL_CLIENT)) {
+		attr->la_valid |= LA_SECURITY;
+		attr->la_seclabel = req_capsule_client_get(pill, &RMF_SELINUX);
+		attr->la_sllen = req_capsule_get_size(pill, &RMF_SELINUX, RCL_CLIENT);
 	}
 
         RETURN(0);

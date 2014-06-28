@@ -1221,7 +1221,7 @@ struct obd_ops {
                          struct obd_trans_info *oti, struct obd_export *md_exp,
                          void *capa);
 	int (*o_setattr)(const struct lu_env *, struct obd_export *exp,
-			 struct obd_info *oinfo, const char *seclabel,
+			 struct obd_info *oinfo, char *seclabel,
 			 struct obd_trans_info *oti);
         int (*o_setattr_async)(struct obd_export *exp, struct obd_info *oinfo,
                                struct obd_trans_info *oti,
@@ -1262,7 +1262,7 @@ struct obd_ops {
                           int objcount, struct obd_ioobj *obj,
                           struct niobuf_remote *remote, int pages,
                           struct niobuf_local *local,
-                          struct obd_trans_info *oti, int rc);
+                          struct obd_trans_info *oti, char *seclabel, int rc);
         int (*o_enqueue)(struct obd_export *, struct obd_info *oinfo,
                          struct ldlm_enqueue_info *einfo,
                          struct ptlrpc_request_set *rqset);
