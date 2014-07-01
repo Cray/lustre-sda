@@ -1018,7 +1018,7 @@ void mdt_reconstruct_open(struct mdt_thread_info *info,
         int                      rc;
         ENTRY;
 
-        LASSERT(pill->rc_fmt == &RQF_LDLM_INTENT_OPEN);
+        LASSERT(pill->rc_fmt == &RQF_LDLM_INTENT_OPEN_SE);
         ldlm_rep = req_capsule_server_get(pill, &RMF_DLM_REP);
         repbody = req_capsule_server_get(pill, &RMF_MDT_BODY);
 

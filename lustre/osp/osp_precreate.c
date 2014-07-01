@@ -1294,7 +1294,7 @@ int osp_security_change(const struct lu_env *env, struct dt_object *dt,
 	LASSERT(rc == 0);
 	oa->o_valid = OBD_MD_FLSECURITY | OBD_MD_FLID | OBD_MD_FLGROUP;
 	seclabel = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX);
-	strcpy(seclabel, la->la_seclabel);
+	memcpy(seclabel, la->la_seclabel, la->la_sllen);
 
 	body = req_capsule_client_get(&req->rq_pill, &RMF_OST_BODY);
 	LASSERT(body);

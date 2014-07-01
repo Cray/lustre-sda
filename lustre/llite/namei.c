@@ -540,8 +540,8 @@ int ll_lookup_it_finish(struct ptlrpc_request *request,
         RETURN(0);
 }
 
-static int ll_init_security(struct inode *parent, void **value,
-			    size_t *len, umode_t mode)
+int ll_init_security(struct inode *parent, void **value,
+		     size_t *len, umode_t mode)
 {
 	struct inode *inode;
 	struct inode_security_struct *isec;

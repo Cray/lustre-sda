@@ -1201,7 +1201,7 @@ skip_transfer:
                                server_cksum);
                 }
         }
-	LASSERT(seclabel != NULL);
+
         /* Must commit after prep above in all cases */
         rc = obd_commitrw(req->rq_svc_thread->t_env, OBD_BRW_WRITE, exp,
                           &repbody->oa, objcount, ioo, remote_nb, npages,

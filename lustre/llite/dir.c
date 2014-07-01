@@ -680,13 +680,20 @@ int ll_dir_setdirstripe(struct inode *dir, struct lmv_user_md *lump,
 	struct ll_sb_info *sbi = ll_i2sbi(dir);
 	int mode;
 	int err;
+	size_t len = 0;
+	void *value = NULL;
 
 	ENTRY;
 
 	mode = (0755 & (S_IRWXUGO|S_ISVTX) & ~current->fs->umask) | S_IFDIR;
+
+	err = ll_init_security(dir, &value, &len, mode);
+	if (err < 0)
+		GOTO(err_exit, err);
+
 	op_data = ll_prep_md_op_data(NULL, dir, NULL, filename,
 				     strlen(filename), mode, LUSTRE_OPC_MKDIR,
-				     lump, NULL, 0);
+				     lump, value, len);
 	if (IS_ERR(op_data))
 		GOTO(err_exit, err = PTR_ERR(op_data));
 
@@ -698,6 +705,9 @@ int ll_dir_setdirstripe(struct inode *dir, struct lmv_user_md *lump,
 	if (err)
 		GOTO(err_exit, err);
 err_exit:
+	if (value != NULL)
+		kfree(value);
+
 	ptlrpc_req_finished(request);
 	return err;
 }

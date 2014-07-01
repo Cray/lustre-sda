@@ -415,10 +415,6 @@ ofd_commitrw_write(const struct lu_env *env, struct ofd_device *ofd,
 
 	LASSERT(objcount == 1);
 
-	LASSERT(la->la_valid & LA_SECURITY);
-	LASSERT(la->la_seclabel);
-	LASSERT(info->fti_attr.la_seclabel);
-
 	fo = ofd_object_find(env, ofd, fid);
 	LASSERT(fo != NULL);
 	LASSERT(ofd_object_exists(fo));

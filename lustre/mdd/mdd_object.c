@@ -1080,7 +1080,8 @@ static int mdd_xattr_set(const struct lu_env *env, struct md_object *obj,
 	if (!strcmp(name, XATTR_NAME_SECURITY_SELINUX)) {
 		struct lu_attr attr = { 0 };
 		attr.la_valid = LA_SECURITY;
-		strncpy(attr.la_seclabel, buf->lb_buf, buf->lb_len);
+		attr.la_seclabel = buf->lb_buf;
+		attr.la_sllen = buf->lb_len;
 		rc = mdd_declare_attr_set(env, mdd, mdd_obj, &attr, handle);
 	}
 
@@ -1119,7 +1120,8 @@ static int mdd_xattr_set(const struct lu_env *env, struct md_object *obj,
 	if (!strcmp(name, XATTR_NAME_SECURITY_SELINUX)) {
 		struct lu_attr attr = { 0 };
 		attr.la_valid = LA_SECURITY;
-		strncpy(attr.la_seclabel, buf->lb_buf, buf->lb_len);
+		attr.la_seclabel = buf->lb_buf;
+		attr.la_sllen = buf->lb_len;
 		rc = mdo_attr_set(env, mdd_obj, &attr, handle,
 				  mdd_object_capa(env, mdd_obj));
 	}

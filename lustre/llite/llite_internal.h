@@ -1658,4 +1658,7 @@ int ll_layout_restore(struct inode *inode, loff_t start, __u64 length);
 int ll_xattr_init(void);
 void ll_xattr_fini(void);
 
+int ll_init_security(struct inode *parent, void **value,
+		     size_t *len, umode_t mode);
+
 #endif /* LLITE_INTERNAL_H */
