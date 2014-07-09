@@ -836,6 +836,8 @@ static void ofd_fini(const struct lu_env *env, struct ofd_device *m)
 	struct obd_device *obd = ofd_obd(m);
 	struct lu_device  *d = &m->ofd_dt_dev.dd_lu_dev;
 
+	sptlrpc_rule_set_free(&obd->u.filter.fo_sptlrpc_rset);
+
 	lfsck_stop(env, m->ofd_osd, true);
 	lfsck_degister(env, m->ofd_osd);
 	target_recovery_fini(obd);
