@@ -841,7 +841,9 @@ static struct cache_deferred_req* cache_upcall_defer(struct cache_req *req)
 {
         return NULL;
 }
-static struct cache_req cache_upcall_chandle = { cache_upcall_defer };
+static struct cache_req cache_upcall_chandle = {
+				 .defer		= cache_upcall_defer, 
+				 .thread_wait	= GSS_SVC_UPCALL_TIMEOUT * HZ };
 
 int gss_svc_upcall_handle_init(struct ptlrpc_request *req,
 			       struct gss_svc_reqctx *grctx,
