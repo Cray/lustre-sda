@@ -1411,6 +1411,7 @@ LB_LINUX_TRY_COMPILE([
 #
 AC_DEFUN([LC_PROG_LINUX],
          [
+	 LC_CONFIG_INSECURE_CLIENT
          LC_CONFIG_PINGER
          LC_CONFIG_CHECKSUM
          LC_CONFIG_LIBLUSTRE_RECOVERY
@@ -1621,6 +1622,18 @@ ac_configure_args="$ac_configure_args --with-lustre-hack --with-sockets"
 
 LC_CONFIG_PINGER
 LC_CONFIG_LIBLUSTRE_RECOVERY
+])
+
+AC_DEFUN([LC_CONFIG_INSECURE_CLIENT],
+[AC_MSG_CHECKING([whether to enable insecure client support])
+AC_ARG_ENABLE([insecure-client],
+       AC_HELP_STRING([--disable-insecure-client],
+                       [disable insecure client support]),
+       [enable_insecure_client='no'],[enable_insecure_client='yes'])
+AC_MSG_RESULT([$enable_insecure_client])
+if test x$enable_insecure_client != xno ; then
+       AC_DEFINE(ENABLE_INSECURE_CLIENT, 1, Insecure client)
+fi
 ])
 
 #

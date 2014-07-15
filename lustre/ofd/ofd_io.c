@@ -483,7 +483,7 @@ ofd_commitrw_write(const struct lu_env *env, struct obd_export *exp,
 	if (rc)
 		GOTO(out, rc);
 
-	la->la_valid &= LA_ATIME | LA_MTIME | LA_CTIME;
+	la->la_valid &= LA_ATIME | LA_MTIME | LA_CTIME | LA_SECURITY;
 
 retry:
 	th = ofd_trans_create(env, ofd);
@@ -573,7 +573,7 @@ int ofd_commitrw(const struct lu_env *env, int cmd, struct obd_export *exp,
 		 struct obdo *oa, int objcount, struct obd_ioobj *obj,
 		 struct niobuf_remote *rnb, int npages,
 		 struct niobuf_local *lnb, struct obd_trans_info *oti,
-		 int old_rc)
+		 char *seclabel, int old_rc)
 {
 	struct ofd_thread_info	*info = ofd_info(env);
 	struct ofd_mod_data	*fmd;
@@ -595,7 +595,7 @@ int ofd_commitrw(const struct lu_env *env, int cmd, struct obd_export *exp,
 		 * to be changed to ofd_fmd_get() to create the fmd if it
 		 * doesn't already exist so we can store the reservation handle
 		 * there. */
-		valid = OBD_MD_FLUID | OBD_MD_FLGID;
+		valid = OBD_MD_FLUID | OBD_MD_FLGID | OBD_MD_FLSECURITY;
 		fmd = ofd_fmd_find(exp, &info->fti_fid);
 		if (!fmd || fmd->fmd_mactime_xid < info->fti_xid)
 			valid |= OBD_MD_FLATIME | OBD_MD_FLMTIME |
@@ -606,6 +606,13 @@ int ofd_commitrw(const struct lu_env *env, int cmd, struct obd_export *exp,
 		if (oa->o_valid & OBD_MD_FLFID) {
 			ff = &info->fti_mds_fid;
 			ofd_prepare_fidea(ff, oa);
+		}
+
+		if (oa->o_valid & OBD_MD_FLSECURITY) {
+			info->fti_attr.la_seclabel = seclabel;
+			info->fti_attr.la_sllen = strlen(seclabel) + 1;
+		} else {
+			info->fti_attr.la_seclabel = NULL;
 		}
 
 		rc = ofd_commitrw_write(env, exp, ofd, &info->fti_fid,

@@ -2424,6 +2424,10 @@ struct cl_req_attr {
 	struct obd_capa	*cra_capa;
 	/** Jobid */
 	char		 cra_jobid[JOBSTATS_JOBID_SIZE];
+#ifdef __KERNEL__
+	/** SELinux label */
+	char		cra_seclabel[CFS_SID_MAX_LEN];
+#endif
 };
 
 /**

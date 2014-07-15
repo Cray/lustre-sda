@@ -462,6 +462,9 @@ struct mdt_thread_info {
 	/* should be enough to fit lustre_mdt_attrs */
 	char			   mti_xattr_buf[128];
 	struct ldlm_enqueue_info   mti_einfo;
+#ifdef __KERNEL__
+	char			ma_seclabel[CFS_SID_MAX_LEN];
+#endif
 };
 
 extern struct lu_context_key mdt_thread_key;

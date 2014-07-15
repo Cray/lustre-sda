@@ -182,6 +182,12 @@ void mdc_create_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		tmp = req_capsule_client_get(&req->rq_pill, &RMF_EADATA);
 		memcpy(tmp, data, datalen);
 	}
+
+	if (op_data->op_slabel != NULL && req_capsule_has_field(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT)) {
+		char *slabel;
+		slabel = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX);
+		memcpy(slabel, op_data->op_slabel, op_data->op_sllen);
+	}
 }
 
 static __u64 mds_pack_open_flags(__u64 flags, __u32 mode)
@@ -268,6 +274,12 @@ void mdc_open_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		memcpy(tmp, lmm, lmmlen);
 	}
 	set_mrc_cr_flags(rec, cr_flags);
+
+	if (op_data->op_slabel != NULL && req_capsule_has_field(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT)) {
+		char *slabel;
+		slabel = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX);
+		memcpy(slabel, op_data->op_slabel, op_data->op_sllen);
+	}
 }
 
 static inline __u64 attr_pack(unsigned int ia_valid) {
