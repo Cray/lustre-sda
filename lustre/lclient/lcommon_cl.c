@@ -948,6 +948,30 @@ void ccc_req_completion(const struct lu_env *env,
         OBD_SLAB_FREE_PTR(vrq, ccc_req_kmem);
 }
 
+#ifdef __KERNEL__
+static int ll_security_from_inode(struct inode *inode, char *seclabel, int len)
+{
+	struct ll_inode_security_struct *isec = inode->i_security;
+	char *scontext;
+	u32 scontext_len;
+	int rc;
+
+	if (!selinux_is_enabled())
+		return -EOPNOTSUPP;
+
+	rc = security_secid_to_secctx(isec->sid, &scontext, &scontext_len);
+	if (rc == 0) {
+		LASSERTF((scontext_len + 1) <= len,
+			"too long security context is not supported\n");
+		memcpy(seclabel, scontext, scontext_len);
+		seclabel[scontext_len] = 0;
+		security_release_secctx(scontext, scontext_len);
+	}
+
+	return rc;
+}
+#endif
+
 /**
  * Implementation of struct cl_req_operations::cro_attr_set() for ccc
  * layer. ccc is responsible for
@@ -975,7 +999,7 @@ void ccc_req_attr_set(const struct lu_env *env,
 {
         struct inode *inode;
         struct obdo  *oa;
-        obd_flag      valid_flags;
+	obd_valid     valid_flags;
 
 	oa = attr->cra_oa;
 	inode = ccc_object_inode(obj);
@@ -993,6 +1017,13 @@ void ccc_req_attr_set(const struct lu_env *env,
                         oa->o_ioepoch = cl_i2info(inode)->lli_ioepoch;
                         valid_flags |= OBD_MD_FLMTIME|OBD_MD_FLCTIME|
                                 OBD_MD_FLUID|OBD_MD_FLGID;
+#ifdef __KERNEL__
+			if (flags & OBD_MD_FLSECURITY &&
+			    ll_security_from_inode(inode,
+						   attr->cra_seclabel,
+						   sizeof(attr->cra_seclabel)) == 0)
+				oa->o_valid |= OBD_MD_FLSECURITY;
+#endif
                 }
         }
         obdo_from_inode(oa, inode, valid_flags & flags);

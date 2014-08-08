@@ -244,4 +244,8 @@ int osc_quota_adjust_qunit(struct obd_export *exp,
                            struct quota_adjust_qunit *oqaq,
                            struct lustre_quota_ctxt *qctxt,
                            struct ptlrpc_request_set *rqset);
+
+#define osc_select_rq_format(exp,basefmt) (exp_connect_selustre(exp) ?\
+					  &(basefmt ## _SE) : &(basefmt))
+
 #endif /* OSC_INTERNAL_H */

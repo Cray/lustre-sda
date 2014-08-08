@@ -498,6 +498,7 @@ static int ost_setattr(struct obd_export *exp, struct ptlrpc_request *req,
         struct ost_body *body, *repbody;
         struct obd_info *oinfo;
         struct lustre_capa *capa = NULL;
+        char *seclabel = NULL;
         int rc;
         ENTRY;
 
@@ -521,6 +522,9 @@ static int ost_setattr(struct obd_export *exp, struct ptlrpc_request *req,
                 }
         }
 
+	if (body->oa.o_valid & OBD_MD_FLSECURITY)
+		seclabel = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX);
+
         repbody = req_capsule_server_get(&req->rq_pill, &RMF_OST_BODY);
         repbody->oa = body->oa;
 
@@ -530,7 +534,7 @@ static int ost_setattr(struct obd_export *exp, struct ptlrpc_request *req,
         oinfo->oi_oa = &repbody->oa;
         oinfo->oi_capa = capa;
 
-        req->rq_status = obd_setattr(exp, oinfo, oti);
+        req->rq_status = obd_setattr(exp, oinfo, seclabel, oti);
 
         OBD_FREE_PTR(oinfo);
 
@@ -900,7 +904,7 @@ static int ost_brw_read(struct ptlrpc_request *req, struct obd_trans_info *oti)
 out_commitrw:
         /* Must commit after prep above in all cases */
         rc = obd_commitrw(OBD_BRW_READ, exp, &repbody->oa, 1, ioo,
-                          remote_nb, npages, local_nb, oti, opaque, rc);
+                          remote_nb, npages, local_nb, oti, opaque, NULL, rc);
 
         if (rc == 0)
                 ost_drop_id(exp, &repbody->oa);
@@ -998,6 +1002,7 @@ static int ost_brw_write(struct ptlrpc_request *req, struct obd_trans_info *oti)
         __u32                    o_uid = 0, o_gid = 0;
         struct ost_thread_local_cache *tls;
 	void			*opaque;
+	char			*seclabel;
         ENTRY;
 
         req->rq_bulk_write = 1;
@@ -1034,6 +1039,8 @@ static int ost_brw_write(struct ptlrpc_request *req, struct obd_trans_info *oti)
 
         for (niocount = i = 0; i < objcount; i++)
                 niocount += ioo[i].ioo_bufcnt;
+
+	seclabel = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX);
 
         /*
          * It'd be nice to have a capsule function to indicate how many elements
@@ -1180,7 +1187,7 @@ skip_transfer:
 
         /* Must commit after prep above in all cases */
         rc = obd_commitrw(OBD_BRW_WRITE, exp, &repbody->oa, objcount, ioo,
-			  remote_nb, npages, local_nb, oti, opaque, rc);
+			  remote_nb, npages, local_nb, oti, opaque, seclabel, rc);
         if (rc == -ENOTCONN)
                 /* quota acquire process has been given up because
                  * either the client has been evicted or the client
@@ -2224,7 +2231,7 @@ static int ost_hpreq_handler(struct ptlrpc_request *req)
                                                 &RQF_OST_BRW_READ);
                         else
                                 req_capsule_set(&req->rq_pill,
-                                                &RQF_OST_BRW_WRITE);
+                                                &RQF_OST_BRW_WRITE_SE);
 
                         body = req_capsule_client_get(&req->rq_pill,
                                                       &RMF_OST_BODY);
@@ -2415,13 +2422,13 @@ int ost_handle(struct ptlrpc_request *req)
                 break;
         case OST_SETATTR:
                 CDEBUG(D_INODE, "setattr\n");
-                req_capsule_set(&req->rq_pill, &RQF_OST_SETATTR);
+                req_capsule_set(&req->rq_pill, &RQF_OST_SETATTR_SE);
                 if (OBD_FAIL_CHECK(OBD_FAIL_OST_SETATTR_NET))
                         RETURN(0);
                 rc = ost_setattr(req->rq_export, req, oti);
                 break;
         case OST_WRITE:
-                req_capsule_set(&req->rq_pill, &RQF_OST_BRW_WRITE);
+                req_capsule_set(&req->rq_pill, &RQF_OST_BRW_WRITE_SE);
                 CDEBUG(D_INODE, "write\n");
                 /* req->rq_request_portal would be nice, if it was set */
                 if (req->rq_rqbd->rqbd_service->srv_req_portal !=OST_IO_PORTAL){

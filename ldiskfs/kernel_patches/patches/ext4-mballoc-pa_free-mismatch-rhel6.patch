@@ -67,7 +67,7 @@ Index: linux-stage/fs/ext4/mballoc.c
  
  	trace_ext4_request_blocks(ar);
  
-+
++#ifdef HAVE_CLEAR_RDONLY_ON_PUT
 +	if (dev_check_rdonly(sb->s_bdev) && printk_ratelimit()) {
 +		struct block_device *bdev = sb->s_bdev;
 +
@@ -84,7 +84,7 @@ Index: linux-stage/fs/ext4/mballoc.c
 +			(unsigned long long)ar->pright,
 +			ar->len, ar->flags);
 +	}
-+
++#endif
  	/*
  	 * For delayed allocation, we could skip the ENOSPC and
  	 * EDQUOT check, as blocks and quotas have been already
@@ -114,10 +114,11 @@ Index: linux-stage/fs/ext4/mballoc.c
  		} else {
  			block = ext4_grp_offs_to_block(sb, &ac->ac_b_ex);
  			ar->len = ac->ac_b_ex.fe_len;
-@@ -4691,6 +4740,15 @@
+@@ -4691,6 +4740,16 @@
  		goto error_return;
  	}
  
++#ifdef HAVE_CLEAR_RDONLY_ON_PUT
 +	if (dev_check_rdonly(sb->s_bdev) && printk_ratelimit()) {
 +		struct block_device *bdev = sb->s_bdev;
 +
@@ -126,7 +127,7 @@ Index: linux-stage/fs/ext4/mballoc.c
 +			bdev->bd_disk ? bdev->bd_disk->disk_name : "",
 +			bdev->bd_dev, inode->i_ino, block, count, metadata);
 +	}
-+
++#endif
  	ext4_debug("freeing block %llu\n", block);
  	trace_ext4_free_blocks(inode, block, count, metadata);
  

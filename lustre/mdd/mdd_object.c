@@ -1607,8 +1607,9 @@ int mdd_attr_set(const struct lu_env *env, struct md_object *obj,
 #endif
         /*TODO: add lock here*/
         /* start a log jounal handle if needed */
-        if (S_ISREG(mdd_object_type(mdd_obj)) &&
-            la->la_valid & (LA_UID | LA_GID)) {
+        if ((S_ISREG(mdd_object_type(mdd_obj)) &&
+             la->la_valid & (LA_UID | LA_GID)) ||
+	     ma->ma_valid & MA_SECURITY) {
                 lmm_size = mdd_lov_mdsize(env, mdd);
                 lmm = mdd_max_lmm_get(env, mdd);
                 if (lmm == NULL)
@@ -1719,7 +1720,36 @@ cleanup:
                                             la->la_valid);
         mdd_trans_stop(env, mdd, rc, handle);
 no_trans:
-        if (rc == 0 && (lmm != NULL && lmm_size > 0 )) {
+	if (rc == 0 && (ma->ma_valid & MA_SECURITY)) {
+		struct obd_export *lov_exp = mds->mds_lov_exp;
+		struct obd_info oinfo = { { { 0 } } };
+
+		OBDO_ALLOC(oinfo.oi_oa);
+		if (oinfo.oi_oa == NULL) {
+			rc = -ENOMEM;
+			goto skip;
+		}
+
+		oinfo.oi_oa->o_id = fid_ver_oid(mdd_object_fid(mdd_obj));
+		oinfo.oi_oa->o_seq = fid_seq(mdd_object_fid(mdd_obj));
+		oinfo.oi_oa->o_valid = OBD_MD_FLID | OBD_MD_FLGROUP | OBD_MD_FLSECURITY;
+
+		rc = obd_unpackmd(mds->mds_lov_exp, &oinfo.oi_md, lmm, lmm_size);
+		if (rc < 0) {
+			CERROR("Error unpack md, type %lx\n", (long)mdd_object_type(mdd_obj));
+			goto skip;
+		}
+
+		rc = obd_setattr(lov_exp, &oinfo, ma->ma_seclabel, NULL);
+skip:
+		if (oinfo.oi_oa != NULL)
+			OBDO_FREE(oinfo.oi_oa);
+		if (oinfo.oi_md != NULL)
+			obd_free_memmd(mds->mds_lov_exp, &oinfo.oi_md);
+	}
+
+        if (rc == 0 && (lmm != NULL && lmm_size > 0 ) && S_ISREG(mdd_object_type(mdd_obj)) &&
+	     ma->ma_attr.la_valid & (LA_UID | LA_GID)) {
                 /*set obd attr, if needed*/
                 rc = mdd_lov_setattr_async(env, mdd_obj, lmm, lmm_size,
                                            logcookies);

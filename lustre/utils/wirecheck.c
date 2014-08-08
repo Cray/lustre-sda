@@ -415,7 +415,6 @@ check_obd_statfs(void)
         CHECK_MEMBER(obd_statfs, os_bsize);
         CHECK_MEMBER(obd_statfs, os_namelen);
         CHECK_MEMBER(obd_statfs, os_state);
-        CHECK_MEMBER(obd_statfs, os_fprecreated);
         CHECK_MEMBER(obd_statfs, os_spare2);
         CHECK_MEMBER(obd_statfs, os_spare3);
         CHECK_MEMBER(obd_statfs, os_spare4);

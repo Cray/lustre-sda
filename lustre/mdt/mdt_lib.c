@@ -1028,7 +1028,7 @@ static int mdt_create_unpack(struct mdt_thread_info *info)
         if (sp->sp_cr_flags & MDS_CREATE_RMT_ACL) {
                 if (S_ISDIR(attr->la_mode))
                         sp->u.sp_pfid = rr->rr_fid1;
-                req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_RMT_ACL);
+                req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_RMT_ACL_SE);
                 LASSERT(req_capsule_field_present(pill, &RMF_EADATA,
                                                   RCL_CLIENT));
                 rr->rr_eadata = req_capsule_client_get(pill, &RMF_EADATA);
@@ -1060,7 +1060,7 @@ static int mdt_create_unpack(struct mdt_thread_info *info)
                        sp->u.sp_ea.fid = rr->rr_fid1;
                        RETURN(0);
                 }
-                req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_RMT_ACL);
+                req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_RMT_ACL_SE);
         } else if (S_ISLNK(attr->la_mode)) {
                 const char *tgt = NULL;
 
@@ -1072,8 +1072,15 @@ static int mdt_create_unpack(struct mdt_thread_info *info)
                 if (tgt == NULL)
                         RETURN(-EFAULT);
         } else {
-                req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_RMT_ACL);
+                req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_RMT_ACL_SE);
         }
+
+	if (req_capsule_has_field(pill, &RMF_SELINUX, RCL_CLIENT)) {
+		attr->la_valid |= LA_SLABEL;
+		attr->la_slabel = req_capsule_client_get(pill, &RMF_SELINUX);
+		attr->la_sllen = req_capsule_get_size(pill, &RMF_SELINUX, RCL_CLIENT);
+	}
+
         rc = mdt_dlmreq_unpack(info);
         RETURN(rc);
 }
@@ -1332,6 +1339,12 @@ static int mdt_open_unpack(struct mdt_thread_info *info)
                 if (rr->rr_eadatalen == 0 &&
                     !(info->mti_spec.sp_cr_flags & MDS_OPEN_DELAY_CREATE))
                         rr->rr_eadatalen = MIN_MD_SIZE;        }
+
+	if (req_capsule_has_field(pill, &RMF_SELINUX, RCL_CLIENT)) {
+		attr->la_valid |= LA_SLABEL;
+		attr->la_slabel = req_capsule_client_get(pill, &RMF_SELINUX);
+		attr->la_sllen = req_capsule_get_size(pill, &RMF_SELINUX, RCL_CLIENT);
+	}
 
         RETURN(0);
 }

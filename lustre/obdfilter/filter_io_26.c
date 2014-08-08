@@ -455,8 +455,8 @@ int filter_do_bio(struct obd_export *exp, struct inode *inode,
 
 /* Must be called with i_mutex taken for writes; this will drop it */
 int filter_direct_io(int rw, struct dentry *dchild, struct filter_iobuf *iobuf,
-                     struct obd_export *exp, struct iattr *attr,
-                     struct obd_trans_info *oti, void **wait_handle)
+		     struct obd_export *exp, struct iattr *attr,
+		     struct obd_trans_info *oti, void **wait_handle)
 {
         struct obd_device *obd = exp->exp_obd;
         struct inode *inode = dchild->d_inode;
@@ -571,7 +571,7 @@ int filter_commitrw_write(struct obd_export *exp, struct obdo *oa,
                           int objcount, struct obd_ioobj *obj,
                           struct niobuf_remote *nb, int niocount,
                           struct niobuf_local *res, struct obd_trans_info *oti,
-			  void *opaque, int rc)
+			  void *opaque, const char *seclabel, int rc)
 {
         struct niobuf_local *lnb;
         struct filter_iobuf *iobuf = NULL;
@@ -744,6 +744,13 @@ retry:
                 CDEBUG(D_QUOTA, "set uid(%u)/gid(%u) to ino(%lu). rc(%d)\n",
                                 iattr.ia_uid, iattr.ia_gid, inode->i_ino, rc);
                 iattr.ia_valid = save & ~(ATTR_UID | ATTR_GID);
+
+		if (seclabel != NULL)
+			rc = fsfilt_setxattr(obd, dentry,
+					     oti->oti_handle,
+					     XATTR_NAME_SECURITY_SELINUX,
+					     seclabel,
+					     strlen(seclabel) + 1);
 
 		err = fsfilt_commit(obd, inode, handle, 0);
 		if (cap_raise)

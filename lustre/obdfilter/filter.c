@@ -1596,10 +1596,6 @@ int filter_vfs_unlink(struct inode *dir, struct dentry *dentry,
         /* Locking order: i_mutex -> journal_lock -> dqptr_sem. LU-952 */
         ll_vfs_dq_init(dir);
 
-        rc = security_inode_unlink(dir, dentry);
-        if (rc)
-                GOTO(out, rc);
-
         rc = dir->i_op->unlink(dir, dentry);
 out:
 	/* need to drop i_mutex before we lose inode reference */
@@ -3241,7 +3237,8 @@ int filter_update_fidea(struct obd_export *exp, struct inode *inode,
 
 /* this is called from filter_truncate() until we have filter_punch() */
 int filter_setattr_internal(struct obd_export *exp, struct dentry *dentry,
-                            struct obdo *oa, struct obd_trans_info *oti)
+                            struct obdo *oa, const char *seclabel,
+                            struct obd_trans_info *oti)
 {
         unsigned int orig_ids[MAXQUOTAS] = {0, 0};
         struct llog_cookie *fcc = NULL;
@@ -3346,6 +3343,12 @@ int filter_setattr_internal(struct obd_export *exp, struct dentry *dentry,
         if (ia_valid & (ATTR_SIZE | ATTR_UID | ATTR_GID))
                 ll_vfs_dq_init(inode);
 
+	if (oa->o_valid & OBD_MD_FLSECURITY) {
+		rc = fsfilt_setxattr(exp->exp_obd, dentry, handle,
+				     XATTR_NAME_SECURITY_SELINUX,
+				     seclabel, strlen(seclabel) + 1);
+	}
+
         if (oa->o_valid & OBD_MD_FLFLAGS) {
                 rc = fsfilt_iocontrol(exp->exp_obd, dentry,
                                       FSFILT_IOC_SETFLAGS, (long)&oa->o_flags);
@@ -3421,7 +3424,7 @@ out_unlock:
 
 /* this is called from filter_truncate() until we have filter_punch() */
 int filter_setattr(struct obd_export *exp, struct obd_info *oinfo,
-                   struct obd_trans_info *oti)
+                   const char *seclabel, struct obd_trans_info *oti)
 {
         struct obdo *oa = oinfo->oi_oa;
         struct lustre_capa *capa = oinfo_capa(oinfo);
@@ -3495,7 +3498,7 @@ int filter_setattr(struct obd_export *exp, struct obd_info *oinfo,
         }
 
         /* setting objects attributes (including owner/group) */
-        rc = filter_setattr_internal(exp, dentry, oa, oti);
+        rc = filter_setattr_internal(exp, dentry, oa, seclabel, oti);
         if (rc)
                 GOTO(out_unlock, rc);
 
@@ -4364,7 +4367,7 @@ static int filter_truncate(struct obd_export *exp, struct obd_info *oinfo,
 
         oinfo->oi_oa->o_size = oinfo->oi_policy.l_extent.start;
         oinfo->oi_oa->o_valid |= OBD_FL_TRUNC;
-        rc = filter_setattr(exp, oinfo, oti);
+        rc = filter_setattr(exp, oinfo, NULL, oti);
         oinfo->oi_oa->o_valid &= ~OBD_FL_TRUNC;
         RETURN(rc);
 }

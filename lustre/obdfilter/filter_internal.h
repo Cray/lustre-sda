@@ -148,9 +148,10 @@ int filter_destroy(struct obd_export *exp, struct obdo *oa,
                    struct lov_stripe_md *md, struct obd_trans_info *,
                    struct obd_export *, void *);
 int filter_setattr_internal(struct obd_export *exp, struct dentry *dentry,
-                            struct obdo *oa, struct obd_trans_info *oti);
+                            struct obdo *oa, const char *seclabel,
+                            struct obd_trans_info *oti);
 int filter_setattr(struct obd_export *exp, struct obd_info *oinfo,
-                   struct obd_trans_info *oti);
+                   const char *seclabel, struct obd_trans_info *oti);
 
 int filter_create(struct obd_export *exp, struct obdo *oa,
                   struct lov_stripe_md **ea, struct obd_trans_info *oti);
@@ -169,7 +170,7 @@ int filter_preprw(int cmd, struct obd_export *, struct obdo *, int objcount,
 int filter_commitrw(int cmd, struct obd_export *, struct obdo *, int objcount,
                     struct obd_ioobj *, struct niobuf_remote *,  int,
 		    struct niobuf_local *, struct obd_trans_info *,
-		    void *opaque, int rc);
+		    void *opaque, const char *seclabel, int rc);
 void filter_release_cache(struct obd_device *, struct obd_ioobj *,
                           struct niobuf_remote *, struct inode *);
 
@@ -178,7 +179,7 @@ struct filter_iobuf;
 int filter_commitrw_write(struct obd_export *exp, struct obdo *oa, int objcount,
                           struct obd_ioobj *obj, struct niobuf_remote *, int,
                           struct niobuf_local *res, struct obd_trans_info *oti,
-			  void *opaque, int rc);
+			  void *opaque, const char *seclabel, int rc);
 obd_size filter_grant_space_left(struct obd_export *exp);
 long filter_grant(struct obd_export *exp, obd_size current_grant,
                   obd_size want, obd_size fs_space_left, int conservative);

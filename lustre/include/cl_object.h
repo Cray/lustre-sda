@@ -2395,6 +2395,10 @@ struct cl_req_attr {
         struct obdo     *cra_oa;
         /** Capability. */
         struct obd_capa *cra_capa;
+#ifdef __KERNEL__
+	/** SELinux label */
+	char		cra_seclabel[CFS_SID_MAX_LEN];
+#endif
 };
 
 /**

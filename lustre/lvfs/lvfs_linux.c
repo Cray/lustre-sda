@@ -481,15 +481,12 @@ out:
 }
 EXPORT_SYMBOL(simple_truncate);
 
-#ifdef LUSTRE_KERNEL_VERSION
-#ifndef HAVE_CLEAR_RDONLY_ON_PUT
-#error rdonly patchset must be updated [cfs bz11248]
-#endif
 void dev_set_rdonly(lvfs_sbdev_type dev);
 int dev_check_rdonly(lvfs_sbdev_type dev);
 
-void __lvfs_set_rdonly(lvfs_sbdev_type dev, lvfs_sbdev_type jdev)
+int __lvfs_set_rdonly(lvfs_sbdev_type dev, lvfs_sbdev_type jdev)
 {
+#ifdef HAVE_CLEAR_RDONLY_ON_PUT
         CDEBUG(D_IOCTL | D_HA, "set dev %lx rdonly\n", (long)dev);
         dev_set_rdonly(dev);
 	/* we need to be sure all fs modification exist on journal 
@@ -499,11 +496,19 @@ void __lvfs_set_rdonly(lvfs_sbdev_type dev, lvfs_sbdev_type jdev)
                        (long)jdev);
                 dev_set_rdonly(jdev);
         }
+        return 0;
+#else
+	return -EINVAL;
+#endif
 }
 
 int lvfs_check_rdonly(lvfs_sbdev_type dev)
 {
-        return dev_check_rdonly(dev);
+#ifdef HAVE_CLEAR_RDONLY_ON_PUT
+	return dev_check_rdonly(dev);
+#else
+	return 0;
+#endif
 }
 
 EXPORT_SYMBOL(__lvfs_set_rdonly);
@@ -528,7 +533,6 @@ int lvfs_check_io_health(struct obd_device *obd, struct file *file)
         RETURN(rc);
 }
 EXPORT_SYMBOL(lvfs_check_io_health);
-#endif /* LUSTRE_KERNEL_VERSION */
 
 void obd_update_maxusage()
 {

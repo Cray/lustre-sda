@@ -1008,15 +1008,15 @@ static int osd_commit_async(const struct lu_env *env,
  */
 lvfs_sbdev_type fsfilt_ldiskfs_journal_sbdev(struct super_block *);
 
-static void osd_ro(const struct lu_env *env, struct dt_device *d)
+static int osd_ro(const struct lu_env *env, struct dt_device *d)
 {
         ENTRY;
 
         CERROR("*** setting device %s read-only ***\n", LUSTRE_OSD_NAME);
 
-        __lvfs_set_rdonly(lvfs_sbdev(osd_sb(osd_dt_dev(d))),
-                          fsfilt_ldiskfs_journal_sbdev(osd_sb(osd_dt_dev(d))));
-        EXIT;
+        RETURN(__lvfs_set_rdonly(lvfs_sbdev(osd_sb(osd_dt_dev(d))),
+                          fsfilt_ldiskfs_journal_sbdev(osd_sb(osd_dt_dev(d)))));
+
 }
 
 
