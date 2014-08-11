@@ -1184,7 +1184,7 @@ int mdt_open_by_fid_lock(struct mdt_thread_info *info, struct ldlm_reply *rep,
 		mdt_lock_handle_init(lhc);
 		mdt_lock_reg_init(lhc, lm);
 		rc = mdt_object_lock(info, o, lhc,
-				     MDS_INODELOCK_LOOKUP | MDS_INODELOCK_OPEN,
+				     MDS_INODELOCK_LOOKUP | MDS_INODELOCK_OPEN | MDS_INODELOCK_XATTR,
 				     MDT_CROSS_LOCK);
 		if (rc)
 			GOTO(out, rc);

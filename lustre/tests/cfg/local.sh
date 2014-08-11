@@ -92,7 +92,7 @@ else
     MGS_MKFS_OPTS="--mgs --device-size=$MGSSIZE"
 fi
 
-MKFSOPT=""
+MKFSOPT="-I 1024"
 [ "x$OSTJOURNALSIZE" != "x" ] &&
     MKFSOPT=$MKFSOPT" -J size=$OSTJOURNALSIZE"
 [ "x$MKFSOPT" != "x" ] &&

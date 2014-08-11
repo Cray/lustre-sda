@@ -470,7 +470,7 @@ static struct dentry *ll_find_alias(struct inode *inode, struct dentry *de)
         spin_unlock(&dcache_lock);
         cfs_spin_unlock(&ll_lookup_lock);
 
-        security_d_instantiate(de, inode);
+
         d_rehash(de);
 
         return de;
@@ -681,6 +681,8 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
                 ll_release_openhandle(dentry, it);
         }
         ll_lookup_finish_locks(it, dentry);
+
+        security_d_instantiate(dentry, dentry->d_inode);
 
         if (dentry == save)
                 GOTO(out, retval = NULL);

@@ -558,7 +558,8 @@ static const struct req_msg_field *ost_brw_read_client[] = {
         &RMF_OST_BODY,
         &RMF_OBD_IOOBJ,
         &RMF_NIOBUF_REMOTE,
-        &RMF_CAPA1
+        &RMF_CAPA1,
+        &RMF_SHORT_IO
 };
 
 static const struct req_msg_field *ost_brw_write_client[] = {
@@ -576,6 +577,7 @@ static const struct req_msg_field *ost_brw_write_client_se[] = {
 	&RMF_OBD_IOOBJ,
 	&RMF_NIOBUF_REMOTE,
 	&RMF_CAPA1,
+	&RMF_SHORT_IO,
 	&RMF_SELINUX
 };
 
