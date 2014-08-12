@@ -1265,7 +1265,7 @@ static int mntdf(char *mntdir, char *fsname, char *pool, int ishow,
 			type = lazy ? tp->st_op | LL_STATFS_NODELAY : tp->st_op;
 			rc = llapi_obd_statfs(mntdir, type, index,
                                               &stat_buf, &uuid_buf);
-                        if (rc == -ENODEV)
+                        if (rc == -ENODEV || rc == -ENOTTY)
                                 break;
 
                         if (poolname && tp->st_op == LL_STATFS_LOV &&

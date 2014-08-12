@@ -57,6 +57,11 @@ extern krb5_error_code krb5int_derive_key(const void *enc,
 extern krb5_error_code krb5_k_create_key(krb5_context context,
 					 const krb5_keyblock *key_data,
 					 krb5_key *out);
+extern krb5_error_code
+krb5int_derive_keyblock(const void *enc,
+                        krb5_key inkey, krb5_keyblock *outkey,
+                        const krb5_data *in_constant, enum deriv_alg alg);
+
 #else /* !HAVE_KRB5INT_DERIVE_KEY */
 
 extern krb5_error_code krb5_derive_key(const void *enc,
