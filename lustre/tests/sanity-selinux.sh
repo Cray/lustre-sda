@@ -53,7 +53,8 @@ test_1() {
 	touch $DIR/$tfile-f1
 	mkdir $DIR/$tfile-d1
 	mkfifo $DIR/$tfile-p1
-	ls -salZ $DIR
+	ln -s $DIR/$tfile-f1 $DIR/$tfile-l1
+	ls -salhZ $DIR
 
 	echo "=== step 2 ==="
 	echo 3 > /proc/sys/vm/drop_caches
@@ -64,6 +65,7 @@ test_1() {
 	do_facet mds1 "sync; $DEBUGFS -c -R 'stat ROOT/$tfile-f1' $dev 2>/dev/null" | grep "selinux ="
 	do_facet mds1 "sync; $DEBUGFS -c -R 'stat ROOT/$tfile-d1' $dev 2>/dev/null" | grep "selinux ="
 	do_facet mds1 "sync; $DEBUGFS -c -R 'stat ROOT/$tfile-p1' $dev 2>/dev/null" | grep "selinux ="
+	do_facet mds1 "sync; $DEBUGFS -c -R 'stat ROOT/$tfile-l1' $dev 2>/dev/null" | grep "selinux ="
 
 	echo "=== step 4 ==="
 	dd if=/dev/zero of=$DIR/$tfile-f1 bs=1M count=10

@@ -171,6 +171,7 @@ extern struct req_format RQF_MDS_REINT_CREATE_RMT_ACL;
 extern struct req_format RQF_MDS_REINT_CREATE_RMT_ACL_SE;
 extern struct req_format RQF_MDS_REINT_CREATE_SLAVE;
 extern struct req_format RQF_MDS_REINT_CREATE_SYM;
+extern struct req_format RQF_MDS_REINT_CREATE_SYM_SE;
 extern struct req_format RQF_MDS_REINT_OPEN;
 extern struct req_format RQF_MDS_REINT_UNLINK;
 extern struct req_format RQF_MDS_REINT_LINK;

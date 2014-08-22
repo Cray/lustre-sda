@@ -498,6 +498,7 @@ int __lvfs_set_rdonly(lvfs_sbdev_type dev, lvfs_sbdev_type jdev)
                        (long)jdev);
                 dev_set_rdonly(jdev);
         }
+	return 0;
 #else
 	return -EINVAL;
 #endif
