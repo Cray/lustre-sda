@@ -433,6 +433,10 @@ int mdt_reint_setxattr(struct mdt_thread_info *info,
 	}
 
         lockpart = MDS_INODELOCK_UPDATE;
+
+	if (!strcmp(xattr_name, XATTR_NAME_SECURITY_SELINUX))
+		lockpart |= MDS_INODELOCK_LOOKUP;
+
         /* Revoke all clients' lookup lock, since the access
          * permissions for this inode is changed when ACL_ACCESS is
          * set. This isn't needed for ACL_DEFAULT, since that does

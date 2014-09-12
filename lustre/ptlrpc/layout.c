@@ -240,6 +240,16 @@ static const struct req_msg_field *mds_reint_create_sym_client[] = {
         &RMF_DLM_REQ
 };
 
+static const struct req_msg_field *mds_reint_create_sym_client_se[] = {
+        &RMF_PTLRPC_BODY,
+        &RMF_REC_REINT,
+        &RMF_CAPA1,
+        &RMF_NAME,
+        &RMF_SYMTGT,
+        &RMF_DLM_REQ,
+        &RMF_SELINUX
+};
+
 static const struct req_msg_field *mds_reint_open_client[] = {
         &RMF_PTLRPC_BODY,
         &RMF_REC_REINT,
@@ -631,7 +641,8 @@ static const struct req_msg_field *ost_brw_write_client[] = {
         &RMF_OST_BODY,
         &RMF_OBD_IOOBJ,
         &RMF_NIOBUF_REMOTE,
-        &RMF_CAPA1
+        &RMF_CAPA1,
+        &RMF_SHORT_IO
 };
 
 static const struct req_msg_field *ost_brw_write_client_se[] = {
@@ -640,6 +651,7 @@ static const struct req_msg_field *ost_brw_write_client_se[] = {
 	&RMF_OBD_IOOBJ,
 	&RMF_NIOBUF_REMOTE,
 	&RMF_CAPA1,
+	&RMF_SHORT_IO,
 	&RMF_SELINUX
 };
 
@@ -762,6 +774,7 @@ static struct req_format *req_formats[] = {
 	&RQF_MDS_REINT_CREATE_RMT_ACL_SE,
         &RQF_MDS_REINT_CREATE_SLAVE,
         &RQF_MDS_REINT_CREATE_SYM,
+	&RQF_MDS_REINT_CREATE_SYM_SE,
         &RQF_MDS_REINT_OPEN,
         &RQF_MDS_REINT_UNLINK,
         &RQF_MDS_REINT_LINK,
@@ -1233,6 +1246,11 @@ struct req_msg_field RMF_SWAP_LAYOUTS =
 	DEFINE_MSGF("swap_layouts", 0, sizeof(struct  mdc_swap_layouts),
 		    lustre_swab_swap_layouts, NULL);
 EXPORT_SYMBOL(RMF_SWAP_LAYOUTS);
+
+struct req_msg_field RMF_SHORT_IO =
+        DEFINE_MSGF("short_io", 0, -1, NULL, NULL);
+EXPORT_SYMBOL(RMF_SHORT_IO);
+
 /*
  * Request formats.
  */
@@ -1392,6 +1410,11 @@ struct req_format RQF_MDS_REINT_CREATE_SYM =
         DEFINE_REQ_FMT0("MDS_REINT_CREATE_SYM",
                         mds_reint_create_sym_client, mdt_body_capa);
 EXPORT_SYMBOL(RQF_MDS_REINT_CREATE_SYM);
+
+struct req_format RQF_MDS_REINT_CREATE_SYM_SE =
+        DEFINE_REQ_FMT0("MDS_REINT_CREATE_SYM_SE",
+                        mds_reint_create_sym_client_se, mdt_body_capa);
+EXPORT_SYMBOL(RQF_MDS_REINT_CREATE_SYM_SE);
 
 struct req_format RQF_MDS_REINT_OPEN =
         DEFINE_REQ_FMT0("MDS_REINT_OPEN",

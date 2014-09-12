@@ -548,6 +548,9 @@ int ll_init_security(struct inode *parent, void **value,
 	char *attr_name = NULL;
 	int rc;
 
+	if (!selinux_is_enabled())
+		return 0;
+
 	OBD_ALLOC_PTR(inode);
 	OBD_ALLOC_PTR(isec);
 
@@ -658,6 +661,10 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
                 ll_release_openhandle(dentry, it);
         }
         ll_lookup_finish_locks(it, dentry);
+
+	security_d_instantiate(dentry, dentry->d_inode);
+	if (d_lustre_invalid(dentry) && dentry->d_inode)
+		ll_invalidate_inode_sid(dentry->d_inode);
 
         if (dentry == save)
                 GOTO(out, retval = NULL);

@@ -1309,9 +1309,12 @@ static int osc_brw_prep_request(int cmd, struct client_obd *cli,struct obdo *oa,
 
 	if (seclabel != NULL && oa->o_valid & OBD_MD_FLSECURITY &&
 	    opc == OST_WRITE &&
-	    req_capsule_has_field(pill, &RMF_SELINUX, RCL_CLIENT))
+	    req_capsule_has_field(pill, &RMF_SELINUX, RCL_CLIENT)) {
+		req_capsule_set_size(pill, &RMF_SHORT_IO, RCL_CLIENT, 0);
+
 		req_capsule_set_size(pill, &RMF_SELINUX, RCL_CLIENT,
-				     seclabel ? strlen(seclabel) + 1 : 0);
+				     strlen(seclabel) + 1);
+	}
 
         rc = ptlrpc_request_pack(req, LUSTRE_OST_VERSION, opc);
         if (rc) {

@@ -180,6 +180,7 @@ extern struct req_format RQF_MDS_REINT_CREATE_RMT_ACL;
 extern struct req_format RQF_MDS_REINT_CREATE_RMT_ACL_SE;
 extern struct req_format RQF_MDS_REINT_CREATE_SLAVE;
 extern struct req_format RQF_MDS_REINT_CREATE_SYM;
+extern struct req_format RQF_MDS_REINT_CREATE_SYM_SE;
 extern struct req_format RQF_MDS_REINT_OPEN;
 extern struct req_format RQF_MDS_REINT_UNLINK;
 extern struct req_format RQF_MDS_REINT_LINK;
@@ -343,5 +344,6 @@ extern struct req_msg_field RMF_UPDATE_REPLY;
 /** @} req_layout */
 
 extern struct req_msg_field RMF_SELINUX;
+extern struct req_msg_field RMF_SHORT_IO;
 
 #endif /* _LUSTRE_REQ_LAYOUT_H__ */

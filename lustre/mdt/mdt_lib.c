@@ -1011,7 +1011,7 @@ static int mdt_create_unpack(struct mdt_thread_info *info)
 	if (S_ISLNK(attr->la_mode)) {
                 const char *tgt = NULL;
 
-                req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_SYM);
+                req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_SYM_SE);
                 if (req_capsule_get_size(pill, &RMF_SYMTGT, RCL_CLIENT)) {
                         tgt = req_capsule_client_get(pill, &RMF_SYMTGT);
                         sp->u.sp_symname = tgt;
