@@ -326,7 +326,7 @@ static struct ptlrpc_request *mdc_intent_open_pack(struct obd_export *exp,
                                          MDS_INODELOCK_UPDATE);
 
         req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_LDLM_INTENT_OPEN_SE);
+                                   mdc_select_rq_format(exp, RQF_LDLM_INTENT_OPEN));
         if (req == NULL) {
                 ldlm_lock_list_put(&cancels, l_bl_ast, count);
                 RETURN(ERR_PTR(-ENOMEM));

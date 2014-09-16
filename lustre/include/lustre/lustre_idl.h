@@ -1166,9 +1166,13 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
 				OBD_CONNECT_FULL20 | OBD_CONNECT_IMP_RECOV | \
 				OBD_CONNECT_MNE_SWAB)
 
-/* Features required for this version of the client to work with server */
+#ifdef ENABLE_INSECURE_CLIENT
 #define CLIENT_CONNECT_MDT_REQD (OBD_CONNECT_IBITS | OBD_CONNECT_FID | \
-                                 OBD_CONNECT_FULL20)
+				 OBD_CONNECT_FULL20)
+#else
+#define CLIENT_CONNECT_MDT_REQD (OBD_CONNECT_IBITS | OBD_CONNECT_FID | \
+				 OBD_CONNECT_FULL20 | OBD_CONNECT_SELUSTRE)
+#endif
 
 #define OBD_OCD_VERSION(major,minor,patch,fix) (((major)<<24) + ((minor)<<16) +\
                                                 ((patch)<<8) + (fix))

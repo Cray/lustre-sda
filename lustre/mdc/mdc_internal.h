@@ -176,4 +176,7 @@ ldlm_mode_t mdc_lock_match(struct obd_export *exp, __u64 flags,
 int mdc_prep_elc_req(struct obd_export *exp, struct ptlrpc_request *req,
 		     cfs_list_t *cancels, int count);
 
+#define mdc_select_rq_format(exp,basefmt) (exp_connect_selustre(exp) ?\
+					  &(basefmt ## _SE) : &(basefmt))
+
 #endif

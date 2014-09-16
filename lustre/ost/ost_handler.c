@@ -1002,7 +1002,7 @@ static int ost_brw_write(struct ptlrpc_request *req, struct obd_trans_info *oti)
         __u32                    o_uid = 0, o_gid = 0;
         struct ost_thread_local_cache *tls;
 	void			*opaque;
-	char			*seclabel;
+	char			*seclabel = NULL;
         ENTRY;
 
         req->rq_bulk_write = 1;
@@ -1040,7 +1040,8 @@ static int ost_brw_write(struct ptlrpc_request *req, struct obd_trans_info *oti)
         for (niocount = i = 0; i < objcount; i++)
                 niocount += ioo[i].ioo_bufcnt;
 
-	seclabel = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX);
+	if (body->oa.o_valid & OBD_MD_FLSECURITY)
+		seclabel = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX);
 
         /*
          * It'd be nice to have a capsule function to indicate how many elements

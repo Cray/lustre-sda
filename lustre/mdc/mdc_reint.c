@@ -250,7 +250,7 @@ rebuild:
                                                 MDS_INODELOCK_UPDATE);
 
         req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_MDS_REINT_CREATE_RMT_ACL_SE);
+                                   mdc_select_rq_format(exp, RQF_MDS_REINT_CREATE_RMT_ACL));
         if (req == NULL) {
                 ldlm_lock_list_put(&cancels, l_bl_ast, count);
                 RETURN(-ENOMEM);

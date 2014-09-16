@@ -423,8 +423,10 @@ int mdt_reint_setxattr(struct mdt_thread_info *info,
 	/* SELinux security label cache should be invalidated on
 	 * "security.selinux" changes.
 	 */
-	if (!strcmp(xattr_name, XATTR_NAME_ACL_ACCESS) ||
-	    !strcmp(xattr_name, XATTR_NAME_SECURITY_SELINUX))
+	if (!strcmp(xattr_name, XATTR_NAME_SECURITY_SELINUX))
+                lockpart |= MDS_INODELOCK_LOOKUP;
+
+	if (!strcmp(xattr_name, XATTR_NAME_ACL_ACCESS))
                 lockpart |= MDS_INODELOCK_LOOKUP;
 	else
 		/* We need to take the lock on behalf of old clients so that

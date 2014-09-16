@@ -3344,6 +3344,7 @@ int filter_setattr_internal(struct obd_export *exp, struct dentry *dentry,
                 ll_vfs_dq_init(inode);
 
 	if (oa->o_valid & OBD_MD_FLSECURITY) {
+		/* XXX: Need to calculate credits separately */
 		rc = fsfilt_setxattr(exp->exp_obd, dentry, handle,
 				     XATTR_NAME_SECURITY_SELINUX,
 				     seclabel, strlen(seclabel) + 1);

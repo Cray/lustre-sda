@@ -562,28 +562,45 @@ int ll_lookup_it_finish(struct ptlrpc_request *request,
         RETURN(0);
 }
 
-static int ll_init_security(struct inode *parent, void **value,
-			    size_t *len, umode_t mode)
+int ll_init_security(struct inode *parent, void **value,
+		     size_t *len, umode_t mode)
 {
-	static struct inode inode;
-	static struct ll_inode_security_struct isec;
-	static DEFINE_MUTEX(mutex);
+	struct inode *inode;
+	struct ll_inode_security_struct *isec;
 	char *attr_name = NULL;
 	int rc;
 
+	if (!selinux_is_enabled())
+		return 0;
+
+	OBD_ALLOC_PTR(inode);
+	OBD_ALLOC_PTR(isec);
+
+	if (inode == NULL || isec == NULL) {
+		rc = -ENOMEM;
+		goto out;
+	}
+
 	/* XXX: We don't have inode at this point, but s_i_i_s() wants one */
-	mutex_lock(&mutex);
-	inode.i_sb = parent->i_sb;
-	inode.i_mode = mode;
-	inode.i_security = &isec;
-	rc = security_inode_init_security(&inode, parent, &attr_name,
+	inode->i_sb = parent->i_sb;
+	inode->i_mode = mode;
+	inode->i_security = isec;
+	rc = security_inode_init_security(inode, parent, &attr_name,
 					  value, len);
-	mutex_unlock(&mutex);
 
 	if (rc == 0) {
 		LASSERT(!strcmp(attr_name, "selinux"));
 		kfree(attr_name);
+	} else {
+		CERROR("cannot determine new object security d_ino=%ld\n",
+		       parent->i_ino);
 	}
+
+out:
+	if (inode != NULL)
+		OBD_FREE_PTR(inode);
+	if (isec != NULL)
+		OBD_FREE_PTR(isec);
 
 	return rc;
 }
@@ -683,6 +700,8 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
         ll_lookup_finish_locks(it, dentry);
 
         security_d_instantiate(dentry, dentry->d_inode);
+	if (dentry->d_flags & DCACHE_LUSTRE_INVALID && dentry->d_inode)
+		ll_invalidate_inode_sid(dentry->d_inode);
 
         if (dentry == save)
                 GOTO(out, retval = NULL);
