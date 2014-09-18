@@ -478,14 +478,14 @@ static int enable_default_ext4_features(struct mkfs_opts *mop, char *anchor,
 		return 0;
 
 	/* Enable quota by default */
-	if (is_e2fsprogs_feature_supp("-O quota") == 0) {
-		append_unique(anchor, ",", "quota", NULL, maxbuflen);
-	} else {
-		fatal();
-		fprintf(stderr, "\"-O quota\" must be supported by "
-			"e2fsprogs, please upgrade your e2fsprogs.\n");
-		return EINVAL;
-	}
+//	if (is_e2fsprogs_feature_supp("-O quota") == 0) {
+//		append_unique(anchor, ",", "quota", NULL, maxbuflen);
+//	} else {
+//		fatal();
+//		fprintf(stderr, "\"-O quota\" must be supported by "
+//			"e2fsprogs, please upgrade your e2fsprogs.\n");
+//		return EINVAL;
+//	}
 
 	/* Allow files larger than 2TB.  Also needs LU-16, but not harmful. */
 	if (is_e2fsprogs_feature_supp("-O huge_file") == 0)
@@ -1228,14 +1228,14 @@ static int is_feature_enabled(const char *feature, const char *devpath)
 int ldiskfs_enable_quota(struct mkfs_opts *mop)
 {
 	char *dev;
-	char cmd[512];
-	int cmdsz = sizeof(cmd), ret;
+//	char cmd[512];
+//	int cmdsz = sizeof(cmd), ret;
 
-	if (is_e2fsprogs_feature_supp("-O quota") != 0) {
-		fprintf(stderr, "%s: \"-O quota\" is is not supported by "
-			"current e2fsprogs\n", progname);
-		return EINVAL;
-	}
+//	if (is_e2fsprogs_feature_supp("-O quota") != 0) {
+//		fprintf(stderr, "%s: \"-O quota\" is is not supported by "
+//			"current e2fsprogs\n", progname);
+//		return EINVAL;
+//	}
 
 	dev = mop->mo_device;
 	if (mop->mo_flags & MO_IS_LOOP)
@@ -1248,12 +1248,12 @@ int ldiskfs_enable_quota(struct mkfs_opts *mop)
 	}
 
 	/* Turn on quota feature by "tune2fs -O quota" */
-	snprintf(cmd, cmdsz, "%s -O quota %s", TUNE2FS, dev);
-	ret = run_command(cmd, cmdsz);
-	if (ret)
-		fprintf(stderr, "command:%s (%d)", cmd, ret);
+//	snprintf(cmd, cmdsz, "%s -O quota %s", TUNE2FS, dev);
+//	ret = run_command(cmd, cmdsz);
+//	if (ret)
+//		fprintf(stderr, "command:%s (%d)", cmd, ret);
 
-	return ret;
+	return 0;
 }
 
 int ldiskfs_init(void)
