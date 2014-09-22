@@ -529,6 +529,7 @@ void gss_delete_sec_context_kerberos(void *internal_ctx)
 static
 void buf_to_sg(struct scatterlist *sg, void *ptr, int len)
 {
+	sg_init_table(sg, 1);
 	sg_set_buf(sg, ptr, len);
 }
 
@@ -605,6 +606,7 @@ int krb5_digest_hmac(struct ll_crypto_hash *tfm,
                 if (iovs[i].kiov_len == 0)
                         continue;
 
+		sg_init_table(&sg[0], 1);
 		sg_set_page(&sg[0], iovs[i].kiov_page, iovs[i].kiov_len,
 			    iovs[i].kiov_offset);
                 ll_crypto_hash_update(&desc, sg, iovs[i].kiov_len);
@@ -647,6 +649,7 @@ int krb5_digest_norm(struct ll_crypto_hash *tfm,
                 if (iovs[i].kiov_len == 0)
                         continue;
 
+		sg_init_table(&sg[0], 1);
 		sg_set_page(&sg[0], iovs[i].kiov_page, iovs[i].kiov_len,
 			    iovs[i].kiov_offset);
                 ll_crypto_hash_update(&desc, sg, iovs[i].kiov_len);
@@ -973,12 +976,14 @@ int krb5_encrypt_bulk(struct ll_crypto_cipher *tfm,
 
         /* encrypt clear pages */
         for (i = 0; i < desc->bd_iov_count; i++) {
+		sg_init_table(&src, 1);
 		sg_set_page(&src, desc->bd_iov[i].kiov_page,
 			    (desc->bd_iov[i].kiov_len + blocksize - 1) &
 			    (~(blocksize - 1)),
 			    desc->bd_iov[i].kiov_offset);
 		if (adj_nob)
 			nob += src.length;
+		sg_init_table(&dst, 1);
 		sg_set_page(&dst, desc->bd_enc_iov[i].kiov_page, src.length,
 			    src.offset);
 
