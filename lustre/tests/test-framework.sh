@@ -5862,12 +5862,14 @@ calc_connection_cnt() {
     # MDT->OST = M * O
     # CLI->OST = C * O
     # CLI->MDT = C * M
+
     comb_m2=$(combination $MDSCOUNT 2)
 
     local num_clients=$(get_clients_mount_count)
 
     local cnt_mdt2mdt=$((comb_m2 * 2))
-    local cnt_mdt2ost=$((MDSCOUNT * OSTCOUNT))
+#    local cnt_mdt2ost=$((MDSCOUNT * OSTCOUNT))
+    local cnt_mdt2ost=0
     local cnt_cli2ost=$((num_clients * OSTCOUNT))
     local cnt_cli2mdt=$((num_clients * MDSCOUNT))
     local cnt_all2ost=$((cnt_mdt2ost + cnt_cli2ost))
@@ -6000,6 +6002,7 @@ flvr_cnt_mdt2ost()
         tmpcnt=`count_flvr "$output" $flavor`
         cnt=$((cnt + tmpcnt))
     done
+
     echo $cnt;
 }
 
