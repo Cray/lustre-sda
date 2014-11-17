@@ -651,10 +651,13 @@ int main(int argc, char *argv[])
          * [9]:  process keyring
          * [10]: session keyring
          */
-        if (argc != 10 + 1) {
+        if (argc != 10 + 1 && argc != 11 + 1) {
                 logmsg(LL_ERR, "invalid parameter number %d\n", argc);
                 return 1;
         }
+
+	if (argc == 11 + 1)
+		lgss_set_hostname(argv[11]);
 
         logmsg(LL_INFO, "key %s, desc %s, ugid %s:%s, sring %s, coinfo %s\n",
                argv[2], argv[4], argv[6], argv[7], argv[10], argv[5]);
