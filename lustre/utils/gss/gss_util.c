@@ -193,6 +193,7 @@ pgsserr(char *msg, u_int32_t maj_stat, u_int32_t min_stat, const gss_OID mech)
 	display_status_2(msg, maj_stat, min_stat, mech);
 }
 
+#if 0
 static
 int extract_realm_name(gss_buffer_desc *name, char **realm)
 {
@@ -229,6 +230,7 @@ int extract_realm_name(gss_buffer_desc *name, char **realm)
 
         return rc;
 }
+#endif
 
 static
 int gssd_acquire_cred(char *server_name, gss_cred_id_t *cred,
@@ -260,8 +262,10 @@ int gssd_acquire_cred(char *server_name, gss_cred_id_t *cred,
 		pgsserr(0, maj_stat, min_stat, g_mechOid);
 		return -1;
 	}
-	if (extract_realm_name(&name, local_realm))
-		return -1;
+
+	*local_realm = strdup(this_realm);
+//	if (extract_realm_name(&name, local_realm))
+//		return -1;
 
 	maj_stat = gss_acquire_cred(&min_stat, target_name, 0,
 			GSS_C_NULL_OID_SET, GSS_C_ACCEPT,
