@@ -820,6 +820,11 @@ static struct dentry *ll_lookup_nd(struct inode *parent, struct dentry *dentry,
         struct dentry *de;
         ENTRY;
 
+#if 1
+	if (nd != NULL)
+		nd->flags &= ~(LOOKUP_OPEN | LOOKUP_CREATE);
+#endif
+
         if (nd && !(nd->flags & (LOOKUP_CONTINUE|LOOKUP_PARENT))) {
                 struct lookup_intent *it;
 
