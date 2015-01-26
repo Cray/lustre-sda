@@ -198,6 +198,12 @@ static int osp_declare_attr_set(const struct lu_env *env, struct dt_object *dt,
 			RETURN(rc);
 	}
 
+	if (attr->la_valid & LA_SECURITY) {
+		if (fid_is_zero(lu_object_fid(&o->opo_obj.do_lu)))
+			osp_object_assign_fid(env, d, o);
+		rc = osp_security_change(env, dt, attr);
+	}
+
 	if (o->opo_new) {
 		/* no need in logging for new objects being created */
 		RETURN(0);

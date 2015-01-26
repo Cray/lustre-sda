@@ -96,7 +96,7 @@ void obdo_from_la(struct obdo *dst, const struct lu_attr *la, __u64 valid)
 EXPORT_SYMBOL(obdo_from_la);
 
 /*FIXME: Just copy from obdo_from_inode*/
-void la_from_obdo(struct lu_attr *dst, const struct obdo *obdo, obd_flag valid)
+void la_from_obdo(struct lu_attr *dst, const struct obdo *obdo, obd_valid valid)
 {
         __u64 newvalid = 0;
 
@@ -140,6 +140,10 @@ void la_from_obdo(struct lu_attr *dst, const struct obdo *obdo, obd_flag valid)
                 dst->la_gid = obdo->o_gid;
                 newvalid |= LA_GID;
         }
+
+	if (valid & OBD_MD_FLSECURITY)
+		newvalid |= LA_SECURITY;
+
         dst->la_valid = newvalid;
 }
 EXPORT_SYMBOL(la_from_obdo);

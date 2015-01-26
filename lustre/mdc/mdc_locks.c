@@ -332,7 +332,7 @@ mdc_intent_open_pack(struct obd_export *exp, struct lookup_intent *it,
                                          MDS_INODELOCK_UPDATE);
 
         req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_LDLM_INTENT_OPEN);
+                                   mdc_select_rq_format(exp, RQF_LDLM_INTENT_OPEN));
         if (req == NULL) {
                 ldlm_lock_list_put(&cancels, l_bl_ast, count);
                 RETURN(ERR_PTR(-ENOMEM));
@@ -348,6 +348,9 @@ mdc_intent_open_pack(struct obd_export *exp, struct lookup_intent *it,
                              op_data->op_namelen + 1);
 	req_capsule_set_size(&req->rq_pill, &RMF_EADATA, RCL_CLIENT,
 			     max(lmmsize, obddev->u.cli.cl_default_mds_easize));
+	if (exp_connect_selustre(exp))
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     op_data->op_sllen);
 
 	rc = ldlm_prep_enqueue_req(exp, req, &cancels, count);
 	if (rc < 0) {

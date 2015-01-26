@@ -3214,7 +3214,7 @@ static int mdt_intent_reint(enum mdt_it_code opcode,
 
         static const struct req_format *intent_fmts[REINT_MAX] = {
                 [REINT_CREATE]  = &RQF_LDLM_INTENT_CREATE,
-                [REINT_OPEN]    = &RQF_LDLM_INTENT_OPEN
+                [REINT_OPEN]    = &RQF_LDLM_INTENT_OPEN_SE
         };
 
         ENTRY;

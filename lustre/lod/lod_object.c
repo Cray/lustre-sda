@@ -294,7 +294,7 @@ static int lod_declare_attr_set(const struct lu_env *env,
 	 * Therefore we need not load striping unless ownership is
 	 * changing.  This should save memory and (we hope) speed up
 	 * rename(). */
-	if (!(attr->la_valid & (LA_UID | LA_GID)))
+	if (!(attr->la_valid & (LA_UID | LA_GID | LA_SECURITY)))
 		RETURN(rc);
 
 	/*

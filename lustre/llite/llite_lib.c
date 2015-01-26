@@ -216,7 +216,7 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 				  OBD_CONNECT_MAX_EASIZE |
 				  OBD_CONNECT_FLOCK_DEAD |
 				  OBD_CONNECT_DISP_STRIPE |
-				  OBD_CONNECT_OPEN_BY_FID;
+				  OBD_CONNECT_OPEN_BY_FID | OBD_CONNECT_SELUSTRE;
 
         if (sbi->ll_flags & LL_SBI_SOM_PREVIEW)
                 data->ocd_connect_flags |= OBD_CONNECT_SOM;
@@ -395,8 +395,9 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 			LCONSOLE_INFO("%s: disabling xattr cache due to "
 				      "unknown maximum xattr size.\n", dt);
 		} else {
-			sbi->ll_flags |= LL_SBI_XATTR_CACHE;
-			sbi->ll_xattr_cache_enabled = 1;
+		// XXX: SDA setxattr should take locks first
+//			sbi->ll_flags |= LL_SBI_XATTR_CACHE;
+//			sbi->ll_xattr_cache_enabled = 1;
 		}
 	}
 
@@ -416,7 +417,8 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
                                   OBD_CONNECT_MAXBYTES |
 				  OBD_CONNECT_EINPROGRESS |
 				  OBD_CONNECT_JOBSTATS | OBD_CONNECT_LVB_TYPE |
-				  OBD_CONNECT_LAYOUTLOCK | OBD_CONNECT_PINGLESS;
+				  OBD_CONNECT_LAYOUTLOCK | OBD_CONNECT_PINGLESS |
+				  OBD_CONNECT_SELUSTRE;
 
         if (sbi->ll_flags & LL_SBI_SOM_PREVIEW)
                 data->ocd_connect_flags |= OBD_CONNECT_SOM;
@@ -1296,8 +1298,8 @@ int ll_md_setattr(struct dentry *dentry, struct md_op_data *op_data,
         int rc, ia_valid;
         ENTRY;
 
-        op_data = ll_prep_md_op_data(op_data, inode, NULL, NULL, 0, 0,
-                                     LUSTRE_OPC_ANY, NULL);
+	op_data = ll_prep_md_op_data(op_data, inode, NULL, NULL, 0, 0,
+				     LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -1980,9 +1982,9 @@ int ll_iocontrol(struct inode *inode, struct file *file,
                 struct mdt_body *body;
                 struct md_op_data *op_data;
 
-                op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL,
-                                             0, 0, LUSTRE_OPC_ANY,
-                                             NULL);
+		op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL,
+					     0, 0, LUSTRE_OPC_ANY,
+					     NULL, NULL, 0);
                 if (IS_ERR(op_data))
                         RETURN(PTR_ERR(op_data));
 
@@ -2012,8 +2014,8 @@ int ll_iocontrol(struct inode *inode, struct file *file,
                 if (get_user(flags, (int *)arg))
                         RETURN(-EFAULT);
 
-                op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
-                                             LUSTRE_OPC_ANY, NULL);
+		op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
+					     LUSTRE_OPC_ANY, NULL, NULL, 0);
                 if (IS_ERR(op_data))
                         RETURN(PTR_ERR(op_data));
 
@@ -2311,9 +2313,10 @@ int ll_process_config(struct lustre_cfg *lcfg)
 
 /* this function prepares md_op_data hint for passing ot down to MD stack. */
 struct md_op_data * ll_prep_md_op_data(struct md_op_data *op_data,
-                                       struct inode *i1, struct inode *i2,
-                                       const char *name, int namelen,
-                                       int mode, __u32 opc, void *data)
+				       struct inode *i1, struct inode *i2,
+				       const char *name, int namelen,
+				       int mode, __u32 opc, void *data,
+				       const char *slabel, int sllen)
 {
         LASSERT(i1 != NULL);
 
@@ -2353,6 +2356,8 @@ struct md_op_data * ll_prep_md_op_data(struct md_op_data *op_data,
 	op_data->op_opc = opc;
 	op_data->op_mds = 0;
 	op_data->op_data = data;
+	op_data->op_slabel = slabel;
+	op_data->op_sllen = sllen;
 
 	/* When called by ll_setattr_raw, file is i1. */
 	if (LLIF_DATA_MODIFIED & ll_i2info(i1)->lli_flags)

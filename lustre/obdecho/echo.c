@@ -199,7 +199,8 @@ static int echo_getattr(const struct lu_env *env, struct obd_export *exp,
 }
 
 static int echo_setattr(const struct lu_env *env, struct obd_export *exp,
-                        struct obd_info *oinfo, struct obd_trans_info *oti)
+                        struct obd_info *oinfo, char *seclabel,
+                        struct obd_trans_info *oti)
 {
         struct obd_device *obd = class_exp2obd(exp);
 
@@ -484,7 +485,7 @@ static int echo_commitrw(const struct lu_env *env, int cmd,
 			 int objcount, struct obd_ioobj *obj,
 			 struct niobuf_remote *rb, int niocount,
 			 struct niobuf_local *res, struct obd_trans_info *oti,
-			 int rc)
+			 char *seclabel, int rc)
 {
         struct obd_device *obd;
         int pgs = 0;

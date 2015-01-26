@@ -125,8 +125,8 @@ static void ll_prepare_close(struct inode *inode, struct md_op_data *op_data,
 
 out:
         ll_pack_inode2opdata(inode, op_data, &och->och_fh);
-        ll_prep_md_op_data(op_data, inode, NULL, NULL,
-                           0, 0, LUSTRE_OPC_ANY, NULL);
+	ll_prep_md_op_data(op_data, inode, NULL, NULL,
+			   0, 0, LUSTRE_OPC_ANY, NULL, NULL, 0);
         EXIT;
 }
 
@@ -825,7 +825,7 @@ ll_lease_open(struct inode *inode, struct file *file, fmode_t fmode,
 		RETURN(ERR_PTR(-ENOMEM));
 
 	op_data = ll_prep_md_op_data(NULL, inode, inode, NULL, 0, 0,
-					LUSTRE_OPC_ANY, NULL);
+					LUSTRE_OPC_ANY, NULL, NULL, 0);
 	if (IS_ERR(op_data))
 		GOTO(out, rc = PTR_ERR(op_data));
 
@@ -1543,9 +1543,9 @@ int ll_lov_getstripe_ea_info(struct inode *inode, const char *filename,
 	if (rc)
 		RETURN(rc);
 
-        op_data = ll_prep_md_op_data(NULL, inode, NULL, filename,
-                                     strlen(filename), lmmsize,
-                                     LUSTRE_OPC_ANY, NULL);
+	op_data = ll_prep_md_op_data(NULL, inode, NULL, filename,
+				     strlen(filename), lmmsize,
+				     LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -2173,7 +2173,7 @@ static int ll_swap_layouts(struct file *file1, struct file *file2,
 	msl.msl_flags = 0;
 	rc = -ENOMEM;
 	op_data = ll_prep_md_op_data(NULL, llss->inode1, llss->inode2, NULL, 0,
-				     0, LUSTRE_OPC_ANY, &msl);
+				     0, LUSTRE_OPC_ANY, &msl, NULL, 0);
 	if (IS_ERR(op_data))
 		GOTO(free, rc = PTR_ERR(op_data));
 
@@ -2239,7 +2239,7 @@ static int ll_hsm_state_set(struct inode *inode, struct hsm_state_set *hss)
 		RETURN(-EPERM);
 
 	op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
-				     LUSTRE_OPC_ANY, hss);
+				     LUSTRE_OPC_ANY, hss, NULL, 0);
 	if (IS_ERR(op_data))
 		RETURN(PTR_ERR(op_data));
 
@@ -2463,7 +2463,7 @@ ll_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			RETURN(-ENOMEM);
 
 		op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
-					     LUSTRE_OPC_ANY, hus);
+					     LUSTRE_OPC_ANY, hus, NULL, 0);
 		if (IS_ERR(op_data)) {
 			OBD_FREE_PTR(hus);
 			RETURN(PTR_ERR(op_data));
@@ -2507,7 +2507,7 @@ ll_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			RETURN(-ENOMEM);
 
 		op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
-					     LUSTRE_OPC_ANY, hca);
+					     LUSTRE_OPC_ANY, hca, NULL, 0);
 		if (IS_ERR(op_data)) {
 			OBD_FREE_PTR(hca);
 			RETURN(PTR_ERR(op_data));
@@ -3154,8 +3154,8 @@ ll_file_flock(struct file *file, int cmd, struct file_lock *file_lock)
 	       flock.l_flock.owner, flags, einfo.ei_mode,
 	       flock.l_flock.start, flock.l_flock.end);
 
-        op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
-                                     LUSTRE_OPC_ANY, NULL);
+	op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
+				     LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -3354,9 +3354,9 @@ static int __ll_inode_revalidate(struct dentry *dentry, __u64 ibits)
                         oit.it_op = IT_LOOKUP;
 
                 /* Call getattr by fid, so do not provide name at all. */
-                op_data = ll_prep_md_op_data(NULL, dentry->d_inode,
-                                             dentry->d_inode, NULL, 0, 0,
-                                             LUSTRE_OPC_ANY, NULL);
+		op_data = ll_prep_md_op_data(NULL, dentry->d_inode,
+					     dentry->d_inode, NULL, 0, 0,
+					     LUSTRE_OPC_ANY, NULL, NULL, 0);
                 if (IS_ERR(op_data))
                         RETURN(PTR_ERR(op_data));
 
@@ -3395,9 +3395,9 @@ static int __ll_inode_revalidate(struct dentry *dentry, __u64 ibits)
 			valid |= OBD_MD_FLEASIZE | OBD_MD_FLMODEASIZE;
 		}
 
-                op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL,
-                                             0, ealen, LUSTRE_OPC_ANY,
-                                             NULL);
+		op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL,
+					     0, ealen, LUSTRE_OPC_ANY,
+					     NULL, NULL, 0);
                 if (IS_ERR(op_data))
                         RETURN(PTR_ERR(op_data));
 
@@ -4098,7 +4098,7 @@ again:
 	}
 
 	op_data = ll_prep_md_op_data(NULL, inode, inode, NULL,
-				     0, 0, LUSTRE_OPC_ANY, NULL);
+				     0, 0, LUSTRE_OPC_ANY, NULL, NULL, 0);
 	if (IS_ERR(op_data)) {
 		mutex_unlock(&lli->lli_layout_mutex);
 		RETURN(PTR_ERR(op_data));

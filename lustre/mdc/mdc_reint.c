@@ -242,7 +242,7 @@ rebuild:
                                                 MDS_INODELOCK_UPDATE);
 
         req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_MDS_REINT_CREATE_RMT_ACL);
+                                   mdc_select_rq_format(exp, RQF_MDS_REINT_CREATE_RMT_ACL));
         if (req == NULL) {
                 ldlm_lock_list_put(&cancels, l_bl_ast, count);
                 RETURN(-ENOMEM);
@@ -252,6 +252,9 @@ rebuild:
                              op_data->op_namelen + 1);
         req_capsule_set_size(&req->rq_pill, &RMF_EADATA, RCL_CLIENT,
                              data && datalen ? datalen : 0);
+	if (exp_connect_selustre(exp))
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     op_data->op_sllen);
 
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {

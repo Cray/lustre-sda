@@ -309,6 +309,11 @@ static inline int exp_connect_cancelset(struct obd_export *exp)
 	return !!(exp_connect_flags(exp) & OBD_CONNECT_CANCELSET);
 }
 
+static inline int exp_connect_selustre(struct obd_export *exp)
+{
+	LASSERT(exp != NULL);
+	return !!(exp_connect_flags(exp) & OBD_CONNECT_SELUSTRE);
+}
 static inline int exp_connect_lru_resize(struct obd_export *exp)
 {
 	LASSERT(exp != NULL);

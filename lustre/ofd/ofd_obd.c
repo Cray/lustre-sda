@@ -704,6 +704,9 @@ int ofd_echo_setattr(const struct lu_env *env, struct obd_export *exp,
 		ofd_prepare_fidea(ff, oa);
 	}
 
+	if (oa->o_valid & OBD_MD_FLSECURITY)
+		info->fti_attr.la_seclabel = seclabel;
+
 	/* setting objects attributes (including owner/group) */
 	rc = ofd_attr_set(env, fo, &info->fti_attr, ff);
 	if (rc)

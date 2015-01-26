@@ -207,6 +207,16 @@ static const struct req_msg_field *mds_reint_create_slave_client[] = {
         &RMF_DLM_REQ
 };
 
+static const struct req_msg_field *mds_reint_create_rmt_acl_client_se[] = {
+        &RMF_PTLRPC_BODY,
+        &RMF_REC_REINT,
+        &RMF_CAPA1,
+        &RMF_NAME,
+        &RMF_EADATA,
+        &RMF_DLM_REQ,
+        &RMF_SELINUX
+};
+
 static const struct req_msg_field *mds_reint_create_rmt_acl_client[] = {
         &RMF_PTLRPC_BODY,
         &RMF_REC_REINT,
@@ -453,6 +463,18 @@ static const struct req_msg_field *ldlm_intent_open_client[] = {
         &RMF_EADATA
 };
 
+static const struct req_msg_field *ldlm_intent_open_client_se[] = {
+        &RMF_PTLRPC_BODY,
+        &RMF_DLM_REQ,
+        &RMF_LDLM_INTENT,
+        &RMF_REC_REINT,    /* coincides with mds_reint_open_client[] */
+        &RMF_CAPA1,
+        &RMF_CAPA2,
+        &RMF_NAME,
+        &RMF_EADATA,
+        &RMF_SELINUX
+};
+
 static const struct req_msg_field *ldlm_intent_unlink_client[] = {
         &RMF_PTLRPC_BODY,
         &RMF_DLM_REQ,
@@ -571,6 +593,19 @@ static const struct req_msg_field *ost_body_capa[] = {
         &RMF_CAPA1
 };
 
+static const struct req_msg_field *ost_setattr_client[] = {
+        &RMF_PTLRPC_BODY,
+        &RMF_OST_BODY,
+        &RMF_CAPA1
+};
+
+static const struct req_msg_field *ost_setattr_client_se[] = {
+	&RMF_PTLRPC_BODY,
+	&RMF_OST_BODY,
+	&RMF_CAPA1,
+	&RMF_SELINUX
+};
+
 static const struct req_msg_field *ost_destroy_client[] = {
         &RMF_PTLRPC_BODY,
         &RMF_OST_BODY,
@@ -578,13 +613,29 @@ static const struct req_msg_field *ost_destroy_client[] = {
         &RMF_CAPA1
 };
 
-
-static const struct req_msg_field *ost_brw_client[] = {
+static const struct req_msg_field *ost_brw_read_client[] = {
         &RMF_PTLRPC_BODY,
         &RMF_OST_BODY,
         &RMF_OBD_IOOBJ,
         &RMF_NIOBUF_REMOTE,
         &RMF_CAPA1
+};
+
+static const struct req_msg_field *ost_brw_write_client[] = {
+        &RMF_PTLRPC_BODY,
+        &RMF_OST_BODY,
+        &RMF_OBD_IOOBJ,
+        &RMF_NIOBUF_REMOTE,
+        &RMF_CAPA1
+};
+
+static const struct req_msg_field *ost_brw_write_client_se[] = {
+	&RMF_PTLRPC_BODY,
+	&RMF_OST_BODY,
+	&RMF_OBD_IOOBJ,
+	&RMF_NIOBUF_REMOTE,
+	&RMF_CAPA1,
+	&RMF_SELINUX
 };
 
 static const struct req_msg_field *ost_brw_read_server[] = {
@@ -706,6 +757,7 @@ static struct req_format *req_formats[] = {
         &RQF_MDS_REINT,
         &RQF_MDS_REINT_CREATE,
         &RQF_MDS_REINT_CREATE_RMT_ACL,
+	&RQF_MDS_REINT_CREATE_RMT_ACL_SE,
         &RQF_MDS_REINT_CREATE_SLAVE,
         &RQF_MDS_REINT_CREATE_SYM,
         &RQF_MDS_REINT_OPEN,
@@ -732,12 +784,14 @@ static struct req_format *req_formats[] = {
         &RQF_OST_QUOTACTL,
         &RQF_OST_GETATTR,
         &RQF_OST_SETATTR,
+	&RQF_OST_SETATTR_SE,
         &RQF_OST_CREATE,
         &RQF_OST_PUNCH,
         &RQF_OST_SYNC,
         &RQF_OST_DESTROY,
         &RQF_OST_BRW_READ,
-        &RQF_OST_BRW_WRITE,
+	&RQF_OST_BRW_WRITE,
+	&RQF_OST_BRW_WRITE_SE,
         &RQF_OST_STATFS,
         &RQF_OST_SET_GRANT_INFO,
 	&RQF_OST_GET_INFO,
@@ -759,6 +813,7 @@ static struct req_format *req_formats[] = {
         &RQF_LDLM_INTENT_LAYOUT,
         &RQF_LDLM_INTENT_GETATTR,
         &RQF_LDLM_INTENT_OPEN,
+	&RQF_LDLM_INTENT_OPEN_SE,
         &RQF_LDLM_INTENT_CREATE,
         &RQF_LDLM_INTENT_UNLINK,
 	&RQF_LDLM_INTENT_GETXATTR,
@@ -1039,6 +1094,10 @@ EXPORT_SYMBOL(RMF_EADATA);
 struct req_msg_field RMF_EAVALS = DEFINE_MSGF("eavals", 0, -1, NULL, NULL);
 EXPORT_SYMBOL(RMF_EAVALS);
 
+struct req_msg_field RMF_SELINUX = DEFINE_MSGF("selinux", 0, -1,
+                                                    NULL, NULL);
+EXPORT_SYMBOL(RMF_SELINUX);
+
 struct req_msg_field RMF_ACL =
         DEFINE_MSGF("acl", RMF_F_NO_SIZE_CHECK,
                     LUSTRE_POSIX_ACL_MAX_SIZE, NULL, NULL);
@@ -1317,6 +1376,11 @@ struct req_format RQF_MDS_REINT_CREATE_RMT_ACL =
                         mds_reint_create_rmt_acl_client, mdt_body_capa);
 EXPORT_SYMBOL(RQF_MDS_REINT_CREATE_RMT_ACL);
 
+struct req_format RQF_MDS_REINT_CREATE_RMT_ACL_SE =
+        DEFINE_REQ_FMT0("MDS_REINT_CREATE_RMT_ACL_SE",
+                        mds_reint_create_rmt_acl_client_se, mdt_body_capa);
+EXPORT_SYMBOL(RQF_MDS_REINT_CREATE_RMT_ACL_SE);
+
 struct req_format RQF_MDS_REINT_CREATE_SLAVE =
         DEFINE_REQ_FMT0("MDS_REINT_CREATE_EA",
                         mds_reint_create_slave_client, mdt_body_capa);
@@ -1442,6 +1506,11 @@ struct req_format RQF_LDLM_INTENT_OPEN =
                         ldlm_intent_open_client, ldlm_intent_open_server);
 EXPORT_SYMBOL(RQF_LDLM_INTENT_OPEN);
 
+struct req_format RQF_LDLM_INTENT_OPEN_SE =
+        DEFINE_REQ_FMT0("LDLM_INTENT_OPEN_SE",
+                        ldlm_intent_open_client_se, ldlm_intent_open_server);
+EXPORT_SYMBOL(RQF_LDLM_INTENT_OPEN_SE);
+
 struct req_format RQF_LDLM_INTENT_CREATE =
         DEFINE_REQ_FMT0("LDLM_INTENT_CREATE",
                         ldlm_intent_create_client, ldlm_intent_getattr_server);
@@ -1565,8 +1634,12 @@ struct req_format RQF_OST_GETATTR =
 EXPORT_SYMBOL(RQF_OST_GETATTR);
 
 struct req_format RQF_OST_SETATTR =
-        DEFINE_REQ_FMT0("OST_SETATTR", ost_body_capa, ost_body_only);
+        DEFINE_REQ_FMT0("OST_SETATTR", ost_setattr_client, ost_body_only);
 EXPORT_SYMBOL(RQF_OST_SETATTR);
+
+struct req_format RQF_OST_SETATTR_SE =
+        DEFINE_REQ_FMT0("OST_SETATTR_SE", ost_setattr_client_se, ost_body_only);
+EXPORT_SYMBOL(RQF_OST_SETATTR_SE);
 
 struct req_format RQF_OST_CREATE =
         DEFINE_REQ_FMT0("OST_CREATE", ost_body_only, ost_body_only);
@@ -1585,12 +1658,16 @@ struct req_format RQF_OST_DESTROY =
 EXPORT_SYMBOL(RQF_OST_DESTROY);
 
 struct req_format RQF_OST_BRW_READ =
-        DEFINE_REQ_FMT0("OST_BRW_READ", ost_brw_client, ost_brw_read_server);
+        DEFINE_REQ_FMT0("OST_BRW_READ", ost_brw_read_client, ost_brw_read_server);
 EXPORT_SYMBOL(RQF_OST_BRW_READ);
 
 struct req_format RQF_OST_BRW_WRITE =
-        DEFINE_REQ_FMT0("OST_BRW_WRITE", ost_brw_client, ost_brw_write_server);
+        DEFINE_REQ_FMT0("OST_BRW_WRITE", ost_brw_write_client, ost_brw_write_server);
 EXPORT_SYMBOL(RQF_OST_BRW_WRITE);
+
+struct req_format RQF_OST_BRW_WRITE_SE =
+        DEFINE_REQ_FMT0("OST_BRW_WRITE_SE", ost_brw_write_client_se, ost_brw_write_server);
+EXPORT_SYMBOL(RQF_OST_BRW_WRITE_SE);
 
 struct req_format RQF_OST_STATFS =
         DEFINE_REQ_FMT0("OST_STATFS", empty, obd_statfs_server);

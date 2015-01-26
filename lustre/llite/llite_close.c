@@ -286,8 +286,8 @@ static void ll_prepare_done_writing(struct inode *inode,
                 return;
 
         ll_pack_inode2opdata(inode, op_data, &(*och)->och_fh);
-        ll_prep_md_op_data(op_data, inode, NULL, NULL,
-                           0, 0, LUSTRE_OPC_ANY, NULL);
+	ll_prep_md_op_data(op_data, inode, NULL, NULL,
+			   0, 0, LUSTRE_OPC_ANY, NULL, NULL, 0);
 }
 
 /** Send a DONE_WRITING rpc. */

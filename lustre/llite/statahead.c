@@ -809,8 +809,8 @@ static int sa_args_init(struct inode *dir, struct inode *child,
                 return -ENOMEM;
         }
 
-        op_data = ll_prep_md_op_data(&minfo->mi_data, dir, child, qstr->name,
-                                     qstr->len, 0, LUSTRE_OPC_ANY, NULL);
+	op_data = ll_prep_md_op_data(&minfo->mi_data, dir, child, qstr->name,
+				     qstr->len, 0, LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data)) {
                 OBD_FREE_PTR(einfo);
                 OBD_FREE_PTR(minfo);

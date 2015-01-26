@@ -166,7 +166,7 @@ static int ll_dir_filler(void *_hash, struct page *page0)
 	LASSERT(max_pages > 0 && max_pages <= MD_MAX_BRW_PAGES);
 
 	op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
-				     LUSTRE_OPC_ANY, NULL);
+				     LUSTRE_OPC_ANY, NULL, NULL, 0);
 	if (IS_ERR(op_data))
 		RETURN(PTR_ERR(op_data));
 
@@ -368,7 +368,7 @@ struct page *ll_get_dir_page(struct inode *dir, __u64 hash,
 		struct md_op_data *op_data;
 
 		op_data = ll_prep_md_op_data(NULL, dir, dir, NULL, 0, 0,
-					     LUSTRE_OPC_ANY, NULL);
+					     LUSTRE_OPC_ANY, NULL, NULL, 0);
 		if (IS_ERR(op_data))
 			return (void *)op_data;
 
@@ -682,13 +682,20 @@ int ll_dir_setdirstripe(struct inode *dir, struct lmv_user_md *lump,
 	struct ll_sb_info *sbi = ll_i2sbi(dir);
 	int mode;
 	int err;
+	size_t len = 0;
+	void *value = NULL;
 
 	ENTRY;
 
 	mode = (0755 & (S_IRWXUGO|S_ISVTX) & ~current->fs->umask) | S_IFDIR;
+
+	err = ll_init_security(dir, &value, &len, mode);
+	if (err < 0)
+		GOTO(err_exit, err);
+
 	op_data = ll_prep_md_op_data(NULL, dir, NULL, filename,
 				     strlen(filename), mode, LUSTRE_OPC_MKDIR,
-				     lump);
+				     lump, value, len);
 	if (IS_ERR(op_data))
 		GOTO(err_exit, err = PTR_ERR(op_data));
 
@@ -701,6 +708,9 @@ int ll_dir_setdirstripe(struct inode *dir, struct lmv_user_md *lump,
 	if (err)
 		GOTO(err_exit, err);
 err_exit:
+	if (value != NULL)
+		kfree(value);
+
 	ptlrpc_req_finished(request);
 	return err;
 }
@@ -749,8 +759,8 @@ int ll_dir_setstripe(struct inode *inode, struct lov_user_md *lump,
                 lum_size = sizeof(struct lov_user_md_v1);
         }
 
-        op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
-                                     LUSTRE_OPC_ANY, NULL);
+	op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
+				     LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -825,9 +835,9 @@ int ll_dir_getstripe(struct inode *inode, struct lov_mds_md **lmmp,
 	if (rc)
 		RETURN(rc);
 
-        op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL,
-                                     0, lmmsize, LUSTRE_OPC_ANY,
-                                     NULL);
+	op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL,
+				     0, lmmsize, LUSTRE_OPC_ANY,
+				     NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -890,8 +900,8 @@ int ll_get_mdt_idx(struct inode *inode)
         int rc, mdtidx;
         ENTRY;
 
-        op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0,
-                                     0, LUSTRE_OPC_ANY, NULL);
+	op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0,
+				     0, LUSTRE_OPC_ANY, NULL, NULL, 0);
         if (IS_ERR(op_data))
                 RETURN(PTR_ERR(op_data));
 
@@ -1323,8 +1333,8 @@ static long ll_dir_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         GOTO(out_free, rc = -EINVAL);
                 }
 
-                op_data = ll_prep_md_op_data(NULL, inode, NULL, filename, namelen,
-                                             0, LUSTRE_OPC_ANY, NULL);
+		op_data = ll_prep_md_op_data(NULL, inode, NULL, filename, namelen,
+					     0, LUSTRE_OPC_ANY, NULL, NULL, 0);
                 if (IS_ERR(op_data))
                         GOTO(out_free, rc = PTR_ERR(op_data));
 
