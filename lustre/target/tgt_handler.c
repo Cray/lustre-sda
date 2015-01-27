@@ -1875,7 +1875,8 @@ int tgt_brw_write(struct tgt_session_info *tsi)
 	body = tsi->tsi_ost_body;
 	LASSERT(body != NULL);
 
-	selinux = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX);
+	if (body->oa.o_valid & OBD_MD_FLSECURITY)
+		selinux = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX);
 
 	ioo = req_capsule_client_get(&req->rq_pill, &RMF_OBD_IOOBJ);
 	LASSERT(ioo != NULL); /* must exists after tgt_ost_body_unpack */
