@@ -44,7 +44,7 @@ if INIT_SCRIPTS
 initdir = $(sysconfdir)/init.d
 init_SCRIPTS = lnet
 if SERVER
-init_SCRIPTS += lustre
+init_SCRIPTS += lustre lsvcgss
 endif
 endif
 
@@ -59,7 +59,7 @@ bin_SCRIPTS = lustre_req_history lfs_migrate
 EXTRA_DIST = license-status version_tag.pl version_tag-git.pl \
 	     version_tag-none.pl lc_common \
 	     $(addsuffix .in,$(genscripts)) lc_mon $(sbinscripts) \
-	     $(bin_SCRIPTS) lustre lnet lhbadm \
+	     $(bin_SCRIPTS) lustre lnet lhbadm lsvcgss \
 	     haconfig ldev Lustre.ha_v2 dkms.mkconf
 
 scriptlibdir = @libexecdir@/@PACKAGE@
