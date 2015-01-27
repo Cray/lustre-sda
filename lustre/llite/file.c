@@ -432,7 +432,7 @@ static int ll_intent_file_open(struct file *file, void *lmm, int lmmsize,
 	}
 
 	op_data = ll_prep_md_op_data(NULL, parent->d_inode, de->d_inode,
-				     name, len, 0, LUSTRE_OPC_ANY, NULL);
+				     name, len, 0, LUSTRE_OPC_ANY, NULL, NULL, 0);
 	if (IS_ERR(op_data))
 		RETURN(PTR_ERR(op_data));
 	op_data->op_data = lmm;
@@ -2966,7 +2966,7 @@ static int ll_file_flock_async_unlock(struct inode *inode,
 		RETURN(rc);
 
 	op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
-				     LUSTRE_OPC_ANY, NULL);
+				     LUSTRE_OPC_ANY, NULL, NULL, 0);
 	if (IS_ERR(op_data))
 		RETURN(PTR_ERR(op_data));
 

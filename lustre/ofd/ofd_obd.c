@@ -652,7 +652,7 @@ out:
 
 /* needed by echo client only for now, RPC handler uses ofd_setattr_hdl() */
 int ofd_echo_setattr(const struct lu_env *env, struct obd_export *exp,
-		     struct obd_info *oinfo, struct obd_trans_info *oti)
+		     struct obd_info *oinfo, char *seclabel, struct obd_trans_info *oti)
 {
 	struct ofd_thread_info	*info;
 	struct ofd_device	*ofd = ofd_exp(exp);

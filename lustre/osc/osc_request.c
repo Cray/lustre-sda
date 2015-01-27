@@ -1661,7 +1661,7 @@ static int osc_brw_redo_request(struct ptlrpc_request *request,
         struct ptlrpc_request *new_req;
         struct osc_brw_async_args *new_aa;
         struct osc_async_page *oap;
-        char *seclabel;
+        char *seclabel = NULL;
         ENTRY;
 
 	DEBUG_REQ(rc == -EINPROGRESS ? D_RPCTRACE : D_ERROR, request,
