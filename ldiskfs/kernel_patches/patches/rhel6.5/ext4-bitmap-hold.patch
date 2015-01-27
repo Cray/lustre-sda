@@ -2,11 +2,12 @@ Index: linux-stage/fs/ext4/mballoc.c
 ===================================================================
 --- linux-stage.orig/fs/ext4/mballoc.c
 +++ linux-stage/fs/ext4/mballoc.c
-@@ -26,6 +26,7 @@
+@@ -26,6 +26,8 @@
  #include <linux/debugfs.h>
  #include <linux/vmalloc.h>
  #include <trace/events/ext4.h>
 +#include <linux/swap.h>
++#define lru_add_drain()
  
  /*
   * MUSTDO:
