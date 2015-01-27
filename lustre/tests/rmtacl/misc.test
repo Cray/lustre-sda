@@ -254,7 +254,7 @@ Symlink in directory with default ACL?
 	 
 	$ ln -s d d/l
 	$ lfs ls -dl d/l | awk '{print $1}'
-	> lrwxrwxrwx
+	> lrwxrwxrwx.
 
 	$ lfs ls -dl -L d/l | awk '{print $1}'
 	> drwxr-x---+
