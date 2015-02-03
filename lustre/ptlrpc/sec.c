@@ -469,10 +469,6 @@ int sptlrpc_req_ctx_switch(struct ptlrpc_request *req,
         int                     reqmsg_size;
         int                     rc = 0;
 
-        LASSERT(req->rq_reqmsg);
-        LASSERT(req->rq_reqlen);
-        LASSERT(req->rq_replen);
-
         CDEBUG(D_SEC, "req %p: switch ctx %p(%u->%s) -> %p(%u->%s), "
                "switch sec %p(%s) -> %p(%s)\n", req,
                oldctx, oldctx->cc_vcred.vc_uid, sec2target_str(oldctx->cc_sec),
