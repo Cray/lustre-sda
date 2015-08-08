@@ -571,6 +571,6 @@ Index: linux-stage/fs/ext4/super.c
 +					err = -EROFS;
 +					goto restore_opts;
 +				}
- 		}
- 	}
- 	ext4_setup_system_zone(sb);
+			enable_quota = 1;
+		}
+	}
