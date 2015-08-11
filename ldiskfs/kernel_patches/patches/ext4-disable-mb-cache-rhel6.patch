@@ -21,8 +21,8 @@ Index: linux-stage/fs/ext4/super.c
  	Opt_mballoc, Opt_bigendian_extents, Opt_force_over_128tb,
  	Opt_extents, Opt_noextents,
 +	Opt_no_mbcache,
- 	Opt_discard, Opt_nodiscard,
-	Opt_init_inode_table, Opt_noinit_inode_table,
+	Opt_discard, Opt_nodiscard, Opt_init_itable, Opt_noinit_itable,
+	Opt_max_dir_size_kb,
  };
 @@ -1574,6 +1575,7 @@
 	{Opt_noauto_da_alloc, "noauto_da_alloc"},

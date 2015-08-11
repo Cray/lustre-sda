@@ -88,32 +88,31 @@ Index: linux-stage/fs/ext4/mballoc.c
  	/*
  	 * For delayed allocation, we could skip the ENOSPC and
  	 * EDQUOT check, as blocks and quotas have been already
-@@ -4529,6 +4559,25 @@
- 			ac->ac_b_ex.fe_len = 0;
- 			ar->len = 0;
- 			ext4_mb_show_ac(ac);
-+			if (ac->ac_pa) {
-+				struct ext4_prealloc_space *pa = ac->ac_pa;
-+
-+				/* We can not make sure whether the bitmap has
-+				 * been updated or not when fail case. So can
-+				 * not revert pa_free back, just mark pa_error*/
-+				pa->pa_error++;
-+				ext4_error(sb,
-+					"Updating bitmap error: [err %d] "
-+					"[pa %p] [phy %lu] [logic %lu] "
-+					"[len %u] [free %u] [error %u] "
-+					"[inode %lu]", *errp, pa,
-+					(unsigned long)pa->pa_pstart,
-+					(unsigned long)pa->pa_lstart,
-+					(unsigned)pa->pa_len,
-+					(unsigned)pa->pa_free,
-+					(unsigned)pa->pa_error,
-+					pa->pa_inode ? pa->pa_inode->i_ino : 0);
-+			}
- 		} else {
- 			block = ext4_grp_offs_to_block(sb, &ac->ac_b_ex);
- 			ar->len = ac->ac_b_ex.fe_len;
+@@ -4529,6 +4559,24 @@
+ 		ac->ac_b_ex.fe_len = 0;
+ 		ar->len = 0;
+ 		ext4_mb_show_ac(ac);
++		if (ac->ac_pa) {
++			struct ext4_prealloc_space *pa = ac->ac_pa;
++			/* We can not make sure whether the bitmap has
++			 * been updated or not when fail case. So can
++			 * not revert pa_free back, just mark pa_error*/
++			pa->pa_error++;
++			ext4_error(sb,
++				"Updating bitmap error: [err %d] "
++				"[pa %p] [phy %lu] [logic %lu] "
++				"[len %u] [free %u] [error %u] "
++				"[inode %lu]", *errp, pa,
++				(unsigned long)pa->pa_pstart,
++				(unsigned long)pa->pa_lstart,
++				(unsigned)pa->pa_len,
++				(unsigned)pa->pa_free,
++				(unsigned)pa->pa_error,
++				pa->pa_inode ? pa->pa_inode->i_ino : 0);
++		}
+	}
+	ext4_mb_release_context(ac);
+ out:
 @@ -4691,6 +4740,16 @@
  		goto error_return;
  	}

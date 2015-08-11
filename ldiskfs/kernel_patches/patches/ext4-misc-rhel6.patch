@@ -207,9 +207,9 @@ Index: linux-stage/fs/ext4/super.c
  	Opt_block_validity, Opt_noblock_validity,
  	Opt_inode_readahead_blks, Opt_journal_ioprio,
 +	Opt_mballoc,
- 	Opt_discard, Opt_nodiscard,
-	Opt_init_inode_table, Opt_noinit_inode_table,
+ 	Opt_discard, Opt_nodiscard, Opt_init_itable, Opt_noinit_itable,
  };
+
 @@ -1556,6 +1559,9 @@ static const match_table_t tokens = {             
 	{Opt_noquota, "noquota"},
 	{Opt_quota, "quota"},
