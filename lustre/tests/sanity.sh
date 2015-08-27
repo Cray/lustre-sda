@@ -446,7 +446,7 @@ str_repeat() {
 # Long symlinks and LU-2241
 test_17g() {
 	mkdir -p $DIR/$tdir
-	local TESTS="59 60 61 4094 4095"
+	local TESTS="59 60 61 4062 4063"
 
 	for i in $TESTS; do
 		local SYMNAME=$(str_repeat 'x' $i)
