@@ -361,7 +361,7 @@ if $1; then
 		;;
 	2.6.32*)
 		if test x$RHEL_KERNEL = xyes; then
-			LDISKFS_SERIES="2.6-rhel6.series"
+			LDISKFS_SERIES="2.6-rhel6.5.series"
 		fi
 		if test x$SUSE_KERNEL = xyes; then
 			LDISKFS_SERIES="2.6-sles11.series"

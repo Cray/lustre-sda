@@ -84,8 +84,9 @@ test_1() {
 	ost_obj_stat $DIR/$tfile-f1 | grep "selinux ="
 	dd if=/dev/zero of=$DIR/$tfile-f2 bs=1M count=10 oflag=direct
 	ost_obj_stat $DIR/$tfile-f2 | grep "selinux ="
+	echo "changing context to s1"
 	chcon "root:object_r:file_t:s1" $DIR/$tfile-f2
-	sync; sleep 10; sync
+	sync; sleep 3; sync
 	ost_obj_stat $DIR/$tfile-f2 | grep "selinux ="
 
 	echo "=== step 5 ==="

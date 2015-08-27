@@ -1408,6 +1408,43 @@ static int lustre_put_lsi(struct super_block *sb)
         RETURN(0);
 }
 
+static void lustre_filter_options(char *options)
+{
+	/* strip out the options for back compatiblity */
+	static char *sout[] = {
+		"mballoc",
+		"iopen",
+		"noiopen",
+		"iopen_nopriv",
+		"extents",
+		"noextents",
+		/* strip out option we processed in osd */
+		"bigendian_extents",
+		"force_over_128tb",
+		NULL
+	};
+	char *str;
+	int rc;
+
+	for (rc = 0, str = options; sout[rc]; ) {
+		char *op = strstr(str, sout[rc]);
+		if (op == NULL) {
+			rc++;
+			str = options;
+			continue;
+		}
+		if (op == options || *(op - 1) == ',') {
+			str = op + strlen(sout[rc]);
+			if (*str == ',' || *str == '\0') {
+				*str == ',' ? str++ : str;
+				memmove(op, str, strlen(str) + 1);
+			}
+		}
+		for (str = op; *str != ',' && *str != '\0'; str++)
+			;
+	}
+}
+
 /*************** server mount ******************/
 
 /** Kernel mount using mount options in MOUNT_DATA_FILE.
@@ -1451,6 +1488,7 @@ static struct vfsmount *server_kernel_mount(struct super_block *sb)
          * to mount successfuly the underlying filesystem */
         if (lmd->lmd_opts && (*(lmd->lmd_opts) != 0))
                 strncat(options, lmd->lmd_opts, CFS_PAGE_SIZE - 1);
+	lustre_filter_options(options);
         /* Pre-mount ldiskfs to read the MOUNT_DATA_FILE */
         CDEBUG(D_MOUNT, "Pre-mount ldiskfs %s\n", lmd->lmd_dev);
         type = get_fs_type("ldiskfs");
@@ -1502,6 +1540,8 @@ static struct vfsmount *server_kernel_mount(struct super_block *sb)
         if (IS_OST(ldd))
             s_flags |= MS_NOATIME | MS_NODIRATIME;
 
+	lustre_filter_options(options);
+
         CDEBUG(D_MOUNT, "kern_mount: %s %s %s\n",
                MT_STR(ldd), lmd->lmd_dev, options);
         type = get_fs_type(MT_STR(ldd));
@@ -1509,6 +1549,7 @@ static struct vfsmount *server_kernel_mount(struct super_block *sb)
                 CERROR("get_fs_type failed\n");
                 GOTO(out_free, rc = -ENODEV);
         }
+
         mnt = vfs_kern_mount(type, s_flags, lmd->lmd_dev, (void *)options);
         cfs_module_put(type->owner);
         if (IS_ERR(mnt)) {

@@ -156,7 +156,7 @@ static int fsfilt_ext3_set_label(struct super_block *sb, char *label)
         memcpy(EXT3_SB(sb)->s_es->s_volume_name, label,
                sizeof(EXT3_SB(sb)->s_es->s_volume_name));
 
-        err = ext3_journal_dirty_metadata(handle, EXT3_SB(sb)->s_sbh);
+        err = jbd2_journal_dirty_metadata(handle, EXT3_SB(sb)->s_sbh);
 
 out:
         ext3_journal_stop(handle);
@@ -873,7 +873,7 @@ static long ext3_ext_find_goal(struct inode *inode, struct ext3_ext_path *path,
 
                 /* try to predict block placement */
                 if ((ex = path[depth].p_ext))
-                        return ext_pblock(ex) + (block - le32_to_cpu(ex->ee_block));
+                        return ldiskfs_ext_pblock(ex) + (block - le32_to_cpu(ex->ee_block));
 
                 /* it looks index is empty
                  * try to find starting from index itself */
@@ -1031,10 +1031,10 @@ static int ext3_ext_new_extent_cb(struct ext3_ext_base *base,
                 ext3_mb_discard_inode_preallocations(inode);
 #endif
 #ifdef HAVE_EXT_FREE_BLOCK_WITH_BUFFER_HEAD /* Introduced in 2.6.32-rc7 */
-		ext3_free_blocks(handle, inode, NULL, ext_pblock(&nex),
+		ext3_free_blocks(handle, inode, NULL, ldiskfs_ext_pblock(&nex),
 				 cpu_to_le16(nex.ee_len), 0);
 #else
-		ext3_free_blocks(handle, inode, ext_pblock(&nex),
+		ext3_free_blocks(handle, inode, ldiskfs_ext_pblock(&nex),
 				 cpu_to_le16(nex.ee_len), 0);
 #endif
                 goto out;
@@ -1046,7 +1046,7 @@ static int ext3_ext_new_extent_cb(struct ext3_ext_base *base,
          * scaning after that block
          */
         cex->ec_len = le16_to_cpu(nex.ee_len);
-        cex->ec_start = ext_pblock(&nex);
+        cex->ec_start = ldiskfs_ext_pblock(&nex);
         BUG_ON(le16_to_cpu(nex.ee_len) == 0);
         BUG_ON(le32_to_cpu(nex.ee_block) != cex->ec_block);
 
@@ -1298,7 +1298,7 @@ int fsfilt_ext3_write_handle(struct inode *inode, void *buf, int bufsize,
                 }
                 LASSERT(bh->b_data + boffs + size <= bh->b_data + bh->b_size);
                 memcpy(bh->b_data + boffs, buf, size);
-                err = ext3_journal_dirty_metadata(handle, bh);
+                err = jbd2_journal_dirty_metadata(handle, bh);
                 if (err) {
                         CERROR("journal_dirty_metadata() returned error %d\n",
                                err);

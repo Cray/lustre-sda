@@ -2840,7 +2840,7 @@ static int osd_ldiskfs_write_record(struct inode *inode, void *buf, int bufsize,
                          "boffs %d size %d bh->b_size %lu",
                          boffs, size, (unsigned long)bh->b_size);
                 memcpy(bh->b_data + boffs, buf, size);
-                err = ldiskfs_journal_dirty_metadata(handle, bh);
+                err = jbd2_journal_dirty_metadata(handle, bh);
                 if (err)
                         break;
 
@@ -3845,9 +3845,9 @@ static struct dt_it *osd_it_ea_init(const struct lu_env *env,
 	memset(file, 0, sizeof(*file));
 	/* Only FMODE_64BITHASH or FMODE_32BITHASH should be set, NOT both. */
 	if (attr & LUDA_64BITHASH)
-		file->f_mode	= O_64BITHASH;
+		file->f_mode	= FMODE_64BITHASH;
 	else
-		file->f_mode	= O_32BITHASH;
+		file->f_mode	= FMODE_32BITHASH;
 	file->f_dentry		= obj_dentry;
 	file->f_mapping 	= obj->oo_inode->i_mapping;
 	file->f_op		= obj->oo_inode->i_fop;
@@ -4100,7 +4100,7 @@ static int osd_it_ea_next(const struct lu_env *env, struct dt_it *di)
                 it->oie_it_dirent++;
                 RETURN(0);
         } else {
-                if (it->oie_file.f_pos == LDISKFS_HTREE_EOF)
+                if (it->oie_file.f_pos == ldiskfs_get_htree_eof(&it->oie_file))
                         rc = +1;
                 else
                         rc = osd_ldiskfs_it_fill(env, di);

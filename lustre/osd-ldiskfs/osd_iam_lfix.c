@@ -855,9 +855,9 @@ int iam_lfix_create(struct inode *obj,
                 lfix_root(root_node->b_data, bsize, keysize, ptrsize, recsize);
                 lfix_leaf(leaf_node->b_data, bsize, keysize, ptrsize, recsize);
                 ldiskfs_mark_inode_dirty(handle, obj);
-                result = ldiskfs_journal_dirty_metadata(handle, root_node);
+                result = jbd2_journal_dirty_metadata(handle, root_node);
                 if (result == 0)
-                        result = ldiskfs_journal_dirty_metadata(handle, leaf_node);
+                        result = jbd2_journal_dirty_metadata(handle, leaf_node);
                 if (result != 0)
                         ldiskfs_std_error(sb, result);
         }

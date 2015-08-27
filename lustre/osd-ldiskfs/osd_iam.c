@@ -602,7 +602,7 @@ static int iam_txn_dirty(handle_t *handle,
 {
         int result;
 
-        result = ldiskfs_journal_dirty_metadata(handle, bh);
+        result = jbd2_journal_dirty_metadata(handle, bh);
         if (result != 0)
                 ldiskfs_std_error(iam_path_obj(path)->i_sb, result);
         return result;
@@ -1679,7 +1679,7 @@ iam_new_node(handle_t *h, struct iam_container *c, iam_ptr_t *b, int *e)
 		--count;
 		*b = le32_to_cpu(head->iih_blks[count]);
 		head->iih_count = cpu_to_le16(count);
-		*e = ldiskfs_journal_dirty_metadata(h, c->ic_idle_bh);
+		*e = jbd2_journal_dirty_metadata(h, c->ic_idle_bh);
 		if (*e != 0)
 			goto fail;
 
@@ -1703,7 +1703,7 @@ iam_new_node(handle_t *h, struct iam_container *c, iam_ptr_t *b, int *e)
 	iam_lock_bh(c->ic_root_bh);
 	*idle_blocks = head->iih_next;
 	iam_unlock_bh(c->ic_root_bh);
-	*e = ldiskfs_journal_dirty_metadata(h, c->ic_root_bh);
+	*e = jbd2_journal_dirty_metadata(h, c->ic_root_bh);
 	if (*e != 0) {
 		iam_lock_bh(c->ic_root_bh);
 		*idle_blocks = cpu_to_le32(*b);
@@ -2065,7 +2065,7 @@ int split_index_node(handle_t *handle, struct iam_path *path,
                         ++ frame;
                         assert_inv(dx_node_check(path, frame));
                         bh_new[0] = NULL; /* buffer head is "consumed" */
-                        err = ldiskfs_journal_dirty_metadata(handle, bh2);
+                        err = jbd2_journal_dirty_metadata(handle, bh2);
                         if (err)
                                 goto journal_error;
                         do_corr(schedule());
@@ -2097,16 +2097,16 @@ int split_index_node(handle_t *handle, struct iam_path *path,
                         dxtrace(dx_show_index ("node", frame->entries));
                         dxtrace(dx_show_index ("node",
                                ((struct dx_node *) bh2->b_data)->entries));
-                        err = ldiskfs_journal_dirty_metadata(handle, bh2);
+                        err = jbd2_journal_dirty_metadata(handle, bh2);
                         if (err)
                                 goto journal_error;
                         do_corr(schedule());
-                        err = ldiskfs_journal_dirty_metadata(handle, parent->bh);
+                        err = jbd2_journal_dirty_metadata(handle, parent->bh);
                         if (err)
                                 goto journal_error;
                 }
                 do_corr(schedule());
-                err = ldiskfs_journal_dirty_metadata(handle, bh);
+                err = jbd2_journal_dirty_metadata(handle, bh);
                 if (err)
                         goto journal_error;
         }

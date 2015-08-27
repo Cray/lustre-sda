@@ -1620,6 +1620,7 @@ int mdd_attr_set(const struct lu_env *env, struct md_object *obj,
 
                 if (rc < 0)
                         GOTO(no_trans, rc);
+                rc = 0;
         }
 
         chlog_cnt = 1;

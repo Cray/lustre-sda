@@ -7,7 +7,8 @@ $(filter %.c,$(ldiskfs_patched_sources)): sources $(ldiskfs_linux_headers) $(fil
 ldiskfs_sed_flags = \
 	-e "s/dx_hash_info/ext4_dx_hash_info/g" \
 	-e "s/DX_HASH/EXT4_DX_HASH/g" \
-	-e "s/EXT4/LDISKFS/g" -e "s/ext4/ldiskfs/g"
+	-e "s/EXT4/LDISKFS/g" -e "s/ext4/ldiskfs/g" \
+	-e "s/LDISKFS_SUPER_MAGIC/EXT4_SUPER_MAGIC/g"
 
 %.c: linux-stage/fs/ext4/%.c
 	sed $(strip $(ldiskfs_sed_flags)) $< > $@
