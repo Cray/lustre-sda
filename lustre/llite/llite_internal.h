@@ -1149,7 +1149,8 @@ void et_fini(struct eacl_table *et);
 /* statahead.c */
 
 #define LL_SA_RPC_MIN           2
-#define LL_SA_RPC_DEF           32
+/* XXX: MRP-1802 */
+#define LL_SA_RPC_DEF           0
 #define LL_SA_RPC_MAX           8192
 
 #define LL_SA_CACHE_BIT         5

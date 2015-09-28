@@ -49,7 +49,7 @@
 
 /* obdo.c */
 void obdo_from_la(struct obdo *dst, const struct lu_attr *la, __u64 valid);
-void la_from_obdo(struct lu_attr *la, const struct obdo *dst, obd_flag valid);
+void la_from_obdo(struct lu_attr *la, const struct obdo *dst, obd_valid valid);
 void obdo_refresh_inode(struct inode *dst, const struct obdo *src,
 			obd_flag valid);
 #define ll_inode_flags(inode)         (inode->i_flags)

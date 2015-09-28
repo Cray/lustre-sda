@@ -241,6 +241,8 @@ int mdt_getxattr(struct mdt_thread_info *info)
 
 	CDEBUG(D_INODE, "getxattr "DFID"\n", PFID(&info->mti_body->mbo_fid1));
 
+	mdt_unpack_security(info);
+
         reqbody = req_capsule_client_get(info->mti_pill, &RMF_MDT_BODY);
         if (reqbody == NULL)
                 RETURN(err_serious(-EFAULT));
@@ -438,6 +440,14 @@ int mdt_reint_setxattr(struct mdt_thread_info *info,
          * not change the access permissions of this inode, nor any
          * other existing inodes. It is setting the ACLs inherited
          * by new directories/files at create time. */
+
+	/*
+	 * SELinux security label cache should be invalidated on
+	 * "security.selinux" changes.
+	 */
+	if (!strcmp(xattr_name, XATTR_NAME_SECURITY_SELINUX))
+		lockpart |= MDS_INODELOCK_LOOKUP;
+
 	/* We need revoke both LOOKUP|PERM lock here, see mdt_attr_set. */
         if (!strcmp(xattr_name, XATTR_NAME_ACL_ACCESS))
 		lockpart |= MDS_INODELOCK_PERM | MDS_INODELOCK_LOOKUP;

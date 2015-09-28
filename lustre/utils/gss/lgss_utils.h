@@ -180,6 +180,7 @@ struct lgss_mech_type *lgss_name2mech(const char *mech_name);
 int  lgss_mech_initialize(struct lgss_mech_type *mech);
 void lgss_mech_finalize(struct lgss_mech_type *mech);
 
+void lgss_set_hostname(const char *hname);
 struct lgss_cred * lgss_create_cred(struct lgss_mech_type *mech);
 void lgss_destroy_cred(struct lgss_cred *cred);
 int lgss_prepare_cred(struct lgss_cred *cred);

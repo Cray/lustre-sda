@@ -1045,6 +1045,14 @@ static int mdd_xattr_set(const struct lu_env *env, struct md_object *obj,
 	if (rc)
 		GOTO(stop, rc);
 
+	if (!(fl & LU_XATTR_INTERNAL) && !strcmp(name, XATTR_NAME_SECURITY_SELINUX)) {
+		struct lu_attr attr = { 0 };
+		attr.la_valid = LA_SECURITY;
+		attr.la_seclabel = buf->lb_buf;
+		attr.la_sllen = buf->lb_len;
+		rc = mdd_declare_attr_set(env, mdd, mdd_obj, &attr, handle);
+	}
+
 	rc = mdd_trans_start(env, mdd, handle);
 	if (rc)
 		GOTO(stop, rc);

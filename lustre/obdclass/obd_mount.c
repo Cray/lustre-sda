@@ -1388,7 +1388,7 @@ struct file_system_type lustre_fs_type = {
         .get_sb       = lustre_get_sb,
 #endif
         .kill_sb      = lustre_kill_super,
-	.fs_flags     = FS_BINARY_MOUNTDATA | FS_REQUIRES_DEV |
+	.fs_flags     = FS_REQUIRES_DEV |
 			FS_HAS_FIEMAP | FS_RENAME_DOES_D_MOVE,
 };
 MODULE_ALIAS_FS("lustre");

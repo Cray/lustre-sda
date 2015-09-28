@@ -1023,7 +1023,7 @@ void mdt_reconstruct_open(struct mdt_thread_info *info,
         int                      rc;
         ENTRY;
 
-        LASSERT(pill->rc_fmt == &RQF_LDLM_INTENT_OPEN);
+        LASSERT(pill->rc_fmt == &RQF_LDLM_INTENT_OPEN_SE);
         ldlm_rep = req_capsule_server_get(pill, &RMF_DLM_REP);
         repbody = req_capsule_server_get(pill, &RMF_MDT_BODY);
 
@@ -1619,7 +1619,7 @@ int mdt_reint_open(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
 
         ma->ma_valid = 0;
 
-        LASSERT(info->mti_pill->rc_fmt == &RQF_LDLM_INTENT_OPEN);
+        LASSERT(info->mti_pill->rc_fmt == &RQF_LDLM_INTENT_OPEN_SE);
         ldlm_rep = req_capsule_server_get(info->mti_pill, &RMF_DLM_REP);
 
         if (unlikely(create_flags & MDS_OPEN_JOIN_FILE)) {

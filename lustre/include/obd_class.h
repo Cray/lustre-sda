@@ -842,8 +842,8 @@ static inline int obd_getattr_async(struct obd_export *exp,
 }
 
 static inline int obd_setattr(const struct lu_env *env, struct obd_export *exp,
-                              struct obd_info *oinfo,
-                              struct obd_trans_info *oti)
+			      struct obd_info *oinfo, char *seclabel,
+			      struct obd_trans_info *oti)
 {
         int rc;
         ENTRY;
@@ -851,7 +851,7 @@ static inline int obd_setattr(const struct lu_env *env, struct obd_export *exp,
         EXP_CHECK_DT_OP(exp, setattr);
         EXP_COUNTER_INCREMENT(exp, setattr);
 
-        rc = OBP(exp->exp_obd, setattr)(env, exp, oinfo, oti);
+	rc = OBP(exp->exp_obd, setattr)(env, exp, oinfo, seclabel, oti);
         RETURN(rc);
 }
 
@@ -1263,15 +1263,14 @@ static inline int obd_commitrw(const struct lu_env *env, int cmd,
                                int objcount, struct obd_ioobj *obj,
                                struct niobuf_remote *rnb, int pages,
                                struct niobuf_local *local,
-                               struct obd_trans_info *oti, int rc)
+                               struct obd_trans_info *oti, char *seclabel, int rc)
 {
         ENTRY;
 
         EXP_CHECK_DT_OP(exp, commitrw);
         EXP_COUNTER_INCREMENT(exp, commitrw);
-
         rc = OBP(exp->exp_obd, commitrw)(env, cmd, exp, oa, objcount, obj,
-                                         rnb, pages, local, oti, rc);
+                                         rnb, pages, local, oti, seclabel, rc);
         RETURN(rc);
 }
 

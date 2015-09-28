@@ -519,6 +519,9 @@ static int obd_init_checks(void)
 extern int class_procfs_init(void);
 extern int class_procfs_clean(void);
 
+extern int obd_security_init(void);
+extern void obd_security_fini(void);
+
 static int __init init_obdclass(void)
 {
         int i, err;
@@ -554,6 +557,8 @@ static int __init init_obdclass(void)
         err = obd_init_checks();
         if (err == -EOVERFLOW)
                 return err;
+
+	obd_security_init();
 
         class_init_uuidlist();
         err = class_handle_init();
@@ -696,6 +701,8 @@ static void cleanup_obdclass(void)
 
         memory_max = obd_memory_max();
         pages_max = obd_pages_max();
+
+	obd_security_fini();
 
         lprocfs_free_stats(&obd_memory);
         CDEBUG((memory_leaked) ? D_ERROR : D_INFO,

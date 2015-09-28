@@ -1080,16 +1080,16 @@ static int mdt_create_unpack(struct mdt_thread_info *info)
 	if (S_ISLNK(attr->la_mode)) {
                 const char *tgt = NULL;
 
-                req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_SYM);
+                req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_SYM_SE);
                 if (req_capsule_get_size(pill, &RMF_SYMTGT, RCL_CLIENT)) {
                         tgt = req_capsule_client_get(pill, &RMF_SYMTGT);
                         sp->u.sp_symname = tgt;
                 }
                 if (tgt == NULL)
                         RETURN(-EFAULT);
-        } else {
-                req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_RMT_ACL);
-        }
+	} else {
+		req_capsule_extend(pill, &RQF_MDS_REINT_CREATE_RMT_ACL_SE);
+	}
 
         rc = mdt_dlmreq_unpack(info);
         RETURN(rc);
@@ -1449,6 +1449,19 @@ static reint_unpacker mdt_reint_unpackers[REINT_MAX] = {
 	[REINT_RMENTRY]  = mdt_rmentry_unpack,
 };
 
+void mdt_unpack_security(struct mdt_thread_info *info)
+{
+	struct lu_ucred		*uc	= mdt_ucred(info);
+	struct req_capsule	*pill	= info->mti_pill;
+	char			*label;
+
+	if (!req_capsule_has_field(pill, &RMF_SELINUX, RCL_CLIENT))
+		return;
+
+	label = req_capsule_client_get(pill, &RMF_SELINUX);
+	strcpy(uc->uc_seclabel, label);
+}
+
 int mdt_reint_unpack(struct mdt_thread_info *info, __u32 op)
 {
         int rc;
@@ -1456,6 +1469,8 @@ int mdt_reint_unpack(struct mdt_thread_info *info, __u32 op)
 
         memset(&info->mti_rr, 0, sizeof(info->mti_rr));
         if (op < REINT_MAX && mdt_reint_unpackers[op] != NULL) {
+		mdt_unpack_security(info);
+
                 info->mti_rr.rr_opcode = op;
                 rc = mdt_reint_unpackers[op](info);
         } else {

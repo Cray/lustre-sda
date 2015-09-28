@@ -1325,6 +1325,7 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
 #define OBD_CONNECT_DISP_STRIPE 0x10000000000000ULL/* create stripe disposition*/
 #define OBD_CONNECT_OPEN_BY_FID	0x20000000000000ULL /* open by fid won't pack
 						       name in request */
+#define OBD_CONNECT_SELUSTRE	0x40000000000000ULL
 #define OBD_CONNECT_UNLINK_CLOSE 0x100000000000000ULL/* close file in unlink */
 
 /* XXX README XXX:
@@ -1371,7 +1372,7 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
 				OBD_CONNECT_PINGLESS | OBD_CONNECT_MAX_EASIZE |\
 				OBD_CONNECT_FLOCK_DEAD | \
 				OBD_CONNECT_DISP_STRIPE |\
-				OBD_CONNECT_OPEN_BY_FID)
+				OBD_CONNECT_OPEN_BY_FID | OBD_CONNECT_SELUSTRE)
 
 #define OST_CONNECT_SUPPORTED  (OBD_CONNECT_SRVLOCK | OBD_CONNECT_GRANT | \
                                 OBD_CONNECT_REQPORTAL | OBD_CONNECT_VERSION | \
@@ -1389,15 +1390,21 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
 				OBD_CONNECT_JOBSTATS | \
 				OBD_CONNECT_LIGHTWEIGHT | OBD_CONNECT_LVB_TYPE|\
 				OBD_CONNECT_LAYOUTLOCK | OBD_CONNECT_FID | \
-				OBD_CONNECT_PINGLESS)
+				OBD_CONNECT_PINGLESS | OBD_CONNECT_SELUSTRE)
 #define ECHO_CONNECT_SUPPORTED (OBD_CONNECT_FID)
 #define MGS_CONNECT_SUPPORTED  (OBD_CONNECT_VERSION | OBD_CONNECT_AT | \
 				OBD_CONNECT_FULL20 | OBD_CONNECT_IMP_RECOV | \
 				OBD_CONNECT_MNE_SWAB | OBD_CONNECT_PINGLESS)
 
 /* Features required for this version of the client to work with server */
+#ifdef ENABLE_INSECURE_CLIENT
 #define CLIENT_CONNECT_MDT_REQD (OBD_CONNECT_IBITS | OBD_CONNECT_FID | \
-                                 OBD_CONNECT_FULL20)
+				 OBD_CONNECT_FULL20)
+#else
+#define CLIENT_CONNECT_MDT_REQD (OBD_CONNECT_IBITS | OBD_CONNECT_FID | \
+				 OBD_CONNECT_FULL20 | OBD_CONNECT_SELUSTRE)
+#endif
+
 
 /* This structure is used for both request and reply.
  *
@@ -1664,8 +1671,9 @@ static inline void lmm_oi_cpu_to_le(struct ost_id *dst_oi,
 #define DEF_REP_MD_SIZE (sizeof(struct lov_mds_md) + \
 			 100 * sizeof(struct lov_ost_data))
 
-#define XATTR_NAME_ACL_ACCESS   "system.posix_acl_access"
-#define XATTR_NAME_ACL_DEFAULT  "system.posix_acl_default"
+#define XATTR_NAME_ACL_ACCESS		"system.posix_acl_access"
+#define XATTR_NAME_ACL_DEFAULT		"system.posix_acl_default"
+#define XATTR_NAME_SECURITY_SELINUX	"security.selinux"
 #define XATTR_USER_PREFIX       "user."
 #define XATTR_TRUSTED_PREFIX    "trusted."
 #define XATTR_SECURITY_PREFIX   "security."
@@ -1789,6 +1797,7 @@ lov_mds_md_max_stripe_count(size_t buf_size, __u32 lmm_magic)
 
 #define OBD_MD_FLDATAVERSION (0x0010000000000000ULL) /* iversion sum */
 #define OBD_MD_FLRELEASED    (0x0020000000000000ULL) /* file released */
+#define OBD_MD_FLSECURITY    (0x0040000000000000ULL) /* has security */
 
 #define OBD_MD_FLGETATTR (OBD_MD_FLID    | OBD_MD_FLATIME | OBD_MD_FLMTIME | \
                           OBD_MD_FLCTIME | OBD_MD_FLSIZE  | OBD_MD_FLBLKSZ | \
@@ -3855,6 +3864,8 @@ struct close_data {
 };
 
 void lustre_swab_close_data(struct close_data *data);
+
+#define CFS_SID_MAX_LEN 128
 
 #endif
 /** @} lustreidl */

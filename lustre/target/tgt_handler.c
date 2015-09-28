@@ -1738,7 +1738,7 @@ out_commitrw:
 	/* Must commit after prep above in all cases */
 	rc = obd_commitrw(tsi->tsi_env, OBD_BRW_READ, exp,
 			  &repbody->oa, 1, ioo, remote_nb, npages, local_nb,
-			  NULL, rc);
+			  NULL, NULL, rc);
 	if (rc == 0)
 		tgt_drop_id(exp, &repbody->oa);
 out_lock:
@@ -1843,6 +1843,7 @@ int tgt_brw_write(struct tgt_session_info *tsi)
 	bool			 no_reply = false, mmap;
 	struct tgt_thread_big_cache *tbc = req->rq_svc_thread->t_data;
 	struct obd_trans_info trans_info = { 0 };
+	char			*selinux = NULL;
 
 	ENTRY;
 
@@ -1880,6 +1881,9 @@ int tgt_brw_write(struct tgt_session_info *tsi)
 
 	body = tsi->tsi_ost_body;
 	LASSERT(body != NULL);
+
+	if (body->oa.o_valid & OBD_MD_FLSECURITY)
+		selinux = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX);
 
 	ioo = req_capsule_client_get(&req->rq_pill, &RMF_OBD_IOOBJ);
 	LASSERT(ioo != NULL); /* must exists after tgt_ost_body_unpack */
@@ -2004,7 +2008,7 @@ skip_transfer:
 	/* Must commit after prep above in all cases */
 	rc = obd_commitrw(tsi->tsi_env, OBD_BRW_WRITE, exp, &repbody->oa,
 			  objcount, ioo, remote_nb, npages, local_nb,
-			  &trans_info, rc);
+			  &trans_info, selinux, rc);
 	if (rc == -ENOTCONN)
 		/* quota acquire process has been given up because
 		 * either the client has been evicted or the client

@@ -1530,7 +1530,7 @@ EXPORT_SYMBOL(cl_req_prep);
  * for the same request.
  */
 void cl_req_attr_set(const struct lu_env *env, struct cl_req *req,
-                     struct cl_req_attr *attr, obd_valid flags)
+                     struct cl_req_attr *attr, obd_valid flags, char *seclabel)
 {
         const struct cl_req_slice *slice;
         struct cl_page            *page;
@@ -1553,7 +1553,7 @@ void cl_req_attr_set(const struct lu_env *env, struct cl_req *req,
                         obj = scan->cpl_obj;
                         if (slice->crs_ops->cro_attr_set != NULL)
                                 slice->crs_ops->cro_attr_set(env, slice, obj,
-                                                             attr + i, flags);
+                                                             attr + i, flags, seclabel);
                 }
         }
         EXIT;

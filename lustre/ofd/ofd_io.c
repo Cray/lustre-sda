@@ -398,7 +398,7 @@ ofd_write_attr_set(const struct lu_env *env, struct ofd_device *ofd,
 	dt_obj = ofd_object_child(ofd_obj);
 	LASSERT(dt_obj != NULL);
 
-	la->la_valid &= LA_UID | LA_GID;
+	la->la_valid &= LA_UID | LA_GID | LA_SECURITY;
 
 	rc = ofd_attr_handle_ugid(env, ofd_obj, la, 0 /* !is_setattr */);
 	if (rc != 0)
@@ -422,6 +422,17 @@ ofd_write_attr_set(const struct lu_env *env, struct ofd_device *ofd,
 
 	if (la->la_valid) {
 		rc = dt_declare_attr_set(env, dt_obj, la, th);
+		if (rc)
+			GOTO(out_tx, rc);
+	}
+
+	if (la->la_valid & LA_SECURITY) {
+		info->fti_buf.lb_buf = la->la_seclabel;
+		info->fti_buf.lb_len = strlen(la->la_seclabel) + 1;
+		rc = dt_declare_xattr_set(env, dt_obj,
+					  &info->fti_buf,
+					  XATTR_NAME_SECURITY_SELINUX, 0,
+					  th);
 		if (rc)
 			GOTO(out_tx, rc);
 	}
@@ -716,7 +727,7 @@ int ofd_commitrw(const struct lu_env *env, int cmd, struct obd_export *exp,
 		 struct obdo *oa, int objcount, struct obd_ioobj *obj,
 		 struct niobuf_remote *rnb, int npages,
 		 struct niobuf_local *lnb, struct obd_trans_info *oti,
-		 int old_rc)
+		 char *seclabel, int old_rc)
 {
 	struct ofd_thread_info	*info = ofd_info(env);
 	struct ofd_mod_data	*fmd;
@@ -747,6 +758,11 @@ int ofd_commitrw(const struct lu_env *env, int cmd, struct obd_export *exp,
 		if (oa->o_valid & OBD_MD_FLFID) {
 			ff = &info->fti_mds_fid;
 			ofd_prepare_fidea(ff, oa);
+		}
+
+		if ((info->fti_attr.la_seclabel = seclabel)) {
+			info->fti_attr.la_valid |= LA_SECURITY;
+			info->fti_attr.la_sllen = strlen(seclabel) + 1;
 		}
 
 		rc = ofd_commitrw_write(env, exp, ofd, fid, &info->fti_attr,

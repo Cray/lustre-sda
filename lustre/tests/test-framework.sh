@@ -517,6 +517,7 @@ load_modules_local() {
 	esac
     LNETLND=${LNETLND:-"socklnd/ksocklnd"}
     load_module ../lnet/klnds/$LNETLND
+echo > /sys/kernel/debug/tracing/trace
     load_module obdclass/obdclass
     load_module ptlrpc/ptlrpc
     load_module ptlrpc/gss/ptlrpc_gss
@@ -547,6 +548,7 @@ load_modules_local() {
 			load_module osd-ldiskfs/osd_ldiskfs
 		fi
 		load_module mgs/mgs
+		load_module security/sec
 		load_module mdd/mdd
 		load_module mdt/mdt
 		load_module ost/ost
@@ -6230,8 +6232,10 @@ calc_connection_cnt() {
 
     local num_clients=$(get_clients_mount_count)
 
-    local cnt_mdt2mdt=$((comb_m2 * 2))
-    local cnt_mdt2ost=$((MDSCOUNT * OSTCOUNT))
+#    local cnt_mdt2mdt=$((comb_m2 * 2))
+    local cnt_mdt2mdt=0
+#    local cnt_mdt2ost=$((MDSCOUNT * OSTCOUNT))
+    local cnt_mdt2ost=0
     local cnt_cli2ost=$((num_clients * OSTCOUNT))
     local cnt_cli2mdt=$((num_clients * MDSCOUNT))
     local cnt_all2ost=$((cnt_mdt2ost + cnt_cli2ost))

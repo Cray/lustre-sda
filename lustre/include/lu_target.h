@@ -381,6 +381,12 @@ static inline void tgt_drop_id(struct obd_export *exp, struct obdo *oa)
 #define TGT_MDT_HDL(flags, name, fn)					\
 	TGT_RPC_HANDLER(MDS_FIRST_OPC, flags, name, fn, &RQF_ ## name,	\
 			LUSTRE_MDS_VERSION)
+
+/* MDT Request with a format known in advance */
+#define TGT_MDT_HDL_SE(flags, name, fn)						\
+	TGT_RPC_HANDLER(MDS_FIRST_OPC, flags, name, fn, &RQF_ ## name ## _SE,	\
+			LUSTRE_MDS_VERSION)
+
 /* Request with a format we do not yet know */
 #define TGT_MDT_HDL_VAR(flags, name, fn)				\
 	TGT_RPC_HANDLER(MDS_FIRST_OPC, flags, name, fn, NULL,		\

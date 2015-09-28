@@ -2703,7 +2703,7 @@ static int echo_client_prep_commit(const struct lu_env *env,
 		}
 
 		ret = obd_commitrw(env, rw, exp, oa, 1, &ioo,
-				   rnb, npages, lnb, oti, ret);
+				   rnb, npages, lnb, oti, NULL, ret);
                 if (ret != 0)
                         GOTO(out, ret);
 
@@ -2726,6 +2726,7 @@ out:
 static int echo_client_brw_ioctl(const struct lu_env *env, int rw,
 				 struct obd_export *exp,
 				 struct obd_ioctl_data *data,
+				 const char *seclabel,
 				 struct obd_trans_info *dummy_oti)
 {
         struct obd_device *obd = class_exp2obd(exp);
@@ -2949,7 +2950,7 @@ echo_client_iocontrol(unsigned int cmd, struct obd_export *exp, int len,
                         oinfo.oi_oa = oa;
                         oinfo.oi_md = eco->eo_lsm;
 
-                        rc = obd_setattr(env, ec->ec_exp, &oinfo, NULL);
+                        rc = obd_setattr(env, ec->ec_exp, &oinfo, NULL, NULL);
                         echo_put_object(eco);
                 }
                 GOTO(out, rc);
@@ -2961,7 +2962,7 @@ echo_client_iocontrol(unsigned int cmd, struct obd_export *exp, int len,
                 rw = OBD_BRW_WRITE;
                 /* fall through */
         case OBD_IOC_BRW_READ:
-		rc = echo_client_brw_ioctl(env, rw, exp, data, &dummy_oti);
+		rc = echo_client_brw_ioctl(env, rw, exp, data, NULL, &dummy_oti);
                 GOTO(out, rc);
 
         default:

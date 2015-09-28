@@ -60,6 +60,7 @@
 #include <cl_object.h>
 
 #include <lclient.h>
+#include <lustre_security.h>
 
 #include "llite_internal.h"
 
@@ -919,7 +920,7 @@ void ccc_req_completion(const struct lu_env *env,
 void ccc_req_attr_set(const struct lu_env *env,
                       const struct cl_req_slice *slice,
                       const struct cl_object *obj,
-                      struct cl_req_attr *attr, obd_valid flags)
+                      struct cl_req_attr *attr, obd_valid flags, char *seclabel)
 {
         struct inode *inode;
         struct obdo  *oa;
@@ -947,6 +948,11 @@ void ccc_req_attr_set(const struct lu_env *env,
 	obdo_set_parent_fid(oa, &cl_i2info(inode)->lli_fid);
 	memcpy(attr->cra_jobid, cl_i2info(inode)->lli_jobid,
 	       JOBSTATS_JOBID_SIZE);
+
+	if (flags & OBD_MD_FLSECURITY && seclabel != NULL) {
+		if (obd_security_from_inode(inode, seclabel) == 0)
+			oa->o_valid |= OBD_MD_FLSECURITY;
+	}
 }
 
 static const struct cl_req_operations ccc_req_ops = {

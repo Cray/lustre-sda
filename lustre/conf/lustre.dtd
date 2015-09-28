@@ -11,7 +11,7 @@
 
 <!-- main elements -->
 <!ELEMENT lustre (node | profile | mountpoint | ldlm | ptlrpc |echoclient |
-                  mds | mdsdev| ost | osd | lov | lovconfig)*>
+                  mds | mdsdev| ost | osd | lov | lovconfig| security)*>
 <!ATTLIST lustre version CDATA #REQUIRED>
 
 <!ELEMENT node (network | routetbl | profile_ref | timeout | 

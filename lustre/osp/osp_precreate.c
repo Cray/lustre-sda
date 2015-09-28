@@ -1244,6 +1244,76 @@ out:
 	RETURN(rc);
 }
 
+int osp_security_change(const struct lu_env *env, struct dt_object *dt,
+			const struct lu_attr *la)
+{
+	struct osp_device	*d = lu2osp_dev(dt->do_lu.lo_dev);
+	struct ptlrpc_request	*req = NULL;
+	struct obd_import	*imp;
+	struct ost_body		*body;
+	struct obdo		*oa = NULL;
+	int			 rc;
+	char			*seclabel;
+
+	ENTRY;
+
+	imp = d->opd_obd->u.cli.cl_import;
+	LASSERT(imp);
+
+	req = ptlrpc_request_alloc(imp, &RQF_OST_SETATTR_SE);
+	if (req == NULL)
+		RETURN(-ENOMEM);
+
+	req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+			     la->la_sllen);
+
+	/* XXX: capa support? */
+	/* osc_set_capa_size(req, &RMF_CAPA1, capa); */
+	rc = ptlrpc_request_pack(req, LUSTRE_OST_VERSION, OST_SETATTR);
+	if (rc) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
+	/*
+	 * XXX: decide how do we do here with resend
+	 * if we don't resend, then client may see wrong file size
+	 * if we do resend, then MDS thread can get stuck for quite long
+	 */
+	req->rq_no_resend = req->rq_no_delay = 1;
+
+	req->rq_request_portal = OST_IO_PORTAL; /* bug 7198 */
+	ptlrpc_at_set_req_timeout(req);
+
+	OBD_ALLOC_PTR(oa);
+	if (oa == NULL)
+		GOTO(out, rc = -ENOMEM);
+
+	rc = fid_to_ostid(lu_object_fid(&dt->do_lu), &oa->o_oi);
+	LASSERT(rc == 0);
+	oa->o_valid = OBD_MD_FLSECURITY | OBD_MD_FLID | OBD_MD_FLGROUP;
+	seclabel = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX);
+	memcpy(seclabel, la->la_seclabel, la->la_sllen);
+
+	body = req_capsule_client_get(&req->rq_pill, &RMF_OST_BODY);
+	LASSERT(body);
+	lustre_set_wire_obdo(&req->rq_import->imp_connect_data, &body->oa, oa);
+
+	/* XXX: capa support? */
+	/* osc_pack_capa(req, body, capa); */
+
+	ptlrpc_request_set_replen(req);
+
+	rc = ptlrpc_queue_wait(req);
+	if (rc)
+		CERROR("can't update security: %d\n", rc);
+out:
+	ptlrpc_req_finished(req);
+	if (oa)
+		OBD_FREE_PTR(oa);
+	RETURN(rc);
+}
+
 int osp_init_precreate(struct osp_device *d)
 {
 	struct l_wait_info	 lwi = { 0 };

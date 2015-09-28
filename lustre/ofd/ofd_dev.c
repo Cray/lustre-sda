@@ -1090,6 +1090,12 @@ static int ofd_setattr_hdl(struct tgt_session_info *tsi)
 		ofd_prepare_fidea(ff, &body->oa);
 	}
 
+	if (body->oa.o_valid & OBD_MD_FLSECURITY) {
+		char *seclabel = req_capsule_client_get(tsi->tsi_pill, &RMF_SELINUX);
+		fti->fti_attr.la_seclabel = seclabel;
+		fti->fti_attr.la_sllen = strlen(seclabel) + 1;
+	}
+
 	/* setting objects attributes (including owner/group) */
 	rc = ofd_attr_set(tsi->tsi_env, fo, &fti->fti_attr, ff);
 	if (rc != 0)
@@ -2005,7 +2011,7 @@ static void ofd_hp_punch(struct tgt_session_info *tsi)
 }
 
 #define OBD_FAIL_OST_READ_NET	OBD_FAIL_OST_BRW_NET
-#define OBD_FAIL_OST_WRITE_NET	OBD_FAIL_OST_BRW_NET
+#define OBD_FAIL_OST_BRW_WRITE_NET	OBD_FAIL_OST_BRW_NET
 #define OST_BRW_READ	OST_READ
 #define OST_BRW_WRITE	OST_WRITE
 
@@ -2021,8 +2027,9 @@ TGT_RPC_HANDLER(OST_FIRST_OPC,
 		&RQF_OBD_SET_INFO, LUSTRE_OST_VERSION),
 TGT_OST_HDL(0,				OST_GET_INFO,	ofd_get_info_hdl),
 TGT_OST_HDL(HABEO_CORPUS| HABEO_REFERO,	OST_GETATTR,	ofd_getattr_hdl),
-TGT_OST_HDL(HABEO_CORPUS| HABEO_REFERO | MUTABOR,
-					OST_SETATTR,	ofd_setattr_hdl),
+TGT_RPC_HANDLER(OST_FIRST_OPC,
+		HABEO_CORPUS| HABEO_REFERO | MUTABOR,	OST_SETATTR,	ofd_setattr_hdl,
+		&RQF_OST_SETATTR_SE, LUSTRE_OST_VERSION),
 TGT_OST_HDL(0		| HABEO_REFERO | MUTABOR,
 					OST_CREATE,	ofd_create_hdl),
 TGT_OST_HDL(0		| HABEO_REFERO | MUTABOR,
@@ -2032,8 +2039,10 @@ TGT_OST_HDL_HP(HABEO_CORPUS| HABEO_REFERO,
 					OST_BRW_READ,	tgt_brw_read,
 							ofd_hp_brw),
 /* don't set CORPUS flag for brw_write because -ENOENT may be valid case */
-TGT_OST_HDL_HP(HABEO_CORPUS| MUTABOR,	OST_BRW_WRITE,	tgt_brw_write,
-							ofd_hp_brw),
+TGT_RPC_HANDLER_HP(OST_FIRST_OPC, HABEO_CORPUS|MUTABOR, OST_BRW_WRITE,
+		   tgt_brw_write, ofd_hp_brw, &RQF_OST_BRW_WRITE_SE,
+		   LUSTRE_OST_VERSION),
+
 TGT_OST_HDL_HP(HABEO_CORPUS| HABEO_REFERO | MUTABOR,
 					OST_PUNCH,	ofd_punch_hdl,
 							ofd_hp_punch),
@@ -2066,6 +2075,11 @@ static struct tgt_opc_slice ofd_common_slice[] = {
 		.tos_opc_start	= SEQ_FIRST_OPC,
 		.tos_opc_end	= SEQ_LAST_OPC,
 		.tos_hs		= seq_handlers
+	},
+	{
+		.tos_opc_start	= SEC_FIRST_OPC,
+		.tos_opc_end	= SEC_LAST_OPC,
+		.tos_hs		= tgt_sec_ctx_handlers
 	},
 	{
 		.tos_hs		= NULL
@@ -2236,6 +2250,8 @@ static void ofd_fini(const struct lu_env *env, struct ofd_device *m)
 {
 	struct obd_device *obd = ofd_obd(m);
 	struct lu_device  *d = &m->ofd_dt_dev.dd_lu_dev;
+
+//	sptlrpc_rule_set_free(&obd->u.filter.fo_sptlrpc_rset);
 
 	lfsck_stop(env, m->ofd_osd, true);
 	lfsck_degister(env, m->ofd_osd);

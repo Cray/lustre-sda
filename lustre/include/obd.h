@@ -509,6 +509,7 @@ struct niobuf_local {
 #define LUSTRE_FLD_NAME         "fld"
 #define LUSTRE_SEQ_NAME         "seq"
 
+#define LUSTRE_SEC_NAME		"sec"
 #define LUSTRE_MDD_NAME         "mdd"
 #define LUSTRE_OSD_LDISKFS_NAME	"osd-ldiskfs"
 #define LUSTRE_OSD_ZFS_NAME     "osd-zfs"
@@ -1007,8 +1008,9 @@ struct obd_ops {
                          struct obdo *oa, struct lov_stripe_md *ea,
                          struct obd_trans_info *oti, struct obd_export *md_exp,
                          void *capa);
-        int (*o_setattr)(const struct lu_env *, struct obd_export *exp,
-                         struct obd_info *oinfo, struct obd_trans_info *oti);
+	int (*o_setattr)(const struct lu_env *, struct obd_export *exp,
+			 struct obd_info *oinfo, char *seclabel,
+			 struct obd_trans_info *oti);
         int (*o_setattr_async)(struct obd_export *exp, struct obd_info *oinfo,
                                struct obd_trans_info *oti,
                                struct ptlrpc_request_set *rqset);
@@ -1026,7 +1028,7 @@ struct obd_ops {
                           int objcount, struct obd_ioobj *obj,
                           struct niobuf_remote *remote, int pages,
                           struct niobuf_local *local,
-                          struct obd_trans_info *oti, int rc);
+                          struct obd_trans_info *oti, char *selinux, int rc);
         int (*o_change_cbdata)(struct obd_export *, struct lov_stripe_md *,
                                ldlm_iterator_t it, void *data);
         int (*o_init_export)(struct obd_export *exp);

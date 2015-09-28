@@ -210,4 +210,8 @@ int osc_quota_poll_check(struct obd_export *exp, struct if_quotacheck *qchk);
 void osc_inc_unstable_pages(struct ptlrpc_request *req);
 void osc_dec_unstable_pages(struct ptlrpc_request *req);
 bool osc_over_unstable_soft_limit(struct client_obd *cli);
+
+#define osc_select_rq_format(exp,basefmt) (exp_connect_selustre(exp) ?\
+					  &(basefmt ## _SE) : &(basefmt))
+
 #endif /* OSC_INTERNAL_H */
