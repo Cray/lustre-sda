@@ -640,7 +640,7 @@ static int osp_sync_new_setattr_job(struct osp_device *d,
 		RETURN(0);
 	}
 
-	req = osp_sync_new_job(d, llh, h, OST_SETATTR, &RQF_OST_SETATTR);
+	req = osp_sync_new_job(d, llh, h, OST_SETATTR, &RQF_OST_SETATTR_SE);
 	if (IS_ERR(req))
 		RETURN(PTR_ERR(req));
 

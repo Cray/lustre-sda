@@ -407,6 +407,9 @@ int ofd_attr_handle_ugid(const struct lu_env *env, struct ofd_object *fo,
 			la->la_valid &= ~LA_UID;
 		if (!(ln->la_mode & S_ISGID))
 			la->la_valid &= ~LA_GID;
+		/* Optimize out security for non-first writes */
+		if (!(la->la_valid & (LA_UID | LA_GID)))
+			la->la_valid &= ~LA_SECURITY;
 	}
 
 	if ((la->la_valid & LA_UID) && (ln->la_mode & S_ISUID))
@@ -486,6 +489,17 @@ int ofd_attr_set(const struct lu_env *env, struct ofd_object *fo,
 	rc = dt_declare_attr_set(env, ofd_object_child(fo), la, th);
 	if (rc)
 		GOTO(stop, rc);
+
+	if (la->la_valid & LA_SECURITY) {
+		info->fti_buf.lb_buf = la->la_seclabel;
+		info->fti_buf.lb_len = strlen(la->la_seclabel) + 1;
+		rc = dt_declare_xattr_set(env, ofd_object_child(fo),
+					  &info->fti_buf,
+					  XATTR_NAME_SECURITY_SELINUX, 0,
+					  th);
+		if (rc)
+			GOTO(stop, rc);
+	}
 
 	if (ff_needed) {
 		info->fti_buf.lb_buf = ff;

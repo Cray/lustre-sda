@@ -121,6 +121,37 @@ static int ll_set_inode(struct inode *inode, void *opaque)
 	return 0;
 }
 
+struct inode_security_struct {
+	struct inode *inode;	/* back pointer to inode object */
+	struct list_head list;	/* list of inode_security_struct */
+	u32 task_sid;		/* SID of creating task */
+	u32 sid;		/* SID of this object */
+	u16 sclass;		/* security class of this object */
+	unsigned char initialized;	/* initialization flag */
+	struct mutex lock;
+};
+
+/**
+ * \brief Mark \a inode as not having a SELinux label attached
+ * \param inode The inode to invalidate
+ */
+static void ll_invalidate_inode_sid(struct inode *inode)
+{
+	struct inode_security_struct *isec;
+
+	if (!selinux_is_enabled())
+		return;
+
+	isec = inode->i_security;
+
+	/* This flag is not really checked each time SELinux refers
+	 * to inode SID. Rather, it is checked when a dentry is
+	 * instantiated for a possible skip of inode security
+	 * initialization. Do not expect from the following code
+	 * what it does NOT do.
+	 */
+	isec->initialized = 0;
+}
 
 /*
  * Get an inode by inode number (already instantiated by the intent lookup).
@@ -290,8 +321,16 @@ int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
 
 		if ((bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM)) &&
 		    inode->i_sb->s_root != NULL &&
-		    inode != inode->i_sb->s_root->d_inode)
+		    inode != inode->i_sb->s_root->d_inode) {
+			/* XXX: We cannot simply prevent old inode from
+			 *	being looked up. Otherwise we'll get:
+			 *	lov_init_sub(): try to own.
+			 *	cl_file_inode_init(): Failure to initialize cl object [0x200000400:0x2:0x0]: -5
+			 *	ll_prep_inode(): new_inode -fatal: rc -5
+			 */
+			ll_invalidate_inode_sid(inode);
 			ll_invalidate_aliases(inode);
+		}
 
 		iput(inode);
 		break;
@@ -393,6 +432,8 @@ struct dentry *ll_splice_alias(struct inode *inode, struct dentry *de)
 				dput(new);
 				return ERR_PTR(rc);
 			}
+			/* XXX: atomic? any other places to fix? */
+			security_d_instantiate(new, new->d_inode);
 			d_move(new, de);
 			iput(inode);
 			CDEBUG(D_DENTRY,

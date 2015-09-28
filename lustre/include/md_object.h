@@ -81,7 +81,8 @@ enum ma_valid {
         MA_LAY_GEN   = (1 << 7),
         MA_HSM       = (1 << 8),
         MA_SOM       = (1 << 9),
-        MA_PFID      = (1 << 10)
+	MA_PFID      = (1 << 10),
+	MA_SECURITY  = (1 << 11)
 };
 
 typedef enum {
@@ -483,7 +484,17 @@ static inline struct md_object *md_object_find_slice(const struct lu_env *env,
                                                      struct md_device *md,
                                                      const struct lu_fid *f)
 {
-        return lu2md(lu_object_find_slice(env, md2lu_dev(md), f, NULL));
+	return lu2md(lu_object_find_slice(env, md2lu_dev(md), f, NULL));
+}
+
+static inline struct md_object *mo_object_find_slice(const struct lu_env *env,
+                                                     struct md_object *mo,
+                                                     const struct lu_fid *f)
+{
+	struct md_device * md_dev;
+	LASSERT(mo == NULL || IS_ERR(mo) || lu_device_is_md(mo->mo_lu.lo_dev));
+	md_dev = container_of0(mo->mo_lu.lo_dev, struct md_device, md_lu_dev);
+	return lu2md(lu_object_find_slice(env, md2lu_dev(md_dev), f, NULL));
 }
 
 
@@ -846,6 +857,12 @@ struct lu_ucred {
 	__u32               uc_umask;
 	struct group_info   *uc_ginfo;
 	struct md_identity *uc_identity;
+#ifdef __KERNEL__
+	__u8                uc_seclabel[CFS_SID_MAX_LEN];
+	__u8                uc_cseclabel[CFS_SID_MAX_LEN];
+	/* The client operation that is the object of the policy */
+	int                 uc_confined_op;
+#endif
 };
 
 struct lu_ucred *lu_ucred(const struct lu_env *env);

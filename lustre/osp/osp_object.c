@@ -189,6 +189,12 @@ static int osp_declare_attr_set(const struct lu_env *env, struct dt_object *dt,
 	if (attr == NULL)
 		RETURN(0);
 
+	if (attr->la_valid & LA_SECURITY) {
+		if (fid_is_zero(lu_object_fid(&o->opo_obj.do_lu)))
+			osp_object_assign_fid(env, d, o);
+		rc = osp_security_change(env, dt, attr);
+	}
+
 	if (attr->la_valid & LA_SIZE && attr->la_size > 0 &&
 	    fid_is_zero(lu_object_fid(&o->opo_obj.do_lu))) {
 		LASSERT(!dt_object_exists(dt));

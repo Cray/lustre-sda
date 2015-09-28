@@ -193,6 +193,7 @@ pgsserr(char *msg, u_int32_t maj_stat, u_int32_t min_stat, const gss_OID mech)
 	display_status_2(msg, maj_stat, min_stat, mech);
 }
 
+#if 0
 static
 int extract_realm_name(gss_buffer_desc *name, char **realm)
 {
@@ -229,10 +230,11 @@ int extract_realm_name(gss_buffer_desc *name, char **realm)
 
         return rc;
 }
+#endif
 
 static
 int gssd_acquire_cred(char *server_name, gss_cred_id_t *cred,
-		      char **local_realm, int *valid)
+		      char **local_realm, int *valid, char *hostname)
 {
 	gss_buffer_desc name;
 	gss_name_t target_name;
@@ -243,8 +245,13 @@ int gssd_acquire_cred(char *server_name, gss_cred_id_t *cred,
 
 	*valid = 0;
 
-	name.value = (void *)server_name;
-	name.length = strlen(server_name);
+	if (hostname != NULL) {
+		name.value = alloca(strlen(server_name)+1+strlen(hostname)+1);
+		sprintf(name.value, "%s@%s", server_name, hostname);
+	} else {
+		name.value = (void *)server_name;
+	}
+	name.length = strlen(name.value);
 
 	maj_stat = gss_import_name(&min_stat, &name,
 			(const gss_OID) GSS_C_NT_HOSTBASED_SERVICE,
@@ -260,8 +267,10 @@ int gssd_acquire_cred(char *server_name, gss_cred_id_t *cred,
 		pgsserr(0, maj_stat, min_stat, g_mechOid);
 		return -1;
 	}
-	if (extract_realm_name(&name, local_realm))
-		return -1;
+
+	*local_realm = strdup(this_realm);
+//	if (extract_realm_name(&name, local_realm))
+//		return -1;
 
 	maj_stat = gss_acquire_cred(&min_stat, target_name, 0,
 			GSS_C_NULL_OID_SET, GSS_C_ACCEPT,
@@ -287,22 +296,22 @@ int gssd_acquire_cred(char *server_name, gss_cred_id_t *cred,
 	return 0;
 }
 
-int gssd_prepare_creds(int must_srv_mgs, int must_srv_mds, int must_srv_oss)
+int gssd_prepare_creds(int must_srv_mgs, int must_srv_mds, int must_srv_oss, char *hostname)
 {
         if (gssd_acquire_cred(GSSD_SERVICE_MGS, &gssd_cred_mgs,
-                              &mgs_local_realm, &gssd_cred_mgs_valid)) {
+                              &mgs_local_realm, &gssd_cred_mgs_valid, hostname)) {
                 if (must_srv_mgs)
                         return -1;
         }
 
         if (gssd_acquire_cred(GSSD_SERVICE_MDS, &gssd_cred_mds,
-                              &mds_local_realm, &gssd_cred_mds_valid)) {
+                              &mds_local_realm, &gssd_cred_mds_valid, hostname)) {
                 if (must_srv_mds)
                         return -1;
         }
 
         if (gssd_acquire_cred(GSSD_SERVICE_OSS, &gssd_cred_oss,
-                              &oss_local_realm, &gssd_cred_oss_valid)) {
+                              &oss_local_realm, &gssd_cred_oss_valid, hostname)) {
                 if (must_srv_oss)
                         return -1;
         }

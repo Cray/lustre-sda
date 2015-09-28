@@ -1514,7 +1514,7 @@ vfs_rename_6args, [
 AC_DEFUN([LC_PROG_LINUX], [
 	AC_MSG_NOTICE([Lustre kernel checks
 ==============================================================================])
-
+	LC_CONFIG_INSECURE_CLIENT
 	LC_CONFIG_PINGER
 	LC_CONFIG_CHECKSUM
 	LC_CONFIG_HEALTH_CHECK_WRITE
@@ -1639,6 +1639,18 @@ AC_DEFUN([LC_PROG_LINUX], [
 		LC_QUOTA_CONFIG
 	])
 ]) # LC_PROG_LINUX
+
+AC_DEFUN([LC_CONFIG_INSECURE_CLIENT],
+[AC_MSG_CHECKING([whether to enable insecure client support])
+AC_ARG_ENABLE([insecure-client],
+       AC_HELP_STRING([--disable-insecure-client],
+                       [disable insecure client support]),
+       [enable_insecure_client='no'],[enable_insecure_client='yes'])
+AC_MSG_RESULT([$enable_insecure_client])
+if test x$enable_insecure_client != xno ; then
+       AC_DEFINE(ENABLE_INSECURE_CLIENT, 1, Insecure client)
+fi
+])
 
 #
 # LC_CONFIG_CLIENT
@@ -1843,24 +1855,6 @@ AC_CHECK_HEADERS([linux/random.h], [], [],
 # utils/llverfs.c
 AC_CHECK_HEADERS([ext2fs/ext2fs.h])
 
-SELINUX=""
-AC_CHECK_LIB([selinux], [is_selinux_enabled],
-	[AC_CHECK_HEADERS([selinux/selinux.h],
-			[SELINUX="-lselinux"
-			AC_DEFINE([HAVE_SELINUX], 1,
-				[support for selinux ])],
-			[AC_MSG_WARN([
-
-No libselinux-devel package found, unable to build selinux enabled tools
-])
-])],
-	[AC_MSG_WARN([
-
-No selinux package found, unable to build selinux enabled tools
-])
-])
-AC_SUBST(SELINUX)
-
 LDAP=""
 AC_CHECK_LIB([ldap],
              [ldap_sasl_bind_s],
@@ -2033,5 +2027,7 @@ lustre/osp/Makefile
 lustre/osp/autoMakefile
 lustre/lod/Makefile
 lustre/lod/autoMakefile
+lustre/security/Makefile
+lustre/security/autoMakefile
 ])
 ]) # LC_CONFIG_FILES

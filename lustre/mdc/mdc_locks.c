@@ -295,6 +295,7 @@ mdc_intent_open_pack(struct obd_export *exp, struct lookup_intent *it,
 	int			 count = 0;
 	int			 mode;
 	int			 rc;
+	char			*domain = NULL;
         ENTRY;
 
         it->it_create_mode = (it->it_create_mode & ~S_IFMT) | S_IFREG;
@@ -331,8 +332,8 @@ mdc_intent_open_pack(struct obd_export *exp, struct lookup_intent *it,
                                          &cancels, mode,
                                          MDS_INODELOCK_UPDATE);
 
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_LDLM_INTENT_OPEN);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				mdc_select_rq_format(exp, RQF_LDLM_INTENT_OPEN));
         if (req == NULL) {
                 ldlm_lock_list_put(&cancels, l_bl_ast, count);
                 RETURN(ERR_PTR(-ENOMEM));
@@ -348,9 +349,15 @@ mdc_intent_open_pack(struct obd_export *exp, struct lookup_intent *it,
                              op_data->op_namelen + 1);
 	req_capsule_set_size(&req->rq_pill, &RMF_EADATA, RCL_CLIENT,
 			     max(lmmsize, obddev->u.cli.cl_default_mds_easize));
+	if (exp_connect_selustre(exp)) {
+		domain = mdc_current_domain();
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
 
 	rc = ldlm_prep_enqueue_req(exp, req, &cancels, count);
 	if (rc < 0) {
+		mdc_release_domain(domain);
 		ptlrpc_request_free(req);
 		RETURN(ERR_PTR(rc));
 	}
@@ -365,7 +372,9 @@ mdc_intent_open_pack(struct obd_export *exp, struct lookup_intent *it,
 
         /* pack the intended request */
         mdc_open_pack(req, op_data, it->it_create_mode, 0, it->it_flags, lmm,
-                      lmmsize);
+                      lmmsize, domain);
+
+	mdc_release_domain(domain);
 
         /* for remote client, fetch remote perm for current user */
         if (client_is_remote(exp))
@@ -433,10 +442,11 @@ static struct ptlrpc_request *mdc_intent_unlink_pack(struct obd_export *exp,
         struct obd_device     *obddev = class_exp2obd(exp);
         struct ldlm_intent    *lit;
         int                    rc;
+	char		      *domain = NULL;
         ENTRY;
 
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_LDLM_INTENT_UNLINK);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				mdc_select_rq_format(exp, RQF_LDLM_INTENT_UNLINK));
         if (req == NULL)
                 RETURN(ERR_PTR(-ENOMEM));
 
@@ -444,8 +454,15 @@ static struct ptlrpc_request *mdc_intent_unlink_pack(struct obd_export *exp,
         req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
                              op_data->op_namelen + 1);
 
+	if (exp_connect_selustre(exp)) {
+		domain = mdc_current_domain();
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
+
         rc = ldlm_prep_enqueue_req(exp, req, NULL, 0);
         if (rc) {
+		mdc_release_domain(domain);
                 ptlrpc_request_free(req);
                 RETURN(ERR_PTR(rc));
         }
@@ -454,8 +471,10 @@ static struct ptlrpc_request *mdc_intent_unlink_pack(struct obd_export *exp,
         lit = req_capsule_client_get(&req->rq_pill, &RMF_LDLM_INTENT);
         lit->opc = (__u64)it->it_op;
 
-        /* pack the intended request */
-        mdc_unlink_pack(req, op_data);
+	/* pack the intended request */
+	mdc_unlink_pack(req, op_data, domain);
+
+	mdc_release_domain(domain);
 
 	req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER,
 			     obddev->u.cli.cl_default_mds_easize);
@@ -479,10 +498,11 @@ static struct ptlrpc_request *mdc_intent_getattr_pack(struct obd_export *exp,
 	struct ldlm_intent    *lit;
 	int                    rc;
 	__u32			easize;
+	char		      *domain = NULL;
 	ENTRY;
 
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_LDLM_INTENT_GETATTR);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+			mdc_select_rq_format(exp, RQF_LDLM_INTENT_GETATTR));
         if (req == NULL)
                 RETURN(ERR_PTR(-ENOMEM));
 
@@ -490,8 +510,15 @@ static struct ptlrpc_request *mdc_intent_getattr_pack(struct obd_export *exp,
         req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
                              op_data->op_namelen + 1);
 
+	if (exp_connect_selustre(exp)) {
+		domain = mdc_current_domain();
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
+
         rc = ldlm_prep_enqueue_req(exp, req, NULL, 0);
         if (rc) {
+		mdc_release_domain(domain);
                 ptlrpc_request_free(req);
                 RETURN(ERR_PTR(rc));
         }
@@ -506,7 +533,9 @@ static struct ptlrpc_request *mdc_intent_getattr_pack(struct obd_export *exp,
 		easize = obddev->u.cli.cl_max_mds_easize;
 
 	/* pack the intended request */
-	mdc_getattr_pack(req, valid, it->it_flags, op_data, easize);
+	mdc_getattr_pack(req, valid, it->it_flags, op_data, easize, domain);
+
+	mdc_release_domain(domain);
 
 	req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER, easize);
 	if (client_is_remote(exp))
@@ -524,20 +553,32 @@ static struct ptlrpc_request *mdc_intent_layout_pack(struct obd_export *exp,
 	struct ptlrpc_request *req;
 	struct ldlm_intent    *lit;
 	struct layout_intent  *layout;
+	char		      *domain = NULL;
 	int rc;
 	ENTRY;
 
 	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-				&RQF_LDLM_INTENT_LAYOUT);
+				mdc_select_rq_format(exp, RQF_LDLM_INTENT_LAYOUT));
 	if (req == NULL)
 		RETURN(ERR_PTR(-ENOMEM));
 
 	req_capsule_set_size(&req->rq_pill, &RMF_EADATA, RCL_CLIENT, 0);
+
+	if (exp_connect_selustre(exp)) {
+		domain = mdc_current_domain();
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
+
 	rc = ldlm_prep_enqueue_req(exp, req, NULL, 0);
 	if (rc) {
+		mdc_release_domain(domain);
 		ptlrpc_request_free(req);
 		RETURN(ERR_PTR(rc));
 	}
+
+	mdc_pack_domain(req, domain);
+	mdc_release_domain(domain);
 
 	/* pack the intent */
 	lit = req_capsule_client_get(&req->rq_pill, &RMF_LDLM_INTENT);

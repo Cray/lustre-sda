@@ -432,6 +432,9 @@ int osp_precreate_get_fid(const struct lu_env *env, struct osp_device *d,
 			  struct lu_fid *fid);
 void osp_precreate_fini(struct osp_device *d);
 int osp_object_truncate(const struct lu_env *env, struct dt_object *dt, __u64);
+int osp_security_change(const struct lu_env *env, struct dt_object *dt,
+			const struct lu_attr *la);
+
 void osp_pre_update_status(struct osp_device *d, int rc);
 void osp_statfs_need_now(struct osp_device *d);
 int osp_reset_last_used(const struct lu_env *env, struct osp_device *osp);

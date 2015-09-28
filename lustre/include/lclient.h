@@ -379,7 +379,7 @@ void ccc_req_completion(const struct lu_env *env,
                         const struct cl_req_slice *slice, int ioret);
 void ccc_req_attr_set(const struct lu_env *env,const struct cl_req_slice *slice,
                       const struct cl_object *obj,
-                      struct cl_req_attr *oa, obd_valid flags);
+                      struct cl_req_attr *oa, obd_valid flags, char *seclabel);
 
 struct lu_device   *ccc2lu_dev      (struct ccc_device *vdv);
 struct lu_object   *ccc2lu          (struct ccc_object *vob);

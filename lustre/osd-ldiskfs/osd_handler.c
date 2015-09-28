@@ -1999,6 +1999,13 @@ static int osd_attr_set(const struct lu_env *env,
 	rc = osd_inode_setattr(env, inode, attr);
 	spin_unlock(&obj->oo_guard);
 
+	if (attr->la_valid & LA_SECURITY) {
+		int lrc;
+		lrc = __osd_xattr_set(osd_oti_get(env), inode, XATTR_NAME_SECURITY_SELINUX, attr->la_seclabel,
+				      strlen(attr->la_seclabel) + 1,
+				      0);
+	}
+
         if (!rc)
 		ll_dirty_inode(inode, I_DIRTY_DATASYNC);
         return rc;

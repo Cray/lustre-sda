@@ -427,6 +427,9 @@ struct lu_attr {
         __u32          la_blksize;
         /** real device */
         __u32          la_rdev;
+	/** security label */
+	char		*la_seclabel;
+	__u32		la_sllen;
         /**
          * valid bits
          *
@@ -452,6 +455,7 @@ enum la_valid {
         LA_BLKSIZE = 1 << 12,
         LA_KILL_SUID = 1 << 13,
         LA_KILL_SGID = 1 << 14,
+	LA_SECURITY = 1 << 15,
 };
 
 /**
@@ -898,8 +902,9 @@ struct lu_rdpg {
 };
 
 enum lu_xattr_flags {
-        LU_XATTR_REPLACE = (1 << 0),
-        LU_XATTR_CREATE  = (1 << 1)
+	LU_XATTR_REPLACE	= (1 << 0),
+	LU_XATTR_CREATE		= (1 << 1),
+	LU_XATTR_INTERNAL	= (1 << 2)
 };
 
 /** @} helpers */
@@ -1277,6 +1282,23 @@ int  lu_env_init  (struct lu_env *env, __u32 tags);
 void lu_env_fini  (struct lu_env *env);
 int  lu_env_refill(struct lu_env *env);
 int  lu_env_refill_by_tags(struct lu_env *env, __u32 ctags, __u32 stags);
+
+enum {
+	UC_UNCONFINED = 0,
+	UC_CONFINED_PERMISSION,
+	UC_CONFINED_GETATTR,
+	UC_CONFINED_SETATTR,
+	UC_CONFINED_GETXATTR,
+	UC_CONFINED_SETXATTR,
+	UC_CONFINED_READLINK,
+	UC_CONFINED_OPEN,
+	UC_CONFINED_READDIR,
+	UC_CONFINED_FLOCK,
+	UC_CONFINED_CREATE,
+	UC_CONFINED_LINK,
+	UC_CONFINED_UNLINK,
+	UC_CONFINED_RENAME
+};
 
 /** @} lu_context */
 

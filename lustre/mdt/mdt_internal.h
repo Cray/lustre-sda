@@ -174,6 +174,7 @@ struct mdt_device {
         struct md_device          *mdt_child;
         struct dt_device          *mdt_bottom;
 	struct obd_export	  *mdt_bottom_exp;
+
         /** target device */
         struct lu_target           mdt_lut;
 	/*
@@ -671,6 +672,7 @@ int mdt_name_unpack(struct req_capsule *pill,
 		    enum mdt_name_flags flags);
 int mdt_close_unpack(struct mdt_thread_info *info);
 int mdt_reint_unpack(struct mdt_thread_info *info, __u32 op);
+void mdt_unpack_security(struct mdt_thread_info *info);
 int mdt_reint_rec(struct mdt_thread_info *, struct mdt_lock_handle *);
 void mdt_pack_attr2body(struct mdt_thread_info *info, struct mdt_body *b,
                         const struct lu_attr *attr, const struct lu_fid *fid);

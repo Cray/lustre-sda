@@ -364,7 +364,7 @@ int ofd_commitrw(const struct lu_env *env, int cmd, struct obd_export *exp,
 		 struct obdo *oa, int objcount, struct obd_ioobj *obj,
 		 struct niobuf_remote *rnb, int npages,
 		 struct niobuf_local *lnb, struct obd_trans_info *oti,
-		 int old_rc);
+		 char *seclabel, int old_rc);
 
 /* ofd_trans.c */
 struct thandle *ofd_trans_create(const struct lu_env *env,

@@ -440,6 +440,10 @@ if [ -f $RPM_BUILD_ROOT%{_sysconfdir}/init.d/lustre ]; then
 	echo '%{_sysconfdir}/sysconfig/lustre' >>lustre.files
 	echo '%{_sysconfdir}/init.d/lustre' >>lustre.files
 fi
+
+if [ -f $RPM_BUILD_ROOT%{_sysconfdir}/init.d/lsvcgss ]; then
+	echo '%{_sysconfdir}/sysconfig/lsvcgss' >>lustre.files
+fi
 %endif
 
 if [ -f $RPM_BUILD_ROOT%{_sysconfdir}/init.d/lnet ]; then
