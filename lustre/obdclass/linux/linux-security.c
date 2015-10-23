@@ -227,22 +227,18 @@ struct obd_transition_cache_entry {
 	char	*rcon;
 };
 
-int obd_security_perm_init(void)
+void obd_security_perm_init(void)
 {
 	rwlock_init(&obd_perm_lock);
 	atomic_set(&obd_perm_hits, 0);
 	atomic_set(&obd_perm_misses, 0);
-
-	return 0;
 }
 
-int obd_security_transition_init(void)
+void obd_security_transition_init(void)
 {
 	rwlock_init(&obd_transition_lock);
 	atomic_set(&obd_tran_hits, 0);
 	atomic_set(&obd_tran_misses, 0);
-
-	return 0;
 }
 
 struct obd_perm_cache_entry obd_perm_cache[HASH_MOD];
@@ -1184,24 +1180,42 @@ int compat_security_validate_transition(char *oldlabel, char *newlabel, char *tl
 int obd_security_init(void)
 {
 	mm_segment_t fs = get_fs();
-
-	kallsyms_on_each_symbol(compat_security_find_validate_transition, NULL);
+	int rc;
 
 	obd_security_perm_init();
 	obd_security_transition_init();
 
+	kallsyms_on_each_symbol(compat_security_find_validate_transition, NULL);
+	if (svt == NULL) {
+		printk("Error: svt not found\n");
+		return -ENOENT;
+	}
+
 	/* module is loaded in userspace context, so we need to modify mm limits */
 	set_fs(KERNEL_DS);
 
-	obd_security_file_read_u64(SELINUX_OPENPERMS_FILE, &obd_security_openperm);
-	obd_security_file_read(SELINUX_FILE_INITCON, obd_security_file_initcon,
-			       sizeof(obd_security_file_initcon));
-	obd_map_classes_and_perms();
+	rc = obd_security_file_read_u64(SELINUX_OPENPERMS_FILE,
+					&obd_security_openperm);
+	if (rc < 0)
+		goto out;
+
+	rc = obd_security_file_read(SELINUX_FILE_INITCON,
+				    obd_security_file_initcon,
+				    sizeof(obd_security_file_initcon));
+	if (rc < 0)
+		goto out;
+
+	rc = obd_map_classes_and_perms();
+	if (rc < 0)
+		goto out;
+
+	/* Self-test fills out caches, so be careful when returning error */
 	obd_security_selftest();
 
+out:
 	set_fs(fs);
 
-	return 0;
+	return rc;
 }
 
 void obd_security_fini(void)
