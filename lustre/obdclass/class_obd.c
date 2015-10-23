@@ -558,7 +558,9 @@ static int __init init_obdclass(void)
         if (err == -EOVERFLOW)
                 return err;
 
-	obd_security_init();
+	err = obd_security_init();
+	if (err < 0)
+		return err;
 
         class_init_uuidlist();
         err = class_handle_init();
