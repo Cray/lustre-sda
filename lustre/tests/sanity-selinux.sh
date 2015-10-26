@@ -227,7 +227,6 @@ test_3 () {
 
 	echo "alice create file"
 	# alice (s2:c0.c1023) creates foofile.txt (s2:c0.1023)
-	$SECADM ls -lZ $TESTDIR/foofile.txt
 	$ALICE dd of=$TESTDIR/foofile.txt <<< "some text" || error "can't create file"
 
 	echo "bob should not read this file"
