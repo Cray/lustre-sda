@@ -325,8 +325,7 @@ int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
 		}
 
 		if ((bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM)) &&
-		    inode->i_sb->s_root != NULL &&
-		    inode != inode->i_sb->s_root->d_inode) {
+		    inode->i_sb->s_root != NULL) {
 			/* XXX: We cannot simply prevent old inode from
 			 *	being looked up. Otherwise we'll get:
 			 *	lov_init_sub(): try to own.
@@ -334,7 +333,9 @@ int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
 			 *	ll_prep_inode(): new_inode -fatal: rc -5
 			 */
 			ll_invalidate_inode_sid(inode);
-			ll_invalidate_aliases(inode);
+
+			if (inode != inode->i_sb->s_root->d_inode)
+				ll_invalidate_aliases(inode);
 		}
 
 		iput(inode);
