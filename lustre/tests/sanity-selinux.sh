@@ -122,7 +122,10 @@ test_2() {
 	TESTDIR2=$MOUNT2/$tdir
 	$SYSADM rm -fR $TESTDIR
 	$SYSADM mkdir $TESTDIR
-	$SYSADM chcon user_u:object_r:user_home_dir_t:s1:c0.c255-s2:c0.c1023 $TESTDIR
+	$SECADM chcon user_u:object_r:user_home_dir_t:s1:c0.c255-s2:c0.c1023 $DIR
+	$SECADM chcon user_u:object_r:user_home_dir_t:s1:c0.c255-s2:c0.c1023 $MOUNT2
+	$SECADM chcon user_u:object_r:user_home_dir_t:s1:c0.c255-s2:c0.c1023 $TESTDIR
+
 	echo "sysadm ls directory1"
 	$SYSADM ls -salZ $TESTDIR
 	echo "sysadm ls directory2"
@@ -223,6 +226,9 @@ test_3 () {
 	TESTDIR2=$MOUNT2/$tdir
 	$SYSADM rm -fR $TESTDIR
 	$SYSADM mkdir $TESTDIR
+
+	$SYSADM chcon user_u:object_r:user_home_t:s2:c0.c1023 $DIR
+	$SYSADM chcon user_u:object_r:user_home_t:s2:c0.c1023 $MOUNT2
 	$SYSADM chcon user_u:object_r:user_home_dir_t:s2:c0.c1023 $TESTDIR2
 
 	echo "alice create file"
@@ -246,5 +252,5 @@ test_3 () {
 run_test 3 "Client cache allows to pass mds security checks"
 
 complete $(basename $0) $SECONDS
-# check_and_cleanup_lustre
+check_and_cleanup_lustre
 exit_status
