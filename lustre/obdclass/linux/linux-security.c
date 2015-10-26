@@ -1052,7 +1052,7 @@ EXPORT_SYMBOL(obd_security_init_object);
 static int obd_map_classes_and_perms(void)
 {
 	char name[128];
-	int i, j;
+	int i, j, rc;
 
 	printk("Loading security classes and permissions:\n");
 
@@ -1060,22 +1060,30 @@ static int obd_map_classes_and_perms(void)
 		struct obd_secclass_map_s *class= &obd_secclass_map[i];
 
 		snprintf(name, sizeof(name), "/selinux/class/%s/index", class->name);
-		obd_security_file_read_u64(name, &class->policy_class);
+		rc = obd_security_file_read_u64(name, &class->policy_class);
+		if (rc < 0)
+			goto out;
+
 		printk("\tmapped class %s:%llu\n", class->name, class->policy_class);
 		printk("\tmapped class %s perms (", class->name);
+
 		for (j = 0; class->perm[j].name != NULL; j++) {
 			struct obd_secperms_map_s *perm = &class->perm[j];
 
 			snprintf(name, sizeof(name), "/selinux/class/%s/perms/%s",
 				 class->name, perm->name);
-			obd_security_file_read_u64(name, &perm->policy_perm);
+
+			rc = obd_security_file_read_u64(name, &perm->policy_perm);
+			if (rc < 0)
+				goto out;
+
 			printk("%s%s:%llu", j > 0 ? ", " : "",
 			       perm->name, perm->policy_perm);
 		}
 		printk(")\n");
 	}
-
-	return 0;
+out:
+	return rc;
 }
 
 #define SUSER "user_u:user_r:user_t:s0"
