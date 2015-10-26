@@ -3632,6 +3632,8 @@ int ll_inode_permission(struct inode *inode, int mask, struct nameidata *nd)
 					   MDS_INODELOCK_LOOKUP);
                 if (rc)
                         RETURN(rc);
+		security_d_instantiate(inode->i_sb->s_root,
+				       inode->i_sb->s_root->d_inode);
         }
 
 	CDEBUG(D_VFSTRACE, "VFS Op:inode="DFID"(%p), inode mode %x mask %o\n",
