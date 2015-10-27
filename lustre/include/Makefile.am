@@ -83,6 +83,7 @@ EXTRA_DIST = \
 	lustre_quota.h \
 	lustre_req_layout.h \
 	lustre_sec.h \
+	lustre_security.h \
 	lustre_update.h \
 	lustre_ver.h \
 	lu_target.h \
