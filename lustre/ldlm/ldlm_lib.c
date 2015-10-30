@@ -268,14 +268,15 @@ static struct lock_class_key client_key[CFS_LOCK_CLASS_MAX];
  */
 int client_obd_setup(struct obd_device *obddev, struct lustre_cfg *lcfg)
 {
-        struct client_obd *cli = &obddev->u.cli;
-        struct obd_import *imp;
-        struct obd_uuid server_uuid;
-        int rq_portal, rp_portal, connect_op;
-        char *name = obddev->obd_type->typ_name;
-        ldlm_ns_type_t ns_type = LDLM_NS_TYPE_UNKNOWN;
-        int rc;
-        ENTRY;
+	struct client_obd *cli = &obddev->u.cli;
+	struct obd_import *imp;
+	struct obd_uuid server_uuid;
+	int rq_portal, rp_portal, connect_op;
+	char *name = obddev->obd_type->typ_name;
+	ldlm_ns_type_t ns_type = LDLM_NS_TYPE_UNKNOWN;
+	int rc;
+	char *cli_name = lustre_cfg_buf(lcfg, 0);
+	ENTRY;
 
 	if (LUSTRE_CFG_BUFLEN(lcfg, 1) < 1) {
 		CERROR("requires a TARGET UUID\n");
@@ -313,7 +314,12 @@ int client_obd_setup(struct obd_device *obddev, struct lustre_cfg *lcfg)
 		rq_portal = MDS_REQUEST_PORTAL;
 		rp_portal = MDC_REPLY_PORTAL;
 		connect_op = MDS_CONNECT;
-		cli->cl_sp_me = LUSTRE_SP_CLI;
+		if (is_lwp_on_ost(cli_name))
+			cli->cl_sp_me = LUSTRE_SP_OST;
+		else if (is_lwp_on_mdt(cli_name))
+			cli->cl_sp_me = LUSTRE_SP_MDT;
+		else
+			cli->cl_sp_me = LUSTRE_SP_CLI;
 		cli->cl_sp_to = LUSTRE_SP_MDT;
 		ns_type = LDLM_NS_TYPE_MDC;
 		lockdep_set_class(&cli->cl_sem,&client_key[CFS_LOCK_CLASS_MDC]);
@@ -336,7 +342,7 @@ int client_obd_setup(struct obd_device *obddev, struct lustre_cfg *lcfg)
 					  &client_key[CFS_LOCK_CLASS_OSC]);
 		}
 		rp_portal = OSC_REPLY_PORTAL;
-		cli->cl_sp_me = LUSTRE_SP_CLI;
+		cli->cl_sp_me = LUSTRE_SP_MDT;
         } else if (!strcmp(name, LUSTRE_MGC_NAME)) {
                 rq_portal = MGS_REQUEST_PORTAL;
                 rp_portal = MGC_REPLY_PORTAL;

@@ -241,8 +241,10 @@ int lwp_init0(const struct lu_env *env, struct lwp_device *lwp,
 		RETURN(rc);
 	}
 
-	if (lprocfs_obd_setup(lwp->lpd_obd) == 0)
+	if (lprocfs_obd_setup(lwp->lpd_obd) == 0) {
+		sptlrpc_lprocfs_cliobd_attach(lwp->lpd_obd);
 		ptlrpc_lprocfs_register_obd(lwp->lpd_obd);
+	}
 
 	RETURN(0);
 }
