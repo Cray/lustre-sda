@@ -755,6 +755,9 @@ run_test 150 "secure mgs connection: client flavor setting"
 test_151() {
 	local save_opts
 
+	[ "$(facet_active_host mgs)" = "$(facet_active_host mds1)" ] &&
+		{ skip "mgs should be different from mds"; return 0; }
+
 	# set mgs only accept krb5p
 	set_rule _mgs any any krb5p
 
