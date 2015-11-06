@@ -159,7 +159,6 @@ const char *krb5_cred_mds_suffix   = "lustre_mds";
 const char *krb5_cred_oss_suffix   = "lustre_oss";
 
 char    *krb5_this_realm        = NULL;
-const char    *krb5_this_hostname     = NULL;
 char    *krb5_keytab_file       = "/etc/krb5.keytab";
 char    *krb5_cc_type           = "FILE:";
 char    *krb5_cc_dir            = "/tmp";
@@ -169,11 +168,6 @@ struct lgss_krb5_cred {
         char            kc_ccname[128];
         int             kc_remove;        /* remove cache upon release */
 };
-
-void lgss_set_hostname(const char *hname)
-{
-	krb5_this_hostname = hname;
-}
 
 static
 int lgss_krb5_set_ccache_name(const char *ccname)
@@ -244,34 +238,30 @@ int svc_princ_verify_host(krb5_context ctx,
                           loglevel_t loglevel)
 {
         struct utsname utsbuf;
-        struct hostent *host = NULL;
+        struct hostent *host;
 
         if (krb5_princ_component(ctx, princ, 1) == NULL) {
                 logmsg(loglevel, "service principal has no host part\n");
                 return -1;
         }
 
-	if (krb5_this_hostname == NULL) {
-		if (uname(&utsbuf)) {
-			logmsg(loglevel, "get UTS name: %s\n", strerror(errno));
-			return -1;
-		}
+        if (uname(&utsbuf)) {
+                logmsg(loglevel, "get UTS name: %s\n", strerror(errno));
+                return -1;
+        }
 
-		host = gethostbyname(utsbuf.nodename);
-		if (host == NULL) {
-			logmsg(loglevel, "failed to get local hostname\n");
-			return -1;
-		}
-	}
+        host = gethostbyname(utsbuf.nodename);
+        if (host == NULL) {
+                logmsg(loglevel, "failed to get local hostname\n");
+                return -1;
+        }
 
         if (lgss_krb5_strcasecmp(krb5_princ_component(ctx, princ, 1),
-                                 krb5_this_hostname ?
-                                 krb5_this_hostname : host->h_name)) {
+                                 host->h_name)) {
                 logmsg(loglevel, "service principal: hostname %.*s "
                        "doesn't match localhost %s\n",
                        krb5_princ_component(ctx, princ, 1)->length,
                        krb5_princ_component(ctx, princ, 1)->data,
-                       krb5_this_hostname ? krb5_this_hostname :
                        host->h_name);
                 return -1;
         }
