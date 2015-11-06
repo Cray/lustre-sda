@@ -37,7 +37,7 @@
 
 int handle_nullreq(FILE *f);
 void svcgssd_run(void);
-int gssd_prepare_creds(int must_srv_mgs, int must_srv_mds, int must_srv_oss, char *hostname);
+int gssd_prepare_creds(int must_srv_mgs, int must_srv_mds, int must_srv_oss);
 gss_cred_id_t gssd_select_svc_cred(int lustre_svc);
 
 extern char *mds_local_realm;

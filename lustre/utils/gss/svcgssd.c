@@ -191,12 +191,12 @@ main(int argc, char *argv[])
 	int opt;
 	int must_srv_mds = 0, must_srv_oss = 0, must_srv_mgs = 0;
 	extern char *optarg;
-	char *progname, *hostname = NULL;
+	char *progname;
 
 	while ((opt = getopt(argc, argv, "h:fvrnmog:")) != -1) {
 		switch (opt) {
 			case 'h':
-				hostname = optarg;
+				fprintf(stderr, "warning: -h is obsolete\n");
 				break;
 			case 'f':
 				fg = 1;
@@ -243,7 +243,7 @@ main(int argc, char *argv[])
 	}
   
 	if (get_creds &&
-	    gssd_prepare_creds(must_srv_mgs, must_srv_mds, must_srv_oss, hostname)) {
+	    gssd_prepare_creds(must_srv_mgs, must_srv_mds, must_srv_oss)) {
                 printerr(0, "unable to obtain root (machine) credentials\n");
                 printerr(0, "do you have a keytab entry for "
 			    "<lustre_xxs>/<your.host>@<YOUR.REALM> in "
