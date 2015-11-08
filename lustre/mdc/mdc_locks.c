@@ -295,7 +295,7 @@ mdc_intent_open_pack(struct obd_export *exp, struct lookup_intent *it,
 	int			 count = 0;
 	int			 mode;
 	int			 rc;
-	char			*domain = NULL;
+	char			*domain = NULL, *crdomain = NULL;
         ENTRY;
 
         it->it_create_mode = (it->it_create_mode & ~S_IFMT) | S_IFREG;
@@ -353,6 +353,14 @@ mdc_intent_open_pack(struct obd_export *exp, struct lookup_intent *it,
 		domain = mdc_current_domain();
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
+
+		if (it->it_op & IT_CREAT)
+			crdomain = mdc_current_create_domain();
+
+		req_capsule_set_size(&req->rq_pill,
+				     &RMF_SELINUX2,
+				     RCL_CLIENT,
+				     crdomain ? strlen(crdomain) + 1 : 0);
 	}
 
 	rc = ldlm_prep_enqueue_req(exp, req, &cancels, count);
@@ -372,9 +380,10 @@ mdc_intent_open_pack(struct obd_export *exp, struct lookup_intent *it,
 
         /* pack the intended request */
         mdc_open_pack(req, op_data, it->it_create_mode, 0, it->it_flags, lmm,
-                      lmmsize, domain);
+                      lmmsize, domain, crdomain);
 
 	mdc_release_domain(domain);
+	mdc_release_domain(crdomain);
 
         /* for remote client, fetch remote perm for current user */
         if (client_is_remote(exp))

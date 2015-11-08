@@ -1185,6 +1185,25 @@ int compat_security_validate_transition(char *oldlabel, char *newlabel, char *tl
 	return svt(oldsid, newsid, tasksid, compat_inode_mode_to_security_class(mode));
 }
 
+int (*sgpa)(struct task_struct *p, char *name, char **value);
+
+int compat_security_find_getprocattr(void *data, const char *name, struct module *m, unsigned long addr)
+{
+	if (!strcmp("security_getprocattr", name)) {
+		sgpa = (void *)addr;
+		printk("found sgpa @ %lx\n", addr);
+		return 1;
+	}
+
+	return 0;
+}
+
+int obd_security_get_create_label(char **value)
+{
+	return sgpa(current, "fscreate", value);
+}
+EXPORT_SYMBOL(obd_security_get_create_label);
+
 int obd_security_init(void)
 {
 	mm_segment_t fs = get_fs();
@@ -1196,6 +1215,12 @@ int obd_security_init(void)
 	kallsyms_on_each_symbol(compat_security_find_validate_transition, NULL);
 	if (svt == NULL) {
 		printk("Error: svt not found\n");
+		return -ENOENT;
+	}
+
+	kallsyms_on_each_symbol(compat_security_find_getprocattr, NULL);
+	if (sgpa == NULL) {
+		printk("Error: sgpa not found\n");
 		return -ENOENT;
 	}
 

@@ -36,6 +36,7 @@
 
 #define DEBUG_SUBSYSTEM S_MDC
 #include <lustre_net.h>
+#include <lustre_security.h>
 #include <lustre/lustre_idl.h>
 #include "mdc_internal.h"
 
@@ -54,6 +55,18 @@ char *mdc_current_domain(void)
 	return domain;
 }
 
+char *mdc_current_create_domain(void)
+{
+	int rc;
+	char *dom;
+
+	rc = obd_security_get_create_label(&dom);
+	if (rc <= 0)
+		return NULL;
+
+	return dom;
+}
+
 void mdc_release_domain(char *domain)
 {
 	if (domain != NULL)
@@ -68,6 +81,15 @@ void mdc_pack_domain(struct ptlrpc_request *req, char *cdomain)
 		char *domain;
 		domain = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX);
 		strcpy(domain, cdomain);
+	}
+}
+
+void mdc_pack_create_domain(struct ptlrpc_request *req, char *crdomain)
+{
+	if (crdomain != NULL) {
+		char *domain;
+		domain = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX2);
+		strcpy(domain, crdomain);
 	}
 }
 
@@ -155,7 +177,7 @@ void mdc_readdir_pack(struct ptlrpc_request *req, __u64 pgoff, size_t size,
 void mdc_create_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		     const void *data, size_t datalen, umode_t mode,
 		     uid_t uid, gid_t gid, cfs_cap_t cap_effective, __u64 rdev,
-		     char *cdomain)
+		     char *cdomain, char *crdomain)
 {
 	struct mdt_rec_create	*rec;
 	char			*tmp;
@@ -194,6 +216,7 @@ void mdc_create_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 	}
 
 	mdc_pack_domain(req, cdomain);
+	mdc_pack_create_domain(req, crdomain);
 }
 
 static inline __u64 mds_pack_open_flags(__u64 flags)
@@ -229,7 +252,7 @@ static inline __u64 mds_pack_open_flags(__u64 flags)
 /* packing of MDS records */
 void mdc_open_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		   umode_t mode, __u64 rdev, __u64 flags, const void *lmm,
-		   size_t lmmlen, char *cdomain)
+		   size_t lmmlen, char *cdomain, char *crdomain)
 {
 	struct mdt_rec_create *rec;
 	char *tmp;
@@ -276,6 +299,7 @@ void mdc_open_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 	set_mrc_cr_flags(rec, cr_flags);
 
 	mdc_pack_domain(req, cdomain);
+	mdc_pack_create_domain(req, crdomain);
 }
 
 static inline __u64 attr_pack(unsigned int ia_valid) {

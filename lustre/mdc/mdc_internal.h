@@ -61,10 +61,10 @@ void mdc_setattr_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 void mdc_create_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		     const void *data, size_t datalen, umode_t mode,
 		     uid_t uid, gid_t gid, cfs_cap_t capability, __u64 rdev,
-		     char *cdomain);
+		     char *cdomain, char *crdomain);
 void mdc_open_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		   umode_t mode, __u64 rdev, __u64 flags,
-		   const void *data, size_t datalen, char *cdomain);
+		   const void *data, size_t datalen, char *cdomain, char *crdomain);
 void mdc_unlink_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		     char *cdomain);
 void mdc_getxattr_pack(struct ptlrpc_request *req, struct md_op_data *op_data);
@@ -175,7 +175,9 @@ static inline int mdc_prep_elc_req(struct obd_export *exp,
 }
 
 char *mdc_current_domain(void);
+char *mdc_current_create_domain(void);
 void mdc_pack_domain(struct ptlrpc_request *req, char *cdomain);
+void mdc_pack_create_domain(struct ptlrpc_request *req, char *crdomain);
 void mdc_release_domain(char *domain);
 
 #define mdc_select_rq_format(exp,basefmt) (exp_connect_selustre(exp) ?\

@@ -732,6 +732,7 @@ static int sec_create(const struct lu_env *env, struct md_object *mo_p,
 	char label[CFS_SID_MAX_LEN];
 	void * attr_value;
 	char name[30], dir_name[30];
+	char *cseclabel = uc->uc_cseclabel[0] ? uc->uc_cseclabel : NULL;
 	ENTRY;
 
 	snprintf(name, sizeof(name), DFID, PFID(sec2fid(md2sec_obj(mo_c))));
@@ -747,8 +748,8 @@ static int sec_create(const struct lu_env *env, struct md_object *mo_p,
 
 	/* Note that the first argument is not uc->uc_sbsid,
 	 * but rather mntpoint_sid */
-	rc = obd_security_init_object(/*0, sid, uc->uc_sid,
-				      uc->uc_csid */ NULL, label, uc->uc_seclabel, NULL, ma->ma_attr.la_mode,
+	rc = obd_security_init_object(NULL, label, uc->uc_seclabel,
+				      cseclabel, ma->ma_attr.la_mode,
 				      &attr_value);
 	if(rc) {
 		CERROR("security_init failed for a new object in directory %s, "
@@ -756,16 +757,9 @@ static int sec_create(const struct lu_env *env, struct md_object *mo_p,
 		RETURN(rc);
 	}
 
-//	rc = cfs_string_to_sid_default(&new_sid, uc->uc_defsid,
-//				       attr_value, attr_len - 1);
-//	if(rc) {
-//		CERROR("failed to convert initial context %s to SID, rc %d\n",
-//		       (char *)attr_value, rc);
-//		RETURN(rc);
-//	}
-
-	rc = obd_security_check_create(uc->uc_seclabel /* uc->uc_sid */, NULL /* uc->uc_csid */, label /* sid */, INITCON_FS_LABEL /* uc->uc_sbsid */,
-				       ma->ma_attr.la_mode, name);
+	rc = obd_security_check_create(uc->uc_seclabel, cseclabel, label,
+				       INITCON_FS_LABEL, ma->ma_attr.la_mode,
+				       name);
 	if (rc < 0) {
 		CDEBUG(D_OTHER, "security_create failed for  %s, tlabel %s, "
 				"rc %d\n", name, uc->uc_seclabel, rc);
