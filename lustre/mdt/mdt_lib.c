@@ -1460,6 +1460,13 @@ void mdt_unpack_security(struct mdt_thread_info *info)
 
 	label = req_capsule_client_get(pill, &RMF_SELINUX);
 	strcpy(uc->uc_seclabel, label);
+
+	if (!req_capsule_has_field(pill, &RMF_SELINUX2, RCL_CLIENT) ||
+	    !req_capsule_get_size(pill, &RMF_SELINUX2, RCL_CLIENT))
+		return;
+
+	label = req_capsule_client_get(pill, &RMF_SELINUX2);
+	strcpy(uc->uc_cseclabel, label);
 }
 
 int mdt_reint_unpack(struct mdt_thread_info *info, __u32 op)

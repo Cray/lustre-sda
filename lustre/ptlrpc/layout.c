@@ -223,7 +223,8 @@ static const struct req_msg_field *mds_reint_create_client_se[] = {
 	&RMF_REC_REINT,
 	&RMF_CAPA1,
 	&RMF_NAME,
-	&RMF_SELINUX
+	&RMF_SELINUX,
+	&RMF_SELINUX2
 };
 
 static const struct req_msg_field *mds_reint_create_slave_client[] = {
@@ -241,6 +242,7 @@ static const struct req_msg_field *mds_reint_create_rmt_acl_client_se[] = {
 	&RMF_CAPA1,
 	&RMF_NAME,
 	&RMF_SELINUX,
+	&RMF_SELINUX2,
 	&RMF_EADATA,
 	&RMF_DLM_REQ,
 };
@@ -269,6 +271,7 @@ static const struct req_msg_field *mds_reint_create_sym_client_se[] = {
         &RMF_CAPA1,
         &RMF_NAME,
 	&RMF_SELINUX,
+	&RMF_SELINUX2,
         &RMF_SYMTGT,
         &RMF_DLM_REQ
 };
@@ -591,7 +594,8 @@ static const struct req_msg_field *ldlm_intent_open_client_se[] = {
         &RMF_CAPA2,
         &RMF_NAME,
         &RMF_EADATA,
-        &RMF_SELINUX
+        &RMF_SELINUX,
+        &RMF_SELINUX2,
 };
 
 static const struct req_msg_field *ldlm_intent_unlink_client[] = {
@@ -1251,6 +1255,10 @@ EXPORT_SYMBOL(RMF_EAVALS);
 struct req_msg_field RMF_SELINUX = DEFINE_MSGF("selinux", 0, -1,
                                                     NULL, NULL);
 EXPORT_SYMBOL(RMF_SELINUX);
+
+struct req_msg_field RMF_SELINUX2 = DEFINE_MSGF("selinux2", 0, -1,
+                                                    NULL, NULL);
+EXPORT_SYMBOL(RMF_SELINUX2);
 
 struct req_msg_field RMF_ACL =
         DEFINE_MSGF("acl", RMF_F_NO_SIZE_CHECK,

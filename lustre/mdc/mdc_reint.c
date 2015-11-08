@@ -228,7 +228,7 @@ int mdc_create(struct obd_export *exp, struct md_op_data *op_data,
         struct obd_import *import = exp->exp_obd->u.cli.cl_import;
         int generation = import->imp_generation;
 	struct list_head cancels = LIST_HEAD_INIT(cancels);
-	char *domain = NULL;
+	char *domain = NULL, *crdomain = NULL;
         ENTRY;
 
         /* For case if upper layer did not alloc fid, do it now. */
@@ -267,6 +267,10 @@ rebuild:
 		domain = mdc_current_domain();
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
+
+		crdomain = mdc_current_create_domain();
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX2, RCL_CLIENT,
+				     crdomain ? strlen(crdomain) + 1 : 0);
 	}
 
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
@@ -281,9 +285,10 @@ rebuild:
          * tgt, for symlinks or lov MD data.
          */
         mdc_create_pack(req, op_data, data, datalen, mode, uid,
-                        gid, cap_effective, rdev, domain);
+                        gid, cap_effective, rdev, domain, crdomain);
 
 	mdc_release_domain(domain);
+	mdc_release_domain(crdomain);
 
         ptlrpc_request_set_replen(req);
 
