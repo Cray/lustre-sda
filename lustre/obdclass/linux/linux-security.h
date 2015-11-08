@@ -66,7 +66,6 @@ enum {
 	OBD_SECPERM_LNK_FILE_LINK,
 	OBD_SECPERM_LNK_FILE_RENAME,
 	OBD_SECPERM_LNK_FILE_EXECUTE,
-	OBD_SECPERM_LNK_FILE_OPEN,
 };
 
 enum {
@@ -237,7 +236,6 @@ struct obd_secclass_map_s {
 				}
 			      },
 	[OBD_SECCLASS_LNK_FILE] = { "lnk_file", {
-					[OBD_SECPERM_LNK_FILE_OPEN] = { "open" },
 					[OBD_SECPERM_LNK_FILE_IOCTL] = { "ioctl" },
 					[OBD_SECPERM_LNK_FILE_READ] = { "read" },
 					[OBD_SECPERM_LNK_FILE_WRITE] = { "write" },
