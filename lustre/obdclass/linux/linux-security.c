@@ -32,8 +32,11 @@
 #include <linux/fs.h>
 #include <linux/xattr.h>
 #include <linux/lsm_audit.h>
+#include <linux/kprobes.h>
 
 #include <obd_support.h>
+
+DECLARE_RWSEM(obd_secpol_rwsem);
 
 u64 obd_security_openperm;
 char obd_security_file_initcon[128] = ""; /* XXX: random size */
@@ -376,6 +379,8 @@ void obd_security_perm_fini(void)
 			kfree(obd_perm_cache[i].tcon);
 	}
 
+	memset(obd_perm_cache, 0, sizeof(obd_perm_cache));
+
 	printk("Purged %d security permission cache entries (%d hits, %d misses)\n",
 	       num, atomic_read(&obd_perm_hits), atomic_read(&obd_perm_misses));
 }
@@ -394,6 +399,8 @@ void obd_security_transition_fini(void)
 		if (obd_transition_cache[i].rcon != NULL)
 			kfree(obd_transition_cache[i].rcon);
 	}
+
+	memset(obd_transition_cache, 0, sizeof(obd_transition_cache));
 
 	printk("Purged %d security transition cache entries (%d hits, %d misses)\n",
 	       num, atomic_read(&obd_tran_hits), atomic_read(&obd_tran_misses));
@@ -559,8 +566,14 @@ out:
 int obd_security_check_open(char *tcon, char *ocon, umode_t mode,
 			    fmode_t fmode, unsigned fflags, char *name)
 {
-	return obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
-				     open_file_to_av(fmode, fflags, mode), name);
+	int rc;
+
+	down_read(&obd_secpol_rwsem);
+	rc = obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
+				   open_file_to_av(fmode, fflags, mode), name);
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_open);
 
@@ -577,13 +590,19 @@ EXPORT_SYMBOL(obd_security_check_open);
 int obd_security_check_permission(char *tcon, char *ocon, int mode,
 				  int mask, char *name)
 {
+	int rc;
+
 	if (!mask) {
 		/* No permission to check.  Existence test. */
 		return 0;
 	}
 
-	return obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
-				     file_mask_to_av(mode, mask), name);
+	down_read(&obd_secpol_rwsem);
+	rc = obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
+				   file_mask_to_av(mode, mask), name);
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_permission);
 
@@ -602,6 +621,7 @@ int obd_security_check_setattr(char *tcon, char *ocon, umode_t mode,
 {
 	unsigned int ia_valid = iattr->ia_valid;
 	__u32 av;
+	int rc;
 
 	/* ATTR_FORCE is just used for ATTR_KILL_S[UG]ID. */
 	if (ia_valid & ATTR_FORCE) {
@@ -617,9 +637,13 @@ int obd_security_check_setattr(char *tcon, char *ocon, umode_t mode,
 	else
 		av = 1 << OBD_SECPERM_FILE_WRITE;
 
-	return obd_security_has_perm(tcon, ocon,
-				     inode_mode_to_security_class(mode),
-				     av, name);
+	down_read(&obd_secpol_rwsem);
+	rc = obd_security_has_perm(tcon, ocon,
+				   inode_mode_to_security_class(mode),
+				   av, name);
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_setattr);
 
@@ -634,8 +658,14 @@ EXPORT_SYMBOL(obd_security_check_setattr);
  */
 int obd_security_check_getattr(char *tcon, char *ocon, umode_t mode, char *name)
 {
-	return obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
-				     1 << OBD_SECPERM_FILE_GETATTR, name);
+	int rc;
+
+	down_read(&obd_secpol_rwsem);
+	rc = obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
+				   1 << OBD_SECPERM_FILE_GETATTR, name);
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_getattr);
 
@@ -689,8 +719,14 @@ out:
 int obd_security_check_create(char *tcon, char *tccon, char *dcon,
 			      char *sbcon, umode_t mode, char *name)
 {
-	return may_create(tcon, tccon, dcon, sbcon,
-			  inode_mode_to_security_class(mode), name);
+	int rc;
+
+	down_read(&obd_secpol_rwsem);
+	rc = may_create(tcon, tccon, dcon, sbcon,
+			inode_mode_to_security_class(mode), name);
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_create);
 
@@ -709,6 +745,8 @@ int obd_security_check_lock(char *tcon, char *ocon, char *fcon,
 {
 	int rc;
 
+	down_read(&obd_secpol_rwsem);
+
 	if (strcmp(tcon, fcon)) {
 		rc = obd_security_has_perm(tcon, fcon, OBD_SECCLASS_FD, OBD_SECPERM_FD_USE, name);
 		if (rc)
@@ -718,6 +756,8 @@ int obd_security_check_lock(char *tcon, char *ocon, char *fcon,
 	rc = obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
 				   OBD_SECPERM_FILE_LOCK, name);
 out:
+	up_read(&obd_secpol_rwsem);
+
 	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_lock);
@@ -772,7 +812,13 @@ static int may_link(char *tcon, char *dcon, char *icon, umode_t mode,
 int obd_security_check_link(char *tcon, char *dcon, char *icon,
 			    umode_t mode, char *name)
 {
-	return may_link(tcon, dcon, icon, mode, SEC_MAY_LINK, name);
+	int rc;
+
+	down_read(&obd_secpol_rwsem);
+	rc = may_link(tcon, dcon, icon, mode, SEC_MAY_LINK, name);
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_link);
 
@@ -789,7 +835,13 @@ EXPORT_SYMBOL(obd_security_check_link);
 int obd_security_check_unlink(char *tcon, char *dcon, char *icon,
 			      umode_t mode, char *name)
 {
-	return may_link(tcon, dcon, icon, mode, SEC_MAY_UNLINK, name);
+	int rc;
+
+	down_read(&obd_secpol_rwsem);
+	rc = may_link(tcon, dcon, icon, mode, SEC_MAY_UNLINK, name);
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_unlink);
 
@@ -818,23 +870,25 @@ int obd_security_check_rename(char *tcon, char *old_name, char *new_name,
 	u32 av;
 	int rc;
 
+	down_read(&obd_secpol_rwsem);
+
 	rc = obd_security_has_perm(tcon, old_dcon, OBD_SECCLASS_DIR,
 				   (1 << OBD_SECPERM_DIR_REMOVENAME) | (1 << OBD_SECPERM_DIR_SEARCH), old_name);
 	if (rc)
-		return rc;
+		goto out;
 
 	rc = obd_security_has_perm(tcon, old_icon,
 			  inode_mode_to_security_class(old_imode),
 			  1 << OBD_SECPERM_FILE_RENAME, old_name);
 	if (rc)
-		return rc;
+		goto out;
 
 	if (S_ISDIR(old_imode) && !same_dirs) {
 		rc = obd_security_has_perm(tcon, old_icon,
 				  inode_mode_to_security_class(old_imode),
 				  1 << OBD_SECPERM_DIR_REPARENT, old_name);
 		if (rc)
-			return rc;
+			goto out;
 	}
 
 	av = (1 << OBD_SECPERM_DIR_ADDNAME) | (1 << OBD_SECPERM_DIR_SEARCH);
@@ -843,7 +897,7 @@ int obd_security_check_rename(char *tcon, char *old_name, char *new_name,
 
 	rc = obd_security_has_perm(tcon, new_dcon, OBD_SECCLASS_DIR, av, new_name);
 	if (rc)
-		return rc;
+		goto out;
 
 	if (new_i_exists) {
 		rc = obd_security_has_perm(tcon, new_icon,
@@ -852,10 +906,12 @@ int obd_security_check_rename(char *tcon, char *old_name, char *new_name,
 								OBD_SECPERM_FILE_UNLINK),
 					   new_name);
 		if (rc)
-			return rc;
+			goto out;
 	}
+out:
+	up_read(&obd_secpol_rwsem);
 
-	return 0;
+	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_rename);
 
@@ -870,8 +926,15 @@ EXPORT_SYMBOL(obd_security_check_rename);
  */
 int obd_security_check_readlink(char *tcon, char *ocon, umode_t mode, char *name)
 {
-	return obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
-			    1 << OBD_SECPERM_FILE_READ, name);
+	int rc;
+
+	down_read(&obd_secpol_rwsem);
+	rc = obd_security_has_perm(tcon, ocon,
+				   inode_mode_to_security_class(mode),
+				   1 << OBD_SECPERM_FILE_READ, name);
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_readlink);
 
@@ -905,6 +968,8 @@ int obd_security_check_setxattr(char *tcon, char *sbcon, char *icon,
 {
 	int rc = 0;
 
+	down_read(&obd_secpol_rwsem);
+
 	if (strcmp(name, XATTR_NAME_SELINUX)) {
 		if (!strncmp(name, XATTR_SECURITY_PREFIX,
 			     sizeof XATTR_SECURITY_PREFIX - 1)) {
@@ -915,36 +980,42 @@ int obd_security_check_setxattr(char *tcon, char *sbcon, char *icon,
 			if (!(capa & (1 << CFS_CAP_SYS_ADMIN))) {
 				/* A different attribute in the security
 				 * namespace. Restrict to administrator. */
-				return -EPERM;
+				rc = -EPERM;
+				goto out;
 			}
 		}
 
-		return obd_security_has_perm(tcon, icon,
+		rc = obd_security_has_perm(tcon, icon,
 					inode_mode_to_security_class(mode),
 					1 << OBD_SECPERM_FILE_SETATTR, fname);
+		goto out;
 	}
 
-	if (!(fsuid == iuid || capa & (1 << CFS_CAP_FOWNER)))
-		return -EPERM;
+	if (!(fsuid == iuid || capa & (1 << CFS_CAP_FOWNER))) {
+		rc = -EPERM;
+		goto out;
+	}
 
 	rc = obd_security_has_perm(tcon, icon, inode_mode_to_security_class(mode),
 				   1 << OBD_SECPERM_FILE_RELABELFROM, fname);
 	if (rc)
-		return rc;
+		goto out;
 
-	/* XXX: can value not be \0 terminated? */
 	rc = obd_security_has_perm(tcon, value, inode_mode_to_security_class(mode),
 				   1 << OBD_SECPERM_FILE_RELABELTO, fname);
 	if (rc)
-		return rc;
+		goto out;
 
 	rc = compat_security_validate_transition(icon, value, tcon, mode);
 	if (rc)
-		return rc;
+		goto out;
 
-	/* XXX: can value not be \0 terminated? */
-	return obd_security_has_perm(value, sbcon, OBD_SECCLASS_FS,
-				     1 << OBD_SECPERM_FS_ASSOCIATE, fname);
+	rc = obd_security_has_perm(value, sbcon, OBD_SECCLASS_FS,
+				   1 << OBD_SECPERM_FS_ASSOCIATE, fname);
+out:
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_setxattr);
 
@@ -962,6 +1033,8 @@ EXPORT_SYMBOL(obd_security_check_setxattr);
 int obd_security_check_removexattr(char *tcon, char *icon, umode_t mode,
 				   char *fname, char *name, __u64 capa)
 {
+	int rc;
+
 	if (!strcmp(name, XATTR_NAME_SELINUX))
 		return -EACCES;
 
@@ -978,9 +1051,13 @@ int obd_security_check_removexattr(char *tcon, char *icon, umode_t mode,
 		}
 	}
 
-	return obd_security_has_perm(tcon, icon,
+	down_read(&obd_secpol_rwsem);
+	rc = obd_security_has_perm(tcon, icon,
 			    inode_mode_to_security_class(mode),
 			    1 << OBD_SECPERM_FILE_SETATTR, fname);
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_removexattr);
 
@@ -995,8 +1072,14 @@ EXPORT_SYMBOL(obd_security_check_removexattr);
  */
 int obd_security_check_getxattr(char *tcon, char *ocon, umode_t mode, char *name)
 {
-	return obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
+	int rc;
+
+	down_read(&obd_secpol_rwsem);
+	rc = obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
 				     1 << OBD_SECPERM_FILE_GETATTR, name);
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_getxattr);
 
@@ -1011,8 +1094,14 @@ EXPORT_SYMBOL(obd_security_check_getxattr);
  */
 int obd_security_check_listxattr(char *tcon, char *ocon, umode_t mode, char *name)
 {
-	return obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
+	int rc;
+
+	down_read(&obd_secpol_rwsem);
+	rc = obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
 				     1 << OBD_SECPERM_FILE_GETATTR, name);
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
 }
 EXPORT_SYMBOL(obd_security_check_listxattr);
 
@@ -1040,9 +1129,11 @@ int obd_security_init_object(char *mcon, char *dcon, char *tcon, char *tccon,
 		if (*value == NULL)
 			rc = -ENOMEM;
 	} else {
+		down_read(&obd_secpol_rwsem);
 		rc = obd_security_transition(tcon, dcon,
 					     inode_mode_to_security_class(mode),
 					     (char **)value);
+		up_read(&obd_secpol_rwsem);
 	}
 
 	return rc;
@@ -1185,9 +1276,15 @@ int compat_security_validate_transition(char *oldlabel, char *newlabel, char *tl
 	return svt(oldsid, newsid, tasksid, compat_inode_mode_to_security_class(mode));
 }
 
+/*
+ * Although we can read the information from /proc/self/attr/fscreate,
+ * the environment on the client is less controllable than on the server.
+ * The concern is that we may not have procfs mounted at /proc sometimes.
+ */
 int (*sgpa)(struct task_struct *p, char *name, char **value);
 
-int compat_security_find_getprocattr(void *data, const char *name, struct module *m, unsigned long addr)
+int compat_security_find_getprocattr(void *data, const char *name,
+				     struct module *m, unsigned long addr)
 {
 	if (!strcmp("security_getprocattr", name)) {
 		sgpa = (void *)addr;
@@ -1204,25 +1301,13 @@ int obd_security_get_create_label(char **value)
 }
 EXPORT_SYMBOL(obd_security_get_create_label);
 
-int obd_security_init(void)
+static int obd_security_load_policy(void)
 {
 	mm_segment_t fs = get_fs();
 	int rc;
 
 	obd_security_perm_init();
 	obd_security_transition_init();
-
-	kallsyms_on_each_symbol(compat_security_find_validate_transition, NULL);
-	if (svt == NULL) {
-		printk("Error: svt not found\n");
-		return -ENOENT;
-	}
-
-	kallsyms_on_each_symbol(compat_security_find_getprocattr, NULL);
-	if (sgpa == NULL) {
-		printk("Error: sgpa not found\n");
-		return -ENOENT;
-	}
 
 	/* module is loaded in userspace context, so we need to modify mm limits */
 	set_fs(KERNEL_DS);
@@ -1249,10 +1334,75 @@ out:
 	set_fs(fs);
 
 	return rc;
+
+}
+
+static void obd_security_unload_policy(void)
+{
+	obd_security_perm_fini();
+	obd_security_transition_fini();
+}
+
+void obd_security_reload_policy(struct work_struct *unused)
+{
+	down_write(&obd_secpol_rwsem);
+	obd_security_unload_policy();
+	obd_security_load_policy();
+	up_write(&obd_secpol_rwsem);
+}
+
+
+int obd_security_trigger_reload_policy(u32 seqno)
+{
+	static DECLARE_WORK(reload_work, obd_security_reload_policy);
+
+	printk("Lustre: reloading security policy\n");
+	schedule_work(&reload_work);
+
+	jprobe_return();
+
+	return 0;
+}
+
+static struct jprobe obd_security_jp = {
+	.entry          = obd_security_trigger_reload_policy,
+	.kp.symbol_name = "avc_ss_reset"
+};
+
+int obd_security_jp_registered = 0;
+
+int obd_security_init(void)
+{
+	int rc;
+
+	kallsyms_on_each_symbol(compat_security_find_validate_transition, NULL);
+	if (svt == NULL) {
+		printk("Error: svt not found\n");
+		return -ENOENT;
+	}
+
+	kallsyms_on_each_symbol(compat_security_find_getprocattr, NULL);
+	if (sgpa == NULL) {
+		printk("Error: sgpa not found\n");
+		return -ENOENT;
+	}
+
+	rc = obd_security_load_policy();
+	if (rc < 0)
+		goto out;
+
+	rc = register_jprobe(&obd_security_jp);
+	if (rc < 0)
+		printk("Error: failed to hook cache reload\n");
+	else
+		obd_security_jp_registered = 1;
+out:
+	return rc;
 }
 
 void obd_security_fini(void)
 {
-	obd_security_perm_fini();
-	obd_security_transition_fini();
+	if (obd_security_jp_registered)
+		unregister_jprobe(&obd_security_jp);
+	obd_security_unload_policy();
 }
