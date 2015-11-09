@@ -447,7 +447,7 @@ if [ -f $RPM_BUILD_ROOT%{_sysconfdir}/init.d/lustre ]; then
 fi
 
 if [ -f $RPM_BUILD_ROOT%{_sysconfdir}/init.d/lsvcgss ]; then
-	echo '%{_sysconfdir}/sysconfig/lsvcgss' >>lustre.files
+	echo '%{_sysconfdir}/init.d/lsvcgss' >>lustre.files
 fi
 %endif
 
