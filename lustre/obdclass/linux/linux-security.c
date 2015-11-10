@@ -381,8 +381,10 @@ void obd_security_perm_fini(void)
 
 	memset(obd_perm_cache, 0, sizeof(obd_perm_cache));
 
-	printk("Purged %d security permission cache entries (%d hits, %d misses)\n",
-	       num, atomic_read(&obd_perm_hits), atomic_read(&obd_perm_misses));
+	printk("Purged %d security permission cache entries "
+	       "(%d hits, %d misses)\n", num,
+	       atomic_read(&obd_perm_hits),
+	       atomic_read(&obd_perm_misses));
 }
 
 void obd_security_transition_fini(void)
@@ -402,8 +404,10 @@ void obd_security_transition_fini(void)
 
 	memset(obd_transition_cache, 0, sizeof(obd_transition_cache));
 
-	printk("Purged %d security transition cache entries (%d hits, %d misses)\n",
-	       num, atomic_read(&obd_tran_hits), atomic_read(&obd_tran_misses));
+	printk("Purged %d security transition cache entries "
+	       "(%d hits, %d misses)\n", num,
+	       atomic_read(&obd_tran_hits),
+	       atomic_read(&obd_tran_misses));
 }
 
 int obd_security_has_perm_noaudit(char *scon, char *tcon,
@@ -422,7 +426,10 @@ int obd_security_has_perm_noaudit(char *scon, char *tcon,
 	}
 
 	if (requested & ~(osd->allowed)) {
-		/* XXX: removed selinux_enforcing check because we always want to be enforcing */
+		/*
+		 * Removed selinux_enforcing check because
+		 * we always want to be enforcing.
+		 */
 		if (osd->flags & OSD_FLAGS_PERMISSIVE) {
 		} else {
 			rc = -EACCES;
@@ -486,8 +493,10 @@ void obd_security_audit(char *scon, char *tcon, enum obd_secclass tclass,
 
 	audit_log_format(ab, "avc:  %s ", denied ? "denied" : "granted");
 	avc_dump_av(ab, tclass, audited);
-	audit_log_format(ab, " for pid=%d comm=%s name=%s scontext=%s tcontext=%s tclass=%s",
-			 current->pid, current->comm, path, scon, tcon, obd_secclass_map[tclass].name);
+	audit_log_format(ab, " for pid=%d comm=%s name=%s "
+			     "scontext=%s tcontext=%s tclass=%s",
+			 current->pid, current->comm, path,
+			 scon, tcon, obd_secclass_map[tclass].name);
 	audit_log_end(ab);
 }
 
@@ -522,7 +531,7 @@ int obd_security_transition(char *con, char *dcon, enum obd_secclass tc,
 
 	snprintf(buf, sizeof(buf), "%s %s %hu", con, dcon, tclass);
 
-	/* XXX: this requires COMPUTE_CREATE priviledge */
+	/* This requires COMPUTE_CREATE priviledge */
 	rc = sel_create_file->f_op->write(sel_create_file, buf, sizeof(buf),
 					  &sel_create_file->f_pos);
 	if (rc < 0) {
@@ -536,7 +545,6 @@ int obd_security_transition(char *con, char *dcon, enum obd_secclass tc,
 		printk("failed to process create read request: %s, rc=%d\n", buf, rc);
 		goto out;
 	}
-
 
 	buf[rc] = '\0';
 	*tcon = kstrdup(buf, GFP_NOFS);
@@ -569,7 +577,8 @@ int obd_security_check_open(char *tcon, char *ocon, umode_t mode,
 	int rc;
 
 	down_read(&obd_secpol_rwsem);
-	rc = obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
+	rc = obd_security_has_perm(tcon, ocon,
+				   inode_mode_to_security_class(mode),
 				   open_file_to_av(fmode, fflags, mode), name);
 	up_read(&obd_secpol_rwsem);
 
@@ -598,7 +607,8 @@ int obd_security_check_permission(char *tcon, char *ocon, int mode,
 	}
 
 	down_read(&obd_secpol_rwsem);
-	rc = obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
+	rc = obd_security_has_perm(tcon, ocon,
+				   inode_mode_to_security_class(mode),
 				   file_mask_to_av(mode, mask), name);
 	up_read(&obd_secpol_rwsem);
 
@@ -661,7 +671,8 @@ int obd_security_check_getattr(char *tcon, char *ocon, umode_t mode, char *name)
 	int rc;
 
 	down_read(&obd_secpol_rwsem);
-	rc = obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
+	rc = obd_security_has_perm(tcon, ocon,
+				   inode_mode_to_security_class(mode),
 				   1 << OBD_SECPERM_FILE_GETATTR, name);
 	up_read(&obd_secpol_rwsem);
 
@@ -677,7 +688,8 @@ static int may_create(char *tcon, char *tccon,
 	int rc;
 
 	rc = obd_security_has_perm(tcon, dcon, OBD_SECCLASS_DIR,
-				   (1 << OBD_SECPERM_DIR_ADDNAME) | (1 << OBD_SECPERM_DIR_SEARCH),
+				   (1 << OBD_SECPERM_DIR_ADDNAME) |
+				   (1 << OBD_SECPERM_DIR_SEARCH),
 				   name);
 	if (rc < 0)
 		return rc;
@@ -690,12 +702,12 @@ static int may_create(char *tcon, char *tccon,
 		tccon_calculated = tccon;
 	}
 
-	rc = obd_security_has_perm(tcon, tccon, tclass, 1 << OBD_SECPERM_FILE_CREATE, name);
+	rc = obd_security_has_perm(tcon, tccon, tclass,
+				   1 << OBD_SECPERM_FILE_CREATE, name);
 	if (rc < 0)
 		goto out;
 
-	rc = obd_security_has_perm(tccon, sbcon,
-				   OBD_SECCLASS_FS,
+	rc = obd_security_has_perm(tccon, sbcon, OBD_SECCLASS_FS,
 				   1 << OBD_SECPERM_FS_ASSOCIATE, name);
 out:
 	if (tccon_calculated != NULL)
@@ -748,12 +760,15 @@ int obd_security_check_lock(char *tcon, char *ocon, char *fcon,
 	down_read(&obd_secpol_rwsem);
 
 	if (strcmp(tcon, fcon)) {
-		rc = obd_security_has_perm(tcon, fcon, OBD_SECCLASS_FD, OBD_SECPERM_FD_USE, name);
+		rc = obd_security_has_perm(tcon, fcon,
+					   OBD_SECCLASS_FD,
+					   OBD_SECPERM_FD_USE, name);
 		if (rc)
 			goto out;
 	}
 
-	rc = obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
+	rc = obd_security_has_perm(tcon, ocon,
+				   inode_mode_to_security_class(mode),
 				   OBD_SECPERM_FILE_LOCK, name);
 out:
 	up_read(&obd_secpol_rwsem);
@@ -873,7 +888,9 @@ int obd_security_check_rename(char *tcon, char *old_name, char *new_name,
 	down_read(&obd_secpol_rwsem);
 
 	rc = obd_security_has_perm(tcon, old_dcon, OBD_SECCLASS_DIR,
-				   (1 << OBD_SECPERM_DIR_REMOVENAME) | (1 << OBD_SECPERM_DIR_SEARCH), old_name);
+				   (1 << OBD_SECPERM_DIR_REMOVENAME) |
+				   (1 << OBD_SECPERM_DIR_SEARCH),
+				   old_name);
 	if (rc)
 		goto out;
 
@@ -902,8 +919,9 @@ int obd_security_check_rename(char *tcon, char *old_name, char *new_name,
 	if (new_i_exists) {
 		rc = obd_security_has_perm(tcon, new_icon,
 					   inode_mode_to_security_class(new_imode),
-					   1<< (S_ISDIR(new_imode) ? OBD_SECPERM_DIR_RMDIR :
-								OBD_SECPERM_FILE_UNLINK),
+					   1<< (S_ISDIR(new_imode) ?
+						OBD_SECPERM_DIR_RMDIR :
+						OBD_SECPERM_FILE_UNLINK),
 					   new_name);
 		if (rc)
 			goto out;
@@ -1075,8 +1093,9 @@ int obd_security_check_getxattr(char *tcon, char *ocon, umode_t mode, char *name
 	int rc;
 
 	down_read(&obd_secpol_rwsem);
-	rc = obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
-				     1 << OBD_SECPERM_FILE_GETATTR, name);
+	rc = obd_security_has_perm(tcon, ocon,
+				   inode_mode_to_security_class(mode),
+				   1 << OBD_SECPERM_FILE_GETATTR, name);
 	up_read(&obd_secpol_rwsem);
 
 	return rc;
@@ -1097,8 +1116,9 @@ int obd_security_check_listxattr(char *tcon, char *ocon, umode_t mode, char *nam
 	int rc;
 
 	down_read(&obd_secpol_rwsem);
-	rc = obd_security_has_perm(tcon, ocon, inode_mode_to_security_class(mode),
-				     1 << OBD_SECPERM_FILE_GETATTR, name);
+	rc = obd_security_has_perm(tcon, ocon,
+				   inode_mode_to_security_class(mode),
+				   1 << OBD_SECPERM_FILE_GETATTR, name);
 	up_read(&obd_secpol_rwsem);
 
 	return rc;
