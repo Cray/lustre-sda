@@ -1449,24 +1449,43 @@ static reint_unpacker mdt_reint_unpackers[REINT_MAX] = {
 	[REINT_RMENTRY]  = mdt_rmentry_unpack,
 };
 
-void mdt_unpack_security(struct mdt_thread_info *info)
+int mdt_unpack_security(struct mdt_thread_info *info)
 {
 	struct lu_ucred		*uc	= mdt_ucred(info);
 	struct req_capsule	*pill	= info->mti_pill;
 	char			*label;
+	__u32			size;
 
 	if (!req_capsule_has_field(pill, &RMF_SELINUX, RCL_CLIENT))
-		return;
+		return 0;
+
+	size = req_capsule_get_size(pill, &RMF_SELINUX, RCL_CLIENT);
+	if (size == 0 || size >= sizeof(uc->uc_seclabel))
+		return -EPROTO;
 
 	label = req_capsule_client_get(pill, &RMF_SELINUX);
-	strcpy(uc->uc_seclabel, label);
+	if (label[size - 1] != '\0')
+		return -EPROTO;
 
-	if (!req_capsule_has_field(pill, &RMF_SELINUX2, RCL_CLIENT) ||
-	    !req_capsule_get_size(pill, &RMF_SELINUX2, RCL_CLIENT))
-		return;
+	memcpy(uc->uc_seclabel, label, size);
 
-	label = req_capsule_client_get(pill, &RMF_SELINUX2);
-	strcpy(uc->uc_cseclabel, label);
+	if (!req_capsule_has_field(pill, &RMF_SELINUX2, RCL_CLIENT))
+		return 0;
+
+	size = req_capsule_get_size(pill, &RMF_SELINUX2, RCL_CLIENT);
+	if (size > 0) {
+		if (size >= sizeof(uc->uc_cseclabel))
+			return -EPROTO;
+
+		label = req_capsule_client_get(pill, &RMF_SELINUX2);
+
+		if (label[size - 1] != '\0')
+			return -EPROTO;
+
+		memcpy(uc->uc_cseclabel, label, size);
+	}
+
+	return 0;
 }
 
 int mdt_reint_unpack(struct mdt_thread_info *info, __u32 op)
@@ -1476,7 +1495,9 @@ int mdt_reint_unpack(struct mdt_thread_info *info, __u32 op)
 
         memset(&info->mti_rr, 0, sizeof(info->mti_rr));
         if (op < REINT_MAX && mdt_reint_unpackers[op] != NULL) {
-		mdt_unpack_security(info);
+		rc = mdt_unpack_security(info);
+		if (rc < 0)
+			goto out;
 
                 info->mti_rr.rr_opcode = op;
                 rc = mdt_reint_unpackers[op](info);
@@ -1484,5 +1505,6 @@ int mdt_reint_unpack(struct mdt_thread_info *info, __u32 op)
                 CERROR("Unexpected opcode %d\n", op);
                 rc = -EFAULT;
         }
+out:
         RETURN(rc);
 }
