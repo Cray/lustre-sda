@@ -241,7 +241,9 @@ int mdt_getxattr(struct mdt_thread_info *info)
 
 	CDEBUG(D_INODE, "getxattr "DFID"\n", PFID(&info->mti_body->mbo_fid1));
 
-	mdt_unpack_security(info);
+	rc = mdt_unpack_security(info);
+	if (rc < 0)
+		RETURN(err_serious(-EPROTO));
 
         reqbody = req_capsule_client_get(info->mti_pill, &RMF_MDT_BODY);
         if (reqbody == NULL)

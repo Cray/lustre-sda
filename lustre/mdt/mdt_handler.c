@@ -1055,7 +1055,9 @@ static int mdt_getattr(struct tgt_session_info *tsi)
         int rc, rc2;
         ENTRY;
 
-	mdt_unpack_security(info);
+	rc = mdt_unpack_security(info);
+	if (rc < 0)
+		GOTO(out_shrink, rc);
 
         reqbody = req_capsule_client_get(pill, &RMF_MDT_BODY);
         LASSERT(reqbody);
@@ -1188,7 +1190,9 @@ static int mdt_swap_layouts(struct tgt_session_info *tsi)
 
 	info = tsi2mdt_info(tsi);
 
-	mdt_unpack_security(info);
+	rc = mdt_unpack_security(info);
+	if (rc < 0)
+		GOTO(out, rc);
 
 	if (info->mti_dlm_req != NULL)
 		ldlm_request_cancel(req, info->mti_dlm_req, 0, LATF_SKIP);
@@ -1588,7 +1592,9 @@ static int mdt_getattr_name(struct tgt_session_info *tsi)
         int rc, rc2;
         ENTRY;
 
-	mdt_unpack_security(info);
+	rc = mdt_unpack_security(info);
+	if (rc < 0)
+		goto out_shrink;
 
         reqbody = req_capsule_client_get(info->mti_pill, &RMF_MDT_BODY);
         LASSERT(reqbody != NULL);
@@ -1701,9 +1707,13 @@ static int mdt_readpage(struct tgt_session_info *tsi)
 	if (repbody == NULL || reqbody == NULL) {
 		mdt_thread_info_fini(info);
                 RETURN(err_serious(-EFAULT));
-}
+	}
 
-	mdt_unpack_security(info);
+	rc = mdt_unpack_security(info);
+	if (rc < 0) {
+		mdt_thread_info_fini(info);
+		RETURN(err_serious(-EPROTO));
+	}
 
         /*
          * prepare @rdpg before calling lower layers and transfer itself. Here
@@ -3163,7 +3173,9 @@ static int mdt_intent_getattr(enum mdt_it_code opcode,
         int                     rc, rc2;
         ENTRY;
 
-	mdt_unpack_security(info);
+	rc = mdt_unpack_security(info);
+	if (rc < 0)
+		GOTO(out_shrink, rc);
 
         reqbody = req_capsule_client_get(info->mti_pill, &RMF_MDT_BODY);
         LASSERT(reqbody);
@@ -3230,10 +3242,12 @@ static int mdt_intent_layout(enum mdt_it_code opcode,
 	struct layout_intent *layout;
 	struct lu_fid *fid;
 	struct mdt_object *obj = NULL;
-	int rc = 0;
+	int rc;
 	ENTRY;
 
-	mdt_unpack_security(info);
+	rc = mdt_unpack_security(info);
+	if (rc < 0)
+		RETURN(rc);
 
 	if (opcode != MDT_IT_LAYOUT) {
 		CERROR("%s: Unknown intent (%d)\n", mdt_obd_name(info->mti_mdt),
