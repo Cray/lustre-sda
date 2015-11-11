@@ -351,6 +351,12 @@ mdc_intent_open_pack(struct obd_export *exp, struct lookup_intent *it,
 			     max(lmmsize, obddev->u.cli.cl_default_mds_easize));
 	if (exp_connect_selustre(exp)) {
 		domain = mdc_current_domain();
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			rc = -EPERM;
+			goto err_out;
+		}
+
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
 
@@ -366,6 +372,7 @@ mdc_intent_open_pack(struct obd_export *exp, struct lookup_intent *it,
 	rc = ldlm_prep_enqueue_req(exp, req, &cancels, count);
 	if (rc < 0) {
 		mdc_release_domain(domain);
+err_out:
 		ptlrpc_request_free(req);
 		RETURN(ERR_PTR(rc));
 	}
@@ -465,6 +472,11 @@ static struct ptlrpc_request *mdc_intent_unlink_pack(struct obd_export *exp,
 
 	if (exp_connect_selustre(exp)) {
 		domain = mdc_current_domain();
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			rc = -EPERM;
+			goto err_out;
+		}
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
 	}
@@ -472,6 +484,7 @@ static struct ptlrpc_request *mdc_intent_unlink_pack(struct obd_export *exp,
         rc = ldlm_prep_enqueue_req(exp, req, NULL, 0);
         if (rc) {
 		mdc_release_domain(domain);
+err_out:
                 ptlrpc_request_free(req);
                 RETURN(ERR_PTR(rc));
         }
@@ -521,6 +534,12 @@ static struct ptlrpc_request *mdc_intent_getattr_pack(struct obd_export *exp,
 
 	if (exp_connect_selustre(exp)) {
 		domain = mdc_current_domain();
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			rc = -EPERM;
+			goto err_out;
+		}
+
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
 	}
@@ -528,6 +547,7 @@ static struct ptlrpc_request *mdc_intent_getattr_pack(struct obd_export *exp,
         rc = ldlm_prep_enqueue_req(exp, req, NULL, 0);
         if (rc) {
 		mdc_release_domain(domain);
+err_out:
                 ptlrpc_request_free(req);
                 RETURN(ERR_PTR(rc));
         }
@@ -575,6 +595,12 @@ static struct ptlrpc_request *mdc_intent_layout_pack(struct obd_export *exp,
 
 	if (exp_connect_selustre(exp)) {
 		domain = mdc_current_domain();
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			rc = -EPERM;
+			goto err_out;
+		}
+
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
 	}
@@ -582,6 +608,7 @@ static struct ptlrpc_request *mdc_intent_layout_pack(struct obd_export *exp,
 	rc = ldlm_prep_enqueue_req(exp, req, NULL, 0);
 	if (rc) {
 		mdc_release_domain(domain);
+err_out:
 		ptlrpc_request_free(req);
 		RETURN(ERR_PTR(rc));
 	}
