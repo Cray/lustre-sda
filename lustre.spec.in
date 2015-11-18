@@ -446,6 +446,10 @@ if [ -f $RPM_BUILD_ROOT%{_sysconfdir}/init.d/lsvcgss ]; then
 fi
 %endif
 
+if [ -f $RPM_BUILD_ROOT%{_sysconfdir}/request-key.d/lgssc.conf ]; then
+	echo '%{_sysconfdir}/request-key.d/lgssc.conf' >>lustre.files
+fi
+
 if [ -f $RPM_BUILD_ROOT%{_sysconfdir}/init.d/lnet ]; then
 	echo '%{_sysconfdir}/init.d/lnet' >>lustre.files
 fi

@@ -46,6 +46,8 @@ init_SCRIPTS = lnet
 if SERVER
 init_SCRIPTS += lustre lsvcgss
 endif
+rkdir = $(sysconfdir)/request-key.d
+rk_SCRIPTS = lgssc.conf
 endif
 
 if SERVER
@@ -60,7 +62,7 @@ EXTRA_DIST = license-status version_tag.pl version_tag-git.pl \
 	     version_tag-none.pl lc_common \
 	     $(addsuffix .in,$(genscripts)) lc_mon $(sbinscripts) \
 	     $(bin_SCRIPTS) lustre lnet lhbadm lsvcgss \
-	     haconfig ldev Lustre.ha_v2 dkms.mkconf
+	     haconfig ldev Lustre.ha_v2 dkms.mkconf lgssc.conf
 
 scriptlibdir = @libexecdir@/@PACKAGE@
 scriptlib_SCRIPTS = haconfig
