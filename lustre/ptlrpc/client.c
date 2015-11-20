@@ -2818,7 +2818,8 @@ static int ptlrpc_replay_interpret(const struct lu_env *env,
                 req->rq_replay_cb(req);
 
         if (ptlrpc_client_replied(req) &&
-            lustre_msg_get_status(req->rq_repmsg) != aa->praa_old_status) {
+            lustre_msg_get_status(req->rq_repmsg) != aa->praa_old_status &&
+            lustre_msg_get_status(req->rq_repmsg) < 0) {
                 DEBUG_REQ(D_ERROR, req, "status %d, old was %d",
                           lustre_msg_get_status(req->rq_repmsg),
                           aa->praa_old_status);

@@ -3320,6 +3320,7 @@ static int mdt_intent_reint(enum mdt_it_code opcode,
         if (rc != 0)
                 mdt_set_disposition(info, rep, DISP_LOOKUP_EXECD);
 
+	CDEBUG(D_INFO, "intent finish %d / %llu <> "LPX64"\n", rc, rep->lock_policy_res2, lhc->mlh_reg_lh.cookie);
 	/* the open lock or the lock for cross-ref object should be
 	 * returned to the client */
 	if (lustre_handle_is_used(&lhc->mlh_reg_lh) &&
