@@ -1129,13 +1129,17 @@ static int ptlrpc_check_req(struct ptlrpc_request *req)
 			  req->rq_export->exp_conn_cnt);
 		return -EEXIST;
 	}
+
 	if (unlikely(obd == NULL || obd->obd_fail)) {
 		/* Failing over, don't handle any more reqs,
-		 * send error response instead. */
+		 * send error response instead if we in recovery
+		 * to fast reconnect and restart . */
 		CDEBUG(D_RPCTRACE, "Dropping req %p for failed obd %s\n",
 			req, (obd != NULL) ? obd->obd_name : "unknown");
-                rc = -ENODEV;
-        } else if (lustre_msg_get_flags(req->rq_reqmsg) &
+		rc = -ENODEV;
+		if (obd && !obd->obd_recovering)
+			RETURN(rc);
+	} else if (lustre_msg_get_flags(req->rq_reqmsg) &
                    (MSG_REPLAY | MSG_REQ_REPLAY_DONE) &&
 		   !obd->obd_recovering) {
                         DEBUG_REQ(D_ERROR, req,
