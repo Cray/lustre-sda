@@ -559,14 +559,14 @@ int ptlrpc_send_reply(struct ptlrpc_request *req, int flags)
 
         /* There may be no rq_export during failover */
 
-        if (unlikely(req->rq_export && req->rq_export->exp_obd &&
-                     req->rq_export->exp_obd->obd_fail)) {
-                /* Failed obd's only send ENODEV */
-                req->rq_type = PTL_RPC_MSG_ERR;
-                req->rq_status = -ENODEV;
-                CDEBUG(D_HA, "sending ENODEV from failed obd %d\n",
-                       req->rq_export->exp_obd->obd_minor);
-        }
+	if (unlikely(req->rq_export && req->rq_export->exp_obd &&
+		     req->rq_export->exp_obd->obd_fail &&
+		     req->rq_status != -ENODEV)) {
+		CDEBUG(D_HA, "mute request from failed obd %d\n",
+			req->rq_export->exp_obd->obd_minor);
+
+		RETURN(-ENODEV);
+	}
 
 	/* In order to keep interoprability with the client (< 2.3) which
 	 * doesn't have pb_jobid in ptlrpc_body, We have to shrink the
