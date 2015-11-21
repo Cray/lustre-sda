@@ -412,6 +412,10 @@ int sptlrpc_rule_set_choose(struct sptlrpc_rule_set *rset,
         struct sptlrpc_rule    *r;
         int                     n;
 
+	/* Avoid kerberizing loopback devices */
+	if (LNET_NETTYP(LNET_NIDNET(nid)) == LOLND)
+		return 0;
+
         for (n = 0; n < rset->srs_nrule; n++) {
                 r = &rset->srs_rules[n];
 
