@@ -1303,7 +1303,6 @@ int mgc_set_info_async(const struct lu_env *env, struct obd_export *exp,
                         LCONSOLE_ERROR("asking sptlrpc flavor %s to MGS but "
                                        "currently %s is in use\n",
                                        (char *) val, str);
-                        rc = -EPERM;
                 }
                 RETURN(rc);
         }

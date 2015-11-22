@@ -1436,13 +1436,11 @@ int sptlrpc_import_sec_adapt(struct obd_import *imp,
                  * normal import, determine flavor from rule set, except
                  * for mgc the flavor is predetermined.
                  */
-                if (cliobd->cl_sp_me == LUSTRE_SP_MGC)
-                        sf = cliobd->cl_flvr_mgc;
-                else 
-                        sptlrpc_conf_choose_flavor(cliobd->cl_sp_me,
-                                                   cliobd->cl_sp_to,
-                                                   &cliobd->cl_target_uuid,
-                                                   conn->c_self, &sf);
+                sptlrpc_conf_choose_flavor(cliobd->cl_sp_me,
+                                           cliobd->cl_sp_to,
+                                           &cliobd->cl_target_uuid,
+                                           conn->c_self, &sf,
+					   &cliobd->cl_flvr_mgc);
 
                 sp = imp->imp_obd->u.cli.cl_sp_me;
         } else {
