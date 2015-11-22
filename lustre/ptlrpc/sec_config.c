@@ -852,12 +852,22 @@ void sptlrpc_conf_choose_flavor(enum lustre_sec_part from,
                                 enum lustre_sec_part to,
                                 struct obd_uuid *target,
                                 lnet_nid_t nid,
-                                struct sptlrpc_flavor *sf)
+                                struct sptlrpc_flavor *sf,
+				struct sptlrpc_flavor *msf)
 {
         struct sptlrpc_conf     *conf;
         struct sptlrpc_conf_tgt *conf_tgt;
         char                     name[MTI_NAME_MAXLEN];
         int                      len, rc = 0;
+
+	if (from == LUSTRE_SP_MGC) {
+		if (LNET_NETTYP(LNET_NIDNET(nid)) != LOLND) {
+			*sf = *msf;
+			return;
+		} else {
+			goto out_default;
+		}
+	}
 
         target2fsname(target->uuid, name, sizeof(name));
 
@@ -885,6 +895,7 @@ void sptlrpc_conf_choose_flavor(enum lustre_sec_part from,
 out:
 	mutex_unlock(&sptlrpc_conf_lock);
 
+out_default:
         if (rc == 0)
                 get_default_flavor(sf);
 
