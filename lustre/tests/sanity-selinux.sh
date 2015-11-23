@@ -243,7 +243,7 @@ test_3 () {
 	echo "but after alice access this file"
 	$ALICE ls -lZ $TESTDIR2/foofile.txt | grep "foofile.txt" || error "alice can't get attrs"
 	echo "bob can read it (if bug exists)"
-	# comment next string and this test wiil not be bassed without fix 
+	# comment next string and this test wiil not pass without sys.hard_security=1 
 	cancel_lru_locks mdc
 	$BOB ls -lZ  $TESTDIR2/foofile.txt | grep "foofile.txt" && error "bob can get attrs"
 

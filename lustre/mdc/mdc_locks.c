@@ -1310,7 +1310,7 @@ int mdc_intent_lock(struct obd_export *exp, struct md_op_data *op_data,
 		it->it_flags);
 
         lockh.cookie = 0;
-        if (0 && fid_is_sane(&op_data->op_fid2) &&
+        if (!hard_security && fid_is_sane(&op_data->op_fid2) &&
             (it->it_op & (IT_LOOKUP | IT_GETATTR))) {
                 /* We could just return 1 immediately, but since we should only
                  * be called in revalidate_it if we already have a lock, let's

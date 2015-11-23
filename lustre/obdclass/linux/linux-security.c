@@ -36,6 +36,9 @@
 
 #include <obd_support.h>
 
+unsigned int hard_security = 1;
+EXPORT_SYMBOL(hard_security);
+
 DECLARE_RWSEM(obd_secpol_rwsem);
 
 u64 obd_security_openperm;
