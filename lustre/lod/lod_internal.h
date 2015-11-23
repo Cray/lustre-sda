@@ -39,6 +39,7 @@
 #define _LOD_INTERNAL_H
 
 #include <libcfs/libcfs.h>
+#include <lustre_cfg.h>
 #include <obd.h>
 #include <dt_object.h>
 
@@ -247,6 +248,7 @@ struct lod_thread_info {
 	struct obd_statfs lti_osfs;
 	struct lu_attr    lti_attr;
 	struct lod_it	  lti_it;
+	struct lustre_cfg lti_lustre_cfg;
 };
 
 extern const struct lu_device_operations lod_lu_ops;
