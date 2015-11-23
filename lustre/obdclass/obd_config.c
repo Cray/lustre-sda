@@ -938,6 +938,8 @@ static int class_set_global(char *ptr, int val, struct lustre_cfg *lcfg)
 	else if (class_match_param(ptr, PARAM_JOBID_VAR, NULL) == 0)
 		strlcpy(obd_jobid_var, lustre_cfg_string(lcfg, 2),
 			JOBSTATS_JOBID_VAR_MAX_LEN + 1);
+	else if (class_match_param(ptr, PARAM_HARD_SECURITY, NULL) == 0)
+		hard_security = val;
 	else
 		RETURN(-EINVAL);
 
