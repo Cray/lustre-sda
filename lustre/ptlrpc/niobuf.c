@@ -840,7 +840,8 @@ int ptl_send_rpc(struct ptlrpc_request *request, int noreply)
         request->rq_deadline = request->rq_sent + request->rq_timeout +
                 ptlrpc_at_get_net_latency(request);
 
-	ptlrpc_pinger_sending_on_import(imp);
+	if (lustre_msg_get_opc(request->rq_reqmsg) != SEC_CTX_INIT)
+		ptlrpc_pinger_sending_on_import(imp);
 
         DEBUG_REQ(D_INFO, request, "send flg=%x",
                   lustre_msg_get_flags(request->rq_reqmsg));
