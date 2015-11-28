@@ -684,6 +684,11 @@ again:
         if (cli_ctx_is_eternal(ctx))
                 RETURN(0);
 
+	if (unlikely(test_bit(PTLRPC_CTX_UNREACH_BIT, &ctx->cc_flags))) {
+		clear_bit(PTLRPC_CTX_UNREACH_BIT, &ctx->cc_flags);
+		RETURN(-ETIMEDOUT);
+	}
+
 	if (unlikely(test_bit(PTLRPC_CTX_NEW_BIT, &ctx->cc_flags))) {
                 LASSERT(ctx->cc_ops->refresh);
                 ctx->cc_ops->refresh(ctx);
