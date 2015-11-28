@@ -1380,8 +1380,10 @@ out:
 
                 cli_ctx_expire(ctx);
 
-                if (rc != -ERESTART)
+                if (rc != -ERESTART && rc != -ETIMEDOUT)
 			set_bit(PTLRPC_CTX_ERROR_BIT, &ctx->cc_flags);
+                else
+                        set_bit(PTLRPC_CTX_UNREACH_BIT, &ctx->cc_flags);
         }
 
         /* let user space think it's a success */

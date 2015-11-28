@@ -1754,8 +1754,11 @@ int ptlrpc_check_set(const struct lu_env *env, struct ptlrpc_request_set *set)
                                  */
                                 status = sptlrpc_req_refresh_ctx(req, -1);
                                 if (status) {
-                                        if (req->rq_err) {
-                                                req->rq_status = status;
+                                        if (req->rq_err || status == -ETIMEDOUT) {
+                                               if (status == -ETIMEDOUT)
+                                                       req->rq_net_err = 1;
+                                               else
+                                                       req->rq_status = status;
 						spin_lock(&req->rq_lock);
 						req->rq_wait_ctx = 0;
 						spin_unlock(&req->rq_lock);
