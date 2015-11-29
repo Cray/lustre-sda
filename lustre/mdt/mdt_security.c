@@ -48,7 +48,7 @@ int mdt_sec_attr_get(const struct lu_env *env, struct mdt_object *mdo)
 
 	rc = obd_security_check_getattr(uc->uc_seclabel, olabel, mda.ma_attr.la_mode, name);
 	if (rc) {
-		CERROR("security_getattr failed for %s, tlabel %s, "
+		CDEBUG(D_OTHER, "security_getattr failed for %s, tlabel %s, "
 			"olabel %s, rc %d\n", name, uc->uc_seclabel, olabel, rc);
 		RETURN(rc);
 	}
@@ -89,7 +89,7 @@ int mdt_sec_xattr_get(const struct lu_env *env, struct mdt_object *mdo,
 	rc = obd_security_check_getxattr(uc->uc_seclabel, olabel,
 			  mda.ma_attr.la_mode, (char *)file_name);
 	if (rc) {
-		CERROR("security_getxattr failed for %s, tlabel %s, "
+		CDEBUG(D_OTHER, "security_getxattr failed for %s, tlabel %s, "
 			"olabel %s, rc %d\n", name, uc->uc_seclabel, olabel, rc);
 		RETURN(rc);
 	}
