@@ -112,6 +112,12 @@ static const struct req_msg_field *mdt_body_only[] = {
         &RMF_MDT_BODY
 };
 
+static const struct req_msg_field *mdt_body_only_se[] = {
+	&RMF_PTLRPC_BODY,
+	&RMF_MDT_BODY,
+	&RMF_SELINUX
+};
+
 static const struct req_msg_field *mdt_body_capa[] = {
         &RMF_PTLRPC_BODY,
         &RMF_MDT_BODY,
@@ -886,6 +892,7 @@ static struct req_format *req_formats[] = {
         &RQF_MDS_DISCONNECT,
         &RQF_MDS_GET_INFO,
         &RQF_MDS_GETSTATUS,
+	&RQF_MDS_GETSTATUS_SE,
         &RQF_MDS_STATFS,
 	&RQF_MDS_STATFS_SE,
         &RQF_MDS_GETATTR,
@@ -1502,6 +1509,10 @@ EXPORT_SYMBOL(RQF_LDLM_INTENT_QUOTA);
 struct req_format RQF_MDS_GETSTATUS =
         DEFINE_REQ_FMT0("MDS_GETSTATUS", mdt_body_only, mdt_body_capa);
 EXPORT_SYMBOL(RQF_MDS_GETSTATUS);
+
+struct req_format RQF_MDS_GETSTATUS_SE =
+        DEFINE_REQ_FMT0("MDS_GETSTATUS_SE", mdt_body_only_se, mdt_body_capa);
+EXPORT_SYMBOL(RQF_MDS_GETSTATUS_SE);
 
 struct req_format RQF_MDS_STATFS =
         DEFINE_REQ_FMT0("MDS_STATFS", empty, obd_statfs_server);

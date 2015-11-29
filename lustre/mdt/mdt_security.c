@@ -1,6 +1,8 @@
 #include "mdt_internal.h"
 #include <lustre_security.h>
 
+#define INITCON_FS_LABEL "system_u:object_r:fs_t:s0"
+
 static int mdt_sec_get_object_label(const struct lu_env *env,
 				    struct mdt_object *mdo,
 				    char seclabel[CFS_SID_MAX_LEN])
@@ -97,4 +99,14 @@ int mdt_sec_xattr_get(const struct lu_env *env, struct mdt_object *mdo,
 skip_checks:
 
 	RETURN(rc);
+}
+
+int mdt_sec_mount(const struct lu_env *env, char *name)
+{
+	struct lu_ucred *uc = lu_ucred(env);
+	int rc;
+
+	rc = obd_security_check_mount(uc->uc_seclabel, INITCON_FS_LABEL, name);
+
+	return rc;
 }
