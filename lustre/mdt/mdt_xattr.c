@@ -193,7 +193,10 @@ static int mdt_getxattr_all(struct mdt_thread_info *info,
 	for (b = eadatahead; b < eadatatail; b += strlen(b) + 1, v += rc) {
 		buf->lb_buf = v;
 		buf->lb_len = reqbody->mbo_eadatasize - eavallen;
-		rc = mdt_getxattr_one(info, b, next, buf, med, uc);
+
+		rc = mdt_sec_xattr_get(env, info->mti_object, buf, b);
+		if (rc == 0)
+			rc = mdt_getxattr_one(info, b, next, buf, med, uc);
 		if (rc < 0)
 			GOTO(out_shrink, rc);
 
@@ -290,7 +293,10 @@ int mdt_getxattr(struct mdt_thread_info *info)
 	if (valid == OBD_MD_FLXATTR) {
 		char *xattr_name = req_capsule_client_get(info->mti_pill,
 							  &RMF_NAME);
-		rc = mdt_getxattr_one(info, xattr_name, next, buf, med, uc);
+
+		rc = mdt_sec_xattr_get(info->mti_env, info->mti_object, buf, xattr_name);
+		if (rc == 0)
+			rc = mdt_getxattr_one(info, xattr_name, next, buf, med, uc);
 	} else if (valid == OBD_MD_FLXATTRLS) {
 		CDEBUG(D_INODE, "listxattr\n");
 

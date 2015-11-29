@@ -1556,7 +1556,10 @@ static int mdt_getattr_name_lock(struct mdt_thread_info *info,
 
         /* finally, we can get attr for child. */
         mdt_set_capainfo(info, 1, child_fid, BYPASS_CAPA);
-        rc = mdt_getattr_internal(info, child, ma_need);
+
+	rc = mdt_sec_attr_get(info->mti_env, child);
+	if (rc == 0)
+	        rc = mdt_getattr_internal(info, child, ma_need);
         if (unlikely(rc != 0)) {
                 mdt_object_unlock(info, child, lhc, 1);
 	} else if (lock) {

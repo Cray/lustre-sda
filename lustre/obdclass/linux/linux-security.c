@@ -180,6 +180,7 @@ void obd_security_compute_av(char *scon, char *tcon,
 					  &sel_access_file->f_pos);
 	if (rc < 0) {
 		printk("failed to process access write request: %s, rc=%d\n", buf, rc);
+		dump_stack();
 		goto err;
 	}
 
@@ -187,6 +188,7 @@ void obd_security_compute_av(char *scon, char *tcon,
 					 &sel_access_file->f_pos);
 	if (rc < 0) {
 		printk("failed to process access read request: %s, rc=%d\n", buf, rc);
+		dump_stack();
 		goto err;
 	}
 
