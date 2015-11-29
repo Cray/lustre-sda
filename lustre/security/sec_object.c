@@ -203,41 +203,12 @@ static int sec_permission(const struct lu_env *env,
 static int sec_attr_get(const struct lu_env *env, struct md_object *mo,
 			struct md_attr *attr)
 {
-	struct lu_ucred *uc = lu_ucred(env);
+	/* Moved to MDT */
 	int rc;
-	char olabel[CFS_SID_MAX_LEN];
-	char name[30];
-	struct md_attr mda;
 
-	ENTRY;
-
-	if (uc->uc_confined_op != UC_CONFINED_GETATTR)
-		goto skip_checks;
-
-	snprintf(name, sizeof(name), DFID, PFID(sec2fid(md2sec_obj(mo))));
-
-	mda.ma_need = MA_INODE;
-	mda.ma_valid = 0;
-	rc = mo_attr_get(env, md_object_next(mo), &mda);
-	if (rc < 0)
-		RETURN(rc);
-
-	rc = sec_get_object_label(env, mo, olabel);
-	if (rc) {
-		CERROR("failed to get object SID for %s, rc %d\n", name, rc);
-		RETURN(rc);
-	}
-
-	rc = obd_security_check_getattr(uc->uc_seclabel, olabel, mda.ma_attr.la_mode, name);
-	if (rc) {
-		CDEBUG(D_OTHER, "security_getattr failed for %s, tlabel %s, "
-				"olabel %s, rc %d\n", name, uc->uc_seclabel, olabel, rc);
-		RETURN(rc);
-	}
-
-skip_checks:
 	rc = mo_attr_get(env, md_object_next(mo), attr);
-	RETURN(rc);
+
+	return rc;
 }
 
 static int sec_attr_set(const struct lu_env *env, struct md_object *mo,
@@ -286,50 +257,12 @@ skip_checks:
 static int sec_xattr_get(const struct lu_env *env, struct md_object *mo,
 			 struct lu_buf *buf, const char *name)
 {
-	struct lu_ucred *uc = lu_ucred(env);
 	int rc;
-	char olabel[CFS_SID_MAX_LEN];
-	char file_name[30];
-	struct md_attr mda;
-	ENTRY;
 
-	/* XXX: uc can be NULL if running mdt_lvbo_fill */
-	/* XXX: MDS_CLOSE updates atime */
-	if (uc == NULL || uc->uc_seclabel[0] == '\0')
-		goto skip_checks;
-
-	/* XXX: not right, but doinit_with_dentry should succeed on the client */
-	if (name != NULL && !strcmp(name, "security.selinux"))
-		goto skip_checks;
-
-	snprintf(file_name, sizeof(file_name), DFID,
-		 PFID(sec2fid(md2sec_obj(mo))));
-
-	mda.ma_need = MA_INODE;
-	mda.ma_valid = 0;
-	rc = mo_attr_get(env, md_object_next(mo), &mda);
-	if (rc < 0)
-		RETURN(rc);
-
-	rc = sec_get_object_label(env, mo, olabel);
-	if (rc) {
-		CERROR("failed to get object SID for %s, rc %d\n",
-		       file_name, rc);
-		RETURN(rc);
-	}
-
-	rc = obd_security_check_getxattr(uc->uc_seclabel, olabel,
-			  mda.ma_attr.la_mode, (char *)file_name);
-	if (rc) {
-		CDEBUG(D_OTHER, "security_getxattr failed for %s, tlabel %s, "
-				"olabel %s, rc %d\n", name, uc->uc_seclabel, olabel, rc);
-		RETURN(rc);
-	}
-
-skip_checks:
+	/* Moved to MDT */
 	rc = mo_xattr_get(env, md_object_next(mo), buf, name);
 
-	RETURN(rc);
+	return rc;
 }
 
 static int sec_readlink(const struct lu_env *env, struct md_object *mo,

@@ -1076,4 +1076,8 @@ static inline char *mdt_obd_name(struct mdt_device *mdt)
 int mds_mod_init(void);
 void mds_mod_exit(void);
 
+int mdt_sec_attr_get(const struct lu_env *env, struct mdt_object *mdo);
+int mdt_sec_xattr_get(const struct lu_env *env, struct mdt_object *mdo,
+		      struct lu_buf *buf, const char *name);
+
 #endif /* _MDT_H */
