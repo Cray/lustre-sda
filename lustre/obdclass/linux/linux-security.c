@@ -961,6 +961,27 @@ int obd_security_check_readlink(char *tcon, char *ocon, umode_t mode, char *name
 }
 EXPORT_SYMBOL(obd_security_check_readlink);
 
+/**
+ * \brief Check sb_kernl_mount security
+ * \param tcon The task context
+ * \param sbcon The superblock context
+ * \retval 0 success and the operation is permitted
+ * \retval -EACCES operation not permitted by the policy
+ */
+int obd_security_check_mount(char *tcon, char *sbcon, char *name)
+{
+	int rc;
+
+	down_read(&obd_secpol_rwsem);
+	rc = obd_security_has_perm(tcon, sbcon,
+				   OBD_SECCLASS_FS,
+				   1 << OBD_SECPERM_FS_MOUNT, name);
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
+}
+EXPORT_SYMBOL(obd_security_check_mount);
+
 #include <linux/xattr.h>
 #define XATTR_SELINUX_SUFFIX "selinux"
 #define XATTR_NAME_SELINUX XATTR_SECURITY_PREFIX XATTR_SELINUX_SUFFIX

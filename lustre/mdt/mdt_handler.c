@@ -280,6 +280,15 @@ static int mdt_getstatus(struct tgt_session_info *tsi)
 	if (OBD_FAIL_CHECK(OBD_FAIL_MDS_GETSTATUS_PACK))
 		GOTO(out, rc = err_serious(-ENOMEM));
 
+	rc = mdt_unpack_security(info);
+	if (rc < 0)
+		GOTO(out, rc);
+
+	/* $fsname might be a better name than / */
+	rc = mdt_sec_mount(info->mti_env, "/");
+	if (rc < 0)
+		GOTO(out, rc);
+
 	repbody = req_capsule_server_get(info->mti_pill, &RMF_MDT_BODY);
 	repbody->mbo_fid1 = mdt->mdt_md_root_fid;
 	repbody->mbo_valid |= OBD_MD_FLID;
@@ -4117,7 +4126,7 @@ TGT_RPC_HANDLER(MDS_FIRST_OPC,
 		HABEO_REFERO,		MDS_SET_INFO,	mdt_set_info,
 		&RQF_OBD_SET_INFO, LUSTRE_MDS_VERSION),
 TGT_MDT_HDL(0,				MDS_GET_INFO,	mdt_get_info),
-TGT_MDT_HDL(0		| HABEO_REFERO,	MDS_GETSTATUS,	mdt_getstatus),
+TGT_MDT_HDL_SE(0		| HABEO_REFERO,	MDS_GETSTATUS,	mdt_getstatus),
 TGT_MDT_HDL_SE(HABEO_CORPUS,		MDS_GETATTR,	mdt_getattr),
 TGT_MDT_HDL_SE(HABEO_CORPUS| HABEO_REFERO,	MDS_GETATTR_NAME,
 							mdt_getattr_name),

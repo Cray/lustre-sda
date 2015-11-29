@@ -105,19 +105,44 @@ static inline int mdc_queue_wait(struct ptlrpc_request *req)
 /* Helper that implements most of mdc_getstatus and signal_completed_replay. */
 /* XXX this should become mdc_get_info("key"), sending MDS_GET_INFO RPC */
 static int send_getstatus(struct obd_import *imp, struct lu_fid *rootfid,
-                          struct obd_capa **pc, int level, int msg_flags)
+                          struct obd_capa **pc, int level, int msg_flags,
+			  int secured)
 {
-        struct ptlrpc_request *req;
-        struct mdt_body       *body;
-        int                    rc;
+        struct ptlrpc_request	*req;
+        struct mdt_body		*body;
+        int			rc;
+	char			*domain = NULL;
         ENTRY;
 
-        req = ptlrpc_request_alloc_pack(imp, &RQF_MDS_GETSTATUS,
-                                        LUSTRE_MDS_VERSION, MDS_GETSTATUS);
+        req = ptlrpc_request_alloc(imp, secured ? &RQF_MDS_GETSTATUS_SE : &RQF_MDS_GETSTATUS);
         if (req == NULL)
                 RETURN(-ENOMEM);
 
+	if (secured) {
+		domain = mdc_current_domain();
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			rc = -EPERM;
+			goto out_free;
+		}
+
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
+
+        rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_GETSTATUS);
+        if (rc) {
+		mdc_release_domain(domain);
+out_free:
+                ptlrpc_request_free(req);
+                RETURN(rc);
+        }
+
         mdc_pack_body(req, NULL, NULL, 0, 0, -1, 0);
+
+	mdc_pack_domain(req, domain);
+	mdc_release_domain(domain);
+
         lustre_msg_add_flags(req->rq_reqmsg, msg_flags);
         req->rq_send_state = level;
 
@@ -151,7 +176,7 @@ int mdc_getstatus(struct obd_export *exp, struct lu_fid *rootfid,
                   struct obd_capa **pc)
 {
         return send_getstatus(class_exp2cliimp(exp), rootfid, pc,
-                              LUSTRE_IMP_FULL, 0);
+                              LUSTRE_IMP_FULL, 0, exp_connect_selustre(exp));
 }
 
 /*

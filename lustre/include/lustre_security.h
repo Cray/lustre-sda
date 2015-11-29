@@ -21,6 +21,7 @@ int obd_security_check_rename(char *tcon, char *old_name, char *new_name,
 int obd_security_check_unlink(char *tcon, char *dcon, char *icon,
 			      umode_t mode, char *name);
 int obd_security_check_readlink(char *tcon, char *ocon, umode_t mode, char *name);
+int obd_security_check_mount(char *tcon, char *sbcon, char *name);
 int obd_security_check_setxattr(char *tcon, char *sbcon, char *icon,
 				umode_t mode, char *fname,
 				void *value, size_t size, char *name,
