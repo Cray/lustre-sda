@@ -101,6 +101,35 @@ skip_checks:
 	RETURN(rc);
 }
 
+int mdt_sec_lookup(const struct lu_env *env, struct mdt_object *parent)
+{
+	struct lu_ucred *uc = lu_ucred(env);
+	int rc;
+	char olabel[CFS_SID_MAX_LEN];
+	char name[30];
+
+	ENTRY;
+
+	snprintf(name, sizeof(name), DFID, PFID(mdt_object_fid(parent)));
+
+	rc = mdt_sec_get_object_label(env, parent, olabel);
+	if (rc) {
+		CERROR("failed to get object SID for %s\n", name);
+		RETURN(rc);
+	}
+
+	rc = obd_security_check_permission(uc->uc_seclabel, olabel, S_IFDIR,
+					   MAY_EXEC, name);
+	if (rc) {
+		CDEBUG(D_OTHER, "security_lookup failed for %s, tlabel %s, "
+				"olabel %s, rc %d\n", name, uc->uc_seclabel, olabel, rc);
+		RETURN(rc);
+	}
+
+	RETURN(rc);
+}
+
+
 int mdt_sec_mount(const struct lu_env *env, char *name)
 {
 	struct lu_ucred *uc = lu_ucred(env);
