@@ -752,7 +752,10 @@ ll_convert_intent(struct open_intent *oit, int lookup_flags)
 		it->it_flags = ll_namei_to_lookup_intent_flag(oit->flags);
 		it->it_flags &= ~MDS_OPEN_FL_INTERNAL;
 	} else {
-		it->it_op = IT_GETATTR;
+		if (hard_security)
+			it->it_op = IT_LOOKUP;
+		else
+			it->it_op = IT_GETATTR;
 	}
 
 	return it;

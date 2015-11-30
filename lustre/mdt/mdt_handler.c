@@ -1310,6 +1310,21 @@ static int mdt_raw_lookup(struct mdt_thread_info *info,
 	RETURN(rc);
 }
 
+enum mdt_it_code {
+        MDT_IT_OPEN,
+        MDT_IT_OCREAT,
+        MDT_IT_CREATE,
+        MDT_IT_GETATTR,
+        MDT_IT_READDIR,
+        MDT_IT_LOOKUP,
+        MDT_IT_UNLINK,
+        MDT_IT_TRUNC,
+        MDT_IT_GETXATTR,
+        MDT_IT_LAYOUT,
+	MDT_IT_QUOTA,
+        MDT_IT_NR
+};
+
 /*
  * UPDATE lock should be taken against parent, and be release before exit;
  * child_bits lock should be taken against child, and be returned back:
@@ -1319,7 +1334,8 @@ static int mdt_raw_lookup(struct mdt_thread_info *info,
 static int mdt_getattr_name_lock(struct mdt_thread_info *info,
                                  struct mdt_lock_handle *lhc,
                                  __u64 child_bits,
-                                 struct ldlm_reply *ldlm_rep)
+                                 struct ldlm_reply *ldlm_rep,
+				 enum mdt_it_code opcode)
 {
         struct ptlrpc_request  *req       = mdt_info_req(info);
         struct mdt_body        *reqbody   = NULL;
@@ -1566,7 +1582,7 @@ static int mdt_getattr_name_lock(struct mdt_thread_info *info,
         /* finally, we can get attr for child. */
         mdt_set_capainfo(info, 1, child_fid, BYPASS_CAPA);
 
-	if (child_bits & MDS_INODELOCK_UPDATE) {
+	if (opcode == MDT_IT_GETATTR) {
 		rc = mdt_sec_attr_get(info->mti_env, child);
 	} else {
 		if (S_ISDIR(lu_object_attr(&parent->mot_obj)))
@@ -1629,7 +1645,7 @@ static int mdt_getattr_name(struct tgt_session_info *tsi)
         if (unlikely(rc))
                 GOTO(out_shrink, rc);
 
-        rc = mdt_getattr_name_lock(info, lhc, MDS_INODELOCK_UPDATE, NULL);
+        rc = mdt_getattr_name_lock(info, lhc, MDS_INODELOCK_UPDATE, NULL, MDT_IT_GETATTR);
         if (lustre_handle_is_used(&lhc->mlh_reg_lh)) {
                 ldlm_lock_decref(&lhc->mlh_reg_lh, lhc->mlh_reg_mode);
                 lhc->mlh_reg_lh.cookie = 0;
@@ -2886,21 +2902,6 @@ err:
 	return rc;
 }
 
-enum mdt_it_code {
-        MDT_IT_OPEN,
-        MDT_IT_OCREAT,
-        MDT_IT_CREATE,
-        MDT_IT_GETATTR,
-        MDT_IT_READDIR,
-        MDT_IT_LOOKUP,
-        MDT_IT_UNLINK,
-        MDT_IT_TRUNC,
-        MDT_IT_GETXATTR,
-        MDT_IT_LAYOUT,
-	MDT_IT_QUOTA,
-        MDT_IT_NR
-};
-
 static int mdt_intent_getattr(enum mdt_it_code opcode,
                               struct mdt_thread_info *info,
                               struct ldlm_lock **,
@@ -3209,7 +3210,7 @@ static int mdt_intent_getattr(enum mdt_it_code opcode,
 	/* Get lock from request for possible resent case. */
 	mdt_intent_fixup_resent(info, *lockp, lhc, flags);
 
-	rc = mdt_getattr_name_lock(info, lhc, child_bits, ldlm_rep);
+	rc = mdt_getattr_name_lock(info, lhc, child_bits, ldlm_rep, opcode);
 	ldlm_rep->lock_policy_res2 = clear_serious(rc);
 
         if (mdt_get_disposition(ldlm_rep, DISP_LOOKUP_NEG))
