@@ -334,6 +334,9 @@ static int ll_revalidate_dentry(struct dentry *dentry,
 {
 	struct inode *dir = dentry->d_parent->d_inode;
 
+	if (hard_security)
+		return 0;
+
 	/* If this is intermediate component path lookup and we were able to get
 	 * to this dentry, then its lock has not been revoked and the
 	 * path component is valid. */
