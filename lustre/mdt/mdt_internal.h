@@ -1079,6 +1079,7 @@ void mds_mod_exit(void);
 int mdt_sec_attr_get(const struct lu_env *env, struct mdt_object *mdo);
 int mdt_sec_xattr_get(const struct lu_env *env, struct mdt_object *mdo,
 		      struct lu_buf *buf, const char *name);
+int mdt_sec_lookup(const struct lu_env *env, struct mdt_object *parent);
 int mdt_sec_mount(const struct lu_env *env, char *name);
 
 #endif /* _MDT_H */
