@@ -402,22 +402,22 @@ static inline u32 file_mask_to_av(int mode, int mask)
 
 	if ((mode & S_IFMT) != S_IFDIR) {
 		if (mask & MAY_EXEC)
-			av |= OBD_SECPERM_FILE_EXECUTE;
+			av |= 1 << OBD_SECPERM_FILE_EXECUTE;
 		if (mask & MAY_READ)
-			av |= OBD_SECPERM_FILE_READ;
+			av |= 1 << OBD_SECPERM_FILE_READ;
 
 		if (mask & MAY_APPEND)
-			av |= OBD_SECPERM_FILE_APPEND;
+			av |= 1 << OBD_SECPERM_FILE_APPEND;
 		else if (mask & MAY_WRITE)
-			av |= OBD_SECPERM_FILE_WRITE;
+			av |= 1 << OBD_SECPERM_FILE_WRITE;
 
 	} else {
 		if (mask & MAY_EXEC)
-			av |= OBD_SECPERM_DIR_SEARCH;
+			av |= 1 << OBD_SECPERM_DIR_SEARCH;
 		if (mask & MAY_WRITE)
-			av |= OBD_SECPERM_DIR_WRITE;
+			av |= 1 << OBD_SECPERM_DIR_WRITE;
 		if (mask & MAY_READ)
-			av |= OBD_SECPERM_DIR_READ;
+			av |= 1 << OBD_SECPERM_DIR_READ;
 	}
 
 	return av;
