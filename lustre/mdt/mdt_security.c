@@ -16,9 +16,9 @@ static int mdt_sec_get_object_label(const struct lu_env *env,
 			  XATTR_NAME_SECURITY_SELINUX);
 	if (rc <= 0) {
 		rc = obd_security_file_default_label(seclabel);
-		CDEBUG(D_OTHER, "security attrs not found for object, "
-				"using default SID %s, rc %d\n",
-				seclabel, rc);
+		CDEBUG(D_SEC, "security attrs not found for object, "
+			      "using default SID %s, rc %d\n",
+			      seclabel, rc);
 	}
 
 	RETURN(0);
@@ -50,7 +50,7 @@ int mdt_sec_attr_get(const struct lu_env *env, struct mdt_object *mdo)
 
 	rc = obd_security_check_getattr(uc->uc_seclabel, olabel, mda.ma_attr.la_mode, name);
 	if (rc) {
-		CDEBUG(D_OTHER, "security_getattr failed for %s, tlabel %s, "
+		CDEBUG(D_SEC, "security_getattr failed for %s, tlabel %s, "
 			"olabel %s, rc %d\n", name, uc->uc_seclabel, olabel, rc);
 		RETURN(rc);
 	}
@@ -91,7 +91,7 @@ int mdt_sec_xattr_get(const struct lu_env *env, struct mdt_object *mdo,
 	rc = obd_security_check_getxattr(uc->uc_seclabel, olabel,
 			  mda.ma_attr.la_mode, (char *)file_name);
 	if (rc) {
-		CDEBUG(D_OTHER, "security_getxattr failed for %s, tlabel %s, "
+		CDEBUG(D_SEC, "security_getxattr failed for %s, tlabel %s, "
 			"olabel %s, rc %d\n", name, uc->uc_seclabel, olabel, rc);
 		RETURN(rc);
 	}
@@ -121,7 +121,7 @@ int mdt_sec_lookup(const struct lu_env *env, struct mdt_object *parent)
 	rc = obd_security_check_permission(uc->uc_seclabel, olabel, S_IFDIR,
 					   MAY_EXEC, name);
 	if (rc) {
-		CDEBUG(D_OTHER, "security_lookup failed for %s, tlabel %s, "
+		CDEBUG(D_SEC, "security_lookup failed for %s, tlabel %s, "
 				"olabel %s, rc %d\n", name, uc->uc_seclabel, olabel, rc);
 		RETURN(rc);
 	}

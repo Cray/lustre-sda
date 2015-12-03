@@ -49,7 +49,7 @@ static int sec_get_object_label(const struct lu_env *env,
 			  XATTR_NAME_SECURITY_SELINUX);
 	if (rc <= 0) {
 		rc = obd_security_file_default_label(seclabel);
-		CDEBUG(D_OTHER, "security attrs not found for object, "
+		CDEBUG(D_SEC, "security attrs not found for object, "
 				"using default SID %s, rc %d\n",
 				seclabel, rc);
 	}
@@ -190,7 +190,7 @@ static int sec_permission(const struct lu_env *env,
 	rc = obd_security_check_permission(uc->uc_seclabel, olabel, mda.ma_attr.la_mode,
 					   mask, name);
 	if (rc) {
-		CDEBUG(D_OTHER, "security_permission failed for %s, tlabel %s, "
+		CDEBUG(D_SEC, "security_permission failed for %s, tlabel %s, "
 				"olabel %s, rc %d\n", name, uc->uc_seclabel, olabel, rc);
 		RETURN(rc);
 	}
@@ -244,7 +244,7 @@ static int sec_attr_set(const struct lu_env *env, struct md_object *mo,
 	rc = obd_security_check_setattr(uc->uc_seclabel, olabel, mda.ma_attr.la_mode,
 				        &iattr, name);
 	if (rc) {
-		CDEBUG(D_OTHER, "security_setattr failed for %s, tlabel %s, "
+		CDEBUG(D_SEC, "security_setattr failed for %s, tlabel %s, "
 				"olabel %s, rc %d\n", name, uc->uc_seclabel, olabel, rc);
 		RETURN(rc);
 	}
@@ -284,7 +284,7 @@ static int sec_readlink(const struct lu_env *env, struct md_object *mo,
 
 	rc = obd_security_check_readlink(uc->uc_seclabel, ilabel, S_IFLNK, name);
 	if (rc < 0) {
-		CDEBUG(D_OTHER, "security_readlink failed for %s, tlabel %s, "
+		CDEBUG(D_SEC, "security_readlink failed for %s, tlabel %s, "
 				"ilabel %s, rc %d\n", name, uc->uc_seclabel, ilabel, rc);
 		RETURN(rc);
 	}
@@ -332,7 +332,7 @@ static int sec_xattr_list(const struct lu_env *env, struct md_object *mo,
 	rc = obd_security_check_listxattr(uc->uc_seclabel, olabel,
 			  mda.ma_attr.la_mode, (char *)file_name);
 	if (rc) {
-		CDEBUG(D_OTHER, "security_listxattr failed for %s, tlabel %s, "
+		CDEBUG(D_SEC, "security_listxattr failed for %s, tlabel %s, "
 				"ilabel %s, rc %d\n", file_name, uc->uc_seclabel, olabel,
 				rc);
 		RETURN(rc);
@@ -374,7 +374,7 @@ static int sec_xattr_set(const struct lu_env *env, struct md_object *mo,
 			  buf->lb_buf, buf->lb_len, (char *)name,
 			  uc->uc_cap, uc->uc_fsuid, mda.ma_attr.la_uid);
 	if (rc) {
-		CDEBUG(D_OTHER, "security_setxattr failed for %s, tlabel %s, "
+		CDEBUG(D_SEC, "security_setxattr failed for %s, tlabel %s, "
 				"ilabel %s, rc %d\n", file_name, uc->uc_seclabel, ilabel,
 				rc);
 		RETURN(rc);
@@ -413,7 +413,7 @@ static int sec_xattr_del(const struct lu_env *env, struct md_object *mo,
 	rc = obd_security_check_removexattr(uc->uc_seclabel, ilabel, mda.ma_attr.la_mode,
 				      file_name, (char *)name, uc->uc_cap);
 	if (rc) {
-		CDEBUG(D_OTHER, "security_removexattr failed for %s, tlabel %s, "
+		CDEBUG(D_SEC, "security_removexattr failed for %s, tlabel %s, "
 				"ilabel %s, rc %d\n", file_name, uc->uc_seclabel, ilabel,
 				rc);
 		RETURN(rc);
@@ -488,7 +488,7 @@ static int sec_open(const struct lu_env *env, struct md_object *mo, int flags)
 				     (flags & MDS_OPEN_APPEND) ? O_APPEND : 0,
 				     file_name);
 	if (rc) {
-		CDEBUG(D_OTHER, "security_open failed for %s, tlabel %s, "
+		CDEBUG(D_SEC, "security_open failed for %s, tlabel %s, "
 				"olabel %s, rc %d\n", file_name, uc->uc_seclabel,
 				olabel, rc);
 		RETURN(rc);
@@ -526,7 +526,7 @@ static int sec_readpage(const struct lu_env *env, struct md_object *mo,
 
 	rc = obd_security_check_permission(uc->uc_seclabel, dlabel, S_IFDIR, MAY_READ, name);
 	if (rc) {
-		CDEBUG(D_OTHER, "security_permission failed for %s, tlabel %s, "
+		CDEBUG(D_SEC, "security_permission failed for %s, tlabel %s, "
 				"dlabel %s, rc %d\n", name, uc->uc_seclabel, dlabel, rc);
 		RETURN(rc);
 	}
@@ -686,7 +686,8 @@ static int sec_create(const struct lu_env *env, struct md_object *mo_p,
 				      &attr_value);
 	if(rc) {
 		CERROR("security_init failed for a new object in directory %s, "
-		       "tlabel %s, rc %d\n", dir_name, uc->uc_seclabel, rc);
+		       "tlabel %s, dlabel %s, tclabel %s, rc %d\n",
+		       dir_name, uc->uc_seclabel, label, cseclabel, rc);
 		RETURN(rc);
 	}
 
@@ -694,8 +695,9 @@ static int sec_create(const struct lu_env *env, struct md_object *mo_p,
 				       INITCON_FS_LABEL, ma->ma_attr.la_mode,
 				       name);
 	if (rc < 0) {
-		CDEBUG(D_OTHER, "security_create failed for  %s, tlabel %s, "
-				"rc %d\n", name, uc->uc_seclabel, rc);
+		CDEBUG(D_SEC, "security_create failed for %s, tlabel %s, "
+			"dlabel %s, tclabel %s, rc %d\n",
+			name, uc->uc_seclabel, label, cseclabel, rc);
 		RETURN(rc);
 	}
 
@@ -779,14 +781,14 @@ static int sec_link(const struct lu_env *env, struct md_object *mo_p,
 		RETURN(rc);
 	}
 
-	CDEBUG(D_OTHER, "sec_link: tlabel=%s dlabel=%s ilabel=%s mode=%x, name=%s\n",
+	CDEBUG(D_SEC, "sec_link: tlabel=%s dlabel=%s ilabel=%s mode=%x, name=%s\n",
 	       uc->uc_seclabel, dlabel, ilabel, mda.ma_attr.la_mode, lname->ln_name);
 
 	/* XXX: what should really go to audit? */
 	rc = obd_security_check_link(uc->uc_seclabel /* uc->uc_sid */, dlabel /* dsid */, ilabel /* isid */,
 			       mda.ma_attr.la_mode, pname);
 	if (rc < 0) {
-		CDEBUG(D_OTHER, "security_link failed for dir %s, tlabel %s, "
+		CDEBUG(D_SEC, "security_link failed for dir %s, tlabel %s, "
 				"rc %d\n", pname, uc->uc_seclabel, rc);
 		RETURN(rc);
 	}
@@ -832,13 +834,13 @@ static int sec_unlink(const struct lu_env *env, struct md_object *mo_p,
 		RETURN(rc);
 	}
 
-	CDEBUG(D_OTHER, "sec_unlink: tsid=%s dsid=%s isid=%s mode=%x, name=%s\n",
+	CDEBUG(D_SEC, "sec_unlink: tsid=%s dsid=%s isid=%s mode=%x, name=%s\n",
 	       uc->uc_seclabel, dlabel, ilabel, mda.ma_attr.la_mode, cname);
 
 	rc = obd_security_check_unlink(uc->uc_seclabel, dlabel, ilabel,
 				       mda.ma_attr.la_mode, cname);
 	if (rc < 0) {
-		CDEBUG(D_OTHER, "security_unlink failed for dir %s, object %s,"
+		CDEBUG(D_SEC, "security_unlink failed for dir %s, object %s,"
 				" tlabel %s, rc %d\n", pname, cname, uc->uc_seclabel,
 				rc);
 		RETURN(rc);
@@ -912,7 +914,7 @@ static int sec_rename(const struct lu_env *env,
 				 mda.ma_attr.la_mode, mda.ma_attr.la_mode,
 				 same_dirs, !!mo_t);
 	if (rc < 0) {
-		CDEBUG(D_OTHER, "security_rename failed for olddir %s, "
+		CDEBUG(D_SEC, "security_rename failed for olddir %s, "
 				"newdir %s, object %s, tsid %s, rc %d\n",
 				poname, pnname,
 				fname, uc->uc_seclabel, rc);
