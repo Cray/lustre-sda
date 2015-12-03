@@ -69,14 +69,14 @@ struct file *obd_security_file_get(char *name)
 
 	file = filp_open(name, O_RDWR, 0);
 	if (IS_ERR(file)) {
-		printk("failed to open %s, rc=%ld\n", name, PTR_ERR(file));
+		CERROR("failed to open %s, rc=%ld\n", name, PTR_ERR(file));
 		goto out;
 	}
 	/* RHEL6.5 has a bug fixed by 7d683a09990ff095a91b6e724ecee0ff8733274a */
 	if ((unsigned int)file->f_dentry->d_sb->s_magic != SELINUX_MAGIC) {
 		filp_close(file, 0);
 		file = ERR_PTR(-EINVAL);
-		printk("wrong magic for %s %lx\n", name,
+		CERROR("wrong magic for %s %lx\n", name,
 		       file->f_dentry->d_sb->s_magic);
 		goto out;
 	}
@@ -101,7 +101,7 @@ int obd_security_file_read(char *name, char *value, int len)
 
 	rc = file->f_op->read(file, value, len, &file->f_pos);
 	if (rc < 0)
-		printk("failed to process read request: %s, rc=%d\n", name, rc);
+		CERROR("failed to process read request: %s, rc=%d\n", name, rc);
 
 	obd_security_file_put(file);
 
@@ -175,11 +175,13 @@ void obd_security_compute_av(char *scon, char *tcon,
 
 	snprintf(buf, sizeof(buf), "%s %s %hu", scon, tcon, tclass);
 
-	/* XXX: this requires COMPUTE_AV priviledge */
+	CDEBUG(D_SEC, "compute_av request: %s\n", buf);
+
+	/* N.B. This requires COMPUTE_AV priviledge */
 	rc = sel_access_file->f_op->write(sel_access_file, buf, sizeof(buf),
 					  &sel_access_file->f_pos);
 	if (rc < 0) {
-		printk("failed to process access write request: %s, rc=%d\n", buf, rc);
+		CERROR("failed to process access write request: %s, rc=%d\n", buf, rc);
 		dump_stack();
 		goto err;
 	}
@@ -187,7 +189,7 @@ void obd_security_compute_av(char *scon, char *tcon,
 	rc = sel_access_file->f_op->read(sel_access_file, buf, sizeof(buf),
 					 &sel_access_file->f_pos);
 	if (rc < 0) {
-		printk("failed to process access read request: %s, rc=%d\n", buf, rc);
+		CERROR("failed to process access read request: %s, rc=%d\n", buf, rc);
 		dump_stack();
 		goto err;
 	}
@@ -196,7 +198,7 @@ void obd_security_compute_av(char *scon, char *tcon,
 
 	buf[rc] = '\0';
 
-	/* printk("got reply %s\n", buf); */
+	CDEBUG(D_SEC, "got reply: %s\n", buf);
 
 	sscanf(buf, "%x ffffffff %x %x %u %x",
 	       &osd->allowed, &osd->auditallow,
@@ -225,7 +227,7 @@ struct obd_perm_cache_entry {
 	char	*scon;
 	char	*tcon;
 	u16	tclass;
-	struct obd_security_decision osd;
+	struct	obd_security_decision osd;
 };
 
 struct obd_transition_cache_entry {
@@ -386,10 +388,10 @@ void obd_security_perm_fini(void)
 
 	memset(obd_perm_cache, 0, sizeof(obd_perm_cache));
 
-	printk("Purged %d security permission cache entries "
-	       "(%d hits, %d misses)\n", num,
-	       atomic_read(&obd_perm_hits),
-	       atomic_read(&obd_perm_misses));
+	LCONSOLE_INFO("Purged %d security permission cache entries "
+		      "(%d hits, %d misses)\n", num,
+		      atomic_read(&obd_perm_hits),
+		      atomic_read(&obd_perm_misses));
 }
 
 void obd_security_transition_fini(void)
@@ -409,10 +411,10 @@ void obd_security_transition_fini(void)
 
 	memset(obd_transition_cache, 0, sizeof(obd_transition_cache));
 
-	printk("Purged %d security transition cache entries "
-	       "(%d hits, %d misses)\n", num,
-	       atomic_read(&obd_tran_hits),
-	       atomic_read(&obd_tran_misses));
+	LCONSOLE_INFO("Purged %d security transition cache entries "
+		      "(%d hits, %d misses)\n", num,
+		      atomic_read(&obd_tran_hits),
+		      atomic_read(&obd_tran_misses));
 }
 
 int obd_security_has_perm_noaudit(char *scon, char *tcon,
@@ -536,22 +538,27 @@ int obd_security_transition(char *con, char *dcon, enum obd_secclass tc,
 
 	snprintf(buf, sizeof(buf), "%s %s %hu", con, dcon, tclass);
 
-	/* This requires COMPUTE_CREATE priviledge */
+	CDEBUG(D_SEC, "compute_create request: %s\n", buf);
+
+	/* N.B. This requires COMPUTE_CREATE priviledge */
 	rc = sel_create_file->f_op->write(sel_create_file, buf, sizeof(buf),
 					  &sel_create_file->f_pos);
 	if (rc < 0) {
-		printk("failed to process create write request: %s, rc=%d\n", buf, rc);
+		CERROR("failed to process create write request: %s, rc=%d\n", buf, rc);
 		goto out;
 	}
 
 	rc = sel_create_file->f_op->read(sel_create_file, buf, sizeof(buf),
 					 &sel_create_file->f_pos);
 	if (rc < 0) {
-		printk("failed to process create read request: %s, rc=%d\n", buf, rc);
+		CERROR("failed to process create read request: %s, rc=%d\n", buf, rc);
 		goto out;
 	}
 
 	buf[rc] = '\0';
+
+	CDEBUG(D_SEC, "got reply: %s\n", buf);
+
 	*tcon = kstrdup(buf, GFP_NOFS);
 	if (*tcon == NULL)
 		rc = -ENOMEM;
@@ -809,9 +816,7 @@ static int may_link(char *tcon, char *dcon, char *icon, umode_t mode,
 		av = 1 << OBD_SECPERM_DIR_RMDIR;
 		break;
 	default:
-		printk(KERN_WARNING "SELinux: %s:  unrecognized kind %d\n",
-			__func__, kind);
-		return 0;
+		LBUG();
 	}
 
 	rc = obd_security_has_perm(tcon, icon, inode_mode_to_security_class(mode),
@@ -1191,7 +1196,7 @@ static int obd_map_classes_and_perms(void)
 	char name[128];
 	int i, j, rc;
 
-	printk("Loading security classes and permissions:\n");
+	LCONSOLE_INFO("Loading security classes and permissions:\n");
 
 	for (i = OBD_SECCLASS_DIR; i < OBD_SECCLASS_MAX; i++) {
 		struct obd_secclass_map_s *class= &obd_secclass_map[i];
@@ -1200,9 +1205,6 @@ static int obd_map_classes_and_perms(void)
 		rc = obd_security_file_read_u64(name, &class->policy_class);
 		if (rc < 0)
 			goto out;
-
-		printk("\tmapped class %s:%llu\n", class->name, class->policy_class);
-		printk("\tmapped class %s perms (", class->name);
 
 		for (j = 0; class->perm[j].name != NULL; j++) {
 			struct obd_secperms_map_s *perm = &class->perm[j];
@@ -1214,10 +1216,10 @@ static int obd_map_classes_and_perms(void)
 			if (rc < 0)
 				goto out;
 
-			printk("%s%s:%llu", j > 0 ? ", " : "",
-			       perm->name, perm->policy_perm);
 		}
-		printk(")\n");
+
+		CDEBUG(D_CONSOLE, "\tmapped class %s:%llu\n",
+		       class->name, class->policy_class);
 	}
 out:
 	return rc;
@@ -1233,19 +1235,19 @@ void obd_security_selftest(void)
 	int rc;
 	char *trcon = NULL;
 
-	printk("OBD security self-tests:\n");
+	LCONSOLE_INFO("OBD security self-tests:\n");
 
 	rc = obd_security_has_perm(SUSER, OUSER, OBD_SECCLASS_FILE, OBD_SECPERM_FILE_READ, NULL);
-	printk("\t%s -> read -> %s, rc=%d\n", SUSER, OUSER, rc);
+	LCONSOLE_INFO("\t%s -> read -> %s, rc=%d\n", SUSER, OUSER, rc);
 
 	rc = obd_security_has_perm(SADM, OADM, OBD_SECCLASS_FILE, OBD_SECPERM_FILE_READ, NULL);
-	printk("\t%s -> read -> %s, rc=%d\n", SADM, OADM, rc);
+	LCONSOLE_INFO("\t%s -> read -> %s, rc=%d\n", SADM, OADM, rc);
 
 	rc = obd_security_has_perm(SUSER, OADM, OBD_SECCLASS_FILE,OBD_SECPERM_FILE_READ, NULL);
-	printk("\t%s -> read -> %s, rc=%d\n", SUSER, OADM, rc);
+	LCONSOLE_INFO("\t%s -> read -> %s, rc=%d\n", SUSER, OADM, rc);
 
 	rc = obd_security_transition(SUSER, OUSER, OBD_SECCLASS_FILE, &trcon);
-	printk("\t%s -> create -> %s -> %s\n", SUSER, OUSER, trcon);
+	LCONSOLE_INFO("\t%s -> create -> %s -> %s\n", SUSER, OUSER, trcon);
 	if (trcon != NULL)
 		kfree(trcon);
 }
@@ -1295,7 +1297,7 @@ int compat_security_find_validate_transition(void *data, const char *name, struc
 {
 	if (!strcmp("security_validate_transition", name)) {
 		svt = (void *)addr;
-		printk("found svt @ %lx\n", addr);
+		LCONSOLE_INFO("found svt @ %lx\n", addr);
 		return 1;
 	}
 
@@ -1334,7 +1336,7 @@ int compat_security_find_getprocattr(void *data, const char *name,
 {
 	if (!strcmp("security_getprocattr", name)) {
 		sgpa = (void *)addr;
-		printk("found sgpa @ %lx\n", addr);
+		LCONSOLE_INFO("found sgpa @ %lx\n", addr);
 		return 1;
 	}
 
@@ -1402,7 +1404,7 @@ int obd_security_trigger_reload_policy(u32 seqno)
 {
 	static DECLARE_WORK(reload_work, obd_security_reload_policy);
 
-	printk("Lustre: reloading security policy\n");
+	LCONSOLE_INFO("Lustre: reloading security policy\n");
 	schedule_work(&reload_work);
 
 	jprobe_return();
@@ -1423,13 +1425,13 @@ int obd_security_init(void)
 
 	kallsyms_on_each_symbol(compat_security_find_validate_transition, NULL);
 	if (svt == NULL) {
-		printk("Error: svt not found\n");
+		CERROR("Error: svt not found\n");
 		return -ENOENT;
 	}
 
 	kallsyms_on_each_symbol(compat_security_find_getprocattr, NULL);
 	if (sgpa == NULL) {
-		printk("Error: sgpa not found\n");
+		CERROR("Error: sgpa not found\n");
 		return -ENOENT;
 	}
 
@@ -1439,7 +1441,7 @@ int obd_security_init(void)
 
 	rc = register_jprobe(&obd_security_jp);
 	if (rc < 0)
-		printk("Error: failed to hook cache reload\n");
+		CERROR("Error: failed to hook cache reload\n");
 	else
 		obd_security_jp_registered = 1;
 out:
