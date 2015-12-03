@@ -914,10 +914,12 @@ static int mdt_getattr_internal(struct mdt_thread_info *info,
 		buffer->lb_len = reqbody->mbo_eadatasize - 1;
 		rc = mo_readlink(env, next, buffer);
 		if (unlikely(rc <= 0)) {
-			CERROR("%s: readlink failed for "DFID": rc = %d\n",
-			       mdt_obd_name(info->mti_mdt),
-			       PFID(mdt_object_fid(o)), rc);
-			rc = -EFAULT;
+			if (rc != -EACCES) {
+				CERROR("%s: readlink failed for "DFID": rc = %d\n",
+				       mdt_obd_name(info->mti_mdt),
+				       PFID(mdt_object_fid(o)), rc);
+				rc = -EFAULT;
+			}
 		} else {
 			int print_limit = min_t(int, PAGE_CACHE_SIZE - 128, rc);
 

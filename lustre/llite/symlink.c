@@ -77,7 +77,7 @@ static int ll_readlink_internal(struct inode *inode,
         rc = md_getattr(sbi->ll_md_exp, op_data, request);
         ll_finish_md_op_data(op_data);
         if (rc) {
-                if (rc != -ENOENT)
+                if (rc != -ENOENT && rc != -EACCES)
 			CERROR("%s: inode "DFID": rc = %d\n",
 			       ll_get_fsname(inode->i_sb, NULL, 0),
 			       PFID(ll_inode2fid(inode)), rc);
@@ -110,12 +110,14 @@ static int ll_readlink_internal(struct inode *inode,
                 GOTO(failed, rc = -EPROTO);
         }
 
-        OBD_ALLOC(lli->lli_symlink_name, symlen);
-        /* do not return an error if we cannot cache the symlink locally */
-        if (lli->lli_symlink_name) {
-                memcpy(lli->lli_symlink_name, *symname, symlen);
-                *symname = lli->lli_symlink_name;
-        }
+	if (!hard_security) {
+		OBD_ALLOC(lli->lli_symlink_name, symlen);
+		/* do not return an error if we cannot cache the symlink locally */
+		if (lli->lli_symlink_name) {
+			memcpy(lli->lli_symlink_name, *symname, symlen);
+			*symname = lli->lli_symlink_name;
+		}
+	}
         RETURN(0);
 
 failed:
