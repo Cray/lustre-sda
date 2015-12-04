@@ -136,6 +136,12 @@ static const struct req_msg_field *quotactl_only[] = {
         &RMF_OBD_QUOTACTL
 };
 
+static const struct req_msg_field *quotactl_only_se[] = {
+	&RMF_PTLRPC_BODY,
+	&RMF_OBD_QUOTACTL,
+	&RMF_SELINUX
+};
+
 static const struct req_msg_field *quota_body_only[] = {
 	&RMF_PTLRPC_BODY,
 	&RMF_QUOTA_BODY
@@ -928,7 +934,8 @@ static struct req_format *req_formats[] = {
         &RQF_MDS_REINT_SETXATTR,
         &RQF_MDS_REINT_SETXATTR_SE,
         &RQF_MDS_QUOTACHECK,
-        &RQF_MDS_QUOTACTL,
+	&RQF_MDS_QUOTACTL,
+	&RQF_MDS_QUOTACTL_SE,
 	&RQF_MDS_HSM_PROGRESS,
 	&RQF_MDS_HSM_CT_REGISTER,
 	&RQF_MDS_HSM_CT_UNREGISTER,
@@ -1487,6 +1494,10 @@ EXPORT_SYMBOL(RQF_OST_QUOTACHECK);
 struct req_format RQF_MDS_QUOTACTL =
         DEFINE_REQ_FMT0("MDS_QUOTACTL", quotactl_only, quotactl_only);
 EXPORT_SYMBOL(RQF_MDS_QUOTACTL);
+
+struct req_format RQF_MDS_QUOTACTL_SE =
+        DEFINE_REQ_FMT0("MDS_QUOTACTL_SE", quotactl_only_se, quotactl_only);
+EXPORT_SYMBOL(RQF_MDS_QUOTACTL_SE);
 
 struct req_format RQF_OST_QUOTACTL =
         DEFINE_REQ_FMT0("OST_QUOTACTL", quotactl_only, quotactl_only);

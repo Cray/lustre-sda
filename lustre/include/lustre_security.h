@@ -22,6 +22,8 @@ int obd_security_check_unlink(char *tcon, char *dcon, char *icon,
 			      umode_t mode, char *name);
 int obd_security_check_readlink(char *tcon, char *ocon, umode_t mode, char *name);
 int obd_security_check_mount(char *tcon, char *sbcon, char *name);
+int obd_security_check_quotamod(char *tcon, char *sbcon, char *name);
+int obd_security_check_getquota(char *tcon, char *sbcon, char *name);
 int obd_security_check_setxattr(char *tcon, char *sbcon, char *icon,
 				umode_t mode, char *fname,
 				void *value, size_t size, char *name,

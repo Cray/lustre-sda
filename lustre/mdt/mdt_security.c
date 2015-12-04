@@ -139,3 +139,23 @@ int mdt_sec_mount(const struct lu_env *env, char *name)
 
 	return rc;
 }
+
+int mdt_sec_quotamod(const struct lu_env *env, char *name)
+{
+	struct lu_ucred *uc = lu_ucred(env);
+	int rc;
+
+	rc = obd_security_check_quotamod(uc->uc_seclabel, INITCON_FS_LABEL, name);
+
+	return rc;
+}
+
+int mdt_sec_getquota(const struct lu_env *env, char *name)
+{
+	struct lu_ucred *uc = lu_ucred(env);
+	int rc;
+
+	rc = obd_security_check_getquota(uc->uc_seclabel, INITCON_FS_LABEL, name);
+
+	return rc;
+}

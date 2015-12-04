@@ -2022,11 +2022,38 @@ static int mdt_quotactl(struct tgt_session_info *tsi)
 	int			 id, rc;
 	struct mdt_device	*mdt = mdt_exp2dev(exp);
 	struct lu_device	*qmt = mdt->mdt_qmt_dev;
+	struct mdt_thread_info	*info = tsi2mdt_info(tsi);
 	ENTRY;
 
+	rc = mdt_unpack_security(info);
+	if (rc < 0) {
+		mdt_thread_info_fini(info);
+		RETURN(err_serious(rc));
+	}
+
 	oqctl = req_capsule_client_get(pill, &RMF_OBD_QUOTACTL);
-	if (oqctl == NULL)
+	if (oqctl == NULL) {
+		mdt_thread_info_fini(info);
 		RETURN(err_serious(-EPROTO));
+	}
+
+	switch (oqctl->qc_cmd) {
+	case Q_SETINFO:
+	case Q_SETQUOTA:
+		rc = mdt_sec_quotamod(info->mti_env, "/");
+		break;
+	case Q_GETINFO:
+	case Q_GETQUOTA:
+	case Q_GETOINFO:
+	case Q_GETOQUOTA:
+		rc = mdt_sec_getquota(info->mti_env, "/");
+		break;
+	}
+
+	mdt_thread_info_fini(info);
+
+	if (rc < 0)
+		RETURN(err_serious(rc));
 
 	rc = req_capsule_server_pack(pill);
 	if (rc)
@@ -4173,7 +4200,7 @@ TGT_MDT_HDL(HABEO_CORPUS,		MDS_DONE_WRITING,
 							mdt_done_writing),
 TGT_MDT_HDL_SE(HABEO_CORPUS| HABEO_REFERO,	MDS_READPAGE,	mdt_readpage),
 TGT_MDT_HDL(HABEO_CORPUS| HABEO_REFERO,	MDS_SYNC,	mdt_sync),
-TGT_MDT_HDL(0,				MDS_QUOTACTL,	mdt_quotactl),
+TGT_MDT_HDL_SE(0,				MDS_QUOTACTL,	mdt_quotactl),
 TGT_MDT_HDL(HABEO_CORPUS| HABEO_REFERO | MUTABOR, MDS_HSM_PROGRESS,
 							mdt_hsm_progress),
 TGT_MDT_HDL(HABEO_CORPUS| HABEO_REFERO | MUTABOR, MDS_HSM_CT_REGISTER,

@@ -1879,13 +1879,36 @@ static int mdc_quotactl(struct obd_device *unused, struct obd_export *exp,
         struct ptlrpc_request   *req;
         struct obd_quotactl     *oqc;
         int                      rc;
+	char			*domain = NULL;
         ENTRY;
 
-        req = ptlrpc_request_alloc_pack(class_exp2cliimp(exp),
-                                        &RQF_MDS_QUOTACTL, LUSTRE_MDS_VERSION,
-                                        MDS_QUOTACTL);
-        if (req == NULL)
-                RETURN(-ENOMEM);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   mdc_select_rq_format(exp, RQF_MDS_QUOTACTL));
+	if (req == NULL)
+		RETURN(-ENOMEM);
+
+	if (exp_connect_selustre(exp)) {
+		domain = mdc_current_domain();
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			rc = -EPERM;
+			goto err_out;
+		}
+
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
+
+	rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_QUOTACTL);
+	if (rc != 0) {
+		mdc_release_domain(domain);
+err_out:
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
+	mdc_pack_domain(req, domain);
+	mdc_release_domain(domain);
 
         oqc = req_capsule_client_get(&req->rq_pill, &RMF_OBD_QUOTACTL);
         *oqc = *oqctl;
