@@ -148,7 +148,9 @@ enum {
 
 enum {
 	OBD_SECPERM_FS_ASSOCIATE,
-	OBD_SECPERM_FS_MOUNT
+	OBD_SECPERM_FS_MOUNT,
+	OBD_SECPERM_FS_GETQUOTA,
+	OBD_SECPERM_FS_QUOTAMOD,
 };
 
 enum {
@@ -194,7 +196,9 @@ struct obd_secclass_map_s {
 			     },
 	[OBD_SECCLASS_FS] = { "filesystem", {
 					[OBD_SECPERM_FS_ASSOCIATE] = { "associate" },
-					[OBD_SECPERM_FS_MOUNT] = { "mount" }
+					[OBD_SECPERM_FS_MOUNT] = { "mount" },
+					[OBD_SECPERM_FS_GETQUOTA] = { "quotaget" },
+					[OBD_SECPERM_FS_QUOTAMOD] = { "quotamod" }
 					}
 				    },
 	[OBD_SECCLASS_FD] = { "fd", {
