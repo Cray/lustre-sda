@@ -963,6 +963,8 @@ void mdt_stats_counter_init(struct lprocfs_stats *stats)
                              "samedir_rename", "reqs");
         lprocfs_counter_init(stats, LPROC_MDT_CROSSDIR_RENAME, 0,
                              "crossdir_rename", "reqs");
+	lprocfs_counter_init(stats, LPROC_MDT_CHECKFLAGS, 0,
+                             "checkflags", "reqs");
 }
 
 int mdt_procfs_init(struct mdt_device *mdt, const char *name)

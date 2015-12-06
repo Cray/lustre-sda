@@ -158,6 +158,7 @@ extern struct req_format RQF_MDS_STATFS_SE;
 extern struct req_format RQF_MDS_GETSTATUS;
 extern struct req_format RQF_MDS_GETSTATUS_SE;
 extern struct req_format RQF_MDS_SYNC;
+extern struct req_format RQF_MDS_CHECK_FLAGS_SE;
 extern struct req_format RQF_MDS_GETXATTR;
 extern struct req_format RQF_MDS_GETXATTR_SE;
 extern struct req_format RQF_MDS_GETATTR;

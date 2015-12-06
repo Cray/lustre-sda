@@ -2010,6 +2010,29 @@ static int mdt_sync(struct tgt_session_info *tsi)
 	RETURN(rc);
 }
 
+static int mdt_check_flags(struct tgt_session_info *tsi)
+{
+	struct ptlrpc_request	*req = tgt_ses_req(tsi);
+	struct mdt_thread_info	*info = tsi2mdt_info(tsi);
+	struct mdt_object *mdo;
+	int rc;
+	ENTRY;
+
+	rc = mdt_unpack_security(info);
+	if (rc < 0)
+		GOTO(out, rc);
+
+	mdo = info->mti_object;
+	rc = mdt_sec_check_flags(info->mti_env, mdo);
+	if (rc == 0)
+		mdt_counter_incr(req, LPROC_MDT_CHECKFLAGS);
+
+out:
+	mdt_thread_info_fini(info);
+	RETURN(rc);
+
+}
+
 /*
  * Handle quota control requests to consult current usage/limit, but also
  * to configure quota enforcement
@@ -4200,6 +4223,7 @@ TGT_MDT_HDL(HABEO_CORPUS,		MDS_DONE_WRITING,
 							mdt_done_writing),
 TGT_MDT_HDL_SE(HABEO_CORPUS| HABEO_REFERO,	MDS_READPAGE,	mdt_readpage),
 TGT_MDT_HDL(HABEO_CORPUS| HABEO_REFERO,	MDS_SYNC,	mdt_sync),
+TGT_MDT_HDL_SE(HABEO_CORPUS| HABEO_REFERO, MDS_CHECK_FLAGS,	mdt_check_flags),
 TGT_MDT_HDL_SE(0,				MDS_QUOTACTL,	mdt_quotactl),
 TGT_MDT_HDL(HABEO_CORPUS| HABEO_REFERO | MUTABOR, MDS_HSM_PROGRESS,
 							mdt_hsm_progress),

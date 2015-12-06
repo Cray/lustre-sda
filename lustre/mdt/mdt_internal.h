@@ -1037,6 +1037,7 @@ enum {
         LPROC_MDT_SYNC,
         LPROC_MDT_SAMEDIR_RENAME,
         LPROC_MDT_CROSSDIR_RENAME,
+	LPROC_MDT_CHECKFLAGS,
         LPROC_MDT_LAST,
 };
 void mdt_counter_incr(struct ptlrpc_request *req, int opcode);
@@ -1083,5 +1084,6 @@ int mdt_sec_lookup(const struct lu_env *env, struct mdt_object *parent);
 int mdt_sec_mount(const struct lu_env *env, char *name);
 int mdt_sec_quotamod(const struct lu_env *env, char *name);
 int mdt_sec_getquota(const struct lu_env *env, char *name);
+int mdt_sec_check_flags(const struct lu_env *env, struct mdt_object *mdo);
 
 #endif /* _MDT_H */
