@@ -1279,13 +1279,16 @@ void obd_security_selftest(void)
 
 	LCONSOLE_INFO("OBD security self-tests:\n");
 
-	rc = obd_security_has_perm(SUSER, OUSER, OBD_SECCLASS_FILE, OBD_SECPERM_FILE_READ, NULL);
+	rc = obd_security_has_perm(SUSER, OUSER, OBD_SECCLASS_FILE,
+				   1 << OBD_SECPERM_FILE_READ, NULL);
 	LCONSOLE_INFO("\t%s -> read -> %s, rc=%d\n", SUSER, OUSER, rc);
 
-	rc = obd_security_has_perm(SADM, OADM, OBD_SECCLASS_FILE, OBD_SECPERM_FILE_READ, NULL);
+	rc = obd_security_has_perm(SADM, OADM, OBD_SECCLASS_FILE,
+				   1 << OBD_SECPERM_FILE_READ, NULL);
 	LCONSOLE_INFO("\t%s -> read -> %s, rc=%d\n", SADM, OADM, rc);
 
-	rc = obd_security_has_perm(SUSER, OADM, OBD_SECCLASS_FILE,OBD_SECPERM_FILE_READ, NULL);
+	rc = obd_security_has_perm(SUSER, OADM, OBD_SECCLASS_FILE,
+				   1 << OBD_SECPERM_FILE_READ, NULL);
 	LCONSOLE_INFO("\t%s -> read -> %s, rc=%d\n", SUSER, OADM, rc);
 
 	rc = obd_security_transition(SUSER, OUSER, OBD_SECCLASS_FILE, &trcon);
