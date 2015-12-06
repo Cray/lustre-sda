@@ -761,6 +761,32 @@ int obd_security_check_create(char *tcon, char *tccon, char *dcon,
 EXPORT_SYMBOL(obd_security_check_create);
 
 /**
+ * \brief Check file_flags security.
+ * \param tcon The task context
+ * \param ocon The object context
+ * \param fcon The FD context
+ * \param mode The object mode
+ * \param name The object name (for audit)
+ * \retval 0 success and the operation is permitted
+ * \retval -EACCES operation not permitted by the policy
+ */
+int obd_security_check_flags(char *tcon, char *ocon, char *fcon,
+			    umode_t mode, char *name)
+{
+	int rc;
+
+	down_read(&obd_secpol_rwsem);
+
+	rc = obd_security_has_perm(tcon, ocon,
+				   inode_mode_to_security_class(mode),
+				   1 << OBD_SECPERM_FILE_WRITE, name);
+	up_read(&obd_secpol_rwsem);
+
+	return rc;
+}
+EXPORT_SYMBOL(obd_security_check_flags);
+
+/**
  * \brief Check file_lock security.
  * \param tcon The task context
  * \param ocon The object context

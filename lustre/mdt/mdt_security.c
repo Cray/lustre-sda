@@ -159,3 +159,33 @@ int mdt_sec_getquota(const struct lu_env *env, char *name)
 
 	return rc;
 }
+
+int mdt_sec_check_flags(const struct lu_env *env, struct mdt_object *mdo)
+{
+	struct lu_ucred *uc = lu_ucred(env);
+	int rc;
+	char olabel[CFS_SID_MAX_LEN];
+	char file_name[30];
+	struct md_attr mda;
+	ENTRY;
+
+	snprintf(file_name, sizeof(file_name),
+		 DFID, PFID(mdt_object_fid(mdo)));
+
+	mda.ma_need = MA_INODE;
+	mda.ma_valid = 0;
+	rc = mo_attr_get(env, mdt_object_child(mdo), &mda);
+	if (rc < 0)
+		RETURN(rc);
+
+	rc = mdt_sec_get_object_label(env, mdo, olabel);
+	if (rc)
+		RETURN(rc);
+
+	rc = obd_security_check_flags(uc->uc_seclabel, olabel, 0,
+				     mda.ma_attr.la_mode, file_name);
+	if (rc)
+		RETURN(rc);
+
+	RETURN(0);
+}

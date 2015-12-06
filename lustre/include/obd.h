@@ -1268,6 +1268,9 @@ struct md_ops {
 	int (*m_get_remote_perm)(struct obd_export *, const struct lu_fid *,
 				 struct obd_capa *, __u32,
 				 struct ptlrpc_request **);
+	int (*m_check_flags)(struct obd_export *exp, const struct lu_fid *fid,
+			      struct obd_capa *oc);
+
 };
 
 struct lsm_operations {

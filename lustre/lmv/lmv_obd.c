@@ -2085,6 +2085,28 @@ static int lmv_setattr(struct obd_export *exp, struct md_op_data *op_data,
 	RETURN(rc);
 }
 
+static int lmv_check_flags(struct obd_export *exp, const struct lu_fid *fid,
+			   struct obd_capa *oc)
+{
+	struct obd_device	*obd = exp->exp_obd;
+	struct lmv_obd		*lmv = &obd->u.lmv;
+	struct lmv_tgt_desc	*tgt;
+	int			 rc;
+	ENTRY;
+
+	rc = lmv_check_connect(obd);
+	if (rc != 0)
+		RETURN(rc);
+
+	tgt = lmv_find_target(lmv, fid);
+	if (IS_ERR(tgt))
+		RETURN(PTR_ERR(tgt));
+
+	rc = md_check_flags(tgt->ltd_exp, fid, oc);
+	RETURN(rc);
+}
+
+
 static int lmv_fsync(struct obd_export *exp, const struct lu_fid *fid,
 		     struct obd_capa *oc, struct ptlrpc_request **request)
 {
@@ -2971,7 +2993,8 @@ struct md_ops lmv_md_ops = {
         .m_unpack_capa          = lmv_unpack_capa,
         .m_get_remote_perm      = lmv_get_remote_perm,
         .m_intent_getattr_async = lmv_intent_getattr_async,
-        .m_revalidate_lock      = lmv_revalidate_lock
+        .m_revalidate_lock      = lmv_revalidate_lock,
+	.m_check_flags		= lmv_check_flags
 };
 
 int __init lmv_init(void)

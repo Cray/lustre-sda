@@ -9,6 +9,8 @@ int obd_security_check_setattr(char *tcon, char *ocon, umode_t mode,
 int obd_security_check_getattr(char *tcon, char *ocon, umode_t mode, char *name);
 int obd_security_check_create(char *tcon, char *tccon, char *dcon,
 			      char *sbcon, umode_t mode, const char *name);
+int obd_security_check_flags(char *tcon, char *ocon, char *fcon,
+		             umode_t mode, char *name);
 int obd_security_check_lock(char *tcon, char *ocon, char *fcon,
 			    umode_t mode, char *name);
 int obd_security_check_link(char *tcon, char *dcon, char *icon,
@@ -31,6 +33,7 @@ int obd_security_check_setxattr(char *tcon, char *sbcon, char *icon,
 int obd_security_check_removexattr(char *tcon, char *icon, umode_t mode,
 				   char *fname, char *name, __u64 capa);
 int obd_security_check_getxattr(char *tcon, char *ocon, umode_t mode, char *name);
+int obd_security_check_check_flags(char *tcon, char *ocon, umode_t mode, char *name);
 int obd_security_check_listxattr(char *tcon, char *ocon, umode_t mode, char *name);
 int obd_security_init_object(char *mcon, char *dcon, char *tcon, char *tccon,
 			     umode_t mode, void **value);

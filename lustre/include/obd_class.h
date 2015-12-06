@@ -1627,6 +1627,17 @@ static inline int md_setattr(struct obd_export *exp, struct md_op_data *op_data,
         RETURN(rc);
 }
 
+static inline int md_check_flags(struct obd_export *exp, const struct lu_fid *fid,
+				 struct obd_capa *oc)
+{
+	int rc;
+	ENTRY;
+	EXP_CHECK_MD_OP(exp, check_flags);
+	EXP_MD_COUNTER_INCREMENT(exp, check_flags);
+	rc = MDP(exp->exp_obd, check_flags)(exp, fid, oc);
+	RETURN(rc);
+}
+
 static inline int md_fsync(struct obd_export *exp, const struct lu_fid *fid,
 			   struct obd_capa *oc, struct ptlrpc_request **request)
 {

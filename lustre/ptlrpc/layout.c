@@ -908,6 +908,7 @@ static struct req_format *req_formats[] = {
         &RQF_MDS_GETXATTR,
         &RQF_MDS_GETXATTR_SE,
         &RQF_MDS_SYNC,
+	&RQF_MDS_CHECK_FLAGS_SE,
         &RQF_MDS_CLOSE,
 	&RQF_MDS_RELEASE_CLOSE,
 	&RQF_MDS_READPAGE,
@@ -1532,6 +1533,10 @@ EXPORT_SYMBOL(RQF_MDS_STATFS);
 struct req_format RQF_MDS_STATFS_SE =
 	DEFINE_REQ_FMT0("MDS_STATFS_SE", empty_se, obd_statfs_server);
 EXPORT_SYMBOL(RQF_MDS_STATFS_SE);
+
+struct req_format RQF_MDS_CHECK_FLAGS_SE =
+       DEFINE_REQ_FMT0("MDS_CHECK_FLAGS_SE", mdt_body_capa_se, ldlm_enqueue_server);
+EXPORT_SYMBOL(RQF_MDS_CHECK_FLAGS_SE);
 
 struct req_format RQF_MDS_SYNC =
         DEFINE_REQ_FMT0("MDS_SYNC", mdt_body_capa, mdt_body_only);
