@@ -139,7 +139,7 @@ static void ll_invalidate_inode_sid(struct inode *inode)
 {
 	struct inode_security_struct *isec;
 
-	if (!selinux_is_enabled())
+	if (!obd_security_supported)
 		return;
 
 	isec = inode->i_security;
@@ -758,7 +758,7 @@ ll_convert_intent(struct open_intent *oit, int lookup_flags)
 		it->it_flags = ll_namei_to_lookup_intent_flag(oit->flags);
 		it->it_flags &= ~MDS_OPEN_FL_INTERNAL;
 	} else {
-		if (hard_security)
+		if (obd_security_supported && hard_security)
 			it->it_op = IT_LOOKUP;
 		else
 			it->it_op = IT_GETATTR;

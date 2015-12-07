@@ -110,7 +110,7 @@ static int ll_readlink_internal(struct inode *inode,
                 GOTO(failed, rc = -EPROTO);
         }
 
-	if (!hard_security) {
+	if (!(obd_security_supported && hard_security)) {
 		OBD_ALLOC(lli->lli_symlink_name, symlen);
 		/* do not return an error if we cannot cache the symlink locally */
 		if (lli->lli_symlink_name) {

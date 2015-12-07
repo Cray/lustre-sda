@@ -334,7 +334,7 @@ static int ll_revalidate_dentry(struct dentry *dentry,
 {
 	struct inode *dir = dentry->d_parent->d_inode;
 
-	if (hard_security)
+	if (obd_security_supported && hard_security)
 		return 0;
 
 	/* If this is intermediate component path lookup and we were able to get

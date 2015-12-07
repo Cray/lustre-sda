@@ -39,6 +39,9 @@
 unsigned int hard_security = 1;
 EXPORT_SYMBOL(hard_security);
 
+unsigned int obd_security_supported;
+EXPORT_SYMBOL(obd_security_supported);
+
 DECLARE_RWSEM(obd_secpol_rwsem);
 
 u64 obd_security_openperm;
@@ -125,6 +128,9 @@ int obd_security_file_read_u64(char *name, u64 *value)
 int obd_security_from_inode(struct inode *inode, char *label)
 {
 	int rc;
+
+	if (!obd_security_supported)
+		return -EPERM;
 
 	rc = xattr_getsecurity(inode, "selinux", label, CFS_SID_MAX_LEN);
 	if (rc < 0)
@@ -1426,7 +1432,15 @@ static int obd_security_load_policy(void)
 out:
 	set_fs(fs);
 
-	return rc;
+	if (rc < 0) {
+		obd_security_supported = 0;
+		CDEBUG(D_CONSOLE, "SELinux is not supported on this system.\n");
+	} else {
+		obd_security_supported = 1;
+		CDEBUG(D_CONSOLE, "SELinux is supported on this system.\n");
+	}
+
+	return 0;
 
 }
 
