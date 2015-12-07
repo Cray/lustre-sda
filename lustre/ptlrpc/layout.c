@@ -1535,7 +1535,7 @@ struct req_format RQF_MDS_STATFS_SE =
 EXPORT_SYMBOL(RQF_MDS_STATFS_SE);
 
 struct req_format RQF_MDS_CHECK_FLAGS_SE =
-       DEFINE_REQ_FMT0("MDS_CHECK_FLAGS_SE", mdt_body_capa_se, ldlm_enqueue_server);
+       DEFINE_REQ_FMT0("MDS_CHECK_FLAGS_SE", mdt_body_capa_se, empty);
 EXPORT_SYMBOL(RQF_MDS_CHECK_FLAGS_SE);
 
 struct req_format RQF_MDS_SYNC =
