@@ -2425,7 +2425,7 @@ int mdc_get_info(const struct lu_env *env, struct obd_export *exp,
 }
 
 int mdc_check_flags(struct obd_export *exp, const struct lu_fid *fid,
-	      struct obd_capa *oc)
+		    struct obd_capa *oc)
 {
 	struct ptlrpc_request *req;
 	int                    rc;
@@ -2448,9 +2448,8 @@ int mdc_check_flags(struct obd_export *exp, const struct lu_fid *fid,
 		domain = mdc_current_domain();
 		if (domain == NULL) {
 			CERROR("no security information\n");
-			rc = -EPERM;
 			ptlrpc_request_free(req);
-			RETURN(rc);
+			RETURN(-EPERM);
 		}
 
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
@@ -2458,7 +2457,7 @@ int mdc_check_flags(struct obd_export *exp, const struct lu_fid *fid,
 	}
 
 	rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_CHECK_FLAGS);
-	if (rc) {
+	if (rc < 0) {
 		ptlrpc_request_free(req);
 		mdc_release_domain(domain);
 		RETURN(rc);
@@ -2471,8 +2470,6 @@ int mdc_check_flags(struct obd_export *exp, const struct lu_fid *fid,
 
 	rc = ptlrpc_queue_wait(req);
 	ptlrpc_req_finished(req);
-
-	capa_put(oc);
 
 	RETURN(rc);
 }

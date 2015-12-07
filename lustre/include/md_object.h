@@ -255,7 +255,6 @@ struct md_object_operations {
 			       struct lustre_handle *lh,
 			       struct ldlm_enqueue_info *einfo,
 			       void *policy);
-	int (*moo_check_flags)(const struct lu_env *env, struct md_object *obj);
 };
 
 /**
@@ -516,13 +515,6 @@ static inline int mo_attr_get(const struct lu_env *env,
 {
         LASSERT(m->mo_ops->moo_attr_get);
         return m->mo_ops->moo_attr_get(env, m, at);
-}
-
-static inline int mo_check_flags(const struct lu_env *env,
-				struct md_object *m)
-{
-        LASSERT(m->mo_ops->moo_check_flags);
-        return m->mo_ops->moo_check_flags(env, m);
 }
 
 static inline int mo_readlink(const struct lu_env *env,

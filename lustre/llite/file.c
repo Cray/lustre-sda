@@ -2792,22 +2792,28 @@ int ll_check_flags(int flags)
 	unsigned long args[6], sp, pc;
 	struct file *filp;
 	struct obd_capa *oc;
-	int rc = 0;
+	int rc;
 	ENTRY;
 
-	LASSERT(!task_current_syscall(current, &nr, args, 6, &sp, &pc));
+	rc = task_current_syscall(current, &nr, args, 6, &sp, &pc);
+	LASSERT(rc == 0);
 
 	filp = fget(args[0]);
+	/* sys_fcntl should have already dereferenced and checked the fd */
+	LASSERT(filp != NULL);
 
 	if ((filp->f_flags & (O_APPEND | O_WRONLY)) == (O_APPEND | O_WRONLY) &&
 	    ((flags & (O_APPEND | O_WRONLY)) == O_WRONLY)) {
-		struct dentry *dentry = filp->f_dentry;
-		struct inode *inode = dentry->d_inode;
+		struct inode *inode = filp->f_dentry->d_inode;
+
 		oc = ll_mdscapa_get(inode);
-		rc = md_check_flags(ll_i2sbi(inode)->ll_md_exp, ll_inode2fid(inode), oc);
+		rc = md_check_flags(ll_i2sbi(inode)->ll_md_exp,
+				    ll_inode2fid(inode), oc);
+		capa_put(oc);
 	}
 
 	fput(filp);
+
 	RETURN(rc);
 }
 
