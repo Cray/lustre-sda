@@ -1295,7 +1295,7 @@ int lustre_fill_super(struct super_block *sb, void *data, int silent)
                         if (rc) {
 				CERROR("Failed to start mgc while mounting "
 					"device %s: rc = %d", lmd->lmd_dev, rc);
-                                lustre_put_lsi(sb);
+				lustre_common_put_super(sb);
                                 GOTO(out, rc);
                         }
                         /* Connect and start */
