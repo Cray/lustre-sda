@@ -330,9 +330,9 @@ ENABLE_INIT_SCRIPTS=0
 AS_IF([test x$enable_utils = xyes], [
 	AC_CACHE_CHECK([whether to install init scripts], [lb_cv_enable_init_scripts], [
 	# our scripts only work on red hat systems
-#	AS_IF([test -f /etc/redhat-release],
+	AS_IF([test -f /etc/redhat-release],
 		[lb_cv_enable_init_scripts="yes"],
-#		[lb_cv_enable_init_scripts="no"])
+		[lb_cv_enable_init_scripts="no"])
 	])
 	AS_IF([test "x$lb_cv_enable_init_scripts" = xyes],
 		[ENABLE_INIT_SCRIPTS=1])
