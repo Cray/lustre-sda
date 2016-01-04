@@ -36,7 +36,7 @@
 
 #include <obd_support.h>
 
-unsigned int hard_security = 1;
+unsigned int hard_security = 0;
 EXPORT_SYMBOL(hard_security);
 
 unsigned int obd_security_supported;
