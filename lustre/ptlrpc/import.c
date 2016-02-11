@@ -887,14 +887,17 @@ static int ptlrpc_connect_set_flags(struct obd_import *imp,
 				      ocd->ocd_cksum_types,
 				      cksum_types_supported_client());
 			cli->cl_checksum = 0;
-			cli->cl_supp_cksum_types = OBD_CKSUM_ADLER;
+			cli->cl_supp_cksum_types = OBD_CKSUM_CRC32C;
 		} else {
 			cli->cl_supp_cksum_types = ocd->ocd_cksum_types;
 		}
 	} else {
 		/* The server does not support OBD_CONNECT_CKSUM.
-		 * Enforce ADLER for backward compatibility*/
-		cli->cl_supp_cksum_types = OBD_CKSUM_ADLER;
+		 * Since we have removed adler, disable checksums for backward
+		 * compatibility.
+		 */
+		cli->cl_checksum = 0;
+		cli->cl_supp_cksum_types = OBD_CKSUM_CRC32C;
 	}
 	cli->cl_cksum_type = cksum_type_select(cli->cl_supp_cksum_types);
 
