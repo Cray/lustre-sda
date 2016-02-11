@@ -66,6 +66,7 @@ static inline unsigned char cksum_obd2cfs(cksum_type_t cksum_type)
  * In case multiple algorithms are supported the best one is used. */
 static inline obd_flag cksum_type_pack(cksum_type_t cksum_type)
 {
+#if 0
 	unsigned int    performance = 0, tmp;
 	obd_flag	flag = OBD_FL_CKSUM_ADLER;
 
@@ -96,10 +97,16 @@ static inline obd_flag cksum_type_pack(cksum_type_t cksum_type)
 		CWARN("unknown cksum type %x\n", cksum_type);
 
 	return flag;
+#endif
+	if (unlikely(cksum_type != OBD_CKSUM_CRC32C))
+		CWARN("unknown cksum type %x\n", cksum_type);
+
+	return OBD_FL_CKSUM_CRC32C;
 }
 
 static inline cksum_type_t cksum_type_unpack(obd_flag o_flags)
 {
+#if 0
 	switch (o_flags & OBD_FL_CKSUM_ALL) {
 	case OBD_FL_CKSUM_CRC32C:
 		return OBD_CKSUM_CRC32C;
@@ -108,8 +115,9 @@ static inline cksum_type_t cksum_type_unpack(obd_flag o_flags)
 	default:
 		break;
 	}
+#endif
 
-	return OBD_CKSUM_ADLER;
+	return OBD_CKSUM_CRC32C;
 }
 
 /* Return a bitmask of the checksum types supported on this system.
@@ -118,19 +126,10 @@ static inline cksum_type_t cksum_type_unpack(obd_flag o_flags)
  */
 static inline cksum_type_t cksum_types_supported_client(void)
 {
-	cksum_type_t ret = OBD_CKSUM_ADLER;
+	CDEBUG(D_INFO, "Crypto hash speed: crc32c %d\n",
+	       cfs_crypto_hash_speed(cksum_obd2cfs(OBD_CKSUM_CRC32C)));
 
-	CDEBUG(D_INFO, "Crypto hash speed: crc %d, crc32c %d, adler %d\n",
-	       cfs_crypto_hash_speed(cksum_obd2cfs(OBD_CKSUM_CRC32)),
-	       cfs_crypto_hash_speed(cksum_obd2cfs(OBD_CKSUM_CRC32C)),
-	       cfs_crypto_hash_speed(cksum_obd2cfs(OBD_CKSUM_ADLER)));
-
-	if (cfs_crypto_hash_speed(cksum_obd2cfs(OBD_CKSUM_CRC32C)) > 0)
-		ret |= OBD_CKSUM_CRC32C;
-	if (cfs_crypto_hash_speed(cksum_obd2cfs(OBD_CKSUM_CRC32)) > 0)
-		ret |= OBD_CKSUM_CRC32;
-
-	return ret;
+	return OBD_CKSUM_CRC32C;
 }
 
 /* Server uses algos that perform at 50% or better of the Adler */

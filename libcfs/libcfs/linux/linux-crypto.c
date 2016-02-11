@@ -29,6 +29,7 @@
 
 #include <linux/crypto.h>
 #include <linux/scatterlist.h>
+#include <linux/fips.h>
 #include <libcfs/libcfs.h>
 #include <libcfs/linux/linux-crypto.h>
 /**
@@ -272,12 +273,14 @@ int cfs_crypto_register(void)
 {
 	request_module("crc32c");
 
-	crc32 = cfs_crypto_crc32_register();
-	adler32 = cfs_crypto_adler32_register();
+	if (fips_enabled == 0) {
+		crc32 = cfs_crypto_crc32_register();
+		adler32 = cfs_crypto_adler32_register();
 
 #ifdef HAVE_PCLMULQDQ
-	crc32pclmul = cfs_crypto_crc32_pclmul_register();
+		crc32pclmul = cfs_crypto_crc32_pclmul_register();
 #endif
+	}
 
 	/* check all algorithms and do performance test */
 	cfs_crypto_test_hashes();
@@ -285,15 +288,16 @@ int cfs_crypto_register(void)
 }
 void cfs_crypto_unregister(void)
 {
-	if (crc32 == 0)
-		cfs_crypto_crc32_unregister();
-	if (adler32 == 0)
-		cfs_crypto_adler32_unregister();
+	if (fips_enabled == 0) {
+		if (crc32 == 0)
+			cfs_crypto_crc32_unregister();
+		if (adler32 == 0)
+			cfs_crypto_adler32_unregister();
 
 #ifdef HAVE_PCLMULQDQ
-	if (crc32pclmul == 0)
-		cfs_crypto_crc32_pclmul_unregister();
+		if (crc32pclmul == 0)
+			cfs_crypto_crc32_pclmul_unregister();
 #endif
-
+	}
 	return;
 }
