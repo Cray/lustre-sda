@@ -36,11 +36,21 @@
 
 #include <obd_support.h>
 
-unsigned int hard_security = 0;
+unsigned int hard_security = 1;
 EXPORT_SYMBOL(hard_security);
 
-unsigned int obd_security_supported;
+unsigned int obd_security_supported = 1;
 EXPORT_SYMBOL(obd_security_supported);
+
+char *sec_domain;
+CFS_MODULE_PARM(sec_domain, "s", charp, 0444,
+		"Lustre subject fixed SELinux security label");
+EXPORT_SYMBOL(sec_domain);
+
+char *sec_create_domain;
+CFS_MODULE_PARM(sec_create_domain, "s", charp, 0444,
+		"Lustre object fixed SELinux security label");
+EXPORT_SYMBOL(sec_create_domain);
 
 DECLARE_RWSEM(obd_secpol_rwsem);
 
@@ -127,16 +137,7 @@ int obd_security_file_read_u64(char *name, u64 *value)
 
 int obd_security_from_inode(struct inode *inode, char *label)
 {
-	int rc;
-
-	if (!obd_security_supported)
-		return -EPERM;
-
-	rc = xattr_getsecurity(inode, "selinux", label, CFS_SID_MAX_LEN);
-	if (rc < 0)
-		return rc;
-
-	label[rc] = 0;
+	strcpy(label, sec_domain);
 
 	return 0;
 }
@@ -1400,7 +1401,6 @@ int compat_security_validate_transition(char *oldlabel, char *newlabel, char *tl
 
 	return svt(oldsid, newsid, tasksid, compat_inode_mode_to_security_class(mode));
 }
-
 /*
  * Although we can read the information from /proc/self/attr/fscreate,
  * the environment on the client is less controllable than on the server.
@@ -1484,7 +1484,6 @@ void obd_security_reload_policy(struct work_struct *unused)
 	up_write(&obd_secpol_rwsem);
 }
 
-
 int obd_security_trigger_reload_policy(u32 seqno)
 {
 	static DECLARE_WORK(reload_work, obd_security_reload_policy);
@@ -1496,6 +1495,8 @@ int obd_security_trigger_reload_policy(u32 seqno)
 
 	return 0;
 }
+
+#if 0
 
 static struct jprobe obd_security_jp = {
 	.entry          = obd_security_trigger_reload_policy,
@@ -1533,9 +1534,55 @@ out:
 	return rc;
 }
 
+
 void obd_security_fini(void)
 {
 	if (obd_security_jp_registered)
 		unregister_jprobe(&obd_security_jp);
 	obd_security_unload_policy();
 }
+#endif
+
+#define OBD_SEC_DOMAIN_COLONS_MIN	2
+
+/**
+ * Sanity-check a string that represents a fixed-label SELinux domain. The
+ * checking performed is very basic; the intention is to ensure that the
+ * specified domains adhere to the format of valid SELinux contexts,
+ * i.e. user:role:type (with an optional MLS/MCS level/compartment).
+ *
+ * \retval true the domain has not been set at startup or has an invalid format
+ * \retval false the domain has been set and appears to have a valid format
+ */
+static bool obd_security_domain_check(const char * const domain)
+{
+	unsigned char num_colons;
+	unsigned char i;
+
+	if (domain == NULL) {
+		CERROR("Lustre fixed SELinux security label not defined!\n");
+		return true;
+	}
+
+	for (num_colons = 0, i = 0; domain[i]; i++)
+		if (domain[i] == ':')
+			num_colons++;
+
+	if (num_colons < OBD_SEC_DOMAIN_COLONS_MIN) {
+		CERROR("Lustre fixed SELinux security label has an invalid"
+		       "format!\n");
+		return true;
+	}
+
+	return false;
+}
+
+int obd_security_init(void)
+{
+	/** Sanity-check the fixed-label domains passed in the modparams. */
+	if (obd_security_domain_check(sec_domain) ||
+	    obd_security_domain_check(sec_create_domain))
+		return -EINVAL;
+	return 0;
+}
+

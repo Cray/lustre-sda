@@ -41,5 +41,4 @@ int obd_security_init_object(char *mcon, char *dcon, char *tcon, char *tccon,
 int obd_security_from_inode(struct inode *inode, char *label);
 int obd_security_file_default_label(char *seclabel);
 
-int obd_security_get_create_label(char **value);
 #endif

@@ -137,12 +137,7 @@ int mdc_setattr(struct obd_export *exp, struct md_op_data *op_data,
         req_capsule_set_size(&req->rq_pill, &RMF_LOGCOOKIES, RCL_CLIENT,
                              ea2len);
 	if (exp_connect_selustre(exp)) {
-		domain = mdc_current_domain();
-		if (domain == NULL) {
-			CERROR("no security information\n");
-			rc = -EPERM;
-			goto err_out;
-		}
+		domain = current_domain();
 
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
@@ -150,8 +145,6 @@ int mdc_setattr(struct obd_export *exp, struct md_op_data *op_data,
 
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {
-		mdc_release_domain(domain);
-err_out:
 		ptlrpc_request_free(req);
 		RETURN(rc);
 	}
@@ -164,8 +157,6 @@ err_out:
                        LTIME_S(op_data->op_attr.ia_mtime),
                        LTIME_S(op_data->op_attr.ia_ctime));
         mdc_setattr_pack(req, op_data, ea, ealen, ea2, ea2len, domain);
-
-	mdc_release_domain(domain);
 
         ptlrpc_request_set_replen(req);
         if (mod && (op_data->op_flags & MF_EPOCH_OPEN) &&
@@ -271,25 +262,19 @@ rebuild:
         req_capsule_set_size(&req->rq_pill, &RMF_EADATA, RCL_CLIENT,
                              data && datalen ? datalen : 0);
 	if (exp_connect_selustre(exp)) {
-		domain = mdc_current_domain();
-		if (domain == NULL) {
-			CERROR("no security information\n");
-			rc = -EPERM;
-			goto err_out;
-		}
+		domain = current_domain();
 
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
 
-		crdomain = mdc_current_create_domain();
+		crdomain = current_create_domain();
+
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX2, RCL_CLIENT,
-				     crdomain ? strlen(crdomain) + 1 : 0);
+				     strlen(crdomain) + 1);
 	}
 
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {
-		mdc_release_domain(domain);
-err_out:
 		ptlrpc_request_free(req);
 		RETURN(rc);
 	}
@@ -300,9 +285,6 @@ err_out:
          */
         mdc_create_pack(req, op_data, data, datalen, mode, uid,
                         gid, cap_effective, rdev, domain, crdomain);
-
-	mdc_release_domain(domain);
-	mdc_release_domain(crdomain);
 
         ptlrpc_request_set_replen(req);
 
@@ -390,12 +372,7 @@ int mdc_unlink(struct obd_export *exp, struct md_op_data *op_data,
                              op_data->op_namelen + 1);
 
 	if (exp_connect_selustre(exp)) {
-		domain = mdc_current_domain();
-		if (domain == NULL) {
-			CERROR("no security information\n");
-			rc = -EPERM;
-			goto err_out;
-		}
+		domain = current_domain();
 
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
@@ -403,15 +380,11 @@ int mdc_unlink(struct obd_export *exp, struct md_op_data *op_data,
 
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {
-		mdc_release_domain(domain);
-err_out:
 		ptlrpc_request_free(req);
 		RETURN(rc);
 	}
 
 	mdc_unlink_pack(req, op_data, domain);
-
-	mdc_release_domain(domain);
 
 	req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER,
 			     obd->u.cli.cl_default_mds_easize);
@@ -460,12 +433,7 @@ int mdc_link(struct obd_export *exp, struct md_op_data *op_data,
                              op_data->op_namelen + 1);
 
 	if (exp_connect_selustre(exp)) {
-		domain = mdc_current_domain();
-		if (domain == NULL) {
-			CERROR("no security information\n");
-			rc = -EPERM;
-			goto err_out;
-		}
+		domain = current_domain();
 
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
@@ -473,15 +441,11 @@ int mdc_link(struct obd_export *exp, struct md_op_data *op_data,
 
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {
-		mdc_release_domain(domain);
-err_out:
 		ptlrpc_request_free(req);
 		RETURN(rc);
 	}
 
 	mdc_link_pack(req, op_data, domain);
-
-	mdc_release_domain(domain);
 
         ptlrpc_request_set_replen(req);
 
@@ -538,12 +502,7 @@ int mdc_rename(struct obd_export *exp, struct md_op_data *op_data,
         req_capsule_set_size(&req->rq_pill, &RMF_SYMTGT, RCL_CLIENT, newlen+1);
 
 	if (exp_connect_selustre(exp)) {
-		domain = mdc_current_domain();
-		if (domain == NULL) {
-			CERROR("no security information\n");
-			rc = -EPERM;
-			goto err_out;
-		}
+		domain = current_domain();
 
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
@@ -551,8 +510,6 @@ int mdc_rename(struct obd_export *exp, struct md_op_data *op_data,
 
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {
-		mdc_release_domain(domain);
-err_out:
 		ptlrpc_request_free(req);
 		RETURN(rc);
 	}
@@ -561,8 +518,6 @@ err_out:
                 ldlm_cli_cancel_list(&cancels, count, req, 0);
 
 	mdc_rename_pack(req, op_data, old, oldlen, new, newlen, domain);
-
-	mdc_release_domain(domain);
 
 	req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER,
 			     obd->u.cli.cl_default_mds_easize);
