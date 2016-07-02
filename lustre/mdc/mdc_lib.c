@@ -38,42 +38,8 @@
 #include <lustre_net.h>
 #include <lustre_security.h>
 #include <lustre/lustre_idl.h>
+#include <obd_support.h>
 #include "mdc_internal.h"
-
-char *mdc_current_domain(void)
-{
-	char *domain = NULL;
-	u32 secid, seclen;
-	int rc;
-
-	security_task_getsecid(current, &secid);
-
-	rc = security_secid_to_secctx(secid, &domain, &seclen);
-	if (rc != 0)
-		return NULL;
-
-	return domain;
-}
-
-char *mdc_current_create_domain(void)
-{
-	int rc;
-	char *dom;
-
-	rc = obd_security_get_create_label(&dom);
-	if (rc <= 0)
-		return NULL;
-
-	return dom;
-}
-
-void mdc_release_domain(char *domain)
-{
-	if (domain != NULL)
-		/* XXX:  should be size, not 0, but it's a trivial kfree
-		 *       and I'm too lazy to pass size through func calls */
-		security_release_secctx(domain, 0);
-}
 
 void mdc_pack_domain(struct ptlrpc_request *req, char *cdomain)
 {

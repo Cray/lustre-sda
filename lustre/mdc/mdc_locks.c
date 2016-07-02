@@ -328,29 +328,20 @@ mdc_intent_open_pack(struct obd_export *exp, struct lookup_intent *it,
 	req_capsule_set_size(&req->rq_pill, &RMF_EADATA, RCL_CLIENT,
 			     max(lmmsize, obddev->u.cli.cl_default_mds_easize));
 	if (exp_connect_selustre(exp)) {
-		domain = mdc_current_domain();
-		if (domain == NULL) {
-			CERROR("no security information\n");
-			rc = -EPERM;
-			goto err_out;
-		}
+		domain = current_domain();
 
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
 
 		if (it->it_op & IT_CREAT)
-			crdomain = mdc_current_create_domain();
+			crdomain = current_create_domain();
 
-		req_capsule_set_size(&req->rq_pill,
-				     &RMF_SELINUX2,
-				     RCL_CLIENT,
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX2, RCL_CLIENT,
 				     crdomain ? strlen(crdomain) + 1 : 0);
 	}
 
 	rc = ldlm_prep_enqueue_req(exp, req, &cancels, count);
 	if (rc < 0) {
-		mdc_release_domain(domain);
-err_out:
 		ptlrpc_request_free(req);
 		RETURN(ERR_PTR(rc));
 	}
@@ -366,9 +357,6 @@ err_out:
         /* pack the intended request */
         mdc_open_pack(req, op_data, it->it_create_mode, 0, it->it_flags, lmm,
                       lmmsize, domain, crdomain);
-
-	mdc_release_domain(domain);
-	mdc_release_domain(crdomain);
 
         /* for remote client, fetch remote perm for current user */
         if (client_is_remote(exp))
@@ -449,20 +437,14 @@ static struct ptlrpc_request *mdc_intent_unlink_pack(struct obd_export *exp,
                              op_data->op_namelen + 1);
 
 	if (exp_connect_selustre(exp)) {
-		domain = mdc_current_domain();
-		if (domain == NULL) {
-			CERROR("no security information\n");
-			rc = -EPERM;
-			goto err_out;
-		}
+		domain = current_domain();
+
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
 	}
 
         rc = ldlm_prep_enqueue_req(exp, req, NULL, 0);
         if (rc) {
-		mdc_release_domain(domain);
-err_out:
                 ptlrpc_request_free(req);
                 RETURN(ERR_PTR(rc));
         }
@@ -473,8 +455,6 @@ err_out:
 
 	/* pack the intended request */
 	mdc_unlink_pack(req, op_data, domain);
-
-	mdc_release_domain(domain);
 
 	req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER,
 			     obddev->u.cli.cl_default_mds_easize);
@@ -511,12 +491,7 @@ static struct ptlrpc_request *mdc_intent_getattr_pack(struct obd_export *exp,
                              op_data->op_namelen + 1);
 
 	if (exp_connect_selustre(exp)) {
-		domain = mdc_current_domain();
-		if (domain == NULL) {
-			CERROR("no security information\n");
-			rc = -EPERM;
-			goto err_out;
-		}
+		domain = current_domain();
 
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
@@ -524,8 +499,6 @@ static struct ptlrpc_request *mdc_intent_getattr_pack(struct obd_export *exp,
 
         rc = ldlm_prep_enqueue_req(exp, req, NULL, 0);
         if (rc) {
-		mdc_release_domain(domain);
-err_out:
                 ptlrpc_request_free(req);
                 RETURN(ERR_PTR(rc));
         }
@@ -541,8 +514,6 @@ err_out:
 
 	/* pack the intended request */
 	mdc_getattr_pack(req, valid, it->it_flags, op_data, easize, domain);
-
-	mdc_release_domain(domain);
 
 	req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER, easize);
 	if (client_is_remote(exp))
@@ -572,12 +543,7 @@ static struct ptlrpc_request *mdc_intent_layout_pack(struct obd_export *exp,
 	req_capsule_set_size(&req->rq_pill, &RMF_EADATA, RCL_CLIENT, 0);
 
 	if (exp_connect_selustre(exp)) {
-		domain = mdc_current_domain();
-		if (domain == NULL) {
-			CERROR("no security information\n");
-			rc = -EPERM;
-			goto err_out;
-		}
+		domain = current_domain();
 
 		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
 				     strlen(domain) + 1);
@@ -585,14 +551,11 @@ static struct ptlrpc_request *mdc_intent_layout_pack(struct obd_export *exp,
 
 	rc = ldlm_prep_enqueue_req(exp, req, NULL, 0);
 	if (rc) {
-		mdc_release_domain(domain);
-err_out:
 		ptlrpc_request_free(req);
 		RETURN(ERR_PTR(rc));
 	}
 
 	mdc_pack_domain(req, domain);
-	mdc_release_domain(domain);
 
 	/* pack the intent */
 	lit = req_capsule_client_get(&req->rq_pill, &RMF_LDLM_INTENT);

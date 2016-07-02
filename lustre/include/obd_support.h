@@ -72,6 +72,12 @@ extern unsigned int obd_alloc_fail_rate;
 extern char obd_jobid_var[];
 extern unsigned int hard_security;
 extern unsigned int obd_security_supported;
+extern char *sec_domain;
+extern char *sec_create_domain;
+
+#define current_domain()	sec_domain
+#define current_create_domain()	sec_create_domain
+
 
 /* lvfs.c */
 int obd_alloc_fail(const void *ptr, const char *name, const char *type,
