@@ -704,8 +704,6 @@ static void cleanup_obdclass(void)
         memory_max = obd_memory_max();
         pages_max = obd_pages_max();
 
-	obd_security_fini();
-
         lprocfs_free_stats(&obd_memory);
         CDEBUG((memory_leaked) ? D_ERROR : D_INFO,
                "obd_memory max: "LPU64", leaked: "LPU64"\n",

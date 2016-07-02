@@ -41,6 +41,7 @@
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
 #include <linux/security.h>
+#include <linux/fsnotify.h>
 
 #define DEBUG_SUBSYSTEM S_LLITE
 
@@ -130,28 +131,6 @@ struct inode_security_struct {
 	unsigned char initialized;	/* initialization flag */
 	struct mutex lock;
 };
-
-/**
- * \brief Mark \a inode as not having a SELinux label attached
- * \param inode The inode to invalidate
- */
-static void ll_invalidate_inode_sid(struct inode *inode)
-{
-	struct inode_security_struct *isec;
-
-	if (!obd_security_supported)
-		return;
-
-	isec = inode->i_security;
-
-	/* This flag is not really checked each time SELinux refers
-	 * to inode SID. Rather, it is checked when a dentry is
-	 * instantiated for a possible skip of inode security
-	 * initialization. Do not expect from the following code
-	 * what it does NOT do.
-	 */
-	isec->initialized = 0;
-}
 
 /*
  * Get an inode by inode number (already instantiated by the intent lookup).
@@ -327,7 +306,6 @@ int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
 			 *	cl_file_inode_init(): Failure to initialize cl object [0x200000400:0x2:0x0]: -5
 			 *	ll_prep_inode(): new_inode -fatal: rc -5
 			 */
-			ll_invalidate_inode_sid(inode);
 
 			if (inode != inode->i_sb->s_root->d_inode)
 				ll_invalidate_aliases(inode);
@@ -761,6 +739,43 @@ ll_convert_intent(struct open_intent *oit, int lookup_flags)
 	return it;
 }
 
+/**
+ * Carries out a lookup, just to cause the MDS sec layer lookup
+ * check to take place; otherwise, the lookup on the last path
+ * component is IT_OPEN, and so the SELinux context of the
+ * parent of the last path component is not checked on the MDS,
+ * when the client is running in permissive mode, or with
+ * SELinux disabled, such as the fixed-label client does.
+ */
+static struct dentry *ll_lookup_parent_lite(struct inode *parent,
+					    struct dentry *dentry)
+{
+	struct dentry *de;
+	struct inode *inode;
+	ENTRY;
+
+	de = ll_lookup_it(parent, dentry, NULL, 0);
+	if (IS_ERR(de))
+		RETURN(de);
+
+	inode = dentry->d_inode;
+	spin_lock(&dcache_lock);
+	spin_lock(&dentry->d_lock);
+	dentry->d_inode = NULL;
+	if (!list_empty(&dentry->d_alias))
+		list_del_init(&dentry->d_alias);
+
+	spin_unlock(&dentry->d_lock);
+	spin_unlock(&dcache_lock);
+	if (inode) {
+		if (!inode->i_nlink)
+			fsnotify_inoderemove(inode);
+		if (dentry->d_op && dentry->d_op->d_iput)
+			dentry->d_op->d_iput(dentry, inode);
+	}
+	RETURN(de);
+}
+
 static struct dentry *ll_lookup_nd(struct inode *parent, struct dentry *dentry,
                                    struct nameidata *nd)
 {
@@ -769,6 +784,10 @@ static struct dentry *ll_lookup_nd(struct inode *parent, struct dentry *dentry,
 
         if (nd && !(nd->flags & (LOOKUP_CONTINUE|LOOKUP_PARENT))) {
                 struct lookup_intent *it;
+
+		de = ll_lookup_parent_lite(parent, dentry);
+		if (IS_ERR(de))
+			RETURN(de);
 
                 if (ll_d2d(dentry) && ll_d2d(dentry)->lld_it) {
                         it = ll_d2d(dentry)->lld_it;
