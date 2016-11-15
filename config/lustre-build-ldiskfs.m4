@@ -7,6 +7,7 @@ AC_MSG_CHECKING([which ldiskfs series to use])
 AS_IF([test x$RHEL_KERNEL = xyes], [
 	case $RHEL_RELEASE_NO in
 	70)	LDISKFS_SERIES="3.10-rhel7.series"	;;
+	68)	LDISKFS_SERIES="2.6-rhel6.8.series"	;;
 	65)	LDISKFS_SERIES="2.6-rhel6.5.series"	;;
 	64)	LDISKFS_SERIES="2.6-rhel6.4.series"	;;
 	6[0-3])	LDISKFS_SERIES="2.6-rhel6.series"	;;
@@ -26,7 +27,7 @@ AS_IF([test x$RHEL_KERNEL = xyes], [
 	])
 ])
 AS_IF([test -z "$LDISKFS_SERIES"],
-	[AC_MSG_WARN([Unknown kernel version $LDISKFS_VERSIONRELEASE])])
+	[AC_MSG_WARN([Unknown kernel ($RHEL_RELEASE_NO) version $LDISKFS_VERSIONRELEASE])])
 AC_MSG_RESULT([$LDISKFS_SERIES])
 AC_SUBST(LDISKFS_SERIES)
 ]) # LDISKFS_LINUX_SERIES
