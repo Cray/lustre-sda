@@ -517,7 +517,6 @@ load_modules_local() {
 	esac
     LNETLND=${LNETLND:-"socklnd/ksocklnd"}
     load_module ../lnet/klnds/$LNETLND
-echo > /sys/kernel/debug/tracing/trace
     load_module obdclass/obdclass
     load_module ptlrpc/ptlrpc
     load_module ptlrpc/gss/ptlrpc_gss
