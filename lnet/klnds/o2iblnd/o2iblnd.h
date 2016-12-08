@@ -110,7 +110,6 @@ typedef struct
 	int		 *kib_ib_mtu;		/* IB MTU */
 	int              *kib_map_on_demand;    /* map-on-demand if RD has more fragments
 						 * than this value, 0 disable map-on-demand */
-	int              *kib_pmr_pool_size;    /* # physical MR in pool */
 	int              *kib_fmr_pool_size;    /* # FMRs in pool */
 	int              *kib_fmr_flush_trigger; /* When to trigger FMR flush */
 	int              *kib_fmr_cache;        /* enable FMR pool cache? */
@@ -138,10 +137,17 @@ extern kib_tunables_t  kiblnd_tunables;
                                      IBLND_CREDIT_HIGHWATER_V1 : \
                                      *kiblnd_tunables.kib_peercredits_hiw) /* when eagerly to return credits */
 
-#ifdef HAVE_RDMA_CREATE_ID_4ARG
-#define kiblnd_rdma_create_id(cb, dev, ps, qpt) rdma_create_id(cb, dev, ps, qpt)
+#ifdef HAVE_RDMA_CREATE_ID_5ARG
+# define kiblnd_rdma_create_id(cb, dev, ps, qpt) rdma_create_id(current->nsproxy->net_ns, \
+								cb, dev, \
+								ps, qpt)
 #else
-#define kiblnd_rdma_create_id(cb, dev, ps, qpt) rdma_create_id(cb, dev, ps)
+# ifdef HAVE_RDMA_CREATE_ID_4ARG
+#  define kiblnd_rdma_create_id(cb, dev, ps, qpt) rdma_create_id(cb, dev, \
+								 ps, qpt)
+# else
+#  define kiblnd_rdma_create_id(cb, dev, ps, qpt) rdma_create_id(cb, dev, ps)
+# endif
 #endif
 
 static inline int
@@ -176,7 +182,6 @@ kiblnd_concurrent_sends_v1(void)
 /* Pools (shared by connections on each CPT) */
 /* These pools can grow at runtime, so don't need give a very large value */
 #define IBLND_TX_POOL			256
-#define IBLND_PMR_POOL			256
 #define IBLND_FMR_POOL			256
 #define IBLND_FMR_POOL_FLUSH		192
 
@@ -231,8 +236,7 @@ typedef struct kib_hca_dev
 	__u64                ibh_page_mask;     /* page mask of current HCA */
 	int                  ibh_mr_shift;      /* bits shift of max MR size */
 	__u64                ibh_mr_size;       /* size of MR */
-	int                  ibh_nmrs;          /* # of global MRs */
-	struct ib_mr       **ibh_mrs;           /* global MR */
+	struct ib_mr        *ibh_mrs;           /* global MR */
 	struct ib_pd        *ibh_pd;            /* PD */
 	kib_dev_t           *ibh_dev;           /* owner */
 	atomic_t             ibh_ref;           /* refcount */
@@ -248,17 +252,6 @@ typedef struct
         int                     ibp_npages;             /* # pages */
         struct page            *ibp_pages[0];           /* page array */
 } kib_pages_t;
-
-struct kib_pmr_pool;
-
-typedef struct {
-	struct list_head	pmr_list;	/* chain node */
-	struct ib_phys_buf     *pmr_ipb;	/* physical buffer */
-	struct ib_mr	       *pmr_mr;		/* IB MR */
-	struct kib_pmr_pool    *pmr_pool;	/* owner of this MR */
-	__u64			pmr_iova;	/* Virtual I/O address */
-	int			pmr_refcount;	/* reference count */
-} kib_phys_mr_t;
 
 struct kib_pool;
 struct kib_poolset;
@@ -334,15 +327,6 @@ typedef struct {
         kib_pages_t            *tpo_tx_pages;           /* premapped tx msg pages */
 } kib_tx_pool_t;
 
-typedef struct {
-        kib_poolset_t           pps_poolset;            /* pool-set */
-} kib_pmr_poolset_t;
-
-typedef struct kib_pmr_pool {
-        struct kib_hca_dev     *ppo_hdev;               /* device for this pool */
-        kib_pool_t              ppo_pool;               /* pool */
-} kib_pmr_pool_t;
-
 typedef struct
 {
 	spinlock_t		fps_lock;		/* serialize */
@@ -359,20 +343,50 @@ typedef struct
 	cfs_time_t		fps_next_retry;
 } kib_fmr_poolset_t;
 
+#ifndef HAVE_IB_RDMA_WR
+struct ib_rdma_wr {
+	struct ib_send_wr wr;
+};
+#endif
+
+struct kib_fast_reg_descriptor { /* For fast registration */
+	struct list_head		 frd_list;
+	struct ib_rdma_wr		 frd_inv_wr;
+#ifdef HAVE_IB_MAP_MR_SG
+	struct ib_reg_wr		 frd_fastreg_wr;
+#else
+	struct ib_rdma_wr		 frd_fastreg_wr;
+	struct ib_fast_reg_page_list    *frd_frpl;
+#endif
+	struct ib_mr			*frd_mr;
+	bool				 frd_valid;
+};
+
 typedef struct
 {
 	struct list_head	fpo_list;	/* chain on pool list */
 	struct kib_hca_dev     *fpo_hdev;	/* device for this pool */
 	kib_fmr_poolset_t      *fpo_owner;	/* owner of this pool */
-	struct ib_fmr_pool     *fpo_fmr_pool;	/* IB FMR pool */
+	union {
+		struct {
+			struct ib_fmr_pool *fpo_fmr_pool; /* IB FMR pool */
+		} fmr;
+		struct { /* For fast registration */
+			struct list_head  fpo_pool_list;
+			int		  fpo_pool_size;
+		} fast_reg;
+	};
 	cfs_time_t		fpo_deadline;	/* deadline of this pool */
 	int			fpo_failed;	/* fmr pool is failed */
 	int			fpo_map_count;	/* # of mapped FMR */
+	int			fpo_is_fmr;
 } kib_fmr_pool_t;
 
 typedef struct {
-        struct ib_pool_fmr     *fmr_pfmr;               /* IB pool fmr */
-        kib_fmr_pool_t         *fmr_pool;               /* pool of FMR */
+	kib_fmr_pool_t			*fmr_pool;	/* pool of FMR */
+	struct ib_pool_fmr		*fmr_pfmr;	/* IB pool fmr */
+	struct kib_fast_reg_descriptor	*fmr_frd;
+	u32				 fmr_key;
 } kib_fmr_t;
 
 typedef struct kib_net
@@ -388,7 +402,6 @@ typedef struct kib_net
 
 	kib_tx_poolset_t	**ibn_tx_ps;	/* tx pool-set */
 	kib_fmr_poolset_t	**ibn_fmr_ps;	/* fmr pool-set */
-	kib_pmr_poolset_t	**ibn_pmr_ps;	/* pmr pool-set */
 
 	kib_dev_t		*ibn_dev;	/* underlying IB device */
 } kib_net_t;
@@ -625,7 +638,7 @@ typedef struct kib_tx                           /* transmit message */
 	/* # send work items */
 	int			tx_nwrq;
 	/* send work items... */
-	struct ib_send_wr	*tx_wrq;
+	struct ib_rdma_wr	*tx_wrq;
 	/* ...and their memory */
 	struct ib_sge		*tx_sge;
 	/* rdma descriptor */
@@ -636,12 +649,8 @@ typedef struct kib_tx                           /* transmit message */
 	struct scatterlist	*tx_frags;
 	/* rdma phys page addrs */
 	__u64			*tx_pages;
-	union {
-		/* MR for physical buffer */
-		kib_phys_mr_t  *pmr;
-		/* FMR */
-		kib_fmr_t	fmr;
-	}			tx_u;
+	/* FMR */
+	kib_fmr_t		fmr;
 				/* dma direction */
 	int			tx_dmadir;
 } kib_tx_t;
@@ -756,6 +765,19 @@ typedef struct kib_peer
 	/* when (in jiffies) I was last alive */
 	cfs_time_t		ibp_last_alive;
 } kib_peer_t;
+
+#ifndef HAVE_IB_INC_RKEY
+/**
+ * ib_inc_rkey - increments the key portion of the given rkey. Can be used
+ * for calculating a new rkey for type 2 memory windows.
+ * @rkey - the rkey to increment.
+ */
+static inline u32 ib_inc_rkey(u32 rkey)
+{
+	const u32 mask = 0x000000ff;
+	return ((rkey + 1) & mask) | (rkey & ~mask);
+}
+#endif
 
 extern kib_data_t      kiblnd_data;
 
@@ -927,10 +949,12 @@ kiblnd_queue2str(kib_conn_t *conn, struct list_head *q)
 /* CAVEAT EMPTOR: We rely on descriptor alignment to allow us to use the
  * lowest bits of the work request id to stash the work item type. */
 
-#define IBLND_WID_TX    0
-#define IBLND_WID_RDMA  1
-#define IBLND_WID_RX    2
-#define IBLND_WID_MASK  3UL
+#define IBLND_WID_INVAL	0
+#define IBLND_WID_TX	1
+#define IBLND_WID_RX	2
+#define IBLND_WID_RDMA	3
+#define IBLND_WID_MR	4
+#define IBLND_WID_MASK	7UL
 
 static inline __u64
 kiblnd_ptr2wreqid (void *ptr, int type)
@@ -1168,8 +1192,6 @@ static inline void kiblnd_dma_sync_single_for_device(struct ib_device *dev,
 
 struct ib_mr *kiblnd_find_rd_dma_mr(kib_hca_dev_t *hdev,
                                     kib_rdma_desc_t *rd);
-struct ib_mr *kiblnd_find_dma_mr(kib_hca_dev_t *hdev,
-                                 __u64 addr, __u64 size);
 void kiblnd_map_rx_descs(kib_conn_t *conn);
 void kiblnd_unmap_rx_descs(kib_conn_t *conn);
 int kiblnd_map_tx(lnet_ni_t *ni, kib_tx_t *tx,
@@ -1178,13 +1200,10 @@ void kiblnd_unmap_tx(lnet_ni_t *ni, kib_tx_t *tx);
 void kiblnd_pool_free_node(kib_pool_t *pool, struct list_head *node);
 struct list_head *kiblnd_pool_alloc_node(kib_poolset_t *ps);
 
-int  kiblnd_fmr_pool_map(kib_fmr_poolset_t *fps, __u64 *pages,
-                         int npages, __u64 iov, kib_fmr_t *fmr);
+int  kiblnd_fmr_pool_map(kib_fmr_poolset_t *fps, kib_tx_t *tx,
+			 kib_rdma_desc_t *rd, __u32 nob, __u64 iov,
+			 kib_fmr_t *fmr);
 void kiblnd_fmr_pool_unmap(kib_fmr_t *fmr, int status);
-
-int  kiblnd_pmr_pool_map(kib_pmr_poolset_t *pps, kib_hca_dev_t *hdev,
-                         kib_rdma_desc_t *rd, __u64 *iova, kib_phys_mr_t **pp_pmr);
-void kiblnd_pmr_pool_unmap(kib_phys_mr_t *pmr);
 
 int  kiblnd_tunables_init(void);
 void kiblnd_tunables_fini(void);

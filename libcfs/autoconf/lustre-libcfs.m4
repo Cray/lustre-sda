@@ -301,6 +301,24 @@ shrinker_count_objects, [
 ])
 
 #
+# Kernel version 4.2 changed topology_thread_cpumask
+# to topology_sibling_cpumask
+#
+AC_DEFUN([LIBCFS_HAVE_TOPOLOGY_SIBLING_CPUMASK],[
+LB_CHECK_COMPILE([does function 'topology_sibling_cpumask' exist],
+topology_sibling_cpumask, [
+	#include <linux/topology.h>
+],[
+	const struct cpumask *mask;
+
+	mask = topology_sibling_cpumask(0);
+],[
+	AC_DEFINE(HAVE_TOPOLOGY_SIBLING_CPUMASK, 1,
+		[topology_sibling_cpumask is available])
+])
+]) # LIBCFS_HAVE_TOPOLOGY_SIBLING_CPUMASK
+
+#
 # LIBCFS_PROG_LINUX
 #
 # LibCFS linux kernel checks
@@ -337,6 +355,8 @@ LIBCFS_ENABLE_CRC32_ACCEL
 LIBCFS_ENABLE_CRC32C_ACCEL
 # 3.12
 LIBCFS_SHRINKER_COUNT
+# 4.2
+LIBCFS_HAVE_TOPOLOGY_SIBLING_CPUMASK
 ]) # LIBCFS_PROG_LINUX
 
 #

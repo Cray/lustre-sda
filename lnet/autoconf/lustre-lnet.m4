@@ -412,8 +412,8 @@ directory which is likely in ${O2IBPATH%-*}
 AC_SUBST(EXTRA_OFED_INCLUDE)
 AC_SUBST(O2IBLND)
 
-# In RHEL 6.2, rdma_create_id() takes the queue-pair type as a fourth argument
 AS_IF([test $ENABLEO2IB -ne 0], [
+	# In RHEL 6.2, rdma_create_id() takes the queue-pair type as a fourth argument
 	LB_CHECK_COMPILE([if 'rdma_create_id' wants four args],
 	rdma_create_id_4args, [
 		#ifdef HAVE_COMPAT_RDMA
@@ -426,7 +426,161 @@ AS_IF([test $ENABLEO2IB -ne 0], [
 		AC_DEFINE(HAVE_RDMA_CREATE_ID_4ARG, 1,
 			[rdma_create_id wants 4 args])
 	])
-])
+
+	# 4.4 added network namespace parameter for rdma_create_id()
+	LB_CHECK_COMPILE([if 'rdma_create_id' wants five args],
+	rdma_create_id_5args, [
+		#ifdef HAVE_COMPAT_RDMA
+		#undef PACKAGE_NAME
+		#undef PACKAGE_TARNAME
+		#undef PACKAGE_VERSION
+		#undef PACKAGE_STRING
+		#undef PACKAGE_BUGREPORT
+		#undef PACKAGE_URL
+		#include <linux/compat-2.6.h>
+		#endif
+		#include <rdma/rdma_cm.h>
+	],[
+		rdma_create_id(NULL, NULL, NULL, 0, 0);
+	],[
+		AC_DEFINE(HAVE_RDMA_CREATE_ID_5ARG, 1,
+			[rdma_create_id wants 5 args])
+	])
+
+	# 4.2 introduced struct ib_cq_init_attr which is used
+	# by ib_create_cq(). Note some OFED stacks only keep
+	# their headers in sync with latest kernels but not
+	# the functionality which means for infiniband testing
+	# we need to always test functionality testings.
+
+	#
+	# 4.2 introduced struct ib_cq_init_attr
+	#
+	LB_CHECK_COMPILE([if 'struct ib_cq_init_attr' exist],
+	ib_cq_init_attr, [
+		#ifdef HAVE_COMPAT_RDMA
+		#include <linux/compat-2.6.h>
+		#endif
+		#include <rdma/ib_verbs.h>
+	],[
+		struct ib_cq_init_attr cq_attr;
+
+		cq_attr.comp_vector = NULL;
+	],[
+		AC_DEFINE(HAVE_IB_CQ_INIT_ATTR, 1,
+			[struct ib_cq_init_attr exist])
+	])
+
+	# new fast registration API introduced in 4.4
+	LB_CHECK_COMPILE([if 4arg 'ib_map_mr_sg' exists],
+	ib_map_mr_sg_4args, [
+		#ifdef HAVE_COMPAT_RDMA
+		#undef PACKAGE_NAME
+		#undef PACKAGE_TARNAME
+		#undef PACKAGE_VERSION
+		#undef PACKAGE_STRING
+		#undef PACKAGE_BUGREPORT
+		#undef PACKAGE_URL
+		#include <linux/compat-2.6.h>
+		#endif
+		#include <rdma/ib_verbs.h>
+	],[
+		ib_map_mr_sg(NULL, NULL, 0, 0);
+	],[
+		AC_DEFINE(HAVE_IB_MAP_MR_SG, 1,
+			[ib_map_mr_sg exists])
+	])
+
+	# ib_map_mr_sg changes from 4 to 5 args (adding sg_offset_p)
+	# in kernel 4.7 (and RHEL 7.3)
+	LB_CHECK_COMPILE([if 5arg 'ib_map_mr_sg' exists],
+	ib_map_mr_sg_5args, [
+		#ifdef HAVE_COMPAT_RDMA
+		#undef PACKAGE_NAME
+		#undef PACKAGE_TARNAME
+		#undef PACKAGE_VERSION
+		#undef PACKAGE_STRING
+		#undef PACKAGE_BUGREPORT
+		#undef PACKAGE_URL
+		#include <linux/compat-2.6.h>
+		#endif
+		#include <rdma/ib_verbs.h>
+	],[
+		ib_map_mr_sg(NULL, NULL, 0, NULL, 0);
+	],[
+		AC_DEFINE(HAVE_IB_MAP_MR_SG, 1,
+			[ib_map_mr_sg exists])
+		AC_DEFINE(HAVE_IB_MAP_MR_SG_5ARGS, 1,
+			[ib_map_mr_sg has 5 arguments])
+	])
+
+	# ib_query_device() removed in 4.5
+	LB_CHECK_COMPILE([if 'struct ib_device' has member 'attrs'],
+	ib_device.attrs, [
+		#ifdef HAVE_COMPAT_RDMA
+		#undef PACKAGE_NAME
+		#undef PACKAGE_TARNAME
+		#undef PACKAGE_VERSION
+		#undef PACKAGE_STRING
+		#undef PACKAGE_BUGREPORT
+		#undef PACKAGE_URL
+		#include <linux/compat-2.6.h>
+		#endif
+		#include <rdma/ib_verbs.h>
+	],[
+		struct ib_device dev;
+		struct ib_device_attr dev_attr = {};
+		dev.attrs = dev_attr;
+	],[
+		AC_DEFINE(HAVE_IB_DEVICE_ATTRS, 1,
+			[struct ib_device.attrs is defined])
+	])
+
+	# 4.3 removed ib_alloc_fast_reg_mr()
+	LB_CHECK_COMPILE([if 'ib_alloc_fast_reg_mr' exists],
+	ib_alloc_fast_reg_mr, [
+		#ifdef HAVE_COMPAT_RDMA
+		#undef PACKAGE_NAME
+		#undef PACKAGE_TARNAME
+		#undef PACKAGE_VERSION
+		#undef PACKAGE_STRING
+		#undef PACKAGE_BUGREPORT
+		#undef PACKAGE_URL
+		#include <linux/compat-2.6.h>
+		#endif
+		#include <rdma/ib_verbs.h>
+	],[
+		ib_alloc_fast_reg_mr(NULL, 0);
+	],[
+		AC_DEFINE(HAVE_IB_ALLOC_FAST_REG_MR, 1,
+			[ib_alloc_fast_reg_mr is defined])
+	])
+
+	# In v4.4 Linux kernel,
+	# commit e622f2f4ad2142d2a613a57fb85f8cf737935ef5
+	# split up struct ib_send_wr so that all non-trivial verbs
+	# use their own structure which embedds struct ib_send_wr.
+	LB_CHECK_COMPILE([if 'struct ib_rdma_wr' is defined],
+	ib_rdma_wr, [
+		#ifdef HAVE_COMPAT_RDMA
+		#undef PACKAGE_NAME
+		#undef PACKAGE_TARNAME
+		#undef PACKAGE_VERSION
+		#undef PACKAGE_STRING
+		#undef PACKAGE_BUGREPORT
+		#undef PACKAGE_URL
+		#include <linux/compat-2.6.h>
+		#endif
+		#include <rdma/ib_verbs.h>
+	],[
+		struct ib_rdma_wr *wr __attribute__ ((unused));
+
+		wr = rdma_wr(NULL);
+	],[
+		AC_DEFINE(HAVE_IB_RDMA_WR, 1,
+			[struct ib_rdma_wr is defined])
+	])
+]) # ENABLEO2IB != "no"
 ]) # LN_CONFIG_O2IB
 
 #
@@ -572,6 +726,33 @@ EXTRA_KCFLAGS="$tmp_flags"
 ]) # LN_CONFIG_SK_DATA_READY
 
 #
+# LN_CONFIG_IB_INC_RKEY
+#
+AC_DEFUN([LN_CONFIG_IB_INC_RKEY], [
+tmp_flags="$EXTRA_KCFLAGS"
+EXTRA_KCFLAGS="-Werror"
+LB_CHECK_COMPILE([if function 'ib_inc_rkey' is defined],
+ib_inc_rkey, [
+	#ifdef HAVE_COMPAT_RDMA
+	#undef PACKAGE_NAME
+	#undef PACKAGE_TARNAME
+	#undef PACKAGE_VERSION
+	#undef PACKAGE_STRING
+	#undef PACKAGE_BUGREPORT
+	#undef PACKAGE_URL
+	#include <linux/compat-2.6.h>
+	#endif
+	#include <rdma/ib_verbs.h>
+],[
+	(void)ib_inc_rkey(0);
+],[
+	AC_DEFINE(HAVE_IB_INC_RKEY, 1,
+		  [function ib_inc_rkey exist])
+])
+EXTRA_KCFLAGS="$tmp_flags"
+]) # LN_CONFIG_IB_INC_RKEY
+
+#
 # LN_PROG_LINUX
 #
 # LNet linux kernel checks
@@ -587,6 +768,7 @@ LN_CONFIG_QUADRICS
 LN_CONFIG_O2IB
 LN_CONFIG_RALND
 LN_CONFIG_GNILND
+LN_CONFIG_IB_INC_RKEY
 LN_CONFIG_MX
 # 2.6.36
 LN_CONFIG_TCP_SENDPAGE

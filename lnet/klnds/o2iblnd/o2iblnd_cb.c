@@ -131,7 +131,6 @@ kiblnd_get_idle_tx(lnet_ni_t *ni, lnet_nid_t target)
         LASSERT (tx->tx_conn == NULL);
         LASSERT (tx->tx_lntmsg[0] == NULL);
         LASSERT (tx->tx_lntmsg[1] == NULL);
-        LASSERT (tx->tx_u.pmr == NULL);
         LASSERT (tx->tx_nfrags == 0);
 
         return tx;
@@ -158,7 +157,7 @@ kiblnd_post_rx (kib_rx_t *rx, int credit)
 	kib_conn_t         *conn = rx->rx_conn;
 	kib_net_t          *net = conn->ibc_peer->ibp_ni->ni_data;
 	struct ib_recv_wr  *bad_wrq = NULL;
-	struct ib_mr       *mr;
+	struct ib_mr       *mr = conn->ibc_hdev->ibh_mrs;
 	int                 rc;
 
 	LASSERT (net != NULL);
@@ -166,9 +165,7 @@ kiblnd_post_rx (kib_rx_t *rx, int credit)
 	LASSERT (credit == IBLND_POSTRX_NO_CREDIT ||
 		 credit == IBLND_POSTRX_PEER_CREDIT ||
 		 credit == IBLND_POSTRX_RSRVD_CREDIT);
-
-	mr = kiblnd_find_dma_mr(conn->ibc_hdev, rx->rx_msgaddr, IBLND_MSG_SIZE);
-	LASSERT (mr != NULL);
+	LASSERT(mr != NULL);
 
         rx->rx_sge.lkey   = mr->lkey;
         rx->rx_sge.addr   = rx->rx_msgaddr;
@@ -572,56 +569,10 @@ kiblnd_kvaddr_to_page (unsigned long vaddr)
 }
 
 static int
-kiblnd_fmr_map_tx(kib_net_t *net, kib_tx_t *tx, kib_rdma_desc_t *rd, int nob)
+kiblnd_fmr_map_tx(kib_net_t *net, kib_tx_t *tx, kib_rdma_desc_t *rd, __u32 nob)
 {
 	kib_hca_dev_t		*hdev;
-	__u64			*pages = tx->tx_pages;
 	kib_fmr_poolset_t	*fps;
-	int			npages;
-	int			size;
-	int			cpt;
-	int			rc;
-	int			i;
-
-	LASSERT(tx->tx_pool != NULL);
-	LASSERT(tx->tx_pool->tpo_pool.po_owner != NULL);
-
-	hdev  = tx->tx_pool->tpo_hdev;
-
-        for (i = 0, npages = 0; i < rd->rd_nfrags; i++) {
-                for (size = 0; size <  rd->rd_frags[i].rf_nob;
-                               size += hdev->ibh_page_size) {
-                        pages[npages ++] = (rd->rd_frags[i].rf_addr &
-                                            hdev->ibh_page_mask) + size;
-                }
-        }
-
-	cpt = tx->tx_pool->tpo_pool.po_owner->ps_cpt;
-
-	fps = net->ibn_fmr_ps[cpt];
-	rc = kiblnd_fmr_pool_map(fps, pages, npages, 0, &tx->tx_u.fmr);
-        if (rc != 0) {
-                CERROR ("Can't map %d pages: %d\n", npages, rc);
-                return rc;
-        }
-
-        /* If rd is not tx_rd, it's going to get sent to a peer, who will need
-         * the rkey */
-        rd->rd_key = (rd != tx->tx_rd) ? tx->tx_u.fmr.fmr_pfmr->fmr->rkey :
-                                         tx->tx_u.fmr.fmr_pfmr->fmr->lkey;
-        rd->rd_frags[0].rf_addr &= ~hdev->ibh_page_mask;
-        rd->rd_frags[0].rf_nob   = nob;
-        rd->rd_nfrags = 1;
-
-        return 0;
-}
-
-static int
-kiblnd_pmr_map_tx(kib_net_t *net, kib_tx_t *tx, kib_rdma_desc_t *rd, int nob)
-{
-	kib_hca_dev_t		*hdev;
-	kib_pmr_poolset_t	*pps;
-	__u64			iova;
 	int			cpt;
 	int			rc;
 
@@ -629,27 +580,23 @@ kiblnd_pmr_map_tx(kib_net_t *net, kib_tx_t *tx, kib_rdma_desc_t *rd, int nob)
 	LASSERT(tx->tx_pool->tpo_pool.po_owner != NULL);
 
 	hdev = tx->tx_pool->tpo_hdev;
-
-	iova = rd->rd_frags[0].rf_addr & ~hdev->ibh_page_mask;
-
 	cpt = tx->tx_pool->tpo_pool.po_owner->ps_cpt;
 
-	pps = net->ibn_pmr_ps[cpt];
-	rc = kiblnd_pmr_pool_map(pps, hdev, rd, &iova, &tx->tx_u.pmr);
-        if (rc != 0) {
-                CERROR("Failed to create MR by phybuf: %d\n", rc);
-                return rc;
-        }
+	fps = net->ibn_fmr_ps[cpt];
+	rc = kiblnd_fmr_pool_map(fps, tx, rd, nob, 0, &tx->fmr);
+	if (rc != 0) {
+		CERROR("Can't map %u pages: %d\n", nob, rc);
+		return rc;
+	}
 
-        /* If rd is not tx_rd, it's going to get sent to a peer, who will need
-         * the rkey */
-        rd->rd_key = (rd != tx->tx_rd) ? tx->tx_u.pmr->pmr_mr->rkey :
-                                         tx->tx_u.pmr->pmr_mr->lkey;
-        rd->rd_nfrags = 1;
-        rd->rd_frags[0].rf_addr = iova;
-        rd->rd_frags[0].rf_nob  = nob;
+	/* If rd is not tx_rd, it's going to get sent to a peer, who will need
+	 * the rkey */
+	rd->rd_key = tx->fmr.fmr_key;
+	rd->rd_frags[0].rf_addr &= ~hdev->ibh_page_mask;
+	rd->rd_frags[0].rf_nob   = nob;
+	rd->rd_nfrags = 1;
 
-        return 0;
+	return 0;
 }
 
 void
@@ -659,14 +606,8 @@ kiblnd_unmap_tx(lnet_ni_t *ni, kib_tx_t *tx)
 
 	LASSERT(net != NULL);
 
-	if (net->ibn_fmr_ps != NULL && tx->tx_u.fmr.fmr_pfmr != NULL) {
-		kiblnd_fmr_pool_unmap(&tx->tx_u.fmr, tx->tx_status);
-		tx->tx_u.fmr.fmr_pfmr = NULL;
-
-	} else if (net->ibn_pmr_ps != NULL && tx->tx_u.pmr != NULL) {
-		kiblnd_pmr_pool_unmap(tx->tx_u.pmr);
-		tx->tx_u.pmr = NULL;
-	}
+	if (net->ibn_fmr_ps != NULL)
+		kiblnd_fmr_pool_unmap(&tx->fmr, tx->tx_status);
 
 	kiblnd_dma_sync_single_for_cpu(tx->tx_pool->tpo_hdev->ibh_ibdev,
 		tx->tx_msgaddr, tx->tx_msg->ibm_nob, DMA_TO_DEVICE);
@@ -715,8 +656,6 @@ kiblnd_map_tx(lnet_ni_t *ni, kib_tx_t *tx,
 
 	if (net->ibn_fmr_ps != NULL)
 		return kiblnd_fmr_map_tx(net, tx, rd, nob);
-	else if (net->ibn_pmr_ps != NULL)
-		return kiblnd_pmr_map_tx(net, tx, rd, nob);
 
 	return -EINVAL;
 }
@@ -824,7 +763,6 @@ __must_hold(&conn->ibc_lock)
         int                ver = conn->ibc_version;
         int                rc;
         int                done;
-        struct ib_send_wr *bad_wrq;
 
         LASSERT (tx->tx_queued);
         /* We rely on this for QP sizing */
@@ -904,13 +842,33 @@ __must_hold(&conn->ibc_lock)
                 /* close_conn will launch failover */
                 rc = -ENETDOWN;
         } else {
+		struct kib_fast_reg_descriptor *frd = tx->fmr.fmr_frd;
+		struct ib_send_wr *bad = &tx->tx_wrq[tx->tx_nwrq - 1].wr;
+		struct ib_send_wr *wr  = &tx->tx_wrq[0].wr;
+
 		/* Transfer ownership from CPU to device just before the call
 		* to post the message to device to send data. */
 		kiblnd_dma_sync_single_for_device(
 			tx->tx_pool->tpo_hdev->ibh_ibdev,
 			tx->tx_msgaddr, tx->tx_msg->ibm_nob, DMA_TO_DEVICE);
-                rc = ib_post_send(conn->ibc_cmid->qp,
-                                  tx->tx_wrq, &bad_wrq);
+
+		if (frd != NULL) {
+			if (!frd->frd_valid) {
+				wr = &frd->frd_inv_wr.wr;
+				wr->next = &frd->frd_fastreg_wr.wr;
+			} else {
+				wr = &frd->frd_fastreg_wr.wr;
+			}
+			frd->frd_fastreg_wr.wr.next = &tx->tx_wrq[0].wr;
+		}
+
+		LASSERTF(bad->wr_id == kiblnd_ptr2wreqid(tx, IBLND_WID_TX),
+			 "bad wr_id "LPX64", opc %d, flags %d, peer: %s\n",
+			 bad->wr_id, bad->opcode, bad->send_flags,
+			 libcfs_nid2str(conn->ibc_peer->ibp_nid));
+
+		bad = NULL;
+		rc = ib_post_send(conn->ibc_cmid->qp, wr, &bad);
         }
 
         conn->ibc_last_send = jiffies;
@@ -1083,35 +1041,34 @@ kiblnd_tx_complete (kib_tx_t *tx, int status)
 static void
 kiblnd_init_tx_msg (lnet_ni_t *ni, kib_tx_t *tx, int type, int body_nob)
 {
-        kib_hca_dev_t     *hdev = tx->tx_pool->tpo_hdev;
-        struct ib_sge     *sge = &tx->tx_sge[tx->tx_nwrq];
-        struct ib_send_wr *wrq = &tx->tx_wrq[tx->tx_nwrq];
-        int                nob = offsetof (kib_msg_t, ibm_u) + body_nob;
-        struct ib_mr      *mr;
+	kib_hca_dev_t *hdev = tx->tx_pool->tpo_hdev;
+	struct ib_sge *sge = &tx->tx_sge[tx->tx_nwrq];
+	struct ib_rdma_wr *wrq;
+	int nob = offsetof(kib_msg_t, ibm_u) + body_nob;
+	struct ib_mr *mr = hdev->ibh_mrs;
 
         LASSERT (tx->tx_nwrq >= 0);
         LASSERT (tx->tx_nwrq < IBLND_MAX_RDMA_FRAGS + 1);
         LASSERT (nob <= IBLND_MSG_SIZE);
+	LASSERT(mr != NULL);
 
         kiblnd_init_msg(tx->tx_msg, type, body_nob);
-
-        mr = kiblnd_find_dma_mr(hdev, tx->tx_msgaddr, nob);
-        LASSERT (mr != NULL);
 
         sge->lkey   = mr->lkey;
         sge->addr   = tx->tx_msgaddr;
         sge->length = nob;
 
-        memset(wrq, 0, sizeof(*wrq));
+	wrq = &tx->tx_wrq[tx->tx_nwrq];
+	memset(wrq, 0, sizeof(*wrq));
 
-        wrq->next       = NULL;
-        wrq->wr_id      = kiblnd_ptr2wreqid(tx, IBLND_WID_TX);
-        wrq->sg_list    = sge;
-        wrq->num_sge    = 1;
-        wrq->opcode     = IB_WR_SEND;
-        wrq->send_flags = IB_SEND_SIGNALED;
+	wrq->wr.next		= NULL;
+	wrq->wr.wr_id		= kiblnd_ptr2wreqid(tx, IBLND_WID_TX);
+	wrq->wr.sg_list		= sge;
+	wrq->wr.num_sge		= 1;
+	wrq->wr.opcode		= IB_WR_SEND;
+	wrq->wr.send_flags	= IB_SEND_SIGNALED;
 
-        tx->tx_nwrq++;
+	tx->tx_nwrq++;
 }
 
 static int
@@ -1121,7 +1078,7 @@ kiblnd_init_rdma(kib_conn_t *conn, kib_tx_t *tx, int type,
 	kib_msg_t         *ibmsg = tx->tx_msg;
 	kib_rdma_desc_t   *srcrd = tx->tx_rd;
 	struct ib_sge     *sge = &tx->tx_sge[0];
-	struct ib_send_wr *wrq = &tx->tx_wrq[0];
+	struct ib_rdma_wr *wrq;
 	int                rc  = resid;
 	int                srcidx;
 	int                dstidx;
@@ -1168,15 +1125,20 @@ kiblnd_init_rdma(kib_conn_t *conn, kib_tx_t *tx, int type,
 
                 wrq = &tx->tx_wrq[tx->tx_nwrq];
 
-                wrq->next       = wrq + 1;
-                wrq->wr_id      = kiblnd_ptr2wreqid(tx, IBLND_WID_RDMA);
-                wrq->sg_list    = sge;
-                wrq->num_sge    = 1;
-                wrq->opcode     = IB_WR_RDMA_WRITE;
-                wrq->send_flags = 0;
+		wrq->wr.next		= &(wrq + 1)->wr;
+		wrq->wr.wr_id		= kiblnd_ptr2wreqid(tx, IBLND_WID_RDMA);
+		wrq->wr.sg_list		= sge;
+		wrq->wr.num_sge		= 1;
+		wrq->wr.opcode		= IB_WR_RDMA_WRITE;
+		wrq->wr.send_flags	= 0;
 
-                wrq->wr.rdma.remote_addr = kiblnd_rd_frag_addr(dstrd, dstidx);
-                wrq->wr.rdma.rkey        = kiblnd_rd_frag_key(dstrd, dstidx);
+#ifdef HAVE_IB_RDMA_WR
+		wrq->remote_addr	= kiblnd_rd_frag_addr(dstrd, dstidx);
+		wrq->rkey		= kiblnd_rd_frag_key(dstrd, dstidx);
+#else
+		wrq->wr.wr.rdma.remote_addr = kiblnd_rd_frag_addr(dstrd, dstidx);
+		wrq->wr.wr.rdma.rkey	= kiblnd_rd_frag_key(dstrd, dstidx);
+#endif
 
                 srcidx = kiblnd_rd_consume_frag(srcrd, srcidx, wrknob);
                 dstidx = kiblnd_rd_consume_frag(dstrd, dstidx, wrknob);
@@ -3294,9 +3256,15 @@ kiblnd_qp_event(struct ib_event *event, void *arg)
 static void
 kiblnd_complete (struct ib_wc *wc)
 {
-        switch (kiblnd_wreqid2type(wc->wr_id)) {
-        default:
-                LBUG();
+	switch (kiblnd_wreqid2type(wc->wr_id)) {
+	default:
+		LBUG();
+
+	case IBLND_WID_MR:
+		if (wc->status != IB_WC_SUCCESS &&
+		    wc->status != IB_WC_WR_FLUSH_ERR)
+			CNETERR("FastReg failed: %d\n", wc->status);
+		return;
 
         case IBLND_WID_RDMA:
                 /* We only get RDMA completion notification if it fails.  All
@@ -3412,6 +3380,8 @@ kiblnd_scheduler(void *arg)
 
 			spin_unlock_irqrestore(&sched->ibs_lock, flags);
 
+			wc.wr_id = IBLND_WID_INVAL;
+
                         rc = ib_poll_cq(conn->ibc_cq, 1, &wc);
                         if (rc == 0) {
                                 rc = ib_req_notify_cq(conn->ibc_cq,
@@ -3428,6 +3398,19 @@ kiblnd_scheduler(void *arg)
 				}
 
 				rc = ib_poll_cq(conn->ibc_cq, 1, &wc);
+			}
+
+			if (unlikely(rc > 0 && wc.wr_id == IBLND_WID_INVAL)) {
+				LCONSOLE_ERROR(
+					"ib_poll_cq (rc: %d) returned invalid "
+					"wr_id, opcode %d, status: %d, "
+					"vendor_err: %d, conn: %s status: %d\n"
+					"please upgrade firmware and OFED or "
+					"contact vendor.\n", rc,
+					wc.opcode, wc.status, wc.vendor_err,
+					libcfs_nid2str(conn->ibc_peer->ibp_nid),
+					conn->ibc_state);
+				rc = -EINVAL;
 			}
 
 			if (rc < 0) {

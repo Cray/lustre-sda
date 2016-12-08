@@ -33,6 +33,7 @@
 #include <linux/xattr.h>
 #include <linux/lsm_audit.h>
 #include <linux/kprobes.h>
+#include <uapi/linux/magic.h>
 
 #include <obd_support.h>
 
@@ -49,10 +50,10 @@ char obd_security_file_initcon[128] = ""; /* XXX: random size */
 
 #include "linux-security.h"
 
-#define SELINUX_ACCESS_FILE	"/selinux/access"
-#define SELINUX_CREATE_FILE	"/selinux/create"
-#define SELINUX_OPENPERMS_FILE	"/selinux/policy_capabilities/open_perms"
-#define SELINUX_FILE_INITCON	"/selinux/initial_contexts/file"
+#define SELINUX_ACCESS_FILE	"/sys/fs/selinux/access"
+#define SELINUX_CREATE_FILE	"/sys/fs/selinux/create"
+#define SELINUX_OPENPERMS_FILE	"/sys/fs/selinux/policy_capabilities/open_perms"
+#define SELINUX_FILE_INITCON	"/sys/fs/selinux/initial_contexts/file"
 
 /* This is NOT a copy of avd */
 struct obd_security_decision {
@@ -1275,7 +1276,8 @@ static int obd_map_classes_and_perms(void)
 	for (i = OBD_SECCLASS_DIR; i < OBD_SECCLASS_MAX; i++) {
 		struct obd_secclass_map_s *class= &obd_secclass_map[i];
 
-		snprintf(name, sizeof(name), "/selinux/class/%s/index", class->name);
+		snprintf(name, sizeof(name), "/sys/fs/selinux/class/%s/index",
+			 class->name);
 		rc = obd_security_file_read_u64(name, &class->policy_class);
 		if (rc < 0)
 			goto out;
@@ -1283,7 +1285,8 @@ static int obd_map_classes_and_perms(void)
 		for (j = 0; class->perm[j].name != NULL; j++) {
 			struct obd_secperms_map_s *perm = &class->perm[j];
 
-			snprintf(name, sizeof(name), "/selinux/class/%s/perms/%s",
+			snprintf(name, sizeof(name),
+				 "/sys/fs/selinux/class/%s/perms/%s",
 				 class->name, perm->name);
 
 			rc = obd_security_file_read_u64(name, &perm->policy_perm);
