@@ -42,8 +42,6 @@ EXPORT_SYMBOL(hard_security);
 unsigned int obd_security_supported;
 EXPORT_SYMBOL(obd_security_supported);
 
-DECLARE_RWSEM(obd_secpol_rwsem);
-
 u64 obd_security_openperm;
 char obd_security_file_initcon[128] = ""; /* XXX: random size */
 
@@ -594,11 +592,9 @@ int obd_security_check_open(char *tcon, char *ocon, umode_t mode,
 {
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 	rc = obd_security_has_perm(tcon, ocon,
 				   inode_mode_to_security_class(mode),
 				   open_file_to_av(fmode, fflags, mode), name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -624,11 +620,9 @@ int obd_security_check_permission(char *tcon, char *ocon, int mode,
 		return 0;
 	}
 
-	down_read(&obd_secpol_rwsem);
 	rc = obd_security_has_perm(tcon, ocon,
 				   inode_mode_to_security_class(mode),
 				   file_mask_to_av(mode, mask), name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -665,11 +659,9 @@ int obd_security_check_setattr(char *tcon, char *ocon, umode_t mode,
 	else
 		av = 1 << OBD_SECPERM_FILE_WRITE;
 
-	down_read(&obd_secpol_rwsem);
 	rc = obd_security_has_perm(tcon, ocon,
 				   inode_mode_to_security_class(mode),
 				   av, name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -688,11 +680,9 @@ int obd_security_check_getattr(char *tcon, char *ocon, umode_t mode, char *name)
 {
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 	rc = obd_security_has_perm(tcon, ocon,
 				   inode_mode_to_security_class(mode),
 				   1 << OBD_SECPERM_FILE_GETATTR, name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -751,10 +741,8 @@ int obd_security_check_create(char *tcon, char *tccon, char *dcon,
 {
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 	rc = may_create(tcon, tccon, dcon, sbcon,
 			inode_mode_to_security_class(mode), name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -775,12 +763,10 @@ int obd_security_check_flags(char *tcon, char *ocon, char *fcon,
 {
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 
 	rc = obd_security_has_perm(tcon, ocon,
 				   inode_mode_to_security_class(mode),
 				   1 << OBD_SECPERM_FILE_WRITE, name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -801,7 +787,6 @@ int obd_security_check_lock(char *tcon, char *ocon, char *fcon,
 {
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 
 	if (strcmp(tcon, fcon)) {
 		rc = obd_security_has_perm(tcon, fcon,
@@ -815,7 +800,6 @@ int obd_security_check_lock(char *tcon, char *ocon, char *fcon,
 				   inode_mode_to_security_class(mode),
 				   OBD_SECPERM_FILE_LOCK, name);
 out:
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -871,9 +855,7 @@ int obd_security_check_link(char *tcon, char *dcon, char *icon,
 {
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 	rc = may_link(tcon, dcon, icon, mode, SEC_MAY_LINK, name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -894,9 +876,7 @@ int obd_security_check_unlink(char *tcon, char *dcon, char *icon,
 {
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 	rc = may_link(tcon, dcon, icon, mode, SEC_MAY_UNLINK, name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -927,7 +907,6 @@ int obd_security_check_rename(char *tcon, char *old_name, char *new_name,
 	u32 av;
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 
 	rc = obd_security_has_perm(tcon, old_dcon, OBD_SECCLASS_DIR,
 				   (1 << OBD_SECPERM_DIR_REMOVENAME) |
@@ -969,7 +948,6 @@ int obd_security_check_rename(char *tcon, char *old_name, char *new_name,
 			goto out;
 	}
 out:
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -988,11 +966,9 @@ int obd_security_check_readlink(char *tcon, char *ocon, umode_t mode, char *name
 {
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 	rc = obd_security_has_perm(tcon, ocon,
 				   inode_mode_to_security_class(mode),
 				   1 << OBD_SECPERM_FILE_READ, name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -1009,11 +985,9 @@ int obd_security_check_mount(char *tcon, char *sbcon, char *name)
 {
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 	rc = obd_security_has_perm(tcon, sbcon,
 				   OBD_SECCLASS_FS,
 				   1 << OBD_SECPERM_FS_MOUNT, name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -1030,11 +1004,9 @@ int obd_security_check_quotamod(char *tcon, char *sbcon, char *name)
 {
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 	rc = obd_security_has_perm(tcon, sbcon,
 				   OBD_SECCLASS_FS,
 				   1 << OBD_SECPERM_FS_QUOTAMOD, name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -1051,11 +1023,9 @@ int obd_security_check_getquota(char *tcon, char *sbcon, char *name)
 {
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 	rc = obd_security_has_perm(tcon, sbcon,
 				   OBD_SECCLASS_FS,
 				   1 << OBD_SECPERM_FS_GETQUOTA, name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -1091,7 +1061,6 @@ int obd_security_check_setxattr(char *tcon, char *sbcon, char *icon,
 {
 	int rc = 0;
 
-	down_read(&obd_secpol_rwsem);
 
 	if (strcmp(name, XATTR_NAME_SELINUX)) {
 		if (!strncmp(name, XATTR_SECURITY_PREFIX,
@@ -1136,7 +1105,6 @@ int obd_security_check_setxattr(char *tcon, char *sbcon, char *icon,
 	rc = obd_security_has_perm(value, sbcon, OBD_SECCLASS_FS,
 				   1 << OBD_SECPERM_FS_ASSOCIATE, fname);
 out:
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -1174,11 +1142,9 @@ int obd_security_check_removexattr(char *tcon, char *icon, umode_t mode,
 		}
 	}
 
-	down_read(&obd_secpol_rwsem);
 	rc = obd_security_has_perm(tcon, icon,
 			    inode_mode_to_security_class(mode),
 			    1 << OBD_SECPERM_FILE_SETATTR, fname);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -1197,11 +1163,9 @@ int obd_security_check_getxattr(char *tcon, char *ocon, umode_t mode, char *name
 {
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 	rc = obd_security_has_perm(tcon, ocon,
 				   inode_mode_to_security_class(mode),
 				   1 << OBD_SECPERM_FILE_GETATTR, name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -1220,11 +1184,9 @@ int obd_security_check_listxattr(char *tcon, char *ocon, umode_t mode, char *nam
 {
 	int rc;
 
-	down_read(&obd_secpol_rwsem);
 	rc = obd_security_has_perm(tcon, ocon,
 				   inode_mode_to_security_class(mode),
 				   1 << OBD_SECPERM_FILE_GETATTR, name);
-	up_read(&obd_secpol_rwsem);
 
 	return rc;
 }
@@ -1254,11 +1216,9 @@ int obd_security_init_object(char *mcon, char *dcon, char *tcon, char *tccon,
 		if (*value == NULL)
 			rc = -ENOMEM;
 	} else {
-		down_read(&obd_secpol_rwsem);
 		rc = obd_security_transition(tcon, dcon,
 					     inode_mode_to_security_class(mode),
 					     (char **)value);
-		up_read(&obd_secpol_rwsem);
 	}
 
 	return rc;
@@ -1478,10 +1438,8 @@ static void obd_security_unload_policy(void)
 
 void obd_security_reload_policy(struct work_struct *unused)
 {
-	down_write(&obd_secpol_rwsem);
 	obd_security_unload_policy();
 	obd_security_load_policy();
-	up_write(&obd_secpol_rwsem);
 }
 
 
