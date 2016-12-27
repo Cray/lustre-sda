@@ -1975,11 +1975,12 @@ run_test 27E "check that default extended attribute size properly increases"
 
 # createtest also checks that device nodes are created and
 # then visible correctly (#2091)
+# UNCONFINED: due to mknod
 test_28() { # bug 2091
 	test_mkdir $DIR/d28
 	$CREATETEST $DIR/d28/ct || error
 }
-run_test 28 "create/mknod/mkdir with bad file types ============"
+run_test_unconfined 28 "create/mknod/mkdir with bad file types ============"
 
 test_29() {
 	[ $PARALLEL == "yes" ] && skip "skip parallel run" && return
@@ -4056,6 +4057,7 @@ test_53() {
 }
 run_test 53 "verify that MDS and OSTs agree on pre-creation ===="
 
+# UNCONFINED: due to socket
 test_54a() {
 	$SOCKETSERVER $DIR/socket ||
 		error "$SOCKETSERVER $DIR/socket failed: $?"
@@ -4063,7 +4065,7 @@ test_54a() {
 		error "$SOCKETCLIENT $DIR/socket failed: $?"
 	$MUNLINK $DIR/socket || error "$MUNLINK $DIR/socket failed: $?"
 }
-run_test 54a "unix domain socket test =========================="
+run_test_unconfined 54a "unix domain socket test =========================="
 
 test_54b() {
 	f="$DIR/f54b"
@@ -4086,6 +4088,7 @@ find_loop_dev() {
 	done
 }
 
+# UNCONFINED: due to mknod
 test_54c() {
 	[ $PARALLEL == "yes" ] && skip "skip parallel run" && return
 	loopdev="$DIR/loop54c"
@@ -4112,7 +4115,7 @@ test_54c() {
 	rm -rf $loopdev $DIR/$tfile $DIR/$tdir
 	return $rc
 }
-run_test 54c "block device works in lustre ====================="
+run_test_unconfined 54c "block device works in lustre ====================="
 
 test_54d() {
 	f="$DIR/f54d"
@@ -4299,6 +4302,7 @@ test_56k() {
 }
 run_test 56k "check lfs find -type f ============================="
 
+# UNCONFINED: due to mknod
 test_56l() {
 	TDIR=$DIR/${tdir}g
 	setup_56_special $NUMFILES $NUMDIRS
@@ -4309,8 +4313,9 @@ test_56l() {
 	[ $NUMS -eq $EXPECTED ] ||
 		error "\"$CMD\" wrong: found $NUMS, expected $EXPECTED"
 }
-run_test 56l "check lfs find -type b ============================="
+run_test_unconfined 56l "check lfs find -type b ============================="
 
+# UNCONFINED: due to mknod
 test_56m() {
 	TDIR=$DIR/${tdir}g
 	setup_56_special $NUMFILES $NUMDIRS
@@ -4321,7 +4326,7 @@ test_56m() {
 	[ $NUMS -eq $EXPECTED ] ||
 		error "\"$CMD\" wrong: found $NUMS, expected $EXPECTED"
 }
-run_test 56m "check lfs find -type c ============================="
+run_test_unconfined 56m "check lfs find -type c ============================="
 
 test_56n() {
 	TDIR=$DIR/${tdir}g
@@ -6773,6 +6778,7 @@ run_acl_subtest()
     return $?
 }
 
+# UNCONFINED: due to fifo, etc
 test_103a() {
 	[ "$UID" != 0 ] && skip_env "must run as root" && return
 	[ -z "$(lctl get_param -n mdc.*-mdc-*.connect_flags | grep acl)" ] &&
@@ -6834,7 +6840,7 @@ test_103a() {
 		fi
 	done
 }
-run_test 103a "acl test ========================================="
+run_test_unconfined 103a "acl test ========================================="
 
 test_103b() {
         local noacl=false
@@ -8859,6 +8865,7 @@ check_stats() {
 	fi
 }
 
+# UNCONFINED: due to mknod
 test_133a() {
 	[ $PARALLEL == "yes" ] && skip "skip parallel run" && return
 	remote_ost_nodsh && skip "remote OST with nodsh" && return
@@ -8902,7 +8909,7 @@ test_133a() {
 
 	rm -rf $DIR/${tdir}
 }
-run_test 133a "Verifying MDT stats ========================================"
+run_test_unconfined 133a "Verifying MDT stats ========================================"
 
 test_133b() {
 	[ $PARALLEL == "yes" ] && skip "skip parallel run" && return
@@ -9846,6 +9853,7 @@ test_154f() {
 }
 run_test 154f "get parent fids by reading link ea"
 
+# UNCONFINED: due to mkfifo
 test_154g()
 {
 	remote_mds_nodsh && skip "remote MDS with nodsh" && return
@@ -9855,7 +9863,7 @@ test_154g()
 	mkdir -p $DIR/$tdir
 	llapi_fid_test -d $DIR/$tdir
 }
-run_test 154g "various llapi FID tests"
+run_test_unconfined 154g "various llapi FID tests"
 
 test_155_small_load() {
     local temp=$TMP/$tfile
@@ -11395,6 +11403,7 @@ jobstats_set() {
 	wait_update $HOSTNAME "$LCTL get_param -n jobid_var" $NEW_JOBENV
 }
 
+# UNCONFINED: due to mknod
 test_205() { # Job stats
 	[ $PARALLEL == "yes" ] && skip "skip parallel run" && return
 	remote_mds_nodsh && skip "remote MDS with nodsh" && return
@@ -11448,7 +11457,7 @@ test_205() { # Job stats
 
 	[ $OLD_JOBENV != $JOBENV ] && jobstats_set $OLD_JOBENV
 }
-run_test 205 "Verify job stats"
+run_test_unconfined 205 "Verify job stats"
 
 # LU-1480, LU-1773 and LU-1657
 test_206() {
@@ -12090,6 +12099,7 @@ mcreate_path2fid () {
 	echo "pass with $path and $fid"
 }
 
+# UNCONFINED: due to mkfifo
 test_226a () {
 	rm -rf $DIR/$tdir
 	mkdir -p $DIR/$tdir
@@ -12103,7 +12113,7 @@ test_226a () {
 	mcreate_path2fid 0120666 0 0 link "symbolic link"
 	mcreate_path2fid 0140666 0 0 sock "socket"
 }
-run_test 226a "call path2fid and fid2path on files of all type"
+run_test_unconfined 226a "call path2fid and fid2path on files of all type"
 
 test_226b () {
 	[ $MDSCOUNT -lt 2 ] && skip "needs >= 2 MDTs" && return

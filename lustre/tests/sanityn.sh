@@ -215,7 +215,7 @@ test_8() {
 	opendevunlink $DIR1/$tfile $DIR2/$tfile || \
 		error "opendevunlink $DIR1/$tfile $DIR2/$tfile"
 }
-run_test 8 "remove of open special file on other node =========="
+run_test_unconfined 8 "remove of open special file on other node =========="
 
 test_9() {
 	MTPT=1

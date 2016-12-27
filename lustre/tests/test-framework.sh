@@ -4840,6 +4840,24 @@ run_test() {
 	return $?
 }
 
+run_test_unconfined() {
+	local OLDCONTEXT
+	local NEWCONTEXT
+	local RC
+
+	# a slightly broken way to raise priviledges
+	# which can work only under permissive mode
+	OLDCONTEXT=$(cat /proc/self/attr/current)
+	NEWCONTEXT="system_u:system_r:kernel_t:s15:c0.c1023"
+
+	echo -n $NEWCONTEXT > /proc/self/attr/current
+	run_test "$@"
+	RC=$?
+	echo -n $OLDCONTEXT > /proc/self/attr/current
+
+	return $RC
+}
+
 log() {
     echo "$*"
     module_loaded lnet || load_modules
