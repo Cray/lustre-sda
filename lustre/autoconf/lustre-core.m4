@@ -1661,6 +1661,26 @@ direct_io_iter, [
 ]) # LC_DIRECTIO_USE_ITER
 
 #
+# LC_LMOPS_GRANT_2ARGS
+#
+# 3.17 removed unused conf argument from lm_grant
+#
+AC_DEFUN([LC_LMOPS_GRANT_2ARGS], [
+LB_CHECK_COMPILE([if 'lock_manager_operations' has .lm_grant with 2 args],
+lock_manager_operations_lm_grant_2args, [
+	#include <linux/fs.h>
+],[
+	struct lock_manager_operations ops;
+	int i __attribute__ ((unused));
+
+	i = ops.lm_grant(NULL, 0);
+],[
+	AC_DEFINE(HAVE_LMOPS_GRANT_2ARGS, 1,
+		[kernel has lock_manager_operations.lm_grant with 2 args])
+])
+]) # LC_LMOPS_GRANT_2ARGS
+
+#
 # LC_NFS_FILLDIR_USE_CTX
 #
 # 3.18 kernel moved from void cookie to struct dir_context
@@ -2185,6 +2205,9 @@ AC_DEFUN([LC_PROG_LINUX], [
 	LC_DIRECTIO_USE_ITER
 	LC_HAVE_IOV_ITER_INIT_DIRECTION
 	LC_HAVE_FILE_OPERATIONS_READ_WRITE_ITER
+
+	# 3.17
+	LC_LMOPS_GRANT_2ARGS
 
 	# 3.18
 	LC_PERCPU_COUNTER_INIT
