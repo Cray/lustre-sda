@@ -1543,7 +1543,7 @@ void obd_security_fini(void)
 }
 #endif
 
-#define OBD_SEC_DOMAIN_COLONS_MIN	2
+#define OBD_SEC_DOMAIN_COLONS_MIN	3
 
 /**
  * Sanity-check a string that represents a fixed-label SELinux domain. The
