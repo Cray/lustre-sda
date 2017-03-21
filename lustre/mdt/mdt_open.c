@@ -1701,6 +1701,10 @@ int mdt_reint_open(struct mdt_thread_info *info, struct mdt_lock_handle *lhc)
         if (result)
                 GOTO(out_parent, result);
 
+	result = mdt_sec_lookup(info->mti_env, parent);
+	if (result)
+		GOTO(out_parent, result);
+
         fid_zero(child_fid);
 
 	result = mdo_lookup(info->mti_env, mdt_object_child(parent),
