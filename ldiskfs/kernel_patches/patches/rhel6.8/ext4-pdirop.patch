@@ -1908,11 +1908,11 @@
  	if (retval)
  		goto out_frames;
  
--	de = do_split(handle,dir, &bh, frame, &hinfo, &retval);
-+	de = do_split(handle,dir, &bh, frames, frame, &hinfo, NULL, &retval);
+-	de = do_split(handle,dir, &bh2, frame, &hinfo, &retval);
++	de = do_split(handle,dir, &bh2, frames, frame, &hinfo, NULL, &retval);
  	if (!de)
  		goto out_frames;
- 	dx_release(frames);
+
 @@ -1616,7 +1966,7 @@ out:
   * the entry, as someone else might have used it while you slept.
   */

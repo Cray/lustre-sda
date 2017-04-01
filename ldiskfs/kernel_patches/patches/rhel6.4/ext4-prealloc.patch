@@ -138,7 +138,7 @@ Index: linux-stage/fs/ext4/mballoc.c
  	struct ext4_sb_info *sbi = EXT4_SB(sb);
 -	unsigned i, j;
 +	unsigned i, j, k, l;
- 	unsigned offset;
+	unsigned offset, offset_incr;
  	unsigned max;
  	int ret;
 @@ -2380,26 +2476,61 @@ int ext4_mb_init(struct super_block *sb,

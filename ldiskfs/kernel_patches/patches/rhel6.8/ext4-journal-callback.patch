@@ -426,19 +426,21 @@ Index: linux-2.6.32-504.3.3.el6.x86_64/fs/ext4/mballoc.c
  	return 0;
  }
  
-@@ -4840,7 +4840,7 @@ do_more:
- 		 * be used until this transaction is committed
+@@ -4840,8 +4840,8 @@ do_more:
+ 		 * We use __GFP_NOFAIL because ext4_free_blocks() is not allowed
+ 		 * to fail.
  		 */
- retry:
--		new_entry = kmem_cache_alloc(ext4_free_ext_cachep, GFP_NOFS);
-+		new_entry = kmem_cache_alloc(ext4_free_data_cachep, GFP_NOFS);
- 		if (!new_entry) {
- 			/*
- 			 * We use a retry loop because
+-		new_entry = kmem_cache_alloc(ext4_free_ext_cachep,
+-				GFP_NOFS|__GFP_NOFAIL);
++		new_entry = kmem_cache_alloc(ext4_free_data_cachep,
++				GFP_NOFS|__GFP_NOFAIL);
+ 		new_entry->start_blk = bit;
+ 		new_entry->group  = block_group;
+ 		new_entry->count = count;
 @@ -4850,10 +4850,10 @@ retry:
- 			congestion_wait(BLK_RW_ASYNC, HZ/50);
- 			goto retry;
- 		}
+ 		 */
+ 		new_entry = kmem_cache_alloc(ext4_free_ext_cachep,
+ 				GFP_NOFS|__GFP_NOFAIL);
 -		new_entry->start_blk = bit;
 -		new_entry->group  = block_group;
 -		new_entry->count = count;
