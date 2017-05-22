@@ -745,43 +745,6 @@ ll_convert_intent(struct open_intent *oit, int lookup_flags)
 	return it;
 }
 
-/**
- * Carries out a lookup, just to cause the MDS sec layer lookup
- * check to take place; otherwise, the lookup on the last path
- * component is IT_OPEN, and so the SELinux context of the
- * parent of the last path component is not checked on the MDS,
- * when the client is running in permissive mode, or with
- * SELinux disabled, such as the fixed-label client does.
- */
-static struct dentry *ll_lookup_parent_lite(struct inode *parent,
-					    struct dentry *dentry)
-{
-	struct dentry *de;
-	struct inode *inode;
-	ENTRY;
-
-	de = ll_lookup_it(parent, dentry, NULL, 0);
-	if (IS_ERR(de))
-		RETURN(de);
-
-	inode = dentry->d_inode;
-	spin_lock(&dcache_lock);
-	spin_lock(&dentry->d_lock);
-	dentry->d_inode = NULL;
-	if (!list_empty(&dentry->d_alias))
-		list_del_init(&dentry->d_alias);
-
-	spin_unlock(&dentry->d_lock);
-	spin_unlock(&dcache_lock);
-	if (inode) {
-		if (!inode->i_nlink)
-			fsnotify_inoderemove(inode);
-		if (dentry->d_op && dentry->d_op->d_iput)
-			dentry->d_op->d_iput(dentry, inode);
-	}
-	RETURN(de);
-}
-
 static struct dentry *ll_lookup_nd(struct inode *parent, struct dentry *dentry,
                                    struct nameidata *nd)
 {
@@ -790,10 +753,6 @@ static struct dentry *ll_lookup_nd(struct inode *parent, struct dentry *dentry,
 
         if (nd && !(nd->flags & (LOOKUP_CONTINUE|LOOKUP_PARENT))) {
                 struct lookup_intent *it;
-
-		de = ll_lookup_parent_lite(parent, dentry);
-		if (IS_ERR(de))
-			RETURN(de);
 
                 if (ll_d2d(dentry) && ll_d2d(dentry)->lld_it) {
                         it = ll_d2d(dentry)->lld_it;
