@@ -220,36 +220,30 @@ static const struct req_msg_field *mds_reint_create_slave_client[] = {
 };
 
 static const struct req_msg_field *mds_reint_create_rmt_acl_client[] = {
-	&RMF_PTLRPC_BODY,
-	&RMF_REC_REINT,
-	&RMF_CAPA1,
-	&RMF_NAME,
-	&RMF_EADATA,
-	&RMF_DLM_REQ,
-	&RMF_FILE_SECCTX_NAME,
-	&RMF_FILE_SECCTX
+        &RMF_PTLRPC_BODY,
+        &RMF_REC_REINT,
+        &RMF_CAPA1,
+        &RMF_NAME,
+        &RMF_EADATA,
+        &RMF_DLM_REQ
 };
 
 static const struct req_msg_field *mds_reint_create_sym_client[] = {
-	&RMF_PTLRPC_BODY,
-	&RMF_REC_REINT,
-	&RMF_CAPA1,
-	&RMF_NAME,
-	&RMF_SYMTGT,
-	&RMF_DLM_REQ,
-	&RMF_FILE_SECCTX_NAME,
-	&RMF_FILE_SECCTX
+        &RMF_PTLRPC_BODY,
+        &RMF_REC_REINT,
+        &RMF_CAPA1,
+        &RMF_NAME,
+        &RMF_SYMTGT,
+        &RMF_DLM_REQ
 };
 
 static const struct req_msg_field *mds_reint_open_client[] = {
-	&RMF_PTLRPC_BODY,
-	&RMF_REC_REINT,
-	&RMF_CAPA1,
-	&RMF_CAPA2,
-	&RMF_NAME,
-	&RMF_EADATA,
-	&RMF_FILE_SECCTX_NAME,
-	&RMF_FILE_SECCTX
+        &RMF_PTLRPC_BODY,
+        &RMF_REC_REINT,
+        &RMF_CAPA1,
+        &RMF_CAPA2,
+        &RMF_NAME,
+        &RMF_EADATA
 };
 
 static const struct req_msg_field *mds_reint_open_server[] = {
@@ -451,28 +445,24 @@ static const struct req_msg_field *ldlm_intent_getattr_server[] = {
 };
 
 static const struct req_msg_field *ldlm_intent_create_client[] = {
-	&RMF_PTLRPC_BODY,
-	&RMF_DLM_REQ,
-	&RMF_LDLM_INTENT,
-	&RMF_REC_REINT,    /* coincides with mds_reint_create_client[] */
-	&RMF_CAPA1,
-	&RMF_NAME,
-	&RMF_EADATA,
-	&RMF_FILE_SECCTX_NAME,
-	&RMF_FILE_SECCTX
+        &RMF_PTLRPC_BODY,
+        &RMF_DLM_REQ,
+        &RMF_LDLM_INTENT,
+        &RMF_REC_REINT,    /* coincides with mds_reint_create_client[] */
+        &RMF_CAPA1,
+        &RMF_NAME,
+        &RMF_EADATA
 };
 
 static const struct req_msg_field *ldlm_intent_open_client[] = {
-	&RMF_PTLRPC_BODY,
-	&RMF_DLM_REQ,
-	&RMF_LDLM_INTENT,
-	&RMF_REC_REINT,    /* coincides with mds_reint_open_client[] */
-	&RMF_CAPA1,
-	&RMF_CAPA2,
-	&RMF_NAME,
-	&RMF_EADATA,
-	&RMF_FILE_SECCTX_NAME,
-	&RMF_FILE_SECCTX
+        &RMF_PTLRPC_BODY,
+        &RMF_DLM_REQ,
+        &RMF_LDLM_INTENT,
+        &RMF_REC_REINT,    /* coincides with mds_reint_open_client[] */
+        &RMF_CAPA1,
+        &RMF_CAPA2,
+        &RMF_NAME,
+        &RMF_EADATA
 };
 
 static const struct req_msg_field *ldlm_intent_unlink_client[] = {
@@ -1008,14 +998,6 @@ EXPORT_SYMBOL(RMF_CLUUID);
 struct req_msg_field RMF_STRING =
         DEFINE_MSGF("string", RMF_F_STRING, -1, NULL, NULL);
 EXPORT_SYMBOL(RMF_STRING);
-
-struct req_msg_field RMF_FILE_SECCTX_NAME =
-	DEFINE_MSGF("file_secctx_name", RMF_F_STRING, -1, NULL, NULL);
-EXPORT_SYMBOL(RMF_FILE_SECCTX_NAME);
-
-struct req_msg_field RMF_FILE_SECCTX =
-	DEFINE_MSGF("file_secctx", 0, -1, NULL, NULL);
-EXPORT_SYMBOL(RMF_FILE_SECCTX);
 
 struct req_msg_field RMF_LLOGD_BODY =
         DEFINE_MSGF("llogd_body", 0,
