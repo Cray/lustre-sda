@@ -458,6 +458,7 @@ static int ll_dir_setdirstripe(struct inode *parent, struct lmv_user_md *lump,
 	ll_finish_md_op_data(op_data);
 	if (err)
 		GOTO(err_exit, err);
+
 err_exit:
 	ptlrpc_req_finished(request);
 	return err;
