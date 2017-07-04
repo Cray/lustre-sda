@@ -389,10 +389,7 @@ int ll_getxattr_common(struct inode *inode, const char *name,
 #endif
 
 do_getxattr:
-	if (sbi->ll_xattr_cache_enabled &&
-	    xattr_type != XATTR_ACL_ACCESS_T &&
-	    (xattr_type != XATTR_SECURITY_T ||
-		strcmp(name, "security.selinux") != 0)) {
+	if (sbi->ll_xattr_cache_enabled && xattr_type != XATTR_ACL_ACCESS_T) {
 		rc = ll_xattr_cache_get(inode, name, buffer, size, valid);
 		if (rc == -EAGAIN)
 			goto getxattr_nocache;

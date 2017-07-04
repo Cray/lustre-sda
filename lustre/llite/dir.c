@@ -423,8 +423,6 @@ static int ll_dir_setdirstripe(struct inode *parent, struct lmv_user_md *lump,
 	struct ptlrpc_request *request = NULL;
 	struct md_op_data *op_data;
 	struct ll_sb_info *sbi = ll_i2sbi(parent);
-	struct inode *inode = NULL;
-	struct dentry dentry;
 	int err;
 	ENTRY;
 
@@ -460,21 +458,6 @@ static int ll_dir_setdirstripe(struct inode *parent, struct lmv_user_md *lump,
 	ll_finish_md_op_data(op_data);
 	if (err)
 		GOTO(err_exit, err);
-
-	CFS_FAIL_TIMEOUT(OBD_FAIL_LLITE_SETDIRSTRIPE_PAUSE, cfs_fail_val);
-
-	err = ll_prep_inode(&inode, request, parent->i_sb, NULL);
-	if (err)
-		GOTO(err_exit, err);
-
-	memset(&dentry, 0, sizeof(dentry));
-	dentry.d_inode = inode;
-
-	err = ll_init_security(&dentry, inode, parent);
-	iput(inode);
-	if (err)
-		GOTO(err_exit, err);
-
 err_exit:
 	ptlrpc_req_finished(request);
 	return err;

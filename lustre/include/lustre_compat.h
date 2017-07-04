@@ -394,22 +394,6 @@ static inline void truncate_inode_pages_final(struct address_space *map)
 #define SIZE_MAX	(~(size_t)0)
 #endif
 
-#ifdef HAVE_SECURITY_IINITSEC_CALLBACK
-# define ll_security_inode_init_security(inode, dir, name, value, len, \
-					 initxattrs, dentry)	       \
-	 security_inode_init_security(inode, dir, &((dentry)->d_name), \
-				      initxattrs, dentry)
-#elif defined HAVE_SECURITY_IINITSEC_QSTR
-# define ll_security_inode_init_security(inode, dir, name, value, len, \
-					 initxattrs, dentry)	       \
-	 security_inode_init_security(inode, dir, &((dentry)->d_name), \
-				      name, value, len)
-#else /* !HAVE_SECURITY_IINITSEC_CALLBACK && !HAVE_SECURITY_IINITSEC_QSTR */
-# define ll_security_inode_init_security(inode, dir, name, value, len, \
-					 initxattrs, dentry)	       \
-	 security_inode_init_security(inode, dir, name, value, len)
-#endif
-
 #ifndef bio_for_each_segment_all /* since kernel version 3.9 */
 #ifdef HAVE_BVEC_ITER
 #define bio_for_each_segment_all(bv, bio, it) \
