@@ -49,6 +49,7 @@
 #include <lustre/ll_fiemap.h>
 #include <lustre_ioctl.h>
 
+#include <asm/syscall.h>
 #include "cl_object.h"
 
 static int
@@ -2869,6 +2870,35 @@ static int ll_flush(struct file *file, fl_owner_t id)
 	return rc ? -EIO : 0;
 }
 
+int ll_check_flags(int flags)
+{
+	unsigned long args[6];
+	struct file *filp;
+	struct obd_capa *oc;
+	int rc = 0;
+	ENTRY;
+
+	syscall_get_arguments(current, task_pt_regs(current), 0, 6, args);
+
+	filp = fget(args[0]);
+	/* sys_fcntl should have already dereferenced and checked the fd */
+	LASSERT(filp != NULL);
+
+	if ((filp->f_flags & (O_APPEND | O_WRONLY)) == (O_APPEND | O_WRONLY) &&
+	    ((flags & (O_APPEND | O_WRONLY)) == O_WRONLY)) {
+		struct inode *inode = filp->f_path.dentry->d_inode;
+
+		oc = ll_mdscapa_get(inode);
+		rc = md_check_flags(ll_i2sbi(inode)->ll_md_exp,
+				    ll_inode2fid(inode), oc);
+		capa_put(oc);
+	}
+
+	fput(filp);
+
+	RETURN(rc);
+}
+
 /**
  * Called to make sure a portion of file has been written out.
  * if @mode is not CL_FSYNC_LOCAL, it will send OST_SYNC RPCs to OST.
@@ -3980,7 +4010,8 @@ struct file_operations ll_file_operations = {
 	.llseek		= ll_file_seek,
 	.splice_read	= ll_file_splice_read,
 	.fsync		= ll_fsync,
-	.flush		= ll_flush
+	.flush		= ll_flush,
+	.check_flags	= ll_check_flags
 };
 
 struct file_operations ll_file_operations_flock = {
@@ -4006,7 +4037,8 @@ struct file_operations ll_file_operations_flock = {
 	.fsync		= ll_fsync,
 	.flush		= ll_flush,
 	.flock		= ll_file_flock,
-	.lock		= ll_file_flock
+	.lock		= ll_file_flock,
+	.check_flags	= ll_check_flags
 };
 
 /* These are for -o noflock - to return ENOSYS on flock calls */

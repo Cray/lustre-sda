@@ -2070,6 +2070,18 @@ posix_acl_valid, [
 ])
 ]) # LC_HAVE_POSIX_ACL_VALID_USER_NS
 
+AC_DEFUN([LC_CONFIG_INSECURE_CLIENT],
+[AC_MSG_CHECKING([whether to enable insecure client support])
+AC_ARG_ENABLE([insecure-client],
+       AC_HELP_STRING([--disable-insecure-client],
+                       [disable insecure client support]),
+       [enable_insecure_client='no'],[enable_insecure_client='yes'])
+AC_MSG_RESULT([$enable_insecure_client])
+if test x$enable_insecure_client != xno ; then
+       AC_DEFINE(ENABLE_INSECURE_CLIENT, 1, Insecure client)
+fi
+])
+
 #
 # LC_PROG_LINUX
 #
@@ -2079,6 +2091,7 @@ AC_DEFUN([LC_PROG_LINUX], [
 	AC_MSG_NOTICE([Lustre kernel checks
 ==============================================================================])
 
+	LC_CONFIG_INSECURE_CLIENT
 	LC_CONFIG_PINGER
 	LC_CONFIG_CHECKSUM
 	LC_CONFIG_HEALTH_CHECK_WRITE

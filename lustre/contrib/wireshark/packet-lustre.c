@@ -226,6 +226,7 @@ typedef enum {
 	MDS_HSM_CT_REGISTER	= 59,
 	MDS_HSM_CT_UNREGISTER	= 60,
 	MDS_SWAP_LAYOUTS	= 61,
+	MDS_CHECK_FLAGS		= 62,
 	MDS_LAST_OPC
 } mds_cmd_t;
 
@@ -1175,7 +1176,8 @@ const value_string lustre_op_codes[] = {
   {59 , "MDS_HSM_CT_REGISTER"},
   {60 , "MDS_HSM_CT_UNREGISTER"},
   {61 , "MDS_SWAP_LAYOUTS"},
-  {62 , "MDS_LAST_OPC"},
+  {62 , "MDS_CHECK_FLAGS"},
+  {63 , "MDS_LAST_OPC"},
   /*LDLM Opcodes*/
   {101 , "LDLM_ENQUEUE"},
   {102 , "LDLM_CONVERT"},

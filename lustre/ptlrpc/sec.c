@@ -703,6 +703,11 @@ again:
         if (cli_ctx_is_eternal(ctx))
                 RETURN(0);
 
+	if (unlikely(test_bit(PTLRPC_CTX_UNREACH_BIT, &ctx->cc_flags))) {
+		clear_bit(PTLRPC_CTX_UNREACH_BIT, &ctx->cc_flags);
+		RETURN(-ETIMEDOUT);
+	}
+
 	if (unlikely(test_bit(PTLRPC_CTX_NEW_BIT, &ctx->cc_flags))) {
                 LASSERT(ctx->cc_ops->refresh);
                 ctx->cc_ops->refresh(ctx);
@@ -1456,13 +1461,11 @@ int sptlrpc_import_sec_adapt(struct obd_import *imp,
                  * normal import, determine flavor from rule set, except
                  * for mgc the flavor is predetermined.
                  */
-                if (cliobd->cl_sp_me == LUSTRE_SP_MGC)
-                        sf = cliobd->cl_flvr_mgc;
-                else 
-                        sptlrpc_conf_choose_flavor(cliobd->cl_sp_me,
-                                                   cliobd->cl_sp_to,
-                                                   &cliobd->cl_target_uuid,
-                                                   conn->c_self, &sf);
+                sptlrpc_conf_choose_flavor(cliobd->cl_sp_me,
+                                           cliobd->cl_sp_to,
+                                           &cliobd->cl_target_uuid,
+                                           conn->c_self, &sf,
+					   &cliobd->cl_flvr_mgc);
 
                 sp = imp->imp_obd->u.cli.cl_sp_me;
         } else {

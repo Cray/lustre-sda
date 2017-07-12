@@ -12,9 +12,10 @@ LCTL=${LCTL:-"$LUSTRE/utils/lctl"}
 [ ! -f "$LCTL" ] && export LCTL=$(which lctl 2> /dev/null)
 
 RMMOD=rmmod
-if [ `uname -r | cut -c 3` -eq 4 ]; then
-    RMMOD="modprobe -r"
-fi
+# In SLES12 SP2 modprobe -r will refuse to unload unknown modules
+# if [ `uname -r | cut -c 3` -eq 4 ]; then
+#     RMMOD="modprobe -r"
+# fi
 
 unload_dep_module() {
     # libcfs                107852  17 llite_lloop,lustre,obdfilter,ost,...

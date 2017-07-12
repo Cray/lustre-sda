@@ -61,7 +61,7 @@ enum req_location {
 };
 
 /* Maximal number of fields (buffers) in a request message. */
-#define REQ_MAX_FIELD_NR  9
+#define REQ_MAX_FIELD_NR  10
 
 struct req_capsule {
         struct ptlrpc_request   *rc_req;
@@ -155,39 +155,56 @@ extern struct req_format RQF_FLD_READ;
 extern struct req_format RQF_MDS_CONNECT;
 extern struct req_format RQF_MDS_DISCONNECT;
 extern struct req_format RQF_MDS_STATFS;
+extern struct req_format RQF_MDS_STATFS_SE;
 extern struct req_format RQF_MDS_GET_ROOT;
+extern struct req_format RQF_MDS_GET_ROOT_SE;
 extern struct req_format RQF_MDS_SYNC;
+extern struct req_format RQF_MDS_CHECK_FLAGS_SE;
 extern struct req_format RQF_MDS_GETXATTR;
+extern struct req_format RQF_MDS_GETXATTR_SE;
 extern struct req_format RQF_MDS_GETATTR;
+extern struct req_format RQF_MDS_GETATTR_SE;
 extern struct req_format RQF_OUT_UPDATE;
 
 /*
  * This is format of direct (non-intent) MDS_GETATTR_NAME request.
  */
 extern struct req_format RQF_MDS_GETATTR_NAME;
+extern struct req_format RQF_MDS_GETATTR_NAME_SE;
 extern struct req_format RQF_MDS_CLOSE;
 extern struct req_format RQF_MDS_RELEASE_CLOSE;
 extern struct req_format RQF_MDS_CONNECT;
 extern struct req_format RQF_MDS_DISCONNECT;
 extern struct req_format RQF_MDS_GET_INFO;
 extern struct req_format RQF_MDS_READPAGE;
+extern struct req_format RQF_MDS_READPAGE_SE;
 extern struct req_format RQF_MDS_DONE_WRITING;
 extern struct req_format RQF_MDS_REINT;
 extern struct req_format RQF_MDS_REINT_CREATE;
+extern struct req_format RQF_MDS_REINT_CREATE_SE;
 extern struct req_format RQF_MDS_REINT_CREATE_RMT_ACL;
+extern struct req_format RQF_MDS_REINT_CREATE_RMT_ACL_SE;
 extern struct req_format RQF_MDS_REINT_CREATE_SLAVE;
 extern struct req_format RQF_MDS_REINT_CREATE_SYM;
+extern struct req_format RQF_MDS_REINT_CREATE_SYM_SE;
 extern struct req_format RQF_MDS_REINT_OPEN;
 extern struct req_format RQF_MDS_REINT_UNLINK;
+extern struct req_format RQF_MDS_REINT_UNLINK_SE;
 extern struct req_format RQF_MDS_REINT_LINK;
+extern struct req_format RQF_MDS_REINT_LINK_SE;
 extern struct req_format RQF_MDS_REINT_RENAME;
+extern struct req_format RQF_MDS_REINT_RENAME_SE;
 extern struct req_format RQF_MDS_REINT_SETATTR;
+extern struct req_format RQF_MDS_REINT_SETATTR_SE;
 extern struct req_format RQF_MDS_REINT_SETXATTR;
+extern struct req_format RQF_MDS_REINT_SETXATTR_SE;
 extern struct req_format RQF_MDS_QUOTACHECK;
 extern struct req_format RQF_MDS_QUOTACTL;
+extern struct req_format RQF_MDS_QUOTACTL_SE;
 extern struct req_format RQF_QC_CALLBACK;
 extern struct req_format RQF_QUOTA_DQACQ;
 extern struct req_format RQF_MDS_SWAP_LAYOUTS;
+extern struct req_format RQF_MDS_SWAP_LAYOUTS_SE;
 /* MDS hsm formats */
 extern struct req_format RQF_MDS_HSM_STATE_GET;
 extern struct req_format RQF_MDS_HSM_STATE_SET;
@@ -203,12 +220,14 @@ extern struct req_format RQF_OST_QUOTACHECK;
 extern struct req_format RQF_OST_QUOTACTL;
 extern struct req_format RQF_OST_GETATTR;
 extern struct req_format RQF_OST_SETATTR;
+extern struct req_format RQF_OST_SETATTR_SE;
 extern struct req_format RQF_OST_CREATE;
 extern struct req_format RQF_OST_PUNCH;
 extern struct req_format RQF_OST_SYNC;
 extern struct req_format RQF_OST_DESTROY;
 extern struct req_format RQF_OST_BRW_READ;
 extern struct req_format RQF_OST_BRW_WRITE;
+extern struct req_format RQF_OST_BRW_WRITE_SE;
 extern struct req_format RQF_OST_STATFS;
 extern struct req_format RQF_OST_SET_GRANT_INFO;
 extern struct req_format RQF_OST_GET_INFO;
@@ -224,10 +243,14 @@ extern struct req_format RQF_LDLM_CONVERT;
 extern struct req_format RQF_LDLM_INTENT;
 extern struct req_format RQF_LDLM_INTENT_BASIC;
 extern struct req_format RQF_LDLM_INTENT_LAYOUT;
+extern struct req_format RQF_LDLM_INTENT_LAYOUT_SE;
 extern struct req_format RQF_LDLM_INTENT_GETATTR;
+extern struct req_format RQF_LDLM_INTENT_GETATTR_SE;
 extern struct req_format RQF_LDLM_INTENT_OPEN;
+extern struct req_format RQF_LDLM_INTENT_OPEN_SE;
 extern struct req_format RQF_LDLM_INTENT_CREATE;
 extern struct req_format RQF_LDLM_INTENT_UNLINK;
+extern struct req_format RQF_LDLM_INTENT_UNLINK_SE;
 extern struct req_format RQF_LDLM_INTENT_GETXATTR;
 extern struct req_format RQF_LDLM_INTENT_QUOTA;
 extern struct req_format RQF_LDLM_CANCEL;
@@ -351,5 +374,8 @@ extern struct req_msg_field RMF_LFSCK_REPLY;
 extern struct req_msg_field RMF_BARRIER_REQUEST;
 extern struct req_msg_field RMF_BARRIER_REPLY;
 /** @} req_layout */
+
+extern struct req_msg_field RMF_SELINUX;
+extern struct req_msg_field RMF_SELINUX2;
 
 #endif /* _LUSTRE_REQ_LAYOUT_H__ */

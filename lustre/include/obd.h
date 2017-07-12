@@ -384,6 +384,10 @@ struct client_obd {
 	void			*cl_lru_work;
 	/* hash tables for osc_quota_info */
 	cfs_hash_t		*cl_quota_hash[MAXQUOTAS];
+
+	char			cl_se_domain[CFS_SID_MAX_LEN];
+	char			cl_se_label[CFS_SID_MAX_LEN];
+	char			cl_se_mount[CFS_SID_MAX_LEN];
 };
 #define obd2cli_tgt(obd) ((char *)(obd)->u.cli.cl_target_uuid.uuid)
 
@@ -501,6 +505,7 @@ struct niobuf_local {
 #define LUSTRE_FLD_NAME         "fld"
 #define LUSTRE_SEQ_NAME         "seq"
 
+#define LUSTRE_SEC_NAME		"sec"
 #define LUSTRE_MDD_NAME         "mdd"
 #define LUSTRE_OSD_LDISKFS_NAME	"osd-ldiskfs"
 #define LUSTRE_OSD_ZFS_NAME     "osd-zfs"
@@ -846,6 +851,9 @@ enum obd_cleanup_stage {
 #define KEY_CACHE_SET		"cache_set"
 #define KEY_CACHE_LRU_SHRINK	"cache_lru_shrink"
 #define KEY_OSP_CONNECTED	"osp_connected"
+#define KEY_SEDOMAIN		"sedomain"
+#define KEY_SELABEL		"selabel"
+#define KEY_SEMOUNT		"semount"
 
 struct lu_context;
 
@@ -1256,6 +1264,9 @@ struct md_ops {
 				  const struct lmv_stripe_md *,
 				  const char *name, int namelen,
 				  struct lu_fid *fid);
+
+	int (*m_check_flags)(struct obd_export *exp, const struct lu_fid *fid,
+			      struct obd_capa *oc);
 };
 
 struct lsm_operations {

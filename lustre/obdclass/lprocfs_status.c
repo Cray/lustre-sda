@@ -653,7 +653,7 @@ static const char *obd_connect_names[] = {
 	"flock_deadlock",
 	"disp_stripe",
 	"open_by_fid",
-	"lfsck",
+	"sda",
 	"unknown",
 	"unlink_close",
 	"multi_mod_rpcs",

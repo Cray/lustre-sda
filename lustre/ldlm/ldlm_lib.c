@@ -382,6 +382,10 @@ int client_obd_setup(struct obd_device *obddev, struct lustre_cfg *lcfg)
                 RETURN(-EINVAL);
         }
 
+	strcpy(cli->cl_se_domain, "root:sysadm_r:sysadm_t:s0-s15:c0.c1023");
+	strcpy(cli->cl_se_label, "system_u:object_r:file_t:s0");
+	strcpy(cli->cl_se_mount, "root:sysadm_r:mount_t:s0-s15:c0.c1023");
+
 	init_rwsem(&cli->cl_sem);
 	mutex_init(&cli->cl_mgc_mutex);
         cli->cl_conn_count = 0;

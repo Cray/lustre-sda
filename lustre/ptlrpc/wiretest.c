@@ -179,7 +179,9 @@ void lustre_assert_wire_constants(void)
 		 (long long)MDS_HSM_CT_UNREGISTER);
 	LASSERTF(MDS_SWAP_LAYOUTS == 61, "found %lld\n",
 		 (long long)MDS_SWAP_LAYOUTS);
-	LASSERTF(MDS_LAST_OPC == 62, "found %lld\n",
+	LASSERTF(MDS_CHECK_FLAGS == 62, "found %lld\n",
+		 (long long)MDS_CHECK_FLAGS);
+	LASSERTF(MDS_LAST_OPC == 63, "found %lld\n",
 		 (long long)MDS_LAST_OPC);
 	LASSERTF(REINT_SETATTR == 1, "found %lld\n",
 		 (long long)REINT_SETATTR);
@@ -1544,7 +1546,7 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)offsetof(struct lov_mds_md_v1, lmm_objects[0]));
 	LASSERTF((int)sizeof(((struct lov_mds_md_v1 *)0)->lmm_objects[0]) == 24, "found %lld\n",
 		 (long long)(int)sizeof(((struct lov_mds_md_v1 *)0)->lmm_objects[0]));
-	CLASSERT(LOV_MAGIC_V1 == (0x0BD10000 | 0x0BD0));
+	CLASSERT(LOV_MAGIC_V1 == 0x0BD10BD0);
 
 	/* Checks for struct lov_mds_md_v3 */
 	LASSERTF((int)sizeof(struct lov_mds_md_v3) == 48, "found %lld\n",

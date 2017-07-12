@@ -305,8 +305,6 @@ test_5() {
 	# stop lsvcgssd
 	send_sigint $(comma_list $(mdts_nodes)) lsvcgssd
 	sleep 5
-	check_gss_daemon_nodes $(comma_list $(mdts_nodes)) lsvcgssd &&
-		error "lsvcgssd still running"
 
 	# flush context, and touch
 	$RUNAS $LFS flushctx $MOUNT || error "can't flush context on $MOUNT"
@@ -324,7 +322,6 @@ test_5() {
 	echo "restart lsvcgssd and recovering"
 	start_gss_daemons $(comma_list $(mdts_nodes)) "$LSVCGSSD -v"
 	sleep 5
-	check_gss_daemon_nodes $(comma_list $(mdts_nodes)) lsvcgssd
 	wait $TOUCHPID || error "touch fail"
 	[ -f $file2 ] || error "$file2 not found"
 }
@@ -755,29 +752,48 @@ run_test 150 "secure mgs connection: client flavor setting"
 test_151() {
 	local save_opts
 
+	[ "$(facet_active_host mgs)" = "$(facet_active_host mds1)" ] &&
+		{ skip "mgs should be different from mds"; return 0; }
+
 	# set mgs only accept krb5p
 	set_rule _mgs any any krb5p
 
 	# umount everything, modules still loaded
 	stopall
 
+	# start mgs
+	start mgs $(mgsdevname 1) $MDS_MOUNT_OPTS
+
 	# mount mgs with default flavor, in current framework it means mgs+mdt1.
 	# the connection of mgc of mdt1 to mgs is expected fail.
 	DEVNAME=$(mdsdevname 1)
-	start mds1 $DEVNAME $MDS_MOUNT_OPTS &&
+	start mds1 $DEVNAME $MDS_MOUNT_OPTS
+	wait_mgc_import_state mds FULL 0 &&
 	    error "mount with default flavor should have failed"
+	stop mds1
 
 	# mount with unauthorized flavor should fail
 	save_opts=$MDS_MOUNT_OPTS
+	if [ -z "$MDS_MOUNT_OPTS" ]; then
+	    MDS_MOUNT_OPTS="-o mgssec=null"
+	else
 	MDS_MOUNT_OPTS="$MDS_MOUNT_OPTS,mgssec=null"
-	start mds1 $DEVNAME $MDS_MOUNT_OPTS &&
+	fi
+	start mds1 $DEVNAME $MDS_MOUNT_OPTS
+	wait_mgc_import_state mds FULL 0 &&
 	    error "mount with unauthorized flavor should have failed"
 	MDS_MOUNT_OPTS=$save_opts
+	stop mds1
 
 	# mount with designated flavor should succeed
 	save_opts=$MDS_MOUNT_OPTS
+	if [ -z "$MDS_MOUNT_OPTS" ]; then
+	    MDS_MOUNT_OPTS="-o mgssec=krb5p"
+	else
 	MDS_MOUNT_OPTS="$MDS_MOUNT_OPTS,mgssec=krb5p"
-	start mds1 $DEVNAME $MDS_MOUNT_OPTS ||
+	fi
+	start mds1 $DEVNAME $MDS_MOUNT_OPTS
+	wait_mgc_import_state mds FULL 0 ||
 	    error "mount with designated flavor should have succeeded"
 	MDS_MOUNT_OPTS=$save_opts
 

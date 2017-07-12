@@ -358,7 +358,7 @@ struct lu_attr;
 struct inode;
 
 void obdo_from_la(struct obdo *dst, const struct lu_attr *la, __u64 valid);
-void la_from_obdo(struct lu_attr *la, const struct obdo *dst, u32 valid);
+void la_from_obdo(struct lu_attr *la, const struct obdo *dst, obd_valid valid);
 void obdo_refresh_inode(struct inode *dst, const struct obdo *src,
 			u32 valid);
 
@@ -1612,6 +1612,17 @@ static inline int md_setattr(struct obd_export *exp, struct md_op_data *op_data,
         rc = MDP(exp->exp_obd, setattr)(exp, op_data, ea, ealen,
                                         ea2, ea2len, request, mod);
         RETURN(rc);
+}
+
+static inline int md_check_flags(struct obd_export *exp, const struct lu_fid *fid,
+				 struct obd_capa *oc)
+{
+	int rc;
+	ENTRY;
+	EXP_CHECK_MD_OP(exp, check_flags);
+	EXP_MD_COUNTER_INCREMENT(exp, check_flags);
+	rc = MDP(exp->exp_obd, check_flags)(exp, fid, oc);
+	RETURN(rc);
 }
 
 static inline int md_fsync(struct obd_export *exp, const struct lu_fid *fid,

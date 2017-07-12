@@ -51,23 +51,28 @@ void mdc_pack_capa(struct ptlrpc_request *req,
 void mdc_swap_layouts_pack(struct ptlrpc_request *req,
 			   struct md_op_data *op_data);
 void mdc_readdir_pack(struct ptlrpc_request *req, __u64 pgoff, size_t size,
-                      const struct lu_fid *fid, struct obd_capa *oc);
+		      const struct lu_fid *fid, struct obd_capa *oc,
+		      char *cdomain);
 void mdc_getattr_pack(struct ptlrpc_request *req, __u64 valid, __u32 flags,
-		      struct md_op_data *data, size_t ea_size);
+		      struct md_op_data *data, size_t ea_size, char *cdomain);
 void mdc_setattr_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
-		      void *ea, size_t ealen, void *ea2, size_t ea2len);
+		      void *ea, size_t ealen, void *ea2, size_t ea2len,
+		      char *cdomain);
 void mdc_create_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		     const void *data, size_t datalen, umode_t mode,
-		     uid_t uid, gid_t gid, cfs_cap_t capability, __u64 rdev);
+		     uid_t uid, gid_t gid, cfs_cap_t capability, __u64 rdev,
+		     char *cdomain, char *crdomain);
 void mdc_open_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		   umode_t mode, __u64 rdev, __u64 flags,
-		   const void *data, size_t datalen);
-void mdc_unlink_pack(struct ptlrpc_request *req, struct md_op_data *op_data);
+		   const void *data, size_t datalen, char *cdomain, char *crdomain);
+void mdc_unlink_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
+		     char *cdomain);
 void mdc_getxattr_pack(struct ptlrpc_request *req, struct md_op_data *op_data);
-void mdc_link_pack(struct ptlrpc_request *req, struct md_op_data *op_data);
+void mdc_link_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
+		   char *cdomain);
 void mdc_rename_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		     const char *old, size_t oldlen,
-		     const char *new, size_t newlen);
+		     const char *new, size_t newlen, char *cdomain);
 void mdc_close_pack(struct ptlrpc_request *req, struct md_op_data *op_data);
 
 /* mdc/mdc_locks.c */
@@ -172,5 +177,12 @@ static inline unsigned long hash_x_index(__u64 hash, int hash64)
 	/* save hash 0 with hash 1 */
 	return ~0UL - (hash + !hash);
 }
+
+void mdc_pack_domain(struct ptlrpc_request *req, char *cdomain);
+void mdc_pack_create_domain(struct ptlrpc_request *req, char *crdomain);
+void mdc_release_domain(char *domain);
+
+#define mdc_select_rq_format(exp,basefmt) (exp_connect_selustre(exp) ?\
+                                          &(basefmt ## _SE) : &(basefmt))
 
 #endif

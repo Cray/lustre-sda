@@ -1510,7 +1510,8 @@ static int lov_set_info_async(const struct lu_env *env, struct obd_export *exp,
         obd_getref(obddev);
         count = lov->desc.ld_tgt_count;
 
-	if (KEY_IS(KEY_CHECKSUM)) {
+	if (KEY_IS(KEY_CHECKSUM) || KEY_IS(KEY_SEDOMAIN) ||
+	    KEY_IS(KEY_SELABEL) || KEY_IS(KEY_SEMOUNT)) {
                 do_inactive = 1;
 	} else if (KEY_IS(KEY_CACHE_SET)) {
 		LASSERT(lov->lov_cache == NULL);

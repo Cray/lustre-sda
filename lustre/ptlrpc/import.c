@@ -1052,7 +1052,8 @@ static int ptlrpc_connect_interpret(const struct lu_env *env,
 		GOTO(out, rc = -EPROTO);
 	}
 
-	if ((ocd->ocd_connect_flags2 & imp->imp_connect_flags2_orig) !=
+	if ((ocd->ocd_connect_flags & OBD_CONNECT_FLAGS2) &&
+	    (ocd->ocd_connect_flags2 & imp->imp_connect_flags2_orig) !=
 	    ocd->ocd_connect_flags2) {
 		CERROR("%s: Server didn't grant requested subset of flags2: "
 		       "asked="LPX64" granted="LPX64"\n",

@@ -1364,6 +1364,8 @@ extern void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
 #define OBD_CONNECT_OPEN_BY_FID	0x20000000000000ULL /* open by fid won't pack
 						       name in request */
 #define OBD_CONNECT_LFSCK      0x40000000000000ULL/* support online LFSCK */
+/* Unfortunately, we have a flag collision here :( */
+#define OBD_CONNECT_SELUSTRE	0x40000000000000ULL
 #define OBD_CONNECT_UNLINK_CLOSE 0x100000000000000ULL/* close file in unlink */
 #define OBD_CONNECT_MULTIMODRPCS 0x200000000000000ULL /* support multiple modify
 							 RPCs in parallel */
@@ -1725,8 +1727,9 @@ static inline void lmm_oi_cpu_to_le(struct ost_id *dst_oi,
 #define DEF_REP_MD_SIZE (sizeof(struct lov_mds_md) + \
 			 100 * sizeof(struct lov_ost_data))
 
-#define XATTR_NAME_ACL_ACCESS   "system.posix_acl_access"
-#define XATTR_NAME_ACL_DEFAULT  "system.posix_acl_default"
+#define XATTR_NAME_ACL_ACCESS		"system.posix_acl_access"
+#define XATTR_NAME_ACL_DEFAULT		"system.posix_acl_default"
+#define XATTR_NAME_SECURITY_SELINUX	"security.selinux"
 #define XATTR_USER_PREFIX       "user."
 #define XATTR_TRUSTED_PREFIX    "trusted."
 #define XATTR_SECURITY_PREFIX   "security."
@@ -1854,7 +1857,10 @@ lov_mds_md_max_stripe_count(size_t buf_size, __u32 lmm_magic)
 #define OBD_MD_FLDATAVERSION (0x0010000000000000ULL) /* iversion sum */
 #define OBD_MD_FLRELEASED    (0x0020000000000000ULL) /* file released */
 
+/* MDS-only */
 #define OBD_MD_DEFAULT_MEA   (0x0040000000000000ULL) /* default MEA */
+/* OSS-only */
+#define OBD_MD_FLSECURITY    (0x0040000000000000ULL) /* has security */
 
 #define OBD_MD_FLGETATTR (OBD_MD_FLID    | OBD_MD_FLATIME | OBD_MD_FLMTIME | \
                           OBD_MD_FLCTIME | OBD_MD_FLSIZE  | OBD_MD_FLBLKSZ | \
@@ -2184,6 +2190,7 @@ typedef enum {
 	MDS_HSM_CT_REGISTER	= 59,
 	MDS_HSM_CT_UNREGISTER	= 60,
 	MDS_SWAP_LAYOUTS	= 61,
+	MDS_CHECK_FLAGS		= 62,
 	MDS_LAST_OPC
 } mds_cmd_t;
 
@@ -4278,6 +4285,8 @@ struct close_data {
 };
 
 void lustre_swab_close_data(struct close_data *data);
+
+#define CFS_SID_MAX_LEN 128
 
 #endif
 /** @} lustreidl */

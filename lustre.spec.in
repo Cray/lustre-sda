@@ -467,6 +467,8 @@ echo '%{_sysconfdir}/init.d/lnet' >>lustre.files
 echo '%{_sysconfdir}/init.d/lsvcgss' >>lustre.files
 %endif
 
+echo '%{_sysconfdir}/request-key.d/lgssc.conf' >>lustre.files
+
 # Create the pristine source directory.
 cd $RPM_BUILD_DIR/lustre-%{version}
 mkdir -p $RPM_BUILD_ROOT%{_prefix}/src

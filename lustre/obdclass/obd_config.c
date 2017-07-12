@@ -981,6 +981,9 @@ void class_del_profiles(void)
 }
 EXPORT_SYMBOL(class_del_profiles);
 
+unsigned int hard_security;
+EXPORT_SYMBOL(hard_security);
+
 static int class_set_global(char *ptr, int val, struct lustre_cfg *lcfg)
 {
 	ENTRY;
@@ -997,6 +1000,8 @@ static int class_set_global(char *ptr, int val, struct lustre_cfg *lcfg)
 	else if (class_match_param(ptr, PARAM_JOBID_VAR, NULL) == 0)
 		strlcpy(obd_jobid_var, lustre_cfg_string(lcfg, 2),
 			JOBSTATS_JOBID_VAR_MAX_LEN + 1);
+	else if (class_match_param(ptr, PARAM_HARD_SECURITY, NULL) == 0)
+		hard_security = val;
 	else
 		RETURN(-EINVAL);
 
@@ -1583,7 +1588,7 @@ int class_config_llog_handler(const struct lu_env *env,
                 lustre_cfg_bufs_init(&bufs, lcfg);
 
                 if (clli && clli->cfg_instance &&
-                    LUSTRE_CFG_BUFLEN(lcfg, 0) > 0){
+                    LUSTRE_CFG_BUFLEN(lcfg, 0) > 0 && lcfg->lcfg_command != LCFG_SPTLRPC_CONF) {
                         inst = 1;
                         inst_len = LUSTRE_CFG_BUFLEN(lcfg, 0) +
                                    sizeof(clli->cfg_instance) * 2 + 4;
@@ -1612,7 +1617,7 @@ int class_config_llog_handler(const struct lu_env *env,
                  * moving them to index [1] and [2], and insert MGC's
                  * obdname at index [0].
                  */
-                if (clli && clli->cfg_instance == NULL &&
+                if (clli /* && clli->cfg_instance == NULL */ &&
                     lcfg->lcfg_command == LCFG_SPTLRPC_CONF) {
                         lustre_cfg_bufs_set(&bufs, 2, bufs.lcfg_buf[1],
                                             bufs.lcfg_buflen[1]);

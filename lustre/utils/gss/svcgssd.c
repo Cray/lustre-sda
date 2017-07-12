@@ -194,8 +194,11 @@ main(int argc, char *argv[])
 	extern char *optarg;
 	char *progname;
 
-	while ((opt = getopt(argc, argv, "fvrnmog:")) != -1) {
+	while ((opt = getopt(argc, argv, "h:fvrnmog:")) != -1) {
 		switch (opt) {
+			case 'h':
+				fprintf(stderr, "warning: -h is obsolete\n");
+				break;
 			case 'f':
 				fg = 1;
 				break;

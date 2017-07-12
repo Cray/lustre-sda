@@ -169,7 +169,8 @@ static void ll_free_sbi(struct super_block *sb)
 }
 
 static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
-                                    struct vfsmount *mnt)
+                                    struct vfsmount *mnt,
+                                    char *sedomain, char *selabel, char *semount)
 {
 	struct inode *root = NULL;
         struct ll_sb_info *sbi = ll_s2sbi(sb);
@@ -223,6 +224,8 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 				  OBD_CONNECT_FLAGS2 | OBD_CONNECT_MULTIMODRPCS;
 
 	data->ocd_connect_flags2 = 0;
+
+	data->ocd_connect_flags |= OBD_CONNECT_SELUSTRE;
 
         if (sbi->ll_flags & LL_SBI_SOM_PREVIEW)
                 data->ocd_connect_flags |= OBD_CONNECT_SOM;
@@ -283,6 +286,19 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
         }
 
 	sbi->ll_md_exp->exp_connect_data = *data;
+
+	if (sedomain != NULL)
+		obd_set_info_async(NULL, sbi->ll_md_exp, sizeof(KEY_SEDOMAIN),
+				 KEY_SEDOMAIN, strlen(sedomain), sedomain,
+				 NULL);
+	if (selabel != NULL)
+		obd_set_info_async(NULL, sbi->ll_md_exp, sizeof(KEY_SELABEL),
+				 KEY_SELABEL, strlen(selabel), selabel,
+				 NULL);
+	if (semount != NULL)
+		obd_set_info_async(NULL, sbi->ll_md_exp, sizeof(KEY_SEMOUNT),
+				 KEY_SEMOUNT, strlen(semount), semount,
+				 NULL);
 
 	err = obd_fid_init(sbi->ll_md_exp->exp_obd, sbi->ll_md_exp,
 			   LUSTRE_SEQ_METADATA);
@@ -402,8 +418,11 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 			LCONSOLE_INFO("%s: disabling xattr cache due to "
 				      "unknown maximum xattr size.\n", dt);
 		} else {
+			/* XXX: the server-side does not have SE-xattr support */
+#if 0
 			sbi->ll_flags |= LL_SBI_XATTR_CACHE;
 			sbi->ll_xattr_cache_enabled = 1;
+#endif
 		}
 	}
 
@@ -430,6 +449,8 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 				  OBD_CONNECT_LAYOUTLOCK |
 				  OBD_CONNECT_PINGLESS | OBD_CONNECT_LFSCK |
 				  OBD_CONNECT_BULK_MBITS;
+
+	data->ocd_connect_flags |= OBD_CONNECT_SELUSTRE;
 
 	if (sb->s_flags & MS_RDONLY)
 		data->ocd_connect_flags |= OBD_CONNECT_RDONLY;
@@ -467,6 +488,7 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 
 	data->ocd_brw_size = DT_MAX_BRW_SIZE;
 
+
 	err = obd_connect(NULL, &sbi->ll_dt_exp, obd, &sbi->ll_sb_uuid, data,
 			  NULL);
 	if (err == -EBUSY) {
@@ -482,6 +504,19 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 	}
 
 	sbi->ll_dt_exp->exp_connect_data = *data;
+
+	if (sedomain != NULL)
+		obd_set_info_async(NULL, sbi->ll_dt_exp, sizeof(KEY_SEDOMAIN),
+				 KEY_SEDOMAIN, strlen(sedomain), sedomain,
+				 NULL);
+	if (selabel != NULL)
+		obd_set_info_async(NULL, sbi->ll_dt_exp, sizeof(KEY_SELABEL),
+				 KEY_SELABEL, strlen(selabel), selabel,
+				 NULL);
+	if (semount != NULL)
+		obd_set_info_async(NULL, sbi->ll_dt_exp, sizeof(KEY_SEMOUNT),
+				 KEY_SEMOUNT, strlen(semount), semount,
+				 NULL);
 
 	err = obd_fid_init(sbi->ll_dt_exp->exp_obd, sbi->ll_dt_exp,
 			   LUSTRE_SEQ_METADATA);
@@ -866,7 +901,7 @@ static inline int ll_set_opt(const char *opt, char *data, int fl)
 }
 
 /* non-client-specific mount options are parsed in lmd_parse */
-static int ll_options(char *options, int *flags)
+static int ll_options(char *options, int *flags, char **sedomain, char **selabel, char **semount)
 {
         int tmp;
         char *s1 = options, *s2;
@@ -987,6 +1022,19 @@ static int ll_options(char *options, int *flags)
                         *flags &= ~tmp;
                         goto next;
                 }
+		if (!strncmp(s1, "sedomain=", strlen("sedomain="))) {
+			*sedomain = s1 + strlen("sedomain=");
+			goto next;
+		}
+		if (!strncmp(s1, "selabel=", strlen("selabel="))) {
+			*selabel = s1 + strlen("selabel=");
+			goto next;
+		}
+		if (!strncmp(s1, "semount=", strlen("semount="))) {
+			*semount = s1 + strlen("semount=");
+			goto next;
+		}
+
                 LCONSOLE_ERROR_MSG(0x152, "Unknown option '%s', won't mount.\n",
                                    s1);
                 RETURN(-EINVAL);
@@ -1072,7 +1120,7 @@ int ll_fill_super(struct super_block *sb, struct vfsmount *mnt)
         struct lustre_profile *lprof = NULL;
         struct lustre_sb_info *lsi = s2lsi(sb);
         struct ll_sb_info *sbi;
-        char  *dt = NULL, *md = NULL;
+        char  *dt = NULL, *md = NULL, *sedomain = NULL, *selabel = NULL, *semount = NULL;
         char  *profilenm = get_profile_name(sb);
         struct config_llog_instance *cfg;
         /* %p for void* in printf needs 16+2 characters: 0xffffffffffffffff */
@@ -1095,7 +1143,7 @@ int ll_fill_super(struct super_block *sb, struct vfsmount *mnt)
 	if (!sbi)
 		GOTO(out_free, err = -ENOMEM);
 
-        err = ll_options(lsi->lsi_lmd->lmd_opts, &sbi->ll_flags);
+        err = ll_options(lsi->lsi_lmd->lmd_opts, &sbi->ll_flags, &sedomain, &selabel, &semount);
         if (err)
                 GOTO(out_free, err);
 
@@ -1151,7 +1199,7 @@ int ll_fill_super(struct super_block *sb, struct vfsmount *mnt)
         sprintf(md, "%s-%p", lprof->lp_md, cfg->cfg_instance);
 
         /* connections, registrations, sb setup */
-        err = client_common_fill_super(sb, md, dt, mnt);
+        err = client_common_fill_super(sb, md, dt, mnt, sedomain, selabel, semount);
 
 out_free:
 	if (md)

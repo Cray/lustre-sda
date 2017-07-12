@@ -902,7 +902,10 @@ static struct cache_deferred_req* cache_upcall_defer(struct cache_req *req)
 {
         return NULL;
 }
-static struct cache_req cache_upcall_chandle = { cache_upcall_defer };
+
+static struct cache_req cache_upcall_chandle = {
+				 .defer		= cache_upcall_defer, 
+				 .thread_wait	= GSS_SVC_UPCALL_TIMEOUT * HZ };
 
 int gss_svc_upcall_handle_init(struct ptlrpc_request *req,
 			       struct gss_svc_reqctx *grctx,
@@ -918,7 +921,6 @@ int gss_svc_upcall_handle_init(struct ptlrpc_request *req,
 	wait_queue_t             wait;
 	int                        replen = sizeof(struct ptlrpc_body);
 	struct gss_rep_header     *rephdr;
-	int                        first_check = 1;
 	int                        rc = SECSVC_DROP;
 	ENTRY;
 
@@ -954,51 +956,22 @@ int gss_svc_upcall_handle_init(struct ptlrpc_request *req,
 	init_waitqueue_entry_current(&wait);
 	add_wait_queue(&rsip->waitq, &wait);
 
-cache_check:
 	/* Note each time cache_check() will drop a reference if return
 	 * non-zero. We hold an extra reference on initial rsip, but must
 	 * take care of following calls. */
 	rc = cache_check(&rsi_cache, &rsip->h, &cache_upcall_chandle);
 	switch (rc) {
 	case -ETIMEDOUT:
-	case -EAGAIN: {
-                int valid;
-
-                if (first_check) {
-                        first_check = 0;
-
-                        read_lock(&rsi_cache.hash_lock);
-			valid = test_bit(CACHE_VALID, &rsip->h.flags);
-                        if (valid == 0)
-				set_current_state(TASK_INTERRUPTIBLE);
-                        read_unlock(&rsi_cache.hash_lock);
-
-			if (valid == 0) {
-				unsigned long jiffies;
-				jiffies = msecs_to_jiffies(MSEC_PER_SEC *
-					  GSS_SVC_UPCALL_TIMEOUT);
-				schedule_timeout(jiffies);
-			}
-			cache_get(&rsip->h);
-			goto cache_check;
-                }
-                CWARN("waited %ds timeout, drop\n", GSS_SVC_UPCALL_TIMEOUT);
-                break;
-        }
         case -ENOENT:
                 CWARN("cache_check return ENOENT, drop\n");
                 break;
         case 0:
-                /* if not the first check, we have to release the extra
-                 * reference we just added on it. */
-		if (!first_check)
-			cache_put(&rsip->h, &rsi_cache);
+		cache_put(&rsip->h, &rsi_cache);
 		CDEBUG(D_SEC, "cache_check is good\n");
 		break;
 	}
 
 	remove_wait_queue(&rsip->waitq, &wait);
-	cache_put(&rsip->h, &rsi_cache);
 
 	if (rc)
 		GOTO(out, rc = SECSVC_DROP);
@@ -1067,12 +1040,9 @@ cache_check:
         rc = SECSVC_OK;
 
 out:
-        /* it looks like here we should put rsip also, but this mess up
-         * with NFS cache mgmt code... FIXME */
-#if 0
-        if (rsip)
-                rsi_put(&rsip->h, &rsi_cache);
-#endif
+	if (rsip)
+		cache_put(&rsip->h, &rsi_cache);
+
 
         if (rsci) {
                 /* if anything went wrong, we don't keep the context too */

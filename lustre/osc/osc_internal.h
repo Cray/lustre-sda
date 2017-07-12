@@ -227,4 +227,8 @@ struct ldlm_lock *osc_dlmlock_at_pgoff(const struct lu_env *env,
 				       struct osc_object *obj, pgoff_t index,
 				       enum osc_dap_flags flags);
 int osc_object_invalidate(const struct lu_env *env, struct osc_object *osc);
+
+#define osc_select_rq_format(exp,basefmt) (exp_connect_selustre(exp) ?\
+					  &(basefmt ## _SE) : &(basefmt))
+
 #endif /* OSC_INTERNAL_H */

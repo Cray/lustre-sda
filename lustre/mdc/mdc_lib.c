@@ -42,6 +42,27 @@
 #include <cl_object.h>
 #include "mdc_internal.h"
 
+void mdc_release_domain(char *domain)
+{
+}
+
+void mdc_pack_domain(struct ptlrpc_request *req, char *cdomain)
+{
+	if (cdomain != NULL) {
+		char *domain;
+		domain = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX);
+		strcpy(domain, cdomain);
+	}
+}
+
+void mdc_pack_create_domain(struct ptlrpc_request *req, char *crdomain)
+{
+	if (crdomain != NULL) {
+		char *domain;
+		domain = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX2);
+		strcpy(domain, crdomain);
+	}
+}
 
 static void __mdc_pack_body(struct mdt_body *b, __u32 suppgid)
 {
@@ -138,7 +159,8 @@ static void mdc_pack_name(struct ptlrpc_request *req,
 }
 
 void mdc_readdir_pack(struct ptlrpc_request *req, __u64 pgoff, size_t size,
-		      const struct lu_fid *fid, struct obd_capa *oc)
+		      const struct lu_fid *fid, struct obd_capa *oc,
+		      char *cdomain)
 {
         struct mdt_body *b = req_capsule_client_get(&req->rq_pill,
                                                     &RMF_MDT_BODY);
@@ -150,12 +172,15 @@ void mdc_readdir_pack(struct ptlrpc_request *req, __u64 pgoff, size_t size,
 	b->mbo_mode = LUDA_FID | LUDA_TYPE;
 
 	mdc_pack_capa(req, &RMF_CAPA1, oc);
+
+	mdc_pack_domain(req, cdomain);
 }
 
 /* packing of MDS records */
 void mdc_create_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		     const void *data, size_t datalen, umode_t mode,
-		     uid_t uid, gid_t gid, cfs_cap_t cap_effective, __u64 rdev)
+		     uid_t uid, gid_t gid, cfs_cap_t cap_effective, __u64 rdev,
+		     char *cdomain, char *crdomain)
 {
 	struct mdt_rec_create	*rec;
 	char			*tmp;
@@ -190,6 +215,9 @@ void mdc_create_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		tmp = req_capsule_client_get(&req->rq_pill, &RMF_EADATA);
 		memcpy(tmp, data, datalen);
 	}
+
+	mdc_pack_domain(req, cdomain);
+	mdc_pack_create_domain(req, crdomain);
 }
 
 static inline __u64 mds_pack_open_flags(__u64 flags)
@@ -225,7 +253,7 @@ static inline __u64 mds_pack_open_flags(__u64 flags)
 /* packing of MDS records */
 void mdc_open_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		   umode_t mode, __u64 rdev, __u64 flags, const void *lmm,
-		   size_t lmmlen)
+		   size_t lmmlen, char *cdomain, char *crdomain)
 {
 	struct mdt_rec_create *rec;
 	char *tmp;
@@ -271,6 +299,9 @@ void mdc_open_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		memcpy(tmp, lmm, lmmlen);
 	}
 	set_mrc_cr_flags(rec, cr_flags);
+
+	mdc_pack_domain(req, cdomain);
+	mdc_pack_create_domain(req, crdomain);
 }
 
 static inline __u64 attr_pack(unsigned int ia_valid) {
@@ -353,7 +384,8 @@ static void mdc_ioepoch_pack(struct mdt_ioepoch *epoch,
 }
 
 void mdc_setattr_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
-		      void *ea, size_t ealen, void *ea2, size_t ea2len)
+		      void *ea, size_t ealen, void *ea2, size_t ea2len,
+		      char *cdomain)
 {
         struct mdt_rec_setattr *rec;
         struct mdt_ioepoch *epoch;
@@ -362,6 +394,8 @@ void mdc_setattr_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
         CLASSERT(sizeof(struct mdt_rec_reint) ==sizeof(struct mdt_rec_setattr));
         rec = req_capsule_client_get(&req->rq_pill, &RMF_REC_REINT);
         mdc_setattr_pack_rec(rec, op_data);
+
+	mdc_pack_domain(req, cdomain);
 
         mdc_pack_capa(req, &RMF_CAPA1, op_data->op_capa1);
 
@@ -388,9 +422,12 @@ void mdc_setattr_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 
         memcpy(req_capsule_client_get(&req->rq_pill, &RMF_LOGCOOKIES), ea2,
                ea2len);
+
+	mdc_pack_domain(req, cdomain);
 }
 
-void mdc_unlink_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
+void mdc_unlink_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
+		     char *cdomain)
 {
 	struct mdt_rec_unlink *rec;
 
@@ -414,9 +451,11 @@ void mdc_unlink_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
         mdc_pack_capa(req, &RMF_CAPA1, op_data->op_capa1);
 
 	mdc_pack_name(req, &RMF_NAME, op_data->op_name, op_data->op_namelen);
+
+	mdc_pack_domain(req, cdomain);
 }
 
-void mdc_link_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
+void mdc_link_pack(struct ptlrpc_request *req, struct md_op_data *op_data, char *cdomain)
 {
         struct mdt_rec_link *rec;
 
@@ -439,11 +478,12 @@ void mdc_link_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
         mdc_pack_capa(req, &RMF_CAPA2, op_data->op_capa2);
 
 	mdc_pack_name(req, &RMF_NAME, op_data->op_name, op_data->op_namelen);
+	mdc_pack_domain(req, cdomain);
 }
 
 void mdc_rename_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		     const char *old, size_t oldlen,
-		     const char *new, size_t newlen)
+		     const char *new, size_t newlen, char *cdomain)
 {
         struct mdt_rec_rename *rec;
 
@@ -471,10 +511,12 @@ void mdc_rename_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 
 	if (new != NULL)
 		mdc_pack_name(req, &RMF_SYMTGT, new, newlen);
+
+	mdc_pack_domain(req, cdomain);
 }
 
 void mdc_getattr_pack(struct ptlrpc_request *req, __u64 valid, __u32 flags,
-		      struct md_op_data *op_data, size_t ea_size)
+		      struct md_op_data *op_data, size_t ea_size, char *cdomain)
 {
         struct mdt_body *b = req_capsule_client_get(&req->rq_pill,
                                                     &RMF_MDT_BODY);
@@ -497,6 +539,8 @@ void mdc_getattr_pack(struct ptlrpc_request *req, __u64 valid, __u32 flags,
 	if (op_data->op_name != NULL)
 		mdc_pack_name(req, &RMF_NAME, op_data->op_name,
 			      op_data->op_namelen);
+
+	mdc_pack_domain(req, cdomain);
 }
 
 static void mdc_hsm_release_pack(struct ptlrpc_request *req,

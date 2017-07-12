@@ -515,6 +515,7 @@ struct ptlrpc_ctx_ops {
 #define PTLRPC_CTX_UPTODATE_BIT        (1)  /* uptodate */
 #define PTLRPC_CTX_DEAD_BIT            (2)  /* mark expired gracefully */
 #define PTLRPC_CTX_ERROR_BIT           (3)  /* fatal error (refresh, etc.) */
+#define PTLRPC_CTX_UNREACH_BIT         (4)  /* unreachable */
 #define PTLRPC_CTX_CACHED_BIT          (8)  /* in ctx cache (hash etc.) */
 #define PTLRPC_CTX_ETERNAL_BIT         (9)  /* always valid */
 
@@ -522,6 +523,7 @@ struct ptlrpc_ctx_ops {
 #define PTLRPC_CTX_UPTODATE            (1 << PTLRPC_CTX_UPTODATE_BIT)
 #define PTLRPC_CTX_DEAD                (1 << PTLRPC_CTX_DEAD_BIT)
 #define PTLRPC_CTX_ERROR               (1 << PTLRPC_CTX_ERROR_BIT)
+#define PTLRPC_CTX_UNREACH             (1 << PTLRPC_CTX_UNREACH_BIT)
 #define PTLRPC_CTX_CACHED              (1 << PTLRPC_CTX_CACHED_BIT)
 #define PTLRPC_CTX_ETERNAL             (1 << PTLRPC_CTX_ETERNAL_BIT)
 

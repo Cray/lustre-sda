@@ -565,14 +565,14 @@ int ptlrpc_send_reply(struct ptlrpc_request *req, int flags)
 
         /* There may be no rq_export during failover */
 
-        if (unlikely(req->rq_export && req->rq_export->exp_obd &&
-                     req->rq_export->exp_obd->obd_fail)) {
-                /* Failed obd's only send ENODEV */
-                req->rq_type = PTL_RPC_MSG_ERR;
-                req->rq_status = -ENODEV;
-                CDEBUG(D_HA, "sending ENODEV from failed obd %d\n",
-                       req->rq_export->exp_obd->obd_minor);
-        }
+	if (unlikely(req->rq_export && req->rq_export->exp_obd &&
+		     req->rq_export->exp_obd->obd_fail &&
+		     req->rq_status != -ENODEV)) {
+		CDEBUG(D_HA, "mute request from failed obd %d\n",
+			req->rq_export->exp_obd->obd_minor);
+
+		RETURN(-ENODEV);
+	}
 
 	/* In order to keep interoprability with the client (< 2.3) which
 	 * doesn't have pb_jobid in ptlrpc_body, We have to shrink the
@@ -873,7 +873,8 @@ int ptl_send_rpc(struct ptlrpc_request *request, int noreply)
         request->rq_deadline = request->rq_sent + request->rq_timeout +
                 ptlrpc_at_get_net_latency(request);
 
-	ptlrpc_pinger_sending_on_import(imp);
+	if (lustre_msg_get_opc(request->rq_reqmsg) != SEC_CTX_INIT)
+		ptlrpc_pinger_sending_on_import(imp);
 
         DEBUG_REQ(D_INFO, request, "send flg=%x",
                   lustre_msg_get_flags(request->rq_reqmsg));

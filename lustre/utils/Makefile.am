@@ -145,12 +145,11 @@ pkglib_LTLIBRARIES += mount_osd_ldiskfs.la
 
 mount_osd_ldiskfs_la_SOURCES = mount_utils_ldiskfs.c
 mount_osd_ldiskfs_la_LDFLAGS = -shared -export-dynamic -module -avoid-version
-mount_osd_ldiskfs_la_LIBADD := $(SELINUX)
 endif
 
 mount_lustre_SOURCES = mount_lustre.c mount_utils.c mount_utils.h
 mount_lustre_CPPFLAGS = $(AM_CPPFLAGS) ${MNTMODCFLAGS}
-mount_lustre_LDADD := $(LIBPTLCTL) $(SELINUX)
+mount_lustre_LDADD := $(LIBPTLCTL)
 mount_lustre_DEPENDENCIES := $(LIBPTLCTL)
 mount_lustre_LDFLAGS = ${MNTMODLDFLAGS}
 

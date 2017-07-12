@@ -45,8 +45,10 @@ if RHEL
 initdir = $(sysconfdir)/init.d
 init_SCRIPTS  = lnet lsvcgss
 if SERVER
-init_SCRIPTS += lustre
+init_SCRIPTS += lustre lsvcgss
 endif
+rkdir = $(sysconfdir)/request-key.d
+rk_SCRIPTS = lgssc.conf
 endif
 
 if UTILS
@@ -71,7 +73,7 @@ EXTRA_DIST = license-status version_tag.pl version_tag-git.pl \
 	     lc_servip lustre_routes_config lustre_routes_conversion \
 	     $(addsuffix .in,$(genscripts)) lfs_migrate lustre_req_history \
 	     lustre lnet lsvcgss lc_common haconfig Lustre.ha_v2 dkms.mkconf \
-	     ko2iblnd-probe lustre_tune_prealloc
+	     ko2iblnd-probe lustre_tune_prealloc lgssc.conf
 
 CLEANFILES = $(genscripts)
 

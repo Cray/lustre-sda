@@ -124,6 +124,7 @@ static int mdc_get_root(struct obd_export *exp, const char *fileset,
 {
         struct ptlrpc_request *req;
         struct mdt_body       *body;
+	char		      *domain = NULL;
         int                    rc;
         ENTRY;
 
@@ -131,20 +132,37 @@ static int mdc_get_root(struct obd_export *exp, const char *fileset,
 		RETURN(-ENOTSUPP);
 
 	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-				&RQF_MDS_GET_ROOT);
+				   mdc_select_rq_format(exp, RQF_MDS_GET_ROOT));
         if (req == NULL)
                 RETURN(-ENOMEM);
+
+	if (exp_connect_selustre(exp)) {
+		domain = exp->exp_obd->u.cli.cl_se_mount;
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			rc = -EPERM;
+			goto out_free;
+		}
+
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
 
 	if (fileset != NULL)
 		req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
 				     strlen(fileset) + 1);
 	rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_GET_ROOT);
 	if (rc) {
+		mdc_release_domain(domain);
+out_free:
 		ptlrpc_request_free(req);
 		RETURN(rc);
 	}
 
         mdc_pack_body(req, NULL, NULL, 0, 0, -1, 0);
+	mdc_pack_domain(req, domain);
+	mdc_release_domain(domain);
+
 	if (fileset != NULL) {
 		char *name = req_capsule_client_get(&req->rq_pill, &RMF_NAME);
 
@@ -242,6 +260,7 @@ static int mdc_getattr(struct obd_export *exp, struct md_op_data *op_data,
 {
         struct ptlrpc_request *req;
         int                    rc;
+	char *domain = NULL;
         ENTRY;
 
 	/* Single MDS without an LMV case */
@@ -250,17 +269,35 @@ static int mdc_getattr(struct obd_export *exp, struct md_op_data *op_data,
 		RETURN(0);
 	}
         *request = NULL;
-        req = ptlrpc_request_alloc(class_exp2cliimp(exp), &RQF_MDS_GETATTR);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				mdc_select_rq_format(exp, RQF_MDS_GETATTR));
         if (req == NULL)
                 RETURN(-ENOMEM);
 
         mdc_set_capa_size(req, &RMF_CAPA1, op_data->op_capa1);
 
+	if (exp_connect_selustre(exp)) {
+		domain = exp->exp_obd->u.cli.cl_se_domain;
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			rc = -EPERM;
+			goto err_out;
+		}
+
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
+
         rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_GETATTR);
         if (rc) {
+		mdc_release_domain(domain);
+err_out:
                 ptlrpc_request_free(req);
                 RETURN(rc);
         }
+
+	mdc_pack_domain(req, domain);
+	mdc_release_domain(domain);
 
         mdc_pack_body(req, &op_data->op_fid1, op_data->op_capa1,
                       op_data->op_valid, op_data->op_mode, -1, 0);
@@ -287,11 +324,12 @@ static int mdc_getattr_name(struct obd_export *exp, struct md_op_data *op_data,
 {
         struct ptlrpc_request *req;
         int                    rc;
+	char *domain = NULL;
         ENTRY;
 
         *request = NULL;
         req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-                                   &RQF_MDS_GETATTR_NAME);
+                                   mdc_select_rq_format(exp, RQF_MDS_GETATTR_NAME));
         if (req == NULL)
                 RETURN(-ENOMEM);
 
@@ -299,11 +337,28 @@ static int mdc_getattr_name(struct obd_export *exp, struct md_op_data *op_data,
         req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
                              op_data->op_namelen + 1);
 
+	if (exp_connect_selustre(exp)) {
+		domain = exp->exp_obd->u.cli.cl_se_domain;
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			rc = -EPERM;
+			goto err_out;
+		}
+
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
+
         rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_GETATTR_NAME);
         if (rc) {
+		mdc_release_domain(domain);
+err_out:
                 ptlrpc_request_free(req);
                 RETURN(rc);
         }
+
+	mdc_pack_domain(req, domain);
+	mdc_release_domain(domain);
 
         mdc_pack_body(req, &op_data->op_fid1, op_data->op_capa1,
                       op_data->op_valid, op_data->op_mode,
@@ -339,6 +394,7 @@ static int mdc_xattr_common(struct obd_export *exp,const struct req_format *fmt,
         int   xattr_namelen = 0;
         char *tmp;
         int   rc;
+	char *domain = NULL;
         ENTRY;
 
         *request = NULL;
@@ -358,6 +414,18 @@ static int mdc_xattr_common(struct obd_export *exp,const struct req_format *fmt,
                                      input_size);
         }
 
+	if (exp_connect_selustre(exp)) {
+		domain = exp->exp_obd->u.cli.cl_se_domain;
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			rc = -EPERM;
+			goto err_out;
+		}
+
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
+
 	/* Flush local XATTR locks to get rid of a possible cancel RPC */
 	if (opcode == MDS_REINT && fid_is_sane(fid) &&
 	    exp->exp_connect_data.ocd_ibits_known & MDS_INODELOCK_XATTR) {
@@ -375,16 +443,22 @@ static int mdc_xattr_common(struct obd_export *exp,const struct req_format *fmt,
 
 		rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 		if (rc) {
+			mdc_release_domain(domain);
+err_out:
 			ptlrpc_request_free(req);
 			RETURN(rc);
 		}
 	} else {
 		rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, opcode);
 		if (rc) {
+			mdc_release_domain(domain);
 			ptlrpc_request_free(req);
 			RETURN(rc);
 		}
 	}
+
+	mdc_pack_domain(req, domain);
+	mdc_release_domain(domain);
 
         if (opcode == MDS_REINT) {
                 struct mdt_rec_setxattr *rec;
@@ -446,7 +520,7 @@ static int mdc_setxattr(struct obd_export *exp, const struct lu_fid *fid,
 			int flags, __u32 suppgid,
 			struct ptlrpc_request **request)
 {
-        return mdc_xattr_common(exp, &RQF_MDS_REINT_SETXATTR,
+        return mdc_xattr_common(exp, mdc_select_rq_format(exp, RQF_MDS_REINT_SETXATTR),
                                 fid, oc, MDS_REINT, valid, xattr_name,
                                 input, input_size, output_size, flags,
                                 suppgid, request);
@@ -458,7 +532,7 @@ static int mdc_getxattr(struct obd_export *exp, const struct lu_fid *fid,
 			const char *input, int input_size, int output_size,
 			int flags, struct ptlrpc_request **request)
 {
-        return mdc_xattr_common(exp, &RQF_MDS_GETXATTR,
+        return mdc_xattr_common(exp, mdc_select_rq_format(exp, RQF_MDS_GETXATTR),
                                 fid, oc, MDS_GETXATTR, valid, xattr_name,
                                 input, input_size, output_size, flags,
                                 -1, request);
@@ -1013,20 +1087,36 @@ static int mdc_getpage(struct obd_export *exp, const struct lu_fid *fid,
 	int                      resends = 0;
 	struct l_wait_info       lwi;
 	int                      rc;
+	char			*domain = NULL;
 	ENTRY;
 
 	*request = NULL;
 	init_waitqueue_head(&waitq);
 
 restart_bulk:
-	req = ptlrpc_request_alloc(class_exp2cliimp(exp), &RQF_MDS_READPAGE);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   mdc_select_rq_format(exp, RQF_MDS_READPAGE));
 	if (req == NULL)
 		RETURN(-ENOMEM);
 
 	mdc_set_capa_size(req, &RMF_CAPA1, oc);
 
+	if (exp_connect_selustre(exp)) {
+		domain = exp->exp_obd->u.cli.cl_se_domain;
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			rc = -EPERM;
+			goto err_out;
+		}
+
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
+
 	rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_READPAGE);
 	if (rc) {
+		mdc_release_domain(domain);
+err_out:
 		ptlrpc_request_free(req);
 		RETURN(rc);
 	}
@@ -1039,6 +1129,7 @@ restart_bulk:
 				    MDS_BULK_PORTAL,
 				    &ptlrpc_bulk_kiov_pin_ops);
 	if (desc == NULL) {
+		mdc_release_domain(domain);
 		ptlrpc_req_finished(req);
 		RETURN(-ENOMEM);
 	}
@@ -1048,7 +1139,9 @@ restart_bulk:
 		desc->bd_frag_ops->add_kiov_frag(desc, pages[i], 0,
 						 PAGE_CACHE_SIZE);
 
-	mdc_readdir_pack(req, offset, PAGE_CACHE_SIZE * npages, fid, oc);
+	mdc_readdir_pack(req, offset, PAGE_CACHE_SIZE * npages, fid, oc, domain);
+
+	mdc_release_domain(domain);
 
 	ptlrpc_request_set_replen(req);
 	rc = ptlrpc_queue_wait(req);
@@ -1561,6 +1654,7 @@ static int mdc_statfs(const struct lu_env *env,
         struct obd_statfs     *msfs;
         struct obd_import     *imp = NULL;
         int                    rc;
+	char		      *domain = NULL;
         ENTRY;
 
         /*
@@ -1574,10 +1668,30 @@ static int mdc_statfs(const struct lu_env *env,
         if (!imp)
                 RETURN(-ENODEV);
 
-        req = ptlrpc_request_alloc_pack(imp, &RQF_MDS_STATFS,
-                                        LUSTRE_MDS_VERSION, MDS_STATFS);
+	req = ptlrpc_request_alloc(imp, mdc_select_rq_format(exp, RQF_MDS_STATFS));
         if (req == NULL)
                 GOTO(output, rc = -ENOMEM);
+
+	if (exp_connect_selustre(exp)) {
+		domain = exp->exp_obd->u.cli.cl_se_domain;
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			GOTO(out, rc = -EPERM);
+		}
+
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
+
+	rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_STATFS);
+	if (rc != 0) {
+		mdc_release_domain(domain);
+		GOTO(out, rc);
+	}
+
+	mdc_pack_domain(req, domain);
+
+	mdc_release_domain(domain);
 
         ptlrpc_request_set_replen(req);
 
@@ -2163,13 +2277,36 @@ static int mdc_quotactl(struct obd_device *unused, struct obd_export *exp,
         struct ptlrpc_request   *req;
         struct obd_quotactl     *oqc;
         int                      rc;
+	char			*domain = NULL;
         ENTRY;
 
-        req = ptlrpc_request_alloc_pack(class_exp2cliimp(exp),
-                                        &RQF_MDS_QUOTACTL, LUSTRE_MDS_VERSION,
-                                        MDS_QUOTACTL);
-        if (req == NULL)
-                RETURN(-ENOMEM);
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   mdc_select_rq_format(exp, RQF_MDS_QUOTACTL));
+	if (req == NULL)
+		RETURN(-ENOMEM);
+
+	if (exp_connect_selustre(exp)) {
+		domain = exp->exp_obd->u.cli.cl_se_domain;
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			rc = -EPERM;
+			goto err_out;
+		}
+
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
+
+	rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_QUOTACTL);
+	if (rc != 0) {
+		mdc_release_domain(domain);
+err_out:
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
+	mdc_pack_domain(req, domain);
+	mdc_release_domain(domain);
 
         oqc = req_capsule_client_get(&req->rq_pill, &RMF_OBD_QUOTACTL);
         *oqc = *oqctl;
@@ -2201,6 +2338,7 @@ static int mdc_ioc_swap_layouts(struct obd_export *exp,
 	struct ptlrpc_request	*req;
 	int			 rc, count;
 	struct mdc_swap_layouts *msl, *payload;
+	char			*domain = NULL;
 	ENTRY;
 
 	msl = op_data->op_data;
@@ -2219,7 +2357,7 @@ static int mdc_ioc_swap_layouts(struct obd_export *exp,
 					 MDS_INODELOCK_XATTR);
 
 	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
-				   &RQF_MDS_SWAP_LAYOUTS);
+				   mdc_select_rq_format(exp, RQF_MDS_SWAP_LAYOUTS));
 	if (req == NULL) {
 		ldlm_lock_list_put(&cancels, l_bl_ast, count);
 		RETURN(-ENOMEM);
@@ -2228,11 +2366,28 @@ static int mdc_ioc_swap_layouts(struct obd_export *exp,
 	mdc_set_capa_size(req, &RMF_CAPA1, op_data->op_capa1);
 	mdc_set_capa_size(req, &RMF_CAPA2, op_data->op_capa2);
 
+	if (exp_connect_selustre(exp)) {
+		domain = exp->exp_obd->u.cli.cl_se_domain;
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			rc = -EPERM;
+			goto err_out;
+		}
+
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
+
 	rc = mdc_prep_elc_req(exp, req, MDS_SWAP_LAYOUTS, &cancels, count);
 	if (rc) {
+		mdc_release_domain(domain);
+err_out:
 		ptlrpc_request_free(req);
 		RETURN(rc);
 	}
+
+	mdc_pack_domain(req, domain);
+	mdc_release_domain(domain);
 
 	mdc_swap_layouts_pack(req, op_data);
 
@@ -2579,6 +2734,19 @@ static int mdc_set_info_async(const struct lu_env *env,
 	struct obd_import	*imp = class_exp2cliimp(exp);
 	int			 rc;
 	ENTRY;
+
+	if (KEY_IS(KEY_SEDOMAIN)) {
+		strcpy(exp->exp_obd->u.cli.cl_se_domain, val);
+		RETURN(0);
+	}
+	if (KEY_IS(KEY_SELABEL)) {
+		strcpy(exp->exp_obd->u.cli.cl_se_label, val);
+		RETURN(0);
+	}
+	if (KEY_IS(KEY_SEMOUNT)) {
+		strcpy(exp->exp_obd->u.cli.cl_se_mount, val);
+		RETURN(0);
+	}
 
 	if (KEY_IS(KEY_READ_ONLY)) {
 		if (vallen != sizeof(int))
@@ -3056,6 +3224,56 @@ static int mdc_renew_capa(struct obd_export *exp, struct obd_capa *oc,
         RETURN(0);
 }
 
+int mdc_check_flags(struct obd_export *exp, const struct lu_fid *fid,
+		    struct obd_capa *oc)
+{
+	struct ptlrpc_request *req;
+	int                    rc;
+	char *domain = NULL;
+
+	ENTRY;
+
+	if (!exp_connect_selustre(exp))
+		RETURN(0);
+
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   &RQF_MDS_CHECK_FLAGS_SE);
+
+	if (req == NULL)
+		RETURN(-ENOMEM);
+
+	mdc_set_capa_size(req, &RMF_CAPA1, oc);
+
+	if (exp_connect_selustre(exp)) {
+		domain = exp->exp_obd->u.cli.cl_se_domain;
+		if (domain == NULL) {
+			CERROR("no security information\n");
+			ptlrpc_request_free(req);
+			RETURN(-EPERM);
+		}
+
+		req_capsule_set_size(&req->rq_pill, &RMF_SELINUX, RCL_CLIENT,
+				     strlen(domain) + 1);
+	}
+
+	rc = ptlrpc_request_pack(req, LUSTRE_MDS_VERSION, MDS_CHECK_FLAGS);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		mdc_release_domain(domain);
+		RETURN(rc);
+	}
+
+	mdc_pack_domain(req, domain);
+	mdc_release_domain(domain);
+	mdc_pack_body(req, fid, oc, 0, 0, -1, 0);
+	ptlrpc_request_set_replen(req);
+
+	rc = ptlrpc_queue_wait(req);
+	ptlrpc_req_finished(req);
+
+	RETURN(rc);
+}
+
 static struct obd_ops mdc_obd_ops = {
         .o_owner            = THIS_MODULE,
         .o_setup            = mdc_setup,
@@ -3110,7 +3328,8 @@ static struct md_ops mdc_md_ops = {
         .m_unpack_capa      = mdc_unpack_capa,
         .m_get_remote_perm  = mdc_get_remote_perm,
         .m_intent_getattr_async = mdc_intent_getattr_async,
-        .m_revalidate_lock      = mdc_revalidate_lock
+        .m_revalidate_lock      = mdc_revalidate_lock,
+	.m_check_flags	    = mdc_check_flags
 };
 
 static int __init mdc_init(void)

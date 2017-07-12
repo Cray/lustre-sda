@@ -2220,6 +2220,28 @@ static int lmv_setattr(struct obd_export *exp, struct md_op_data *op_data,
 	RETURN(rc);
 }
 
+static int lmv_check_flags(struct obd_export *exp, const struct lu_fid *fid,
+			   struct obd_capa *oc)
+{
+	struct obd_device	*obd = exp->exp_obd;
+	struct lmv_obd		*lmv = &obd->u.lmv;
+	struct lmv_tgt_desc	*tgt;
+	int			 rc;
+	ENTRY;
+
+	rc = lmv_check_connect(obd);
+	if (rc != 0)
+		RETURN(rc);
+
+	tgt = lmv_find_target(lmv, fid);
+	if (IS_ERR(tgt))
+		RETURN(PTR_ERR(tgt));
+
+	rc = md_check_flags(tgt->ltd_exp, fid, oc);
+	RETURN(rc);
+}
+
+
 static int lmv_fsync(struct obd_export *exp, const struct lu_fid *fid,
 		     struct obd_capa *oc, struct ptlrpc_request **request)
 {
@@ -2874,7 +2896,7 @@ int lmv_set_info_async(const struct lu_env *env, struct obd_export *exp,
 	lmv = &obd->u.lmv;
 
 	if (KEY_IS(KEY_READ_ONLY) || KEY_IS(KEY_FLUSH_CTX) ||
-	    KEY_IS(KEY_DEFAULT_EASIZE)) {
+	    KEY_IS(KEY_DEFAULT_EASIZE) || KEY_IS(KEY_SEDOMAIN) || KEY_IS(KEY_SELABEL) || KEY_IS(KEY_SEMOUNT)) {
 		int i, err = 0;
 
 		for (i = 0; i < lmv->desc.ld_tgt_count; i++) {
@@ -3584,6 +3606,7 @@ struct md_ops lmv_md_ops = {
         .m_intent_getattr_async = lmv_intent_getattr_async,
 	.m_revalidate_lock      = lmv_revalidate_lock,
 	.m_get_fid_from_lsm	= lmv_get_fid_from_lsm,
+	.m_check_flags		= lmv_check_flags
 };
 
 int __init lmv_init(void)
