@@ -48,6 +48,7 @@
 #include <errno.h>
 #include <pwd.h>
 #include <keyutils.h>
+#include <linux/keyctl.h>
 #include <gssapi/gssapi.h>
 
 #include "lsupport.h"
@@ -394,6 +395,7 @@ int error_kernel_key(key_serial_t keyid, int rpc_error, int gss_error)
 
 again:
         if (keyctl_update(keyid, buf, p - buf)) {
+		keyctl_invalidate(keyid);
                 if (errno != EAGAIN) {
                         logmsg(LL_ERR, "revoke key %08x: %s\n",
                                keyid, strerror(errno));
@@ -405,7 +407,7 @@ again:
                 sleep(2);
                 goto again;
         }
-
+	keyctl_invalidate(keyid);
         logmsg(LL_INFO, "key %08x: revoked\n", keyid);
         return 0;
 }

@@ -138,11 +138,6 @@ static inline void keyring_upcall_unlock(struct gss_sec_keyring *gsec_kr)
 #endif
 }
 
-static inline void key_revoke_locked(struct key *key)
-{
-        set_bit(KEY_FLAG_REVOKED, &key->flags);
-}
-
 static void ctx_upcall_timeout_kr(unsigned long data)
 {
         struct ptlrpc_cli_ctx *ctx = (struct ptlrpc_cli_ctx *) data;
@@ -153,7 +148,7 @@ static void ctx_upcall_timeout_kr(unsigned long data)
         LASSERT(key);
 
         cli_ctx_expire(ctx);
-        key_revoke_locked(key);
+        key_invalidate(key);
 }
 
 static void ctx_start_timer_kr(struct ptlrpc_cli_ctx *ctx, long timeout)
@@ -411,9 +406,6 @@ static void unbind_key_ctx(struct key *key, struct ptlrpc_cli_ctx *ctx)
 	LASSERT(key_get_payload(key, 0) == ctx);
 	LASSERT(test_bit(PTLRPC_CTX_CACHED_BIT, &ctx->cc_flags) == 0);
 
-        /* must revoke the key, or others may treat it as newly created */
-        key_revoke_locked(key);
-
 	key_set_payload(key, 0, NULL);
         ctx2gctx_keyring(ctx)->gck_key = NULL;
 
@@ -440,6 +432,7 @@ static void unbind_ctx_kr(struct ptlrpc_cli_ctx *ctx)
                 down_write(&key->sem);
                 unbind_key_ctx(key, ctx);
                 up_write(&key->sem);
+		key_invalidate(key);
                 key_put(key);
         }
 }
@@ -858,16 +851,15 @@ struct ptlrpc_cli_ctx * gss_sec_lookup_ctx_kr(struct ptlrpc_sec *sec,
 
 			CDEBUG(D_SEC, "installed key %p <-> ctx %p (sec %p)\n",
 			       key, ctx, sec);
-		} else {
-			/* we'd prefer to call key_revoke(), but we more like
-			 * to revoke it within this key->sem locked period. */
-			key_revoke_locked(key);
 		}
 
 		create_new = 1;
 	}
 
         up_write(&key->sem);
+
+	if (!ctx)
+		key_invalidate(key);
 
         if (is_root && create_new)
                 request_key_unlink(key);
@@ -922,11 +914,6 @@ void flush_user_ctx_cache_kr(struct ptlrpc_sec *sec,
 		down_write(&key->sem);
 
 		kill_key_locked(key);
-
-		/* kill_key_locked() should usually revoke the key, but we
-		 * revoke it again to make sure, e.g. some case the key may
-		 * not well coupled with a context. */
-		key_revoke_locked(key);
 
 		up_write(&key->sem);
 
@@ -1233,7 +1220,7 @@ err_put:
 err_up:
         up_write(&key->sem);
 err_revoke:
-        key_revoke(key);
+        key_invalidate(key);
         goto out;
 }
 
