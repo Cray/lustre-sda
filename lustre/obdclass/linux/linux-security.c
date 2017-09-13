@@ -33,6 +33,20 @@
 #include <linux/xattr.h>
 #include <linux/lsm_audit.h>
 #include <linux/kprobes.h>
+#include <net/sock.h>
+#include <linux/netlink.h>
+#include <linux/skbuff.h>
+#include <linux/completion.h>
+#include <linux/kmod.h>
+#include <linux/delay.h>
+#include <linux/sched.h>
+#include <asm/atomic.h>
+#include <linux/idr.h>
+#include <linux/slab.h>
+#include <linux/pid.h>
+#include <linux/types.h>
+#include <linux/rcupdate.h>
+#include <linux/mutex.h>
 
 #include <obd_support.h>
 
@@ -54,6 +68,18 @@ char obd_security_file_initcon[128] = ""; /* XXX: random size */
 #define SELINUX_OPENPERMS_FILE	"/selinux/policy_capabilities/open_perms"
 #define SELINUX_FILE_INITCON	"/selinux/initial_contexts/file"
 
+#define NETLINK_SEC_UPM		31
+#define LSELD_PIDFILE		"/var/run/lseld.pid"
+#define LSELD_EXEC		"/usr/sbin/lseld"
+#define NLMSG_LSEC		(NLMSG_MIN_TYPE + 1)
+
+static struct sock *nl_sk;
+static int lseld_pid;
+static struct idr idr_upm;
+static DEFINE_SPINLOCK(idr_lock);
+
+//static struct kmem_cache *upm_msg_cache;
+
 /* This is NOT a copy of avd */
 struct obd_security_decision {
 	unsigned allowed;
@@ -61,6 +87,12 @@ struct obd_security_decision {
 	unsigned auditdeny;
 	unsigned seqno;
 	unsigned flags;
+};
+
+struct upm_msg_ctx {
+	struct sk_buff *skb_tx;
+	struct sk_buff *skb_rx;
+	struct completion complete;
 };
 
 /* definitions of osd.flags */
@@ -164,6 +196,91 @@ static void convert_to_obd_perms(enum obd_secclass tc, unsigned *perms)
 	*perms = obd_perms;
 }
 
+static struct upm_msg_ctx * obd_security_upm_msg(const char *buf, size_t len)
+{
+	int rc;
+	int id;
+	struct upm_msg_ctx *ctx;
+	struct nlmsghdr *nlh;
+
+	if (buf == NULL || len < 0)
+		return ERR_PTR(-EINVAL);
+
+#if 0
+	/** TODO: Possibly use GFP_NOFS? */
+	OBD_SLAB_ALLOC_PTR_GFP(ctx, upm_msg_cache, GFP_ATOMIC);
+#endif
+	ctx = kmalloc(sizeof(*ctx), GFP_ATOMIC);
+	if (ctx == NULL)
+		return ERR_PTR(-ENOMEM);
+
+	ctx->skb_tx = nlmsg_new(len, GFP_ATOMIC);
+	if (ctx->skb_tx == NULL) {
+		CERROR("Failed to create socket buffer\n");
+		rc = -ENOMEM;
+		goto err;
+	}
+
+	init_completion(&ctx->complete);
+
+again:
+	if (idr_pre_get(&idr_upm, GFP_ATOMIC) == 0) {
+		rc = -ENOMEM;
+		goto err;
+	}
+
+	spin_lock(&idr_lock);
+	rc = idr_get_new(&idr_upm, ctx, &id);
+	/** TODO: Check how to handle -ENOSPC correctly? */
+	if (rc == -EAGAIN || rc == -ENOSPC) {
+		spin_unlock(&idr_lock);
+		goto again;
+	}
+	spin_unlock(&idr_lock);
+
+	//nlh = nlmsg_put(skb_out, lseld_pid, 0, NLMSG_LSELD, len, 0);
+	nlh = nlmsg_put(ctx->skb_tx, 0, 0, NLMSG_LSEC, len, 0);
+	if (nlh == NULL) {
+		CERROR("Failed to add netlink message to socket buffer\n");
+		spin_lock(&idr_lock);
+		idr_remove(&idr_upm, id);
+		spin_unlock(&idr_lock);
+		rc = -EMSGSIZE;
+		goto err;
+	}
+	NETLINK_CB(ctx->skb_tx).dst_group = 0; /* not in mcast group */
+
+	strncpy(nlmsg_data(nlh), buf, len);
+
+	/**
+	 * Use the idr as the netlink message sequence id; this implies that
+	 * sequence ids will be unique amongst the messages that are being used
+	 * at any point, but will likely be reused later.
+	 */
+	nlh->nlmsg_seq = id;
+
+	pr_info("Sending message with sequence number %d\n", nlh->nlmsg_seq);
+
+	rc = nlmsg_unicast(nl_sk, ctx->skb_tx, lseld_pid);
+	if (rc < 0) {
+		CERROR("Failed to send netlink message\n");
+		idr_remove(&idr_upm, id);
+		goto err;
+	}
+
+	/** Only support single-message-in-flight functionality for now */
+	wait_for_completion(&ctx->complete);
+
+	return ctx;
+err:
+
+	//OBD_SLAB_FREE_PTR(ctx, upm_msg_cache);
+	kfree(ctx);
+	//nlmsg_free(skb_out);
+
+	return ERR_PTR(rc);
+}
+
 void obd_security_compute_av(char *scon, char *tcon,
 			     enum obd_secclass tc,
 			     struct obd_security_decision *osd)
@@ -172,17 +289,33 @@ void obd_security_compute_av(char *scon, char *tcon,
 	struct file *sel_access_file;
 	int rc;
 	u16 tclass;
+	struct nlmsghdr *nlh;
+	struct upm_msg_ctx *ctx;
+
+#if 0
+	if (lseld_pid == 0) {
+		CERROR("SEC UPM not running!\n");
+		return;
+	}
+#endif
 
 	tclass = obd_secclass_map[tc].policy_class;
 
 	sel_access_file = obd_security_file_get(SELINUX_ACCESS_FILE);
-	if (IS_ERR_OR_NULL(sel_access_file))
+	if (IS_ERR_OR_NULL(sel_access_file)) {
+		/** TODO: Maybe should not go to err from here? */
 		goto err;
-
+	}
+#if 0
+	buf[127] = '\0';
+#endif
 	snprintf(buf, sizeof(buf), "%s %s %hu", scon, tcon, tclass);
+
+	pr_info("class is %hu\n", tclass);
 
 	CDEBUG(D_SEC, "compute_av request: %s\n", buf);
 
+#if 0
 	/* N.B. This requires COMPUTE_AV priviledge */
 	rc = sel_access_file->f_op->write(sel_access_file, buf, sizeof(buf),
 					  &sel_access_file->f_pos);
@@ -203,16 +336,48 @@ void obd_security_compute_av(char *scon, char *tcon,
 	obd_security_file_put(sel_access_file);
 
 	buf[rc] = '\0';
+#endif
 
-	CDEBUG(D_SEC, "got reply: %s\n", buf);
+	ctx = obd_security_upm_msg(&buf[0], strlen(scon) + strlen(tcon) +
+				   sizeof(tclass) + 3);
+	if (IS_ERR(ctx)) {
+		//CERROR("Error: sending netlink message failed\n");
+		pr_info("Error: sending netlink message failed, error = %ld\n",
+			PTR_ERR(ctx));
+		goto err;
+	}
 
-	sscanf(buf, "%x ffffffff %x %x %u %x",
+	//nlh = (struct nlmsghdr *)ctx->skb->data;
+	nlh = nlmsg_hdr(ctx->skb_rx);
+	if (nlh == NULL) {
+		CERROR("netlink message is NULL\n");
+		rc = -EINVAL;
+		goto err;
+	}
+
+	//CDEBUG(D_SEC, "got reply: %s\n", (char *)nlmsg_data(nlh));
+	pr_info("got reply2: %s, seq = %d\n", (char *)nlmsg_data(nlh),
+		nlh->nlmsg_seq);
+
+	//sscanf((char *)nlmsg_data(nlh), "%x ffffffff %x %x %u %x",
+	/** TODO: Change this? */
+	sscanf(nlmsg_data(nlh), "%x ffffffff %x %x %u %x",
 	       &osd->allowed, &osd->auditallow,
 	       &osd->auditdeny, &osd->seqno, &osd->flags);
 
 	convert_to_obd_perms(tc, &osd->allowed);
 	convert_to_obd_perms(tc, &osd->auditallow);
 	convert_to_obd_perms(tc, &osd->auditdeny);
+
+	//OBD_SLAB_FREE_PTR(ctx, upm_msg_cache);
+	kfree(ctx);
+
+	/** TODO: Enable this after seeing how idr allocates ids? */
+#if 0
+	spin_lock(&idr_lock);
+	idr_remove(&idr_upm, nlh->nlmsg_seq);
+	spin_unlock(&idr_lock);
+#endif
 
 	return;
 err:
@@ -1453,7 +1618,7 @@ static int obd_security_load_policy(void)
 		goto out;
 
 	/* Self-test fills out caches, so be careful when returning error */
-	obd_security_selftest();
+	//obd_security_selftest();
 
 out:
 	set_fs(fs);
@@ -1504,6 +1669,201 @@ static struct jprobe obd_security_jp = {
 
 int obd_security_jp_registered = 0;
 
+static void obd_sec_upm_recv(struct sk_buff *skb)
+{
+	struct nlmsghdr *nlh;
+	struct upm_msg_ctx *ctx;
+#if 0
+	if (lseld_pid == 0) {
+		lseld_pid = nlh->nlmsg_pid;
+		return;
+	} else if (lseld_pid != nlh->nlmsg_pid) {
+		CERROR("Unexpected PID from SEC UPM: %d\n", nlh->nlmsg_pid);
+		return;
+	} else {
+		nlh = nlmsg_hdr(skb);
+
+#endif
+	nlh = nlmsg_hdr(skb);
+
+	pr_info("Received netlink from userspace, pid = %d, msg = %s, "
+		"seq = %d\n", nlh->nlmsg_pid, (char *)nlmsg_data(nlh),
+	       nlh->nlmsg_seq);
+
+	spin_lock(&idr_lock);
+	ctx = idr_find(&idr_upm, nlh->nlmsg_seq);
+	if (ctx == NULL) {
+		/** TODO: Handle more correctly? */
+		spin_unlock(&idr_lock);
+		CERROR("message context is NULL\n");
+		dump_stack();
+		return;
+	}
+	spin_unlock(&idr_lock);
+
+	ctx->skb_rx = skb;
+
+#if 0
+	}
+#endif
+
+	complete(&ctx->complete);
+}
+
+static void obd_security_upm_fini(void)
+{
+	/** TODO: Add the check later */
+#if 0
+	if (idr_upm != NULL)
+#endif
+	if (lseld_pid) {
+		/** Initialize it to current, for a non-NULL value */
+		struct task_struct *lseld = current;
+		struct pid *pid;
+
+		rcu_read_lock();
+		//lseld = find_task_by_pid_ns(lseld_pid, &init_pid_ns);
+		pid = find_pid_ns(lseld_pid, &init_pid_ns);
+		if (pid) {
+			lseld = pid_task(pid, PIDTYPE_PID);
+		}
+		rcu_read_unlock();
+		if (!pid || !lseld) {
+			CERROR("lseld process does not exist, but %s exists!\n",
+			       LSELD_PIDFILE);
+			goto nolseld;
+		} else {
+			/** TODO: Change with kill_pid_info()? */
+			force_sig(SIGTERM, lseld);
+		}
+		/** TODO: handle race with lseld here? */
+	}
+
+nolseld:
+
+	idr_destroy(&idr_upm);
+
+#if 0
+	if (upm_msg_cache)
+		kmem_cache_destroy(upm_msg_cache);
+#endif
+
+	if (nl_sk != NULL)
+		netlink_kernel_release(nl_sk);
+}
+
+static int obd_security_upm_init(void)
+{
+	int rc;
+	char buf[128];
+	struct file *pidfile = NULL;
+	char __always_unused *end;
+	char *argv[2] = {LSELD_EXEC, NULL};
+	mm_segment_t fs;
+
+
+#if 0
+	upm_msg_cache = kmem_cache_create("upm_msg_cache",
+					  sizeof(struct upm_msg_ctx), 0, 0,
+					  NULL);
+	if (upm_msg_cache == NULL) {
+		rc = -ENOMEM;
+		goto err;
+	}
+#endif
+
+	nl_sk = netlink_kernel_create(&init_net, NETLINK_SEC_UPM, 0,
+				      obd_sec_upm_recv, NULL, THIS_MODULE);
+	if (nl_sk == NULL) {
+		CERROR("Error: failed to create SEC UPM socket!\n");
+		pr_info("Error: failed to create SEC UPM socket!\n");
+		return -ENOMEM;
+	}
+
+	rc = call_usermodehelper(argv[0], argv, NULL, UMH_WAIT_PROC);
+	if (rc) {
+		CERROR("Error: starting sec upm failed, rc = %d\n", rc);
+		pr_info("Error: starting sec upm failed, rc = %d\n", rc);
+		return rc;
+	}
+
+	/** XXX: Random delay to allow the pidfile to be written */
+	set_current_state(TASK_INTERRUPTIBLE);
+	schedule_timeout(HZ);
+
+	fs = get_fs();
+
+	set_fs(KERNEL_DS);
+
+	pidfile = filp_open(LSELD_PIDFILE, O_RDWR, 0);
+	if (IS_ERR(pidfile)) {
+		pr_info("Failed to get lseld pidfile\n");
+		rc = PTR_ERR(pidfile);
+		goto err;
+	}
+
+	rc = pidfile->f_op->read(pidfile, buf, sizeof(buf), &pidfile->f_pos);
+	if (rc <= 0) {
+		CERROR("Error: failed to read lseld pidfile , rc = %d\n", rc);
+		pr_info("Error: failed to read lseld pidfile, rc = %d\n", rc);
+		goto err;
+	}
+
+	lseld_pid = simple_strtoul(buf, &end, 0);
+	if (lseld_pid == 0) {
+		CERROR("Error: lseld pid not retrieved correctly\n");
+		pr_info("Error: lseld pid not retrieved correctly\n");
+		rc = -EINVAL;
+		goto err;
+	}
+
+	idr_init(&idr_upm);
+
+	CDEBUG(D_SEC, "lseld pid is %d\n", lseld_pid);
+	pr_info("lseld pid is %d\n", lseld_pid);
+
+#if 0
+	strcpy(buf, "Test string");
+
+	rc = obd_security_upm_msg(&buf[0], strlen("Test string\n"));
+	if (rc < 0) {
+		CERROR("Error: sending netlink message failed\n");
+		pr_info("Error: sending netlink message failed\n");
+		obd_security_upm_fini();
+	}
+#endif
+
+err:
+#if 0
+	if (upm_msg_cache)
+		kmem_cache_destroy(upm_msg_cache);
+#endif
+
+#if 0
+	if (idr_upm)
+	idr_destroy(&idr_upm);
+#endif
+
+	if (!IS_ERR_OR_NULL(pidfile))
+		filp_close(pidfile, 0);
+
+	set_fs(fs);
+
+	return rc;
+}
+
+void obd_security_fini(void)
+{
+	if (obd_security_jp_registered)
+		unregister_jprobe(&obd_security_jp);
+	obd_security_unload_policy();
+	/** TODO: This needs to be moved elsewhere, as obd_security_fini() is
+	 * called at module unload time, and if lseld causes a reference to be
+	 * taken on module odclass, modules can not be unloaded cleanly
+	 */
+	obd_security_upm_fini();
+}
+
 int obd_security_init(void)
 {
 	int rc;
@@ -1525,17 +1885,21 @@ int obd_security_init(void)
 		goto out;
 
 	rc = register_jprobe(&obd_security_jp);
-	if (rc < 0)
+	if (rc < 0) {
 		CERROR("Error: failed to hook cache reload\n");
-	else
+		goto out;
+	} else {
 		obd_security_jp_registered = 1;
+	}
+
+	rc = obd_security_upm_init();
+	if (rc < 0) {
+		CERROR("Error: failed to initialize upm\n");
+		goto out;
+	}
+
+	obd_security_selftest();
+
 out:
 	return rc;
-}
-
-void obd_security_fini(void)
-{
-	if (obd_security_jp_registered)
-		unregister_jprobe(&obd_security_jp);
-	obd_security_unload_policy();
 }

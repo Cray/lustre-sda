@@ -26,7 +26,7 @@ if UTILS
 rootsbin_PROGRAMS = mount.lustre
 sbin_PROGRAMS = lctl wiretest l_getidentity llverfs llverdev \
 	llog_reader lr_reader lustre_rsync \
-	ll_recover_lost_found_objs ltrack_stats ll_decode_filter_fid
+	ll_recover_lost_found_objs ltrack_stats ll_decode_filter_fid lseld
 if SERVER
 sbin_PROGRAMS += mkfs.lustre tunefs.lustre
 endif
@@ -192,6 +192,9 @@ wirecheck_SOURCES = wirecheck.c
 wirecheck_CPPFLAGS = -DCC="\"$(CC)\""
 
 wiretest_SOURCES = wiretest.c
+
+lseld_SOURCES = lseld.c sec_ulp.h
+lseld_LDADD := /usr/lib64/libsepol.a
 
 EXTRA_DIST = $(sbin_scripts) $(bin_scripts) $(CONFDIR_DATA)
 
